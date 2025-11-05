@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "Sample Agent with MCP Platform": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "USE_AGENTIC_AUTH": "false",
+        "ENVIRONMENT_ID": "", // This is the Environment id, only needed when using MCPPlatform mode
+      },
+      "applicationUrl": "https://localhost:64896;http://localhost:64897"
+    }
+  }
+}
