@@ -1,0 +1,19 @@
+{
+    "mcpServers": [
+        {
+            "mcpServerName": "mcp_MailTools"
+        },
+        {
+            "mcpServerName": "mcp_CalendarTools"
+        },
+        {
+            "mcpServerName": "mcp_NLWeb"
+        },
+        {
+            "mcpServerName": "mcp_SharePointTools"
+        },
+        {
+            "mcpServerName": "mcp_OneDriveServer"
+        }
+    ]
+}
