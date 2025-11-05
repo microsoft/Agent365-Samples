@@ -1,0 +1,75 @@
+[project]
+name = "sample-openai-agent"
+version = "0.1.0"
+description = "Sample OpenAI Agent using Microsoft Agent365 SDK"
+authors = [
+    { name = "Microsoft", email = "example@microsoft.com" }
+]
+dependencies = [
+    # OpenAI Agents SDK - The official package
+    "openai-agents",
+    
+    # Microsoft Agents SDK - Official packages for hosting and integration
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+    
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+    
+    # HTTP server support for MCP servers
+    "uvicorn[standard]>=0.20.0",
+    "fastapi>=0.100.0",
+    
+    # HTTP client
+    "httpx>=0.24.0",
+    
+    # Data validation
+    "pydantic>=2.0.0",
+    
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+
+    # Local packages from local index
+    # - Update package versions to match your built wheels
+    "microsoft_agents_a365_tooling >= 2025.10.20",
+    "microsoft_agents_a365_tooling_extensions_openai >= 2025.10.20",
+    "microsoft_agents_a365_observability_core >= 2025.10.20",
+    "microsoft_agents_a365_observability_extensions_openai >= 2025.10.20",
+    "microsoft_agents_a365_notifications >= 2025.10.20",
+]
+requires-python = ">=3.11"
+
+# Package index configuration
+# PyPI is the default/primary source, local packages are fallback
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "microsoft_agents_a365"
+url = "../../dist"
+format = "flat"
+
+[project.optional-dependencies]
+dev = [
+    # For development and testing
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Don't include any Python modules in the package since this is a sample/script collection
+py-modules = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["build*", "dist*", "venv*"]
