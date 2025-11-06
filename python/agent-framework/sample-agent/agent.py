@@ -9,8 +9,10 @@ with integrated observability using Microsoft Agent 365.
 Features:
 - AgentFramework SDK with Azure OpenAI integration
 - MCP server integration for dynamic tool registration
-- Simplified observability setup
+- Simplified observability setup following reference examples pattern
+- Two-step configuration: configure() + instrument()
 - Automatic AgentFramework instrumentation
+- Token-based authentication for Agent 365 Observability
 - Custom spans with detailed attributes
 - Comprehensive error handling and cleanup
 """
@@ -34,27 +36,28 @@ logger = logging.getLogger(__name__)
 # <DependencyImports>
 
 # AgentFramework SDK
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework import ChatAgent
-from azure.identity import AzureCliCredential
+from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.observability import setup_observability
 
 # Agent Interface
 from agent_interface import AgentInterface
+from azure.identity import AzureCliCredential
 
 # Microsoft Agents SDK
 from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 # Observability Components
-from microsoft_agents_a365.observability.core.config import configure
-
-# AgentFramework Instrumentation (when available)
-# from microsoft_agents_a365.observability.agentframework import InstrumentorAgentFramework
+from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
+    AgentFrameworkInstrumentor,
+)
 
 # MCP Tooling
 from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_registration_service import (
     McpToolRegistrationService,
 )
+from token_cache import get_cached_agentic_token
 
 # </DependencyImports>
 
@@ -71,8 +74,8 @@ class AgentFrameworkAgent(AgentInterface):
         """Initialize the AgentFramework agent."""
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Initialize observability
-        self._setup_observability()
+        # Initialize auto instrumentation with Agent365 observability SDK
+        self._enable_agentframework_instrumentation()
 
         # Initialize authentication options
         self.auth_options = LocalAuthenticationOptions.from_environment()
@@ -129,7 +132,7 @@ class AgentFrameworkAgent(AgentInterface):
             self.agent = ChatAgent(
                 chat_client=self.chat_client,
                 instructions="You are a helpful assistant with access to tools.",
-                #tools=[],  # Tools will be added dynamically by MCP setup
+                tools=[],  # Tools will be added dynamically by MCP setup
             )
 
             logger.info("✅ AgentFramework agent created successfully")
@@ -145,70 +148,52 @@ class AgentFrameworkAgent(AgentInterface):
     # =========================================================================
     # <ObservabilityConfiguration>
 
+    def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
+        """
+        Token resolver function for Agent 365 Observability exporter.
+
+        Uses the cached agentic token obtained from AGENT_APP.auth.get_token(context, "AGENTIC").
+        This is the only valid authentication method for this context.
+        """
+
+        try:
+            logger.info(
+                f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}"
+            )
+
+            # Use cached agentic token from agent authentication
+            cached_token = get_cached_agentic_token(tenant_id, agent_id)
+            if cached_token:
+                logger.info("Using cached agentic token from agent authentication")
+                return cached_token
+            else:
+                logger.warning(
+                    f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}"
+                )
+                return None
+
+        except Exception as e:
+            logger.error(
+                f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}"
+            )
+            return None
+
     def _setup_observability(self):
         """
-        Configure Microsoft Agent 365 observability
-        
-        Default: Console logging (ConsoleSpanExporter) for development
-        - Set ENABLE_KAIRO_EXPORTER=false or ENABLE_A365_OBSERVABILITY_EXPORTER=false
-        
-        Advanced: Cloud export to Agent365 for production
-        - Set ENABLE_KAIRO_EXPORTER=true (or ENABLE_A365_OBSERVABILITY_EXPORTER=true)
-        - Provide token_resolver in configure()
-        - Add framework instrumentation:
-          * AgentFramework: InstrumentorAgentFramework().instrument()
+        Configure observability using agent_framework.observability.setup_observability()
         """
         try:
-            os.environ["ENABLE_OBSERVABILITY"] = "true"
-            
-            # Check both legacy (ENABLE_KAIRO_EXPORTER) and new (ENABLE_A365_OBSERVABILITY_EXPORTER) keys
-            use_cloud_export = (
-                os.getenv("ENABLE_KAIRO_EXPORTER", "false").lower() == "true" or
-                os.getenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "false").lower() == "true"
-            )
-            
-            if use_cloud_export:
-                logger.warning("⚠️ Cloud export requires token_resolver - implement when needed")
-                # TODO: For cloud export, implement token_resolver:
-                # status = configure(
-                #     service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "agentframework-sample-agent"),
-                #     service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-                #     token_resolver=self.token_resolver,
-                #     cluster_category=os.getenv("CLUSTER_CATEGORY", "preprod"),
-                # )
-                return
-            else:
-                logger.info("🖥️  Configuring observability with console output")
-                status = configure(
-                    service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "agentframework-sample-agent"),
-                    service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-                )
-
-            if not status:
-                logger.warning("⚠️ Observability configuration failed")
-                return
-
-            export_type = "cloud (Agent365)" if use_cloud_export else "console"
-            logger.info(f"✅ Observability configured with {export_type} output")
-
-            self._enable_agentframework_instrumentation()
-
+            setup_observability()
+            logger.info("✅ AgentFramework observability configured successfully")
         except Exception as e:
             logger.error(f"❌ Error setting up observability: {e}")
 
     def _enable_agentframework_instrumentation(self):
-        """
-        Enable AgentFramework instrumentation for automatic tracing
-        
-        To enable: Uncomment the import and call below when package is available
-        from microsoft_agents_a365.observability.agentframework import InstrumentorAgentFramework
-        InstrumentorAgentFramework().instrument()
-        """
+        """Enable AgentFramework instrumentation for automatic tracing"""
         try:
-            # TODO: Uncomment when InstrumentorAgentFramework is available
-            # InstrumentorAgentFramework().instrument()
-            
-            logger.info("ℹ️  AgentFramework instrumentation ready (enable InstrumentorAgentFramework for detailed traces)")
+            # Initialize Agent 365 Observability Wrapper for AgentFramework SDK
+            AgentFrameworkInstrumentor().instrument()
+            logger.info("✅ AgentFramework instrumentation enabled")
         except Exception as e:
             logger.warning(f"⚠️ Could not enable AgentFramework instrumentation: {e}")
 
@@ -234,7 +219,7 @@ class AgentFrameworkAgent(AgentInterface):
         try:
             if not self.tool_service:
                 logger.warning(
-                    "⚠️ MCP tool service not available - skipping MCP server setup"
+                    "⚠️ MCP tool service not available -  skipping MCP server setup"
                 )
                 return
 
@@ -248,14 +233,24 @@ class AgentFrameworkAgent(AgentInterface):
 
             if use_agentic_auth:
                 logger.info("🔄 Adding tool servers with agentic authentication...")
+                scope = os.getenv("AGENTIC_AUTH_SCOPE")
+                if not scope:
+                    logger.warning(
+                        "⚠️ AGENTIC_AUTH_SCOPE environment variable is not set when USE_AGENTIC_AUTH=true"
+                    )
+                    return
+                scopes = [scope]
+                authToken = await auth.exchange_token(context, scopes, "AGENTIC")
+                auth_token = authToken.token
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
                     agent_instructions="You are a helpful assistant with access to tools.",
                     initial_tools=[],
-                    agent_user_id=agent_user_id,
+                    agentic_app_id=agent_user_id,
                     environment_id=self.auth_options.env_id,
                     auth=auth,
                     turn_context=context,
+                    auth_token=auth_token,
                 )
             else:
                 logger.info(
@@ -265,7 +260,7 @@ class AgentFrameworkAgent(AgentInterface):
                     chat_client=self.chat_client,
                     agent_instructions="You are a helpful assistant with access to tools.",
                     initial_tools=[],
-                    agent_user_id=agent_user_id,
+                    agentic_app_id=agent_user_id,
                     environment_id=self.auth_options.env_id,
                     auth=auth,
                     auth_token=self.auth_options.bearer_token,
@@ -275,7 +270,7 @@ class AgentFrameworkAgent(AgentInterface):
             if self.agent:
                 logger.info("✅ Agent MCP setup completed successfully")
             else:
-                logger.error("❌ Agent is None after MCP setup")
+                logger.warning("⚠️ Agent MCP setup returned None")
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")

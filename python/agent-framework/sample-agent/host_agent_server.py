@@ -5,10 +5,8 @@ Generic Agent Host Server
 A generic hosting server that can host any agent class that implements the required interface.
 """
 
-import asyncio
 import logging
 import os
-import signal
 import socket
 from os import environ
 
@@ -36,12 +34,14 @@ from microsoft_agents.hosting.core import (
     TurnContext,
     TurnState,
 )
+from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
     BaggageBuilder,
 )
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
+from token_cache import cache_agentic_token
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -136,8 +136,8 @@ class GenericAgentHost:
                         auth_handler_id="AGENTIC",
                     )
 
-                    # Note: Token caching removed - only needed for cloud observability export
-                    # For cloud export, uncomment: cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+                    # Cache the agentic token for observability export
+                    cache_agentic_token(tenant_id, agent_id, exaau_token.token)
 
                     user_message = context.activity.text or ""
                     logger.info(f"📨 Processing message: '{user_message}'")
@@ -316,7 +316,7 @@ class GenericAgentHost:
             """Cleanup handler for graceful shutdown"""
             logger.info("Shutting down gracefully...")
             await self.cleanup()
-        
+
         app.on_shutdown.append(cleanup_on_shutdown)
 
         try:
@@ -352,6 +352,11 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
             raise TypeError(
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
+
+        configure(
+            service_name="AgentFrameworkTracingWithAzureOpenAI",
+            service_namespace="AgentFrameworkTesting",
+        )
 
         # Create the host
         host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)

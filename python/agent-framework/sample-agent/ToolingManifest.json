@@ -2,9 +2,7 @@
   "mcpServers": [
     {
       "mcpServerName": "mcp_MailTools",
-      "mcpServerUniqueName": "mcp_MailTools",
-      "scope": "McpServers.Mail.All",
-      "audience": "api://05879165-0320-489e-b644-f72b33f3edf0"
+      "mcpServerUniqueName": "mcp_MailTools"
     }
   ]
 }

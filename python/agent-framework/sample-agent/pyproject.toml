@@ -37,10 +37,12 @@ dependencies = [
 
     # Local packages from local index
     # - Update package versions to match your built wheels
-    "microsoft_agents_a365_tooling >= 2025.10.20",
-    "microsoft_agents_a365_tooling_extensions_agentframework >= 2025.10.20",
-    "microsoft_agents_a365_observability_core >= 2025.10.20",
-    "microsoft_agents_a365_notifications >= 2025.10.20",
+    "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0",
+    "microsoft_agents_a365_runtime >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
 ]
 requires-python = ">=3.11"
 
@@ -53,7 +55,7 @@ default = true
 
 [[tool.uv.index]]
 name = "microsoft_kairo"
-url = "./dist"
+url = "../../../../python/dist"
 format = "flat"
 
 [build-system]
@@ -64,9 +66,6 @@ build-backend = "hatchling.build"
 packages = ["."]
 
 [tool.uv]
-# Allow pre-release versions for packages that require them
-prerelease = "allow"
-
 dev-dependencies = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
