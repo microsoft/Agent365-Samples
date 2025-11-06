@@ -246,7 +246,6 @@ def _initialize_services(self):
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
                     agent_user_id=agent_user_id,
-                    environment_id=self.auth_options.env_id,
                     auth=auth,
                     context=context,
                 )
@@ -254,7 +253,6 @@ def _initialize_services(self):
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
                     agent_user_id=agent_user_id,
-                    environment_id=self.auth_options.env_id,
                     auth=auth,
                     context=context,
                     auth_token=self.auth_options.bearer_token,

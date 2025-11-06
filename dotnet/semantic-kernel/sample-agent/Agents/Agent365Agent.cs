@@ -48,11 +48,9 @@ public class Agent365Agent
         if (MyAgent.TermsAndConditionsAccepted)
         {
             // Provide the tool service with necessary parameters to connect to A365
-            // The environmentId will be extracted programmatically
-            string environmentId = Environment.GetEnvironmentVariable("ENVIRONMENT_ID") ?? string.Empty;
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            toolService.AddToolServersToAgent(kernel, environmentId, userAuthorization, turnContext);
+            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
         }
         else
         {

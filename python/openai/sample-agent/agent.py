@@ -217,7 +217,6 @@ Always be friendly and explain your reasoning when using tools.
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
                     agentic_app_id=agentic_app_id,
-                    environment_id=self.auth_options.env_id,
                     auth=auth,
                     context=context,
                 )
@@ -225,7 +224,6 @@ Always be friendly and explain your reasoning when using tools.
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
                     agentic_app_id=agentic_app_id,
-                    environment_id=self.auth_options.env_id,
                     auth=auth,
                     context=context,
                     auth_token=self.auth_options.bearer_token,

@@ -151,7 +151,6 @@ export async function getClient(authorization: any, turnContext: TurnContext): P
     tools = await toolService.addMcpToolServers(
       mcpClientConfig,
       '',
-      process.env.ENVIRONMENT_ID || "",
       authorization,
       turnContext,
       process.env.BEARER_TOKEN || "",
@@ -179,22 +178,18 @@ export async function getClient(authorization: any, turnContext: TurnContext): P
 
 **LangChain Integration**:
 - **MCP Tools**: Loads tools from MCP tool servers dynamically
-- **Environment-Based**: Uses `ENVIRONMENT_ID` and `BEARER_TOKEN` for authentication
+- **Auth**: Uses `BEARER_TOKEN` for authentication
 - **OpenAI Model**: Configured for GPT-4o-mini
 - **Error Handling**: Gracefully handles tool loading failures
 
 **Authentication Options**:
-1. **The environment for which your servers are provisioned**:
-```
-ENVIRONMENT_ID=
-```
 
-2. **OBO (On-Behalf-Of) Authentication**:
+1. **OBO (On-Behalf-Of) Authentication**:
 ```
 BEARER_TOKEN=<your-mcp-bearer-token>
 ```
 
-3. **Agentic Authentication**:
+2. **Agentic Authentication**:
 ```
 USE_AGENTIC_AUTH=true
 
