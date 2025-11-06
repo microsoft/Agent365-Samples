@@ -1,6 +1,6 @@
 {
   "name": "langchain-sample",
-  "version": "2025.10.13",
+  "version": "2025.11.6",
   "description": "Sample agent integrating LangChain Agents with Microsoft 365 Agents SDK and Agent365 SDK",
   "main": "src/index.ts",
   "scripts": {
@@ -17,8 +17,7 @@
     "agent",
     "ai"
   ],
-  "author": "jterrazas@microsoft.com",
-  "license": "See license file",
+  "license": "MIT",
   "dependencies": {
     "@langchain/core": "*",
     "@langchain/langgraph": "*",

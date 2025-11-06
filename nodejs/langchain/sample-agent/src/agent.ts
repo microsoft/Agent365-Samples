@@ -22,7 +22,7 @@ export class A365Agent extends AgentApplication<TurnState> {
     });
 
     // Route agent notifications
-    this.onAgentNotification("*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
+    this.onAgentNotification("agents:*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
       await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
     });
 
