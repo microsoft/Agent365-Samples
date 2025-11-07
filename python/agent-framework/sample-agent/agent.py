@@ -122,7 +122,7 @@ class AgentFrameworkAgent(AgentInterface):
             api_version=api_version,
         )
 
-        logger.info("✅ AzureOpenAIChatClient created successfully")
+        logger.info("AzureOpenAIChatClient created successfully")
 
     def _create_agent(self):
         """Create the AgentFramework agent with initial configuration"""
@@ -178,7 +178,7 @@ class AgentFrameworkAgent(AgentInterface):
             # Initialize Agent 365 Observability Wrapper for AgentFramework SDK
             AgentFrameworkInstrumentor().instrument()
         except Exception as e:
-            logger.warning(f"⚠️ Could not enable AgentFramework instrumentation: {e}")
+            logger.warning(f"Could not enable AgentFramework instrumentation: {e}")
 
     # </ObservabilityConfiguration>
 
@@ -192,11 +192,11 @@ class AgentFrameworkAgent(AgentInterface):
         try:
             if not self.tool_service:
                 logger.warning(
-                    "⚠️ MCP tool service not available -  skipping MCP server setup"
+                    "MCP tool service not available -  skipping MCP server setup"
                 )
                 return
 
-            logger.info("🔍 Starting MCP server setup...")
+            logger.info("Starting MCP server setup...")
 
             agent_user_id = os.getenv("AGENT_ID", "user123")
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
@@ -205,7 +205,7 @@ class AgentFrameworkAgent(AgentInterface):
                 scope = os.getenv("AGENTIC_AUTH_SCOPE")
                 if not scope:
                     logger.warning(
-                        "⚠️ AGENTIC_AUTH_SCOPE environment variable is not set when USE_AGENTIC_AUTH=true"
+                        "AGENTIC_AUTH_SCOPE environment variable is not set when USE_AGENTIC_AUTH=true"
                     )
                     return
                 scopes = [scope]
@@ -237,7 +237,7 @@ class AgentFrameworkAgent(AgentInterface):
             logger.exception("Full error details:")
 
         if not self.agent:
-            logger.warning("⚠️ Agent MCP setup returned None, returning agent without servers.")
+            logger.warning("Agent MCP setup returned None, returning agent without servers.")
             self._create_agent()
 
     # </McpServerSetup>

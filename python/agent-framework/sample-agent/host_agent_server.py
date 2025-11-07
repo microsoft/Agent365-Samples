@@ -87,13 +87,13 @@ class A365Agent(AgentApplication):
         async def help_handler(context: TurnContext, _: TurnState):
             """Handle help requests and member additions"""
             welcome_message = (
-                "👋 **Welcome to Generic Agent Host!**\n\n"
+                "**Welcome to Generic Agent Host!**\n\n"
                 f"I'm powered by: **{self.agent.__class__.__name__}**\n\n"
                 "Ask me anything and I'll do my best to help!\n"
                 "Type '/help' for this message."
             )
             await context.send_activity(welcome_message)
-            logger.info("📨 Sent help/welcome message")
+            logger.info("Sent help/welcome message")
 
         # Register handlers
         self.conversation_update("membersAdded")(help_handler)
@@ -119,7 +119,7 @@ class A365Agent(AgentApplication):
                     cache_agentic_token(tenant_id, agent_id, exaau_token.token)
 
                     user_message = context.activity.text or ""
-                    logger.info(f"📨 Processing message: '{user_message}'")
+                    logger.info(f"Processing message: '{user_message}'")
 
                     # Skip empty messages
                     if not user_message.strip():
@@ -130,20 +130,20 @@ class A365Agent(AgentApplication):
                         return
 
                     # Process with the hosted agent
-                    logger.info(f"🤖 Processing with {self.agent.__class__.__name__}...")
+                    logger.info(f"Processing with {self.agent.__class__.__name__}...")
                     response = await self.agent.process_user_message(
                         user_message, self.auth, context
                     )
 
                     # Send response back
                     logger.info(
-                        f"📤 Sending response: '{response[:100] if len(response) > 100 else response}'"
+                        f"Sending response: '{response[:100] if len(response) > 100 else response}'"
                     )
                     await context.send_activity(response)
 
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"
-                logger.error(f"❌ Error processing message: {str(e)}")
+                logger.error(f"Error processing message: {str(e)}")
                 await context.send_activity(error_msg)
 
     async def cleanup(self):

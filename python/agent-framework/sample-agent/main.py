@@ -45,7 +45,7 @@ def create_auth_configuration() -> AgentAuthConfiguration | None:
 
     if client_id and tenant_id and client_secret:
         logger.info(
-            "🔒 Using Client Credentials authentication (CLIENT_ID/TENANT_ID provided)"
+            "Using Client Credentials authentication (CLIENT_ID/TENANT_ID provided)"
         )
         try:
             return AgentAuthConfiguration(
@@ -62,10 +62,10 @@ def create_auth_configuration() -> AgentAuthConfiguration | None:
 
     if environ.get("BEARER_TOKEN"):
         logger.info(
-            "🔑 BEARER_TOKEN present but incomplete app registration; continuing in anonymous dev mode"
+            "BEARER_TOKEN present but incomplete app registration; continuing in anonymous dev mode"
         )
     else:
-        logger.warning("⚠️ No authentication env vars found; running anonymous")
+        logger.warning("No authentication env vars found; running anonymous")
 
     return None
 
@@ -120,9 +120,9 @@ def start_server(agent_app: AgentApplication):
     app = Application(middlewares=middlewares)
 
     logger.info(
-        "🔒 Auth middleware enabled"
+        "Auth middleware enabled"
         if auth_configuration
-        else "🔧 Anonymous mode (no auth middleware)"
+        else "Anonymous mode (no auth middleware)"
     )
 
     # Routes
@@ -131,7 +131,6 @@ def start_server(agent_app: AgentApplication):
     app.router.add_get("/api/health", health)
 
     # Context
-    app["agent_configuration"] = auth_configuration
     app["agent_app"] = agent_app
     app["adapter"] = agent_app.adapter
 
@@ -144,24 +143,24 @@ def start_server(agent_app: AgentApplication):
         s.settimeout(0.5)
         if s.connect_ex(("127.0.0.1", desired_port)) == 0:
             logger.warning(
-                f"⚠️ Port {desired_port} already in use. Attempting {desired_port + 1}."
+                f"Port {desired_port} already in use. Attempting {desired_port + 1}."
             )
             port = desired_port + 1
 
     print("=" * 80)
-    print(f"🏢 Generic Agent Host -")
+    print(f"Generic Agent Host -")
     print("=" * 80)
     print(
-        f"\n🔒 Authentication: {'Enabled' if auth_configuration else 'Anonymous'}"
+        f"\nAuthentication: {'Enabled' if auth_configuration else 'Anonymous'}"
     )
-    print("🤖 Using Microsoft Agents SDK patterns")
-    print("🎯 Compatible with Agents Playground")
+    print("Using Microsoft Agents SDK patterns")
+    print("Compatible with Agents Playground")
     if port != desired_port:
-        print(f"⚠️ Requested port {desired_port} busy; using fallback {port}")
-    print(f"\n🚀 Starting server on localhost:{port}")
-    print(f"📚 Bot Framework endpoint: http://localhost:{port}/api/messages")
-    print(f"❤️ Health: http://localhost:{port}/api/health")
-    print("🎯 Ready for testing!\n")
+        print(f"Requested port {desired_port} busy; using fallback {port}")
+    print(f"\nStarting server on localhost:{port}")
+    print(f"Bot Framework endpoint: http://localhost:{port}/api/messages")
+    print(f"Health: http://localhost:{port}/api/health")
+    print("Ready for testing!\n")
 
     # Register cleanup on app shutdown
     async def cleanup_on_shutdown(app):
@@ -174,7 +173,7 @@ def start_server(agent_app: AgentApplication):
     try:
         run_app(app, host="localhost", port=port, handle_signals=True)
     except KeyboardInterrupt:
-        print("\n👋 Server stopped")
+        print("\nServer stopped")
     except Exception as error:
         logger.error(f"Server error: {error}")
         raise error
@@ -191,7 +190,7 @@ def main():
         start_server(host)
 
     except Exception as e:
-        print(f"❌ Failed to start server: {e}")
+        print(f"Failed to start server: {e}")
         import traceback
 
         traceback.print_exc()
