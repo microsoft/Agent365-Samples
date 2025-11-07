@@ -22,6 +22,7 @@ from microsoft_agents.hosting.aiohttp import (
 from microsoft_agents.hosting.core import (
     AgentApplication,
     Authorization,
+    ApplicationOptions,
     MemoryStorage,
     TurnContext,
     TurnState,
@@ -50,7 +51,7 @@ agents_sdk_config = load_configuration_from_env(environ)
 class A365Agent(AgentApplication):
     """Generic host that can host any agent implementing the AgentInterface"""
 
-    def __init__(self, agent_class: type[AgentInterface], *agent_args, **agent_kwargs):
+    def __init__(self, agent: AgentInterface):
         """
         Initialize the generic host with an agent class and its initialization parameters.
 
@@ -59,24 +60,24 @@ class A365Agent(AgentApplication):
             *agent_args: Positional arguments to pass to the agent constructor
             **agent_kwargs: Keyword arguments to pass to the agent constructor
         """
+        connection_manager = MsalConnectionManager(**agents_sdk_config)
+        storage = MemoryStorage()
         super().__init__(
-            storage= MemoryStorage(),
-            adapter= CloudAdapter(
-                connection_manager= MsalConnectionManager(**agents_sdk_config)
+            options = ApplicationOptions(
+                storage= storage,
+                adapter= CloudAdapter(
+                    connection_manager= connection_manager
+                ),
             ),
-            authorization= Authorization(**agents_sdk_config),
+            connection_manager= connection_manager,
+            authorization= Authorization(
+                storage,
+                connection_manager,
+                **agents_sdk_config),
             **agents_sdk_config,
         )
 
-        if not check_agent_inheritance(agent_class):
-            raise TypeError(
-                f"Agent class {agent_class.__name__} must inherit from AgentInterface"
-            )
-
-        self.agent_class = agent_class
-        self.agent_args = agent_args
-        self.agent_kwargs = agent_kwargs
-        self.agent_instance = None
+        self.agent = agent
 
         self._setup_handlers()
 
@@ -95,27 +96,20 @@ class A365Agent(AgentApplication):
             logger.info("📨 Sent help/welcome message")
 
         # Register handlers
-        self.agent_app.conversation_update("membersAdded")(help_handler)
-        self.agent_app.message("/help")(help_handler)
+        self.conversation_update("membersAdded")(help_handler)
+        self.message("/help")(help_handler)
 
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
         handler = ["AGENTIC"] if use_agentic_auth else None
 
-        @self.agent_app.activity("message", auth_handlers=handler)
+        @self.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
             try:
                 tenant_id = context.activity.recipient.tenant_id
                 agent_id = context.activity.recipient.agentic_app_id
                 with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    # Ensure the agent is available
-                    if not self.agent_instance:
-                        error_msg = "❌ Sorry, the agent is not available."
-                        logger.error(error_msg)
-                        await context.send_activity(error_msg)
-                        return
-
-                    exaau_token = await self.agent_app.auth.exchange_token(
+                    exaau_token = await self.auth.exchange_token(
                         context,
                         scopes=get_observability_authentication_scope(),
                         auth_handler_id="AGENTIC",
@@ -137,8 +131,8 @@ class A365Agent(AgentApplication):
 
                     # Process with the hosted agent
                     logger.info(f"🤖 Processing with {self.agent_class.__name__}...")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, context
+                    response = await self.agent.process_user_message(
+                        user_message, self.auth, context
                     )
 
                     # Send response back
@@ -147,42 +141,20 @@ class A365Agent(AgentApplication):
                     )
                     await context.send_activity(response)
 
-                    logger.info("✅ Response sent successfully to client")
-
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"
-                logger.error(f"❌ Error processing message: {e}")
+                logger.error(f"❌ Error processing message: {str(e)}")
                 await context.send_activity(error_msg)
-
-    async def initialize_agent(self):
-        """Initialize the hosted agent instance"""
-        if self.agent_instance is None:
-            try:
-                logger.info(f"🤖 Initializing {self.agent_class.__name__}...")
-
-                # Create the agent instance
-                self.agent_instance = self.agent_class(
-                    *self.agent_args, **self.agent_kwargs
-                )
-
-                # Initialize the agent
-                await self.agent_instance.initialize()
-
-                logger.info(f"✅ {self.agent_class.__name__} initialized successfully")
-            except Exception as e:
-                logger.error(
-                    f"❌ Failed to initialize {self.agent_class.__name__}: {e}"
-                )
-                raise
 
     async def cleanup(self):
         """Clean up resources"""
-        if self.agent_instance:
-            try:
-                await self.agent_instance.cleanup()
-                logger.info("Agent cleanup completed")
-            except Exception as e:
-                logger.error(f"Error during agent cleanup: {e}")
+        if not self.agent:
+            return
+
+        try:
+            await self.agent.cleanup()
+        except Exception as e:
+            logger.error(f"Error during agent cleanup: {e}")
 
 
 def create_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs) -> A365Agent:
@@ -207,7 +179,7 @@ def create_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs) 
         )
 
         # Create the host
-        return A365Agent(agent_class, *agent_args, **agent_kwargs)
+        return A365Agent(agent_class(*agent_args, **agent_kwargs))
 
 
     except Exception as error:

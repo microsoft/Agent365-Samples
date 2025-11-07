@@ -16,12 +16,6 @@ class AgentInterface(ABC):
     This ensures agents implement the required methods at class definition time,
     providing stronger guarantees than a Protocol.
     """
-
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize the agent and any required resources."""
-        pass
-
     @abstractmethod
     async def process_user_message(
         self, message: str, auth: Authorization, context: TurnContext
@@ -45,9 +39,4 @@ def check_agent_inheritance(agent_class) -> bool:
     Returns:
         True if the agent inherits from AgentInterface, False otherwise
     """
-    if not issubclass(agent_class, AgentInterface):
-        print(f"❌ Agent {agent_class.__name__} does not inherit from AgentInterface")
-        return False
-
-    print(f"✅ Agent {agent_class.__name__} properly inherits from AgentInterface")
-    return True
+    return issubclass(agent_class, AgentInterface)

@@ -1055,8 +1055,8 @@ ws = [
 
 [[package]]
 name = "microsoft-agents-a365-notifications"
-version = "2025.10.31+preview.33838"
-source = { registry = "../../../../python/dist" }
+version = "0.1.0"
+source = { registry = "dist" }
 dependencies = [
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-hosting-core" },
@@ -1064,13 +1064,13 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { path = "microsoft_agents_a365_notifications-2025.10.31+preview.33838-py3-none-any.whl" },
+    { path = "microsoft_agents_a365_notifications-0.1.0-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-observability-core"
-version = "2025.10.31+preview.33838"
-source = { registry = "../../../../python/dist" }
+version = "0.1.0"
+source = { registry = "dist" }
 dependencies = [
     { name = "microsoft-agents-a365-runtime" },
     { name = "opentelemetry-api" },
@@ -1080,33 +1080,47 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { path = "microsoft_agents_a365_observability_core-2025.10.31+preview.33838-py3-none-any.whl" },
+    { path = "microsoft_agents_a365_observability_core-0.1.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "microsoft-agents-a365-observability-extensions-agent-framework"
+version = "0.1.0"
+source = { registry = "dist" }
+dependencies = [
+    { name = "microsoft-agents-a365-observability-core" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-sdk" },
+]
+wheels = [
+    { path = "microsoft_agents_a365_observability_extensions_agent_framework-0.1.0-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-runtime"
-version = "2025.10.31+preview.33838"
-source = { registry = "../../../../python/dist" }
+version = "0.1.0"
+source = { registry = "dist" }
 wheels = [
-    { path = "microsoft_agents_a365_runtime-2025.10.31+preview.33838-py3-none-any.whl" },
+    { path = "microsoft_agents_a365_runtime-0.1.0-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-tooling"
-version = "2025.10.31+preview.33838"
-source = { registry = "../../../../python/dist" }
+version = "0.1.0"
+source = { registry = "dist" }
 dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
 wheels = [
-    { path = "microsoft_agents_a365_tooling-2025.10.31+preview.33838-py3-none-any.whl" },
+    { path = "microsoft_agents_a365_tooling-0.1.0-py3-none-any.whl" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-tooling-extensions-agentframework"
-version = "2025.10.31+preview.43329"
-source = { registry = "../../../../python/dist" }
+version = "0.1.0"
+source = { registry = "dist" }
 dependencies = [
     { name = "agent-framework-azure-ai" },
     { name = "azure-identity" },
@@ -1115,7 +1129,7 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { path = "microsoft_agents_a365_tooling_extensions_agentframework-2025.10.31+preview.43329-py3-none-any.whl" },
+    { path = "microsoft_agents_a365_tooling_extensions_agentframework-0.1.0-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -2351,6 +2365,8 @@ dependencies = [
     { name = "httpx" },
     { name = "microsoft-agents-a365-notifications" },
     { name = "microsoft-agents-a365-observability-core" },
+    { name = "microsoft-agents-a365-observability-extensions-agent-framework" },
+    { name = "microsoft-agents-a365-runtime" },
     { name = "microsoft-agents-a365-tooling" },
     { name = "microsoft-agents-a365-tooling-extensions-agentframework" },
     { name = "microsoft-agents-activity" },
@@ -2378,10 +2394,12 @@ requires-dist = [
     { name = "azure-identity" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.24.0" },
-    { name = "microsoft-agents-a365-notifications", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-observability-core", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-tooling", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-tooling-extensions-agentframework", specifier = ">=2025.10.20" },
+    { name = "microsoft-agents-a365-notifications", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-observability-core", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-observability-extensions-agent-framework", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-runtime", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-tooling", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-tooling-extensions-agentframework", specifier = ">=0.1.0" },
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-authentication-msal" },
     { name = "microsoft-agents-hosting-aiohttp" },

@@ -8,30 +8,30 @@ authors = [
 dependencies = [
     # AgentFramework SDK - The official package
     "agent-framework-azure-ai",
-    
+
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp",
     "microsoft-agents-hosting-core",
     "microsoft-agents-authentication-msal",
     "microsoft-agents-activity",
-    
+
     # Azure SDK components
     "azure-identity",
-    
+
     # Core dependencies
     "python-dotenv",
     "aiohttp",
-    
+
     # HTTP server support for MCP servers
     "uvicorn[standard]>=0.20.0",
     "fastapi>=0.100.0",
-    
+
     # HTTP client
     "httpx>=0.24.0",
-    
+
     # Data validation
     "pydantic>=2.0.0",
-    
+
     # Additional utilities
     "typing-extensions>=4.0.0",
 
@@ -54,8 +54,8 @@ url = "https://pypi.org/simple"
 default = true
 
 [[tool.uv.index]]
-name = "microsoft_kairo"
-url = "../../../../python/dist"
+name = "agent365"
+url = "./dist"
 format = "flat"
 
 [build-system]

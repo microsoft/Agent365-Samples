@@ -155,7 +155,7 @@ def start_server(agent_app: AgentApplication):
             port = desired_port + 1
 
     print("=" * 80)
-    print(f"🏢 Generic Agent Host - {agent_app.__name__}")
+    print(f"🏢 Generic Agent Host -")
     print("=" * 80)
     print(
         f"\n🔒 Authentication: {'Enabled' if auth_configuration else 'Anonymous'}"
