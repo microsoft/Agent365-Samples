@@ -45,7 +45,6 @@ from agent_interface import AgentInterface
 from azure.identity import AzureCliCredential
 
 # Microsoft Agents SDK
-from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 # Observability Components
@@ -61,6 +60,8 @@ from token_cache import get_cached_agentic_token
 
 # </DependencyImports>
 
+class LocalAuthenticationOptions():
+    bearer_token: str
 
 class AgentFrameworkAgent(AgentInterface):
     """AgentFramework Agent integrated with MCP servers and Observability"""
@@ -78,7 +79,7 @@ class AgentFrameworkAgent(AgentInterface):
         self._initialize_observability()
 
         # Initialize authentication options
-        self.auth_options = LocalAuthenticationOptions.from_environment()
+        self.auth_options = LocalAuthenticationOptions(bearer_token=os.getenv("BEARER_TOKEN", ""))
 
         # Initialize MCP services
         self.tool_service = McpToolRegistrationService()
@@ -151,14 +152,9 @@ class AgentFrameworkAgent(AgentInterface):
         """
 
         try:
-            logger.info(
-                f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}"
-            )
-
             # Use cached agentic token from agent authentication
             cached_token = get_cached_agentic_token(tenant_id, agent_id)
             if cached_token:
-                logger.info("Using cached agentic token from agent authentication")
                 return cached_token
             else:
                 logger.warning(
@@ -219,7 +215,7 @@ class AgentFrameworkAgent(AgentInterface):
                     agent_instructions="You are a helpful assistant with access to tools.",
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
-                    environment_id=self.auth_options.env_id,
+                    environment_id="",
                     auth=auth,
                     turn_context=context,
                     auth_token=auth_token,
@@ -230,7 +226,7 @@ class AgentFrameworkAgent(AgentInterface):
                     agent_instructions="You are a helpful assistant with access to tools.",
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
-                    environment_id=self.auth_options.env_id,
+                    environment_id="",
                     auth=auth,
                     auth_token=self.auth_options.bearer_token,
                     turn_context=context,
