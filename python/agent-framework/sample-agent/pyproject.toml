@@ -36,13 +36,13 @@ dependencies = [
     "typing-extensions>=4.0.0",
 
     # Local packages from local index
-    # - Update package versions to match your built wheels
-    "microsoft_agents_a365_tooling >= 0.1.0",
-    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0",
-    "microsoft_agents_a365_observability_core >= 0.1.0",
-    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0",
-    "microsoft_agents_a365_runtime >= 0.1.0",
-    "microsoft_agents_a365_notifications >= 0.1.0",
+    # - Use version ranges that work with both dev versions and future production releases
+    "microsoft_agents_a365_tooling >= 0.1.0.dev11, < 999.0.0",
+    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0.dev11, < 999.0.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0.dev11, < 999.0.0",
+    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0.dev11, < 999.0.0",
+    "microsoft_agents_a365_runtime >= 0.1.0.dev11, < 999.0.0",
+    "microsoft_agents_a365_notifications >= 0.1.0.dev11, < 999.0.0",
 ]
 requires-python = ">=3.11"
 
@@ -54,8 +54,8 @@ url = "https://pypi.org/simple"
 default = true
 
 [[tool.uv.index]]
-name = "microsoft_kairo"
-url = "../../../../python/dist"
+name = "microsoft_agents"
+url = "../dist"
 format = "flat"
 
 [build-system]
@@ -66,7 +66,11 @@ build-backend = "hatchling.build"
 packages = ["."]
 
 [tool.uv]
-dev-dependencies = [
+# Allow pre-release versions for dependencies that require them
+prerelease = "allow"
+
+[dependency-groups]
+dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.1.0",

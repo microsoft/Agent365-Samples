@@ -1,0 +1,28 @@
+{
+  "id": "94a8b018-7365-43b9-b9a9-bc7fc67be329",
+  "timestamp": "2025-09-18T22:21:54.612Z",
+  "channelId": "msteams",
+  "serviceUrl": "http://localhost:56150/_connector",
+  "recipient": {
+    "id": "agent365demo.sellak.userNov7_1@ztaitest12.onmicrosoft.com",
+    "name": "Agent365 Sellak Demo User Instance Nov7_1",
+    "agenticUserId": "7a4b6845-8a2c-4dfd-aeb9-fb9c5aa0027b",
+    "agenticAppId": "5d5288ae-72b5-4f2c-a92d-32ebcda338f3",
+    "tenantId": "e8a85347-fb53-4a91-9267-c616cbe1fd16",
+    "role": "agenticUser"
+  },
+  "from": {
+    "id": "29:1sH5NArUwkWAX-VmfHH3cfem2S89f2nB0N6aJ5zEjBoxT17fhSMdlYu_55ZyR8_OKFxS3BMnaGldHH3wdf_9K4Q",
+    "name": "Josjoy",
+    "aadObjectId": "03f4dd93-7e1e-41d6-bf7c-f211f9e96a13",
+    "role": "user"
+  },
+  "conversation": {
+    "id": "personal-chat-id",
+    "conversationType": "personal",
+    "tenantId": "00000000-0000-0000-0000-0000000000001"
+  },
+  "type": "message",
+  "text": "Send Email to sellak@microsoft.com with detailed Comparison between NordicTrack Commercial 2450 vs. Peloton Tread treadmills. It should be atleast 200 words. Do not ask follow up questions and directly send the email. Use formal writing style. Sign off as A365TestingAgent Py Ztai A365-samples"
+}
+ 
