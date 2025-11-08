@@ -5,7 +5,7 @@ import { ActivityTypes } from '@microsoft/agents-activity';
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
 
-import { Client, getClient } from './client';
+import { Client, getClient } from './client.js';
 
 export class A365Agent extends AgentApplication<TurnState> {
   agentName = "A365 Agent";

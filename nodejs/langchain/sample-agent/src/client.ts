@@ -55,14 +55,15 @@ export async function getClient(authorization: any, turnContext: TurnContext): P
 
   try {
     const mcpClientConfig = {} as ClientConfig;
-    tools = await toolService.addMcpToolServers(
-      mcpClientConfig,
+    const mcpTools = await toolService.addMcpToolServers(
+      mcpClientConfig as any,
       '',
       process.env.ENVIRONMENT_ID || "",
       authorization,
       turnContext,
       process.env.BEARER_TOKEN || "",
     );
+    tools = mcpTools as any;
   } catch (error) {
     console.error('Error adding MCP tool servers:', error);
   }

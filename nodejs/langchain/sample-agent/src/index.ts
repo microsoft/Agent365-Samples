@@ -5,7 +5,7 @@ configDotenv();
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
-import { agentApplication } from './agent';
+import { agentApplication } from './agent.js';
 
 const authConfig: AuthConfiguration = {};
 

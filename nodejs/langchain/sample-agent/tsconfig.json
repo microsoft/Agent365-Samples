@@ -13,6 +13,8 @@
       "skipLibCheck": true,
       "forceConsistentCasingInFileNames": true,
       "resolveJsonModule": true,
+      "resolvePackageJsonExports": false,
+      "resolvePackageJsonImports": false,
       "rootDir": "src",
       "outDir": "dist",
       "tsBuildInfoFile": "dist/.tsbuildinfo"
