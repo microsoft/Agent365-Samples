@@ -54,7 +54,7 @@ url = "https://pypi.org/simple"
 default = true
 
 [[tool.uv.index]]
-name = "microsoft_kairo"
+name = "microsoft_agents_a365"
 url = "../../dist"
 format = "flat"
 

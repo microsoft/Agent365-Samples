@@ -204,8 +204,7 @@ class AgentFrameworkAgent(AgentInterface):
             if use_agentic_auth:
                 scope = os.getenv("AGENTIC_AUTH_SCOPE")
                 if not scope:
-                    logger.warning("⚠️ AGENTIC_AUTH_SCOPE not set")
-                    return
+                    logger.error("❌ AGENTIC_AUTH_SCOPE is required when USE_AGENTIC_AUTH is enabled")
                     return
                 scopes = [scope]
                 authToken = await auth.exchange_token(context, scopes, "AGENTIC")
