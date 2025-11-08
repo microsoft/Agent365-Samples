@@ -121,6 +121,8 @@ Using proper Microsoft Agents SDK patterns
 After starting the server, you can test it using the Microsoft 365 Agents Playground.
 In a separate terminal, start the playground:
 ```powershell
+agentsplayground
+# or
 teamsapptester
 ```
 
