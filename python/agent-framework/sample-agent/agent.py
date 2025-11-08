@@ -48,6 +48,9 @@ from azure.identity import AzureCliCredential
 from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
+# Notifications
+from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+
 # Observability Components
 from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
     AgentFrameworkInstrumentor,
@@ -88,6 +91,9 @@ class AgentFrameworkAgent(AgentInterface):
 
         # Initialize MCP services
         self._initialize_services()
+        
+        # Track if MCP servers have been set up
+        self.mcp_servers_initialized = False
 
     # </Initialization>
 
@@ -111,32 +117,23 @@ class AgentFrameworkAgent(AgentInterface):
                 "AZURE_OPENAI_API_VERSION environment variable is required"
             )
 
-        logger.info(f"Creating AzureOpenAIChatClient with endpoint: {endpoint}")
-        logger.info(f"Deployment: {deployment}")
-        logger.info(f"API Version: {api_version}")
-
         self.chat_client = AzureOpenAIChatClient(
             endpoint=endpoint,
             credential=AzureCliCredential(),
             deployment_name=deployment,
             api_version=api_version,
         )
-
-        logger.info("✅ AzureOpenAIChatClient created successfully")
+        logger.info("✅ AzureOpenAIChatClient created")
 
     def _create_agent(self):
         """Create the AgentFramework agent with initial configuration"""
         try:
-            logger.info("Creating AgentFramework agent...")
-
             self.agent = ChatAgent(
                 chat_client=self.chat_client,
                 instructions="You are a helpful assistant with access to tools.",
-                tools=[],  # Tools will be added dynamically by MCP setup
+                tools=[],
             )
-
-            logger.info("✅ AgentFramework agent created successfully")
-
+            logger.info("✅ AgentFramework agent created")
         except Exception as e:
             logger.error(f"Failed to create agent: {e}")
             raise
@@ -149,53 +146,31 @@ class AgentFrameworkAgent(AgentInterface):
     # <ObservabilityConfiguration>
 
     def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-        """
-        Token resolver function for Agent 365 Observability exporter.
-
-        Uses the cached agentic token obtained from AGENT_APP.auth.get_token(context, "AGENTIC").
-        This is the only valid authentication method for this context.
-        """
-
+        """Token resolver for Agent 365 Observability"""
         try:
-            logger.info(
-                f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}"
-            )
-
-            # Use cached agentic token from agent authentication
             cached_token = get_cached_agentic_token(tenant_id, agent_id)
-            if cached_token:
-                logger.info("Using cached agentic token from agent authentication")
-                return cached_token
-            else:
-                logger.warning(
-                    f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}"
-                )
-                return None
-
+            if not cached_token:
+                logger.warning(f"No cached token for agent {agent_id}")
+            return cached_token
         except Exception as e:
-            logger.error(
-                f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}"
-            )
+            logger.error(f"Error resolving token: {e}")
             return None
 
     def _setup_observability(self):
-        """
-        Configure observability using agent_framework.observability.setup_observability()
-        """
+        """Configure observability"""
         try:
             setup_observability()
-            logger.info("✅ AgentFramework observability configured successfully")
+            logger.info("✅ Observability configured")
         except Exception as e:
-            logger.error(f"❌ Error setting up observability: {e}")
+            logger.error(f"❌ Observability error: {e}")
 
     def _enable_agentframework_instrumentation(self):
-        """Enable AgentFramework instrumentation for automatic tracing"""
+        """Enable AgentFramework instrumentation"""
         try:
-            # Initialize Agent 365 Observability Wrapper for AgentFramework SDK
             AgentFrameworkInstrumentor().instrument()
-            logger.info("✅ AgentFramework instrumentation enabled")
+            logger.info("✅ Instrumentation enabled")
         except Exception as e:
-            logger.warning(f"⚠️ Could not enable AgentFramework instrumentation: {e}")
+            logger.warning(f"⚠️ Instrumentation failed: {e}")
 
     # </ObservabilityConfiguration>
 
@@ -205,39 +180,32 @@ class AgentFrameworkAgent(AgentInterface):
     # <McpServerSetup>
 
     def _initialize_services(self):
-        """Initialize MCP services and authentication options"""
+        """Initialize MCP services"""
         try:
-            # Create MCP tool registration service
             self.tool_service = McpToolRegistrationService()
-            logger.info("✅ AgentFramework MCP tool registration service initialized")
+            logger.info("✅ MCP tool service initialized")
         except Exception as e:
-            logger.warning(f"⚠️ Could not initialize MCP tool service: {e}")
+            logger.warning(f"⚠️ MCP tool service failed: {e}")
             self.tool_service = None
 
     async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
         """Set up MCP server connections"""
+        if self.mcp_servers_initialized:
+            return
+            
         try:
             if not self.tool_service:
-                logger.warning(
-                    "⚠️ MCP tool service not available -  skipping MCP server setup"
-                )
+                logger.warning("⚠️ MCP tool service unavailable")
                 return
-
-            logger.info("🔍 Starting MCP server setup...")
 
             agent_user_id = os.getenv("AGENT_ID", "user123")
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
 
-            logger.info(f"🆔 Agent User ID: {agent_user_id}")
-            logger.info(f"🔐 Using agentic auth: {use_agentic_auth}")
-
             if use_agentic_auth:
-                logger.info("🔄 Adding tool servers with agentic authentication...")
                 scope = os.getenv("AGENTIC_AUTH_SCOPE")
                 if not scope:
-                    logger.warning(
-                        "⚠️ AGENTIC_AUTH_SCOPE environment variable is not set when USE_AGENTIC_AUTH=true"
-                    )
+                    logger.warning("⚠️ AGENTIC_AUTH_SCOPE not set")
+                    return
                     return
                 scopes = [scope]
                 authToken = await auth.exchange_token(context, scopes, "AGENTIC")
@@ -253,9 +221,6 @@ class AgentFrameworkAgent(AgentInterface):
                     auth_token=auth_token,
                 )
             else:
-                logger.info(
-                    "🔄 Adding tool servers with bearer token authentication..."
-                )
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
                     agent_instructions="You are a helpful assistant with access to tools.",
@@ -268,54 +233,33 @@ class AgentFrameworkAgent(AgentInterface):
                 )
 
             if self.agent:
-                logger.info("✅ Agent MCP setup completed successfully")
+                logger.info("✅ MCP setup completed")
+                self.mcp_servers_initialized = True
             else:
-                logger.warning("⚠️ Agent MCP setup returned None")
+                logger.warning("⚠️ MCP setup failed")
 
         except Exception as e:
-            logger.error(f"Error setting up MCP servers: {e}")
-            logger.exception("Full error details:")
+            logger.error(f"MCP setup error: {e}")
 
     # </McpServerSetup>
 
     # =========================================================================
-    # INITIALIZATION AND MESSAGE PROCESSING
+    # MESSAGE PROCESSING
     # =========================================================================
     # <MessageProcessing>
 
     async def initialize(self):
-        """Initialize the agent and MCP server connections"""
-        logger.info("Initializing AgentFramework Agent with MCP servers...")
-        try:
-            logger.info("Agent initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize agent: {e}")
-            raise
+        """Initialize the agent"""
+        logger.info("Agent initialized")
 
     async def process_user_message(
         self, message: str, auth: Authorization, context: TurnContext
     ) -> str:
         """Process user message using the AgentFramework SDK"""
         try:
-            # Setup MCP servers
             await self.setup_mcp_servers(auth, context)
-
-            # Run the agent with the user message
             result = await self.agent.run(message)
-
-            # Extract the response from the result
-            if result:
-                if hasattr(result, "contents"):
-                    return str(result.contents)
-                elif hasattr(result, "text"):
-                    return str(result.text)
-                elif hasattr(result, "content"):
-                    return str(result.content)
-                else:
-                    return str(result)
-            else:
-                return "I couldn't process your request at this time."
-
+            return self._extract_result(result) or "I couldn't process your request at this time."
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             return f"Sorry, I encountered an error: {str(e)}"
@@ -323,55 +267,91 @@ class AgentFrameworkAgent(AgentInterface):
     # </MessageProcessing>
 
     # =========================================================================
+    # NOTIFICATION HANDLING
+    # =========================================================================
+    # <NotificationHandling>
+
+    async def handle_agent_notification_activity(
+        self, notification_activity, auth: Authorization, context: TurnContext
+    ) -> str:
+        """Handle agent notification activities (email, Word mentions, etc.)"""
+        try:
+            notification_type = notification_activity.notification_type
+            logger.info(f"📬 Processing notification: {notification_type}")
+
+            # Setup MCP servers on first call
+            await self.setup_mcp_servers(auth, context)
+
+            # Handle Email Notifications
+            if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+                if not hasattr(notification_activity, "email") or not notification_activity.email:
+                    return "I could not find the email notification details."
+                
+                email = notification_activity.email
+                email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
+                message = f"You have received the following email. Please follow any instructions in it. {email_body}"
+                
+                result = await self.agent.run(message)
+                return self._extract_result(result) or "Email notification processed."
+
+            # Handle Word Comment Notifications
+            elif notification_type == NotificationTypes.WPX_COMMENT:
+                if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
+                    return "I could not find the Word notification details."
+                
+                wpx = notification_activity.wpx_comment
+                doc_id = getattr(wpx, "document_id", "")
+                comment_id = getattr(wpx, "initiating_comment_id", "")
+                drive_id = "default"
+                
+                # Get Word document content
+                doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
+                doc_result = await self.agent.run(doc_message)
+                word_content = self._extract_result(doc_result)
+                
+                # Process the comment with document context
+                comment_text = notification_activity.text or ""
+                response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
+                result = await self.agent.run(response_message)
+                return self._extract_result(result) or "Word notification processed."
+
+            # Generic notification handling
+            else:
+                notification_message = notification_activity.text or f"Notification received: {notification_type}"
+                result = await self.agent.run(notification_message)
+                return self._extract_result(result) or "Notification processed successfully."
+
+        except Exception as e:
+            logger.error(f"Error processing notification: {e}")
+            return f"Sorry, I encountered an error processing the notification: {str(e)}"
+
+    def _extract_result(self, result) -> str:
+        """Extract text content from agent result"""
+        if not result:
+            return ""
+        if hasattr(result, "contents"):
+            return str(result.contents)
+        elif hasattr(result, "text"):
+            return str(result.text)
+        elif hasattr(result, "content"):
+            return str(result.content)
+        else:
+            return str(result)
+
+    # </NotificationHandling>
+
+    # =========================================================================
     # CLEANUP
     # =========================================================================
     # <Cleanup>
 
     async def cleanup(self) -> None:
-        """Clean up agent resources and MCP server connections"""
+        """Clean up agent resources"""
         try:
-            logger.info("Cleaning up agent resources...")
-
-            # Cleanup MCP tool service if it exists
             if hasattr(self, "tool_service") and self.tool_service:
-                try:
-                    await self.tool_service.cleanup()
-                    logger.info("MCP tool service cleanup completed")
-                except Exception as cleanup_ex:
-                    logger.warning(f"Error cleaning up MCP tool service: {cleanup_ex}")
-
+                await self.tool_service.cleanup()
             logger.info("Agent cleanup completed")
-
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            logger.error(f"Cleanup error: {e}")
 
     # </Cleanup>
-
-
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
-# <MainEntryPoint>
-
-
-async def main():
-    """Main function to run the AgentFramework Agent with MCP servers"""
-    try:
-        # Create and initialize the agent
-        agent = AgentFrameworkAgent()
-        await agent.initialize()
-
-    except Exception as e:
-        logger.error(f"Failed to start agent: {e}")
-        print(f"Error: {e}")
-
-    finally:
-        # Cleanup
-        if "agent" in locals():
-            await agent.cleanup()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-# </MainEntryPoint>

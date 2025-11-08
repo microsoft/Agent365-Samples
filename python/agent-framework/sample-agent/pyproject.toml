@@ -55,7 +55,7 @@ default = true
 
 [[tool.uv.index]]
 name = "microsoft_kairo"
-url = "../../../../python/dist"
+url = "../../dist"
 format = "flat"
 
 [build-system]
