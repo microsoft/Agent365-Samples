@@ -67,6 +67,8 @@ from token_cache import get_cached_agentic_token
 
 class AgentFrameworkAgent(AgentInterface):
     """AgentFramework Agent integrated with MCP servers and Observability"""
+    
+    AGENT_PROMPT = "You are a helpful assistant with access to tools."
 
     # =========================================================================
     # INITIALIZATION
@@ -130,7 +132,7 @@ class AgentFrameworkAgent(AgentInterface):
         try:
             self.agent = ChatAgent(
                 chat_client=self.chat_client,
-                instructions="You are a helpful assistant with access to tools.",
+                instructions=self.AGENT_PROMPT,
                 tools=[],
             )
             logger.info("✅ AgentFramework agent created")
@@ -211,7 +213,7 @@ class AgentFrameworkAgent(AgentInterface):
                 auth_token = authToken.token
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
-                    agent_instructions="You are a helpful assistant with access to tools.",
+                    agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
                     environment_id=self.auth_options.env_id,
@@ -222,7 +224,7 @@ class AgentFrameworkAgent(AgentInterface):
             else:
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
-                    agent_instructions="You are a helpful assistant with access to tools.",
+                    agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
                     environment_id=self.auth_options.env_id,
