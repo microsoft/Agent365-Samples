@@ -37,12 +37,12 @@ dependencies = [
 
     # Local packages from local index
     # - Update package versions to match your built wheels
-    "microsoft_agents_a365_tooling >= 0.1.0",
-    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0",
-    "microsoft_agents_a365_observability_core >= 0.1.0",
-    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0",
-    "microsoft_agents_a365_runtime >= 0.1.0",
-    "microsoft_agents_a365_notifications >= 0.1.0",
+    "microsoft_agents_a365_tooling >= 0.0.0",
+    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.0.0",
+    "microsoft_agents_a365_observability_core >= 0.0.0",
+    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.0.0",
+    "microsoft_agents_a365_runtime >= 0.0.0",
+    "microsoft_agents_a365_notifications >= 0.0.0",
 ]
 requires-python = ">=3.11"
 
@@ -55,7 +55,7 @@ default = true
 
 [[tool.uv.index]]
 name = "microsoft_agents_a365"
-url = "../../dist"
+url = "../dist"
 format = "flat"
 
 [build-system]
