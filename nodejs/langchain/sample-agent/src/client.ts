@@ -57,7 +57,7 @@ export async function getClient(authorization: Authorization, turnContext: TurnC
   // Get Mcp Tools
   let agentWithMcpTools = undefined;
   try {
-    agentWithMcpTools = await toolService.addMcpToolServers(
+    agentWithMcpTools = await toolService.addToolServersToAgent(
       agent,
       '',
       process.env.ENVIRONMENT_ID || "",
