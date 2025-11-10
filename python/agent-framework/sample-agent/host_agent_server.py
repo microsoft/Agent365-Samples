@@ -37,13 +37,10 @@ from microsoft_agents_a365.runtime.environment_utils import (
 
 
 # Observability Components
-from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
-    AgentFrameworkInstrumentor,
-)
 from agent_framework.observability import setup_observability
 
 # Helper for Observability
-from token_cache import get_cached_agentic_token
+from token_cache import cache_agentic_token, get_cached_agentic_token
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -123,6 +120,9 @@ class A365Agent(AgentApplication):
                         scopes=get_observability_authentication_scope(),
                         auth_handler_id="AGENTIC",
                     )
+
+                    # Cache the agentic token for observability export
+                    cache_agentic_token(tenant_id, agent_id, exaau_token.token)
 
                     user_message = context.activity.text or ""
                     logger.info(f"Processing message: '{user_message}'")
@@ -212,9 +212,6 @@ def create_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs) 
 
         # Start up Observability
         setup_observability()
-
-        # Initialize Agent 365 Observability Wrapper for AgentFramework SDK
-        AgentFrameworkInstrumentor().instrument()
 
         # Create the host
         return A365Agent(agent_class(*agent_args, **agent_kwargs))

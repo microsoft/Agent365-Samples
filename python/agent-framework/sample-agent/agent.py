@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
 
-
 # Agent Interface
 from agent_interface import AgentInterface
 from azure.identity import AzureCliCredential
@@ -50,6 +49,11 @@ from microsoft_agents.hosting.core import Authorization, TurnContext
 # MCP Tooling
 from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_registration_service import (
     McpToolRegistrationService,
+)
+
+# Observability
+from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
+    AgentFrameworkInstrumentor,
 )
 
 # </DependencyImports>
@@ -69,6 +73,9 @@ class AgentFrameworkAgent(AgentInterface):
         """Initialize the AgentFramework agent."""
         self.logger = logging.getLogger(self.__class__.__name__)
 
+        # Initialize Agent 365 Observability Wrapper for AgentFramework SDK
+        AgentFrameworkInstrumentor().instrument()
+
         # Initialize authentication options
         self.auth_options = LocalAuthenticationOptions()
         self.auth_options.bearer_token = os.getenv("BEARER_TOKEN", "")
@@ -78,7 +85,6 @@ class AgentFrameworkAgent(AgentInterface):
 
         # Create Azure OpenAI chat client
         self._create_chat_client()
-
 
     # </Initialization>
 
