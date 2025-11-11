@@ -1,7 +1,7 @@
 {
   "name": "perplexity-agent-sample",
   "version": "1.0.0",
-  "description": "Perplexity AI Agent with Microsoft 365 Agent365 SDK",
+  "description": "Perplexity AI Agent with Microsoft Agent 365 SDK",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
