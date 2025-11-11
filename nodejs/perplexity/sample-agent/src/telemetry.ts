@@ -1,10 +1,8 @@
 import {
   ObservabilityManager,
   Builder,
-} from '@microsoft/agents-a365-observability';
+} from "@microsoft/agents-a365-observability";
 
-export const kairo = ObservabilityManager.configure(
-  (builder: Builder) =>
-    builder
-      .withService('Perplexity Agent', '1.0.0')
+export const a365Observability = ObservabilityManager.configure(
+  (builder: Builder) => builder.withService("Perplexity Agent", "1.0.0")
 );
