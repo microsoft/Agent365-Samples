@@ -45,18 +45,18 @@ ms_agents_logger.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Notifications imports (optional)
-# Temporarily disabled due to package incompleteness
 NOTIFICATIONS_AVAILABLE = False
-# try:
-#     from microsoft_agents_a365.notifications.agent_notification import (
-#         AgentNotification,
-#         AgentNotificationActivity,
-#         ChannelId,
-#     )
-#     NOTIFICATIONS_AVAILABLE = True
-# except ImportError:
-#     NOTIFICATIONS_AVAILABLE = False
-#     logger.debug("Notification packages not installed - notification handling disabled")
+try:
+    from microsoft_agents_a365.notifications.agent_notification import (
+        AgentNotification,
+        AgentNotificationActivity,
+        ChannelId,
+    )
+    NOTIFICATIONS_AVAILABLE = True
+    logger.debug("✅ Notification support enabled")
+except ImportError as e:
+    NOTIFICATIONS_AVAILABLE = False
+    logger.debug(f"Notification packages not available: {e}")
 
 # Observability imports (optional)
 try:
@@ -181,19 +181,93 @@ class GenericAgentHost:
                 await context.send_activity(error_msg)
 
         # Register notification handler if available
-        # Temporarily disabled due to package issues
-        # if NOTIFICATIONS_AVAILABLE and self.agent_notification:
-        #     @self.agent_notification.on_agent_notification(
-        #         channel_id=ChannelId(channel="agents", sub_channel="*"),
-        #         auth_handlers=handler,
-        #     )
-        #     async def on_notification(
-        #         context: TurnContext,
-        #         state: TurnState,
-        #         notification_activity: AgentNotificationActivity,
-        #     ):
-        #         """Handle agent notifications (email, Word comments, etc.)"""
-        #         # Implementation temporarily disabled
+        if NOTIFICATIONS_AVAILABLE and self.agent_notification:
+            # Shared notification handler logic
+            async def handle_notification_common(
+                context: TurnContext,
+                state: TurnState,
+                notification_activity: AgentNotificationActivity,
+            ):
+                """Common notification handler for both 'agents' and 'msteams' channels"""
+                try:
+                    logger.info(f"🔔 Notification received! Type: {context.activity.type}, Channel: {context.activity.channel_id if hasattr(context.activity, 'channel_id') else 'None'}")
+                    
+                    result = await self._validate_agent_and_setup_context(context)
+                    if result is None:
+                        return
+                    tenant_id, agent_id = result
+
+                    if OBSERVABILITY_AVAILABLE:
+                        with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                            await self._handle_notification_with_agent(
+                                context, notification_activity
+                            )
+                    else:
+                        await self._handle_notification_with_agent(
+                            context, notification_activity
+                        )
+
+                except Exception as e:
+                    logger.error(f"❌ Notification error: {e}")
+                    await context.send_activity(
+                        f"Sorry, I encountered an error processing the notification: {str(e)}"
+                    )
+            
+            # Register for 'agents' channel (production - Outlook, Teams notifications)
+            @self.agent_notification.on_agent_notification(
+                channel_id=ChannelId(channel="agents", sub_channel="*"),
+                auth_handlers=handler,
+            )
+            async def on_notification_agents(
+                context: TurnContext,
+                state: TurnState,
+                notification_activity: AgentNotificationActivity,
+            ):
+                """Handle notifications from 'agents' channel (production)"""
+                await handle_notification_common(context, state, notification_activity)
+            
+            # Register for 'msteams' channel (testing - Agents Playground)
+            @self.agent_notification.on_agent_notification(
+                channel_id=ChannelId(channel="msteams", sub_channel="*"),
+                auth_handlers=handler,
+            )
+            async def on_notification_msteams(
+                context: TurnContext,
+                state: TurnState,
+                notification_activity: AgentNotificationActivity,
+            ):
+                """Handle notifications from 'msteams' channel (testing)"""
+                await handle_notification_common(context, state, notification_activity)
+            
+            logger.info("✅ Notification handlers registered for 'agents' and 'msteams' channels")
+
+    async def _handle_notification_with_agent(
+        self, context: TurnContext, notification_activity: AgentNotificationActivity
+    ):
+        """
+        Handle notification with the agent instance.
+        
+        Args:
+            context: Turn context
+            notification_activity: The notification activity to process
+        """
+        logger.info(f"📬 {notification_activity.notification_type}")
+
+        # Check if agent supports notifications
+        if not hasattr(self.agent_instance, "handle_agent_notification_activity"):
+            logger.warning("⚠️ Agent doesn't support notifications")
+            await context.send_activity(
+                "This agent doesn't support notification handling yet."
+            )
+            return
+
+        # Process the notification with the agent
+        response = await self.agent_instance.handle_agent_notification_activity(
+            notification_activity, self.agent_app.auth, context
+        )
+        
+        # Send the response
+        await context.send_activity(response)
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
         """

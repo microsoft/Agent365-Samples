@@ -399,7 +399,21 @@ class ClaudeAgent(AgentInterface):
 
             # Generic notification handling
             else:
-                notification_message = notification_activity.text or f"Notification received: {notification_type}"
+                # Log full activity structure for debugging
+                logger.info(f"🔍 Full notification activity structure:")
+                logger.info(f"   Type: {notification_activity.activity.type}")
+                logger.info(f"   Name: {notification_activity.activity.name}")
+                logger.info(f"   Text: {getattr(notification_activity.activity, 'text', 'N/A')}")
+                logger.info(f"   Value: {getattr(notification_activity.activity, 'value', 'N/A')}")
+                logger.info(f"   Entities: {notification_activity.activity.entities}")
+                logger.info(f"   Channel ID: {notification_activity.activity.channel_id}")
+                
+                # Try to get message from activity.text or activity.value
+                notification_message = (
+                    getattr(notification_activity.activity, 'text', None) or 
+                    str(getattr(notification_activity.activity, 'value', None)) or 
+                    f"Notification received: {notification_type}"
+                )
                 logger.info(f"📨 Processing generic notification: {notification_type}")
                 
                 # Process with Claude
