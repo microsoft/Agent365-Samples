@@ -1,10 +1,10 @@
-# Perplexity AI Agent Sample
+# Agent Sample - Perplexity AI
 
 This directory contains a sample agent implementation using Node.js and Perplexity AI.
 
 ## Demonstrates
 
-This sample demonstrates how to build an agent using the Agent365 framework with Node.js and Perplexity AI.
+This sample demonstrates how to build an agent using the Agent 365 framework with Node.js and Perplexity AI.
 
 ## Prerequisites
 
