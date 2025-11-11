@@ -41,13 +41,13 @@ TENANT_ID=your_tenant_id
 
 See `.env.template` for all available options.
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
 ```powershell
 npm install
 ```
 
-### 3. Build the Sample
+### 3. Build the sample
 
 ```powershell
 npm run build
@@ -77,12 +77,7 @@ In a new terminal:
 npm run test-tool
 ```
 
-This opens the M365 Agents Playground where you can:
-
-- Chat with your agent
-- Test installation flow
-- Try notification handling
-- Inspect requests/responses
+This opens the M365 Agents Playground where you can chat with your agent.
 
 ### 5. Optionally, while testing you can run in dev mode (auto-reload)
 
