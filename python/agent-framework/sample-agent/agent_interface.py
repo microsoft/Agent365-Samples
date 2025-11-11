@@ -48,6 +48,5 @@ def check_agent_inheritance(agent_class) -> bool:
     if not issubclass(agent_class, AgentInterface):
         print(f"❌ Agent {agent_class.__name__} does not inherit from AgentInterface")
         return False
-
-    print(f"✅ Agent {agent_class.__name__} properly inherits from AgentInterface")
     return True
+

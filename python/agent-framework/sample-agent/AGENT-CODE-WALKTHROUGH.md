@@ -8,6 +8,7 @@ Step-by-step walkthrough of the complete agent implementation in `sample_agent\a
 |-----------|---------|
 | **AgentFramework SDK** | Core AI orchestration and conversation management |
 | **Microsoft 365 Agents SDK** | Enterprise hosting and authentication integration |
+| **Agent Notifications** | Handle @mentions from Outlook, Word, and Excel |
 | **MCP Servers** | External tool access and integration |
 | **Microsoft Agent 365 Observability** | Comprehensive tracing and monitoring |
 
@@ -43,6 +44,9 @@ from agent_interface import AgentInterface
 from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
+# Notifications
+from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+
 # Observability Components
 from microsoft_agents_a365.observability.core.config import configure
 
@@ -57,6 +61,7 @@ from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_r
 **Key Imports**:
 - **AgentFramework**: Tools to talk to AI models and manage conversations
 - **Microsoft 365 Agents**: Enterprise security and hosting features
+- **Notifications**: Handle @mentions from Outlook, Word, and Excel
 - **MCP Tooling**: Connects the agent to external tools and services
 - **Observability**: Tracks what the agent is doing for monitoring and debugging
 
@@ -297,6 +302,107 @@ The agent supports multiple authentication modes and extensive configuration opt
 ---
 
 ## Step 7: Message Processing
+
+```python
+async def process_user_message(
+    self, message: str, auth: Authorization, context: TurnContext
+) -> str:
+    """Process user message using the AgentFramework SDK"""
+    try:
+        await self.setup_mcp_servers(auth, context)
+        result = await self.agent.run(message)
+        return self._extract_result(result) or "I couldn't process your request at this time."
+    except Exception as e:
+        logger.error(f"Error processing message: {e}")
+        return f"Sorry, I encountered an error: {str(e)}"
+```
+
+**What it does**: Handles regular chat messages from users.
+
+**What happens**:
+1. **Setup Tools**: Makes sure MCP tools are connected (only runs once on first message)
+2. **Run Agent**: Sends the message to the AI agent for processing
+3. **Extract Response**: Pulls out the text response from the agent's result
+4. **Error Handling**: Catches problems and returns friendly error messages
+
+---
+
+## Step 8: Notification Handling
+
+```python
+async def handle_agent_notification_activity(
+    self, notification_activity, auth: Authorization, context: TurnContext
+) -> str:
+    """Handle agent notification activities (email, Word mentions, etc.)"""
+    try:
+        notification_type = notification_activity.notification_type
+        logger.info(f"📬 Processing notification: {notification_type}")
+
+        await self.setup_mcp_servers(auth, context)
+
+        # Handle Email Notifications
+        if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+            if not hasattr(notification_activity, "email") or not notification_activity.email:
+                return "I could not find the email notification details."
+            
+            email = notification_activity.email
+            email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
+            message = f"You have received the following email. Please follow any instructions in it. {email_body}"
+            
+            result = await self.agent.run(message)
+            return self._extract_result(result) or "Email notification processed."
+
+        # Handle Word Comment Notifications
+        elif notification_type == NotificationTypes.WPX_COMMENT:
+            if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
+                return "I could not find the Word notification details."
+            
+            wpx = notification_activity.wpx_comment
+            doc_id = getattr(wpx, "document_id", "")
+            comment_id = getattr(wpx, "initiating_comment_id", "")
+            drive_id = "default"
+            
+            # Get Word document content
+            doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
+            doc_result = await self.agent.run(doc_message)
+            word_content = self._extract_result(doc_result)
+            
+            # Process the comment with document context
+            comment_text = notification_activity.text or ""
+            response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
+            result = await self.agent.run(response_message)
+            return self._extract_result(result) or "Word notification processed."
+
+        # Generic notification handling
+        else:
+            notification_message = notification_activity.text or f"Notification received: {notification_type}"
+            result = await self.agent.run(notification_message)
+            return self._extract_result(result) or "Notification processed successfully."
+
+    except Exception as e:
+        logger.error(f"Error processing notification: {e}")
+        return f"Sorry, I encountered an error processing the notification: {str(e)}"
+```
+
+**What it does**: Handles notifications from Microsoft 365 apps like Outlook and Word.
+
+**What happens**:
+1. **Setup Tools**: Makes sure MCP tools are connected (notifications might arrive before any regular messages)
+2. **Identify Type**: Checks what kind of notification it is (email, Word comment, etc.)
+3. **Email Notifications**: Extracts email body and processes with the agent
+4. **Word Comments**: Retrieves document content, then processes the comment with context
+5. **Generic Handling**: Falls back to simple text processing for other notification types
+
+**Supported Notification Types**:
+- `NotificationTypes.EMAIL_NOTIFICATION`: @mentions in Outlook emails
+- `NotificationTypes.WPX_COMMENT`: @mentions in Word/Excel comments
+- Other notification types handled generically
+
+**Why MCP Setup is Needed**: Notifications need access to tools (like Microsoft Graph to read documents) just like regular messages. The `mcp_servers_initialized` flag ensures setup only runs once regardless of whether a message or notification arrives first.
+
+---
+
+## Step 9: Cleanup
 
 ```python
 async def initialize(self):
