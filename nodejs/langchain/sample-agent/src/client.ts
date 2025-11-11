@@ -1,11 +1,9 @@
-import { createAgent } from "langchain";
+import { createAgent, ReactAgent } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
-import { DynamicStructuredTool } from "@langchain/core/tools";
 
 // Tooling Imports
-import { ClientConfig } from '@langchain/mcp-adapters';
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-langchain';
-import { TurnContext } from '@microsoft/agents-hosting';
+import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
 // Observability Imports
 import {
@@ -32,6 +30,12 @@ sdk.start();
 
 const toolService = new McpToolRegistrationService();
 
+const agentName = "LangChain A365 Agent";
+const agent = createAgent({
+  model: new ChatOpenAI({ temperature: 0 }),
+  name: agentName,
+});
+
 /**
  * Creates and configures a LangChain client with Agent365 MCP tools.
  *
@@ -49,14 +53,12 @@ const toolService = new McpToolRegistrationService();
  * const response = await client.invokeAgent("Send an email to john@example.com");
  * ```
  */
-export async function getClient(authorization: any, turnContext: TurnContext): Promise<Client> {
+export async function getClient(authorization: Authorization, turnContext: TurnContext): Promise<Client> {
   // Get Mcp Tools
-  let tools: DynamicStructuredTool[] = [];
-
+  let agentWithMcpTools = undefined;
   try {
-    const mcpClientConfig = {} as ClientConfig;
-    tools = await toolService.addMcpToolServers(
-      mcpClientConfig,
+    agentWithMcpTools = await toolService.addToolServersToAgent(
+      agent,
       '',
       process.env.ENVIRONMENT_ID || "",
       authorization,
@@ -67,20 +69,7 @@ export async function getClient(authorization: any, turnContext: TurnContext): P
     console.error('Error adding MCP tool servers:', error);
   }
 
-  // Create the model
-  const model = new ChatOpenAI({
-    model: "gpt-4o-mini",
-  });
-
-  // Create the agent
-  const agent = createAgent({
-    model: model,
-    tools: tools,
-    name: 'LangChain Agent',
-    includeAgentName: 'inline'
-  });
-
-  return new LangChainClient(agent);
+  return new LangChainClient(agentWithMcpTools || agent);
 }
 
 /**
@@ -88,9 +77,9 @@ export async function getClient(authorization: any, turnContext: TurnContext): P
  * It creates a React agent with tools and exposes an invokeAgent method.
  */
 class LangChainClient implements Client {
-  private agent: any;
+  private agent: ReactAgent;
 
-  constructor(agent: any) {
+  constructor(agent: ReactAgent) {
     this.agent = agent;
   }
 
@@ -111,7 +100,7 @@ class LangChainClient implements Client {
       ],
     });
 
-    let agentMessage = '';
+    let agentMessage: any = '';
 
     // Extract the content from the LangChain response
     if (result.messages && result.messages.length > 0) {

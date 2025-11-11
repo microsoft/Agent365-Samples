@@ -8,8 +8,6 @@ import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications'
 import { Client, getClient } from './client';
 
 export class A365Agent extends AgentApplication<TurnState> {
-  agentName = "A365 Agent";
-
   constructor() {
     super({
       startTypingTimer: true,

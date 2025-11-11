@@ -264,7 +264,7 @@ export class ClaudeAgent {
     if (mcpEnvironmentId && agenticUserId) {
       try {
 
-          await this.toolServerService.addToolServers(
+          await this.toolServerService.addToolServersToAgent(
           agentOptions,
           agenticUserId,
           mcpEnvironmentId,
