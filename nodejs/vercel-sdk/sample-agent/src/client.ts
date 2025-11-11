@@ -1,4 +1,4 @@
-import { generateText,  Experimental_Agent as Agent } from "ai";
+import { Experimental_Agent as Agent } from "ai";
 import { anthropic } from '@ai-sdk/anthropic';
 
 
@@ -22,26 +22,22 @@ export interface Client {
 const sdk = ObservabilityManager.configure(
   (builder: Builder) =>
     builder
-      .withService('Vercel SDK Sample Agent', '1.0.0')
+      .withService('Vercel AI SDK Sample Agent', '1.0.0')
 );
 
 sdk.start();
 
 /**
- * Creates and configures a LangChain client with Agent365 MCP tools.
+ * Creates and configures a Vercel AI SDK client with anthropic model.
  *
- * This factory function initializes a LangChain React agent with access to
- * Microsoft 365 tools through MCP (Model Context Protocol) servers. It handles
- * tool discovery, authentication, and agent configuration.
+ * This factory function initializes a Vercel AI SDK React agent with access to
  *
- * @param authorization - Agent365 authorization context for token acquisition
- * @param turnContext - Bot Framework turn context for the current conversation
- * @returns Promise<Client> - Configured LangChain client ready for agent interactions
+ * @returns Promise<Client> - Configured Vercel AI SDK client ready for agent interactions
  *
  * @example
  * ```typescript
- * const client = await getClient(authorization, turnContext);
- * const response = await client.invokeAgent("Send an email to john@example.com");
+ * const client = await getClient();
+ * const response = await client.invokeAgent("Hello, how are you?");
  * ```
  */
 export async function getClient(): Promise<Client> {
@@ -57,7 +53,7 @@ export async function getClient(): Promise<Client> {
 }
 
 /**
- * VercelAiClient provides an interface to interact with LangChain agents.
+ * VercelAiClient provides an interface to interact with Vercel AI SDK agents.
  * It creates a React agent with tools and exposes an invokeAgent method.
  */
 class VercelAiClient implements Client {
@@ -68,7 +64,7 @@ class VercelAiClient implements Client {
   }
 
   /**
-   * Sends a user message to the LangChain agent and returns the AI's response.
+   * Sends a user message to the Vercel AI SDK agent and returns the AI's response.
    * Handles streaming results and error reporting.
    *
    * @param {string} userMessage - The message or prompt to send to the agent.
