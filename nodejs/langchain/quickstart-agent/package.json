@@ -1,0 +1,43 @@
+{
+  "name": "langchain-sample",
+  "version": "2025.11.6",
+  "description": "Sample agent integrating LangChain Agents with Microsoft 365 Agents SDK and Agent365 SDK",
+  "main": "src/index.ts",
+  "scripts": {
+    "preinstall": "node preinstall-local-packages.js",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "test-tool": "agentsplayground",
+    "eval": "node --env-file .env src/evals/index.js",
+    "build": "tsc"
+  },
+  "keywords": [
+    "langchain",
+    "microsoft-365",
+    "agent",
+    "ai"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@langchain/core": "*",
+    "@langchain/langgraph": "*",
+    "@langchain/mcp-adapters": "*",
+    "@langchain/openai": "*",
+    "@microsoft/agents-activity": "^1.1.0-alpha.85",
+    "@microsoft/agents-hosting": "^1.1.0-alpha.85",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "langchain": "^1.0.1",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
+    "@babel/cli": "^7.28.3",
+    "@babel/core": "^7.28.4",
+    "@babel/preset-env": "^7.28.3",
+    "@microsoft/m365agentsplayground": "^0.2.16",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2"
+  }
+}
