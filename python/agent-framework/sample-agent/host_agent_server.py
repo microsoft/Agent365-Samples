@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""
-Generic Agent Host Server
-A generic hosting server that can host any agent class that implements the required interface.
-"""
+"""Generic Agent Host Server - Hosts agents implementing AgentInterface"""
 
+# --- Imports ---
 import logging
 import os
 from os import environ
@@ -12,13 +10,12 @@ from os import environ
 # Import our agent base class
 from agent_interface import AgentInterface
 from dotenv import load_dotenv
+from agent_interface import AgentInterface, check_agent_inheritance
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
 )
-
-# Microsoft Agents SDK imports
 from microsoft_agents.hosting.core import (
     AgentApplication,
     Authorization,
@@ -26,6 +23,11 @@ from microsoft_agents.hosting.core import (
     MemoryStorage,
     TurnContext,
     TurnState,
+)
+from microsoft_agents_a365.notifications.agent_notification import (
+    AgentNotification,
+    AgentNotificationActivity,
+    ChannelId,
 )
 from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
@@ -42,14 +44,16 @@ from agent_framework.observability import setup_observability
 # Helper for Observability
 from token_cache import cache_agentic_token, get_cached_agentic_token
 
-# Configure logging
+# --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
 ms_agents_logger.addHandler(logging.StreamHandler())
 ms_agents_logger.setLevel(logging.INFO)
 
+observability_logger = logging.getLogger("microsoft_agents_a365.observability")
+observability_logger.setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
-# Load configuration
 load_dotenv()
 agents_sdk_config = load_configuration_from_env(environ)
 
@@ -84,79 +88,109 @@ class A365Agent(AgentApplication):
         )
 
         self.agent = agent
+        self.agent_notifications = AgentNotification(self)
 
         self._setup_handlers()
 
-    def _setup_handlers(self):
-        """Setup the Microsoft Agents SDK message handlers"""
+    # --- Observability ---
+    async def _setup_observability_token(
+        self, context: TurnContext, tenant_id: str, agent_id: str
+    ):
+        tenant_id = context.activity.recipient.tenant_id
+        agent_id = context.activity.recipient.agentic_app_id
 
-        async def help_handler(context: TurnContext, _: TurnState):
-            """Handle help requests and member additions"""
-            welcome_message = (
-                "**Welcome to Generic Agent Host!**\n\n"
-                f"I'm powered by: **{self.agent.__class__.__name__}**\n\n"
-                "Ask me anything and I'll do my best to help!\n"
-                "Type '/help' for this message."
+        try:
+            exaau_token = await self.auth.exchange_token(
+                context,
+                scopes=get_observability_authentication_scope(),
+                auth_handler_id="AGENTIC",
             )
-            await context.send_activity(welcome_message)
-            logger.info("Sent help/welcome message")
+            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
-        # Register handlers
-        self.conversation_update("membersAdded")(help_handler)
-        self.message("/help")(help_handler)
+        return tenant_id, agent_id
 
+    # --- Handlers (Messages & Notifications) ---
+    def _setup_handlers(self):
+        """Setup message and notification handlers"""
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
         handler = ["AGENTIC"] if use_agentic_auth else None
 
+        async def help_handler(context: TurnContext, _: TurnState):
+            await context.send_activity(
+                f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
+                "How can I help you today?"
+            )
+
+        self.conversation_update("membersAdded")(help_handler)
+        self.message("/help")(help_handler)
+
         @self.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
-            """Handle all messages with the hosted agent"""
             try:
-                tenant_id = context.activity.recipient.tenant_id
-                agent_id = context.activity.recipient.agentic_app_id
+                result = await self._setup_observability_token(context)
+                if result is None:
+                    return
+                tenant_id, agent_id = result
+
                 with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    exaau_token = await self.auth.exchange_token(
-                        context,
-                        scopes=get_observability_authentication_scope(),
-                        auth_handler_id="AGENTIC",
-                    )
-
-                    # Cache the agentic token for observability export
-                    cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-
                     user_message = context.activity.text or ""
-                    logger.info(f"Processing message: '{user_message}'")
-
-                    # Skip empty messages
-                    if not user_message.strip():
+                    if not user_message.strip() or user_message.strip() == "/help":
                         return
 
-                    # Skip messages that are handled by other decorators (like /help)
-                    if user_message.strip() == "/help":
-                        return
-
-                    # Process with the hosted agent
-                    logger.info(f"Processing with {self.agent.__class__.__name__}...")
+                    logger.info(f"📨 {user_message}")
                     response = await self.agent.process_user_message(
                         user_message, self.auth, context
-                    )
-
-                    # Send response back
-                    logger.info(
-                        f"Sending response: '{response[:100] if len(response) > 100 else response}'"
                     )
                     await context.send_activity(response)
 
             except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                logger.error(f"Error processing message: {str(e)}")
-                await context.send_activity(error_msg)
+                logger.error(f"❌ Error: {e}")
+                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+            auth_handlers=handler,
+        )
+        async def on_notification(
+            context: TurnContext,
+            state: TurnState,
+            notification_activity: AgentNotificationActivity,
+        ):
+            try:
+                result = await self._setup_observability_token(context)
+                if result is None:
+                    return
+                tenant_id, agent_id = result
+
+                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                    logger.info(f"📬 {notification_activity.notification_type}")
+
+                    if not hasattr(
+                        self.agent, "handle_agent_notification_activity"
+                    ):
+                        logger.warning("⚠️ Agent doesn't support notifications")
+                        await context.send_activity(
+                            "This agent doesn't support notification handling yet."
+                        )
+                        return
+
+                    response = (
+                        await self.agent.handle_agent_notification_activity(
+                            notification_activity, self.auth, context
+                        )
+                    )
+                    await context.send_activity(response)
+
+            except Exception as e:
+                logger.error(f"❌ Notification error: {e}")
+                await context.send_activity(
+                    f"Sorry, I encountered an error processing the notification: {str(e)}"
+                )
+
+    # --- Cleanup ---
     async def cleanup(self):
-        """Clean up resources"""
-        if not self.agent:
-            return
-
         try:
             await self.agent.cleanup()
         except Exception as e:

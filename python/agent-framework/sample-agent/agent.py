@@ -46,14 +46,17 @@ from azure.identity import AzureCliCredential
 # Microsoft Agents SDK
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
+# Notifications
+from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+
+# Observability Components
+from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
+    AgentFrameworkInstrumentor,
+)
+
 # MCP Tooling
 from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_registration_service import (
     McpToolRegistrationService,
-)
-
-# Observability
-from microsoft_agents_a365.observability.extensions.agentframework.trace_instrumentor import (
-    AgentFrameworkInstrumentor,
 )
 
 # </DependencyImports>
@@ -63,6 +66,8 @@ class LocalAuthenticationOptions():
 
 class AgentFrameworkAgent(AgentInterface):
     """AgentFramework Agent integrated with MCP servers and Observability"""
+
+    AGENT_PROMPT = "You are a helpful assistant with access to tools."
 
     # =========================================================================
     # INITIALIZATION
@@ -108,10 +113,6 @@ class AgentFrameworkAgent(AgentInterface):
                 "AZURE_OPENAI_API_VERSION environment variable is required"
             )
 
-        logger.info(f"Creating AzureOpenAIChatClient with endpoint: {endpoint}")
-        logger.info(f"Deployment: {deployment}")
-        logger.info(f"API Version: {api_version}")
-
         self.chat_client = AzureOpenAIChatClient(
             endpoint=endpoint,
             credential=AzureCliCredential(),
@@ -126,10 +127,9 @@ class AgentFrameworkAgent(AgentInterface):
         try:
             self.agent = ChatAgent(
                 chat_client=self.chat_client,
-                instructions="You are a helpful assistant with access to tools.",
-                tools=[],  # Tools will be added dynamically by MCP setup
+                instructions=self.AGENT_PROMPT,
+                tools=[],
             )
-
         except Exception as e:
             logger.error(f"Failed to create agent: {e}")
             raise
@@ -143,13 +143,10 @@ class AgentFrameworkAgent(AgentInterface):
 
     async def _create_agent_with_mcp(self, auth: Authorization, context: TurnContext):
         """Set up MCP server connections"""
-        try:
-            if not self.tool_service:
-                logger.warning(
-                    "MCP tool service not available -  skipping MCP server setup"
-                )
-                return
+        if self.mcp_servers_initialized:
+            return
 
+        try:
             logger.info("Starting MCP server setup...")
 
             agent_user_id = os.getenv("AGENT_ID", "user123")
@@ -167,7 +164,7 @@ class AgentFrameworkAgent(AgentInterface):
                 auth_token = authToken.token
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
-                    agent_instructions="You are a helpful assistant with access to tools.",
+                    agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
                     environment_id="",
@@ -178,7 +175,7 @@ class AgentFrameworkAgent(AgentInterface):
             else:
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
-                    agent_instructions="You are a helpful assistant with access to tools.",
+                    agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
                     agentic_app_id=agent_user_id,
                     environment_id="",
@@ -187,8 +184,7 @@ class AgentFrameworkAgent(AgentInterface):
                     turn_context=context,
                 )
         except Exception as e:
-            logger.error(f"Error setting up MCP servers: {e}")
-            logger.exception("Full error details:")
+            logger.error(f"MCP setup error: {e}")
 
         if not self.agent:
             logger.warning("Agent MCP setup returned None, returning agent without servers.")
@@ -211,20 +207,7 @@ class AgentFrameworkAgent(AgentInterface):
 
             # Run the agent with the user message
             result = await self.agent.run(message)
-
-            # Extract the response from the result
-            if result:
-                if hasattr(result, "contents"):
-                    return str(result.contents)
-                elif hasattr(result, "text"):
-                    return str(result.text)
-                elif hasattr(result, "content"):
-                    return str(result.content)
-                else:
-                    return str(result)
-            else:
-                return "I couldn't process your request at this time."
-
+            return self._extract_result(result) or "I couldn't process your request at this time."
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             return f"Sorry, I encountered an error: {str(e)}"
@@ -232,20 +215,91 @@ class AgentFrameworkAgent(AgentInterface):
     # </MessageProcessing>
 
     # =========================================================================
+    # NOTIFICATION HANDLING
+    # =========================================================================
+    # <NotificationHandling>
+
+    async def handle_agent_notification_activity(
+        self, notification_activity, auth: Authorization, context: TurnContext
+    ) -> str:
+        """Handle agent notification activities (email, Word mentions, etc.)"""
+        try:
+            notification_type = notification_activity.notification_type
+            logger.info(f"📬 Processing notification: {notification_type}")
+
+            # Setup MCP servers on first call
+            await self.setup_mcp_servers(auth, context)
+
+            # Handle Email Notifications
+            if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+                if not hasattr(notification_activity, "email") or not notification_activity.email:
+                    return "I could not find the email notification details."
+
+                email = notification_activity.email
+                email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
+                message = f"You have received the following email. Please follow any instructions in it. {email_body}"
+
+                result = await self.agent.run(message)
+                return self._extract_result(result) or "Email notification processed."
+
+            # Handle Word Comment Notifications
+            elif notification_type == NotificationTypes.WPX_COMMENT:
+                if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
+                    return "I could not find the Word notification details."
+
+                wpx = notification_activity.wpx_comment
+                doc_id = getattr(wpx, "document_id", "")
+                comment_id = getattr(wpx, "initiating_comment_id", "")
+                drive_id = "default"
+
+                # Get Word document content
+                doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
+                doc_result = await self.agent.run(doc_message)
+                word_content = self._extract_result(doc_result)
+
+                # Process the comment with document context
+                comment_text = notification_activity.text or ""
+                response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
+                result = await self.agent.run(response_message)
+                return self._extract_result(result) or "Word notification processed."
+
+            # Generic notification handling
+            else:
+                notification_message = notification_activity.text or f"Notification received: {notification_type}"
+                result = await self.agent.run(notification_message)
+                return self._extract_result(result) or "Notification processed successfully."
+
+        except Exception as e:
+            logger.error(f"Error processing notification: {e}")
+            return f"Sorry, I encountered an error processing the notification: {str(e)}"
+
+    def _extract_result(self, result) -> str:
+        """Extract text content from agent result"""
+        if not result:
+            return ""
+        if hasattr(result, "contents"):
+            return str(result.contents)
+        elif hasattr(result, "text"):
+            return str(result.text)
+        elif hasattr(result, "content"):
+            return str(result.content)
+        else:
+            return str(result)
+
+    # </NotificationHandling>
+
+    # =========================================================================
     # CLEANUP
     # =========================================================================
     # <Cleanup>
 
     async def cleanup(self) -> None:
-        """Clean up agent resources and MCP server connections"""
+        """Clean up agent resources"""
         try:
-            # Cleanup MCP tool service if it exists
             if hasattr(self, "tool_service") and self.tool_service:
-                try:
-                    await self.tool_service.cleanup()
-                except Exception as cleanup_ex:
-                    logger.warning(f"Error cleaning up MCP tool service: {cleanup_ex}")
+                await self.tool_service.cleanup()
+            logger.info("Agent cleanup completed")
         except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
+            logger.error(f"Cleanup error: {e}")
 
     # </Cleanup>
