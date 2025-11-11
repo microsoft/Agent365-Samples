@@ -16,11 +16,11 @@ This sample demonstrates how to build an agent using the Agent365 framework with
 
 ### 1. Setup environment variables
 
-Copy the example and fill in your values:
+Copy the template and fill in your values:
 
 ```powershell
-# Copy the example environment file
-cp .env.example .env
+# Copy the template environment file
+cp .env.template .env
 ```
 
 **Minimum required:**
@@ -39,7 +39,7 @@ CLIENT_SECRET=your_bot_secret
 TENANT_ID=your_tenant_id
 ```
 
-See `.env.example` for all available options.
+See `.env.template` for all available options.
 
 ### 2. Install Dependencies
 
