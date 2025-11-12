@@ -59,7 +59,7 @@ For detailed information about this sample, please refer to:
 ## 📚 Related Documentation
 
 - [OpenAI Agent SDK Documentation](https://platform.openai.com/docs/guides/agents)
-- [Microsoft Agents A365 Tooling](https://github.com/microsoft/Agent365-nodejs/tree/main/packages/agents-a365-tooling-extensions-openai)
+- [Microsoft Agent 365 Tooling](https://github.com/microsoft/Agent365-nodejs/tree/main/packages/agents-a365-tooling-extensions-openai)
 - [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/typescript-sdk/tree/main)
 - [AgentsPlayground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project?tabs=windows)
 

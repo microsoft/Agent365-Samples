@@ -27,7 +27,7 @@ For detailed information about this sample, please refer to:
 ## 📚 Related Documentation
 
 - [AgentFramework SDK Documentation](https://github.com/microsoft/Agent365)
-- [Microsoft Agents A365 Tooling](https://github.com/microsoft/Agent365/tree/main/python)
+- [Microsoft Agent 365 Tooling](https://github.com/microsoft/Agent365/tree/main/python)
 - [Model Context Protocol (MCP)](https://github.com/microsoft/Agent365/tree/main/python/libraries/microsoft-agents-a365-tooling)
 
 ## 🤝 Contributing
