@@ -1,82 +1,256 @@
-# Code Walkthrough: OpenAI Agents SDK MCP Agent
+# Agent Code Walkthrough
 
-This document provides a detailed technical walkthrough of the OpenAI Agents SDK MCP Agent implementation, covering architecture, key components, and design decisions.
+Step-by-step walkthrough of the complete agent implementation in `src/agent.ts`.
 
-## 📁 File Structure Overview
+## Overview
+
+| Component | Purpose |
+|-----------|---------|
+| **OpenAI Agents SDK** | Core AI orchestration and native function calling |
+| **Microsoft 365 Agents SDK** | Enterprise hosting and authentication integration |
+| **Agent Notifications** | Handle @mentions from Outlook, Word, and Excel |
+| **MCP Servers** | External tool access and integration |
+| **Microsoft Agent 365 Observability** | Comprehensive tracing and monitoring |
+
+## File Structure and Organization
 
 ```
 sample-agent/
 ├── src/
-│   ├── agent.ts               # 🔵 Main agent implementation (60 lines)
-│   ├── client.ts              # 🔵 OpenAI Agents SDK client wrapper
-│   └── index.ts               # 🔵 Express server entry point
-├── ToolingManifest.json       # 🔧 MCP tools definition
-├── package.json               # 📦 Dependencies and scripts
-├── tsconfig.json              # 🔧 TypeScript configuration
-└── Documentation files...
+│   ├── agent.ts               # Main agent implementation (~60 lines)
+│   ├── client.ts              # OpenAI client wrapper with observability
+│   └── index.ts               # Express server entry point
+├── ToolingManifest.json       # MCP tools definition
+├── package.json               # Dependencies and scripts
+└── .env                       # Configuration (not committed)
 ```
 
-## 🏗️ Architecture Overview
+---
 
-### Design Principles
-1. **OpenAI Agents SDK Integration**: Native OpenAI agents with MCP tool orchestration
-2. **Event-Driven**: Bot Framework activity handlers for different message types
-3. **Async-First**: Full asynchronous operation throughout
-4. **Observability**: Comprehensive telemetry and span management
-5. **Server Lifecycle Management**: Proper MCP server connection handling
+---
 
-### Key Components
-```
-┌───────────────────────────────────────────────────────┐
-│                agent.ts Structure                     │
-├───────────────────────────────────────────────────────┤
-│  Imports & Dependencies            (Lines 1-8)        │
-│  MyAgent Class                     (Lines 10-60)      │
-│   ├── Constructor & Event Routing  (Lines 12-30)      │
-│   ├── Message Activity Handler     (Lines 32-52)      │
-│   └── Notification Handler         (Lines 54-57)      │
-│  Agent Application Export          (Line 60)          │
-└───────────────────────────────────────────────────────┘
-```
+## Step 1: Dependency Imports
 
-## 🔍 Core Components Deep Dive
-
-### 1. MyAgent Class
-
-**Location**: Lines 10-60
-
-#### 1.1 Constructor and Event Routing (Lines 12-30)
+### agent.ts imports:
 ```typescript
-constructor() {
-  super({
-    startTypingTimer: true,
-    storage: new MemoryStorage(),
-    authorization: {
-      agentic: {
-        type: 'agentic',
-      } // scopes set in the .env file...
-    }
-  });
+import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
+import { ActivityTypes } from '@microsoft/agents-activity';
 
-  // Route agent notifications
-  this.onAgentNotification("agents:*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
-    await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
-  });
+// Notification Imports
+import '@microsoft/agents-a365-notifications';
+import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
+```
 
-  this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
-    await this.handleAgentMessageActivity(context, state);
-  });
+### client.ts imports:
+```typescript
+import { Agent, run } from '@openai/agents';
+import { TurnContext } from '@microsoft/agents-hosting';
+
+import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
+
+// Observability Imports
+import {
+  ObservabilityManager,
+  InferenceScope,
+  Builder,
+  InferenceOperationType,
+  AgentDetails,
+  TenantDetails,
+  InferenceDetails
+} from '@microsoft/agents-a365-observability';
+```
+
+**What it does**: Brings in all the external libraries and tools the agent needs to work.
+
+**Key Imports**:
+- **@microsoft/agents-hosting**: Bot Framework integration for hosting and turn management
+- **@microsoft/agents-activity**: Activity types for different message formats
+- **@microsoft/agents-a365-notifications**: Handles @mentions from Outlook, Word, and Excel
+- **@openai/agents**: OpenAI Agents SDK for native AI orchestration and function calling
+- **@microsoft/agents-a365-tooling-extensions-openai**: MCP tool registration service for OpenAI agents
+- **@microsoft/agents-a365-observability**: Comprehensive telemetry, tracing, and monitoring infrastructure
+
+---
+
+## Step 2: Agent Initialization
+
+```typescript
+export class MyAgent extends AgentApplication<TurnState> {
+
+  constructor() {
+    super({
+      startTypingTimer: true,
+      storage: new MemoryStorage(),
+      authorization: {
+        agentic: {
+          type: 'agentic',
+        } // scopes set in the .env file...
+      }
+    });
+
+    // Route agent notifications
+    this.onAgentNotification("agents:*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
+      await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
+    });
+
+    this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
+      await this.handleAgentMessageActivity(context, state);
+    });
+  }
 }
 ```
 
-**Key Features**:
-- **Application Configuration**: Sets up typing timer and memory storage
-- **Agentic Authorization**: Configures authorization with agentic type (scopes from .env)
-- **Notification Routing**: Registers handler for agent notifications with "agents:*" pattern
-- **Message Activity Routing**: Handles standard Bot Framework message activities
-- **Type Safety**: Uses strongly typed state interfaces
+**What it does**: Creates the main AI agent and sets up its basic behavior.
 
-#### 1.2 Message Activity Handler (Lines 32-52)
+**What happens**:
+1. **Extends AgentApplication**: Inherits Bot Framework hosting capabilities
+2. **Typing Indicator**: Shows "typing..." while processing messages
+3. **Memory Storage**: Uses in-memory conversation state storage
+4. **Agentic Authorization**: Enterprise-grade authentication (scopes from .env)
+5. **Event Routing**: Registers handlers for messages and notifications
+
+---
+
+## Step 3: Agent Creation
+
+The agent client wrapper is defined in `client.ts`:
+
+```typescript
+const agent = new Agent({
+    // You can customize the agent configuration here if needed
+    name: 'OpenAI Agent',
+  });
+
+export async function getClient(authorization: any, turnContext: TurnContext): Promise<Client> {
+  try {
+    await toolService.addToolServersToAgent(
+      agent,
+      process.env.AGENTIC_USER_ID || '',
+      process.env.MCP_ENVIRONMENT_ID || "",
+      authorization,
+      turnContext,
+      process.env.MCP_AUTH_TOKEN || "",
+    );
+  } catch (error) {
+    console.warn('Failed to register MCP tool servers:', error);
+  }
+
+  return new OpenAIClient(agent);
+}
+```
+
+**What it does**: Creates a client wrapper that adds MCP tools to the OpenAI agent.
+
+**What happens**:
+1. **Tool Registration**: Dynamically adds MCP servers from ToolingManifest.json
+2. **Authorization Flow**: Passes authentication context for tool access
+3. **Error Resilience**: Continues even if tool registration fails
+4. **Returns Client**: Wraps the agent with lifecycle and observability
+
+**Environment Variables**:
+- `AGENTIC_USER_ID`: User identifier for the agent
+- `MCP_ENVIRONMENT_ID`: Environment where MCP servers are provisioned
+- `MCP_AUTH_TOKEN`: Bearer token for MCP server authentication
+
+---
+
+## Step 4: Observability Configuration
+
+Observability is configured at the module level in `client.ts`:
+
+```typescript
+const sdk = ObservabilityManager.configure(
+  (builder: Builder) =>
+    builder
+      .withService('TypeScript Sample Agent', '1.0.0')
+);
+
+sdk.start();
+```
+
+And applied per-invocation:
+
+```typescript
+async invokeAgentWithScope(prompt: string) {
+  const inferenceDetails: InferenceDetails = {
+    operationName: InferenceOperationType.CHAT,
+    model: this.agent.model,
+  };
+
+  const agentDetails: AgentDetails = {
+    agentId: 'typescript-compliance-agent',
+    agentName: 'TypeScript Compliance Agent',
+    conversationId: 'conv-12345',
+  };
+
+  const tenantDetails: TenantDetails = {
+    tenantId: 'typescript-sample-tenant',
+  };
+
+  const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+
+  const response = await this.invokeAgent(prompt);
+
+  // Record the inference response with token usage
+  scope?.recordOutputMessages([response]);
+  scope?.recordInputMessages([prompt]);
+  scope?.recordResponseId(`resp-${Date.now()}`);
+  scope?.recordInputTokens(45);
+  scope?.recordOutputTokens(78);
+  scope?.recordFinishReasons(['stop']);
+
+  return response;
+}
+```
+
+**What it does**: Turns on detailed logging and monitoring so you can see what your agent is doing.
+
+**What happens**:
+1. **SDK Configuration**: Sets up observability with service name and version
+2. **Inference Scope**: Creates telemetry context for each agent invocation
+3. **Recording Metrics**: Captures input/output messages, tokens, and response IDs
+4. **Multi-tenant Context**: Associates operations with agent, tenant, and conversation
+
+**Why it's useful**: Like having a detailed diary of everything your agent does - great for troubleshooting!
+
+---
+
+## Step 5: MCP Server Setup
+
+MCP servers are registered in the `getClient` function:
+
+```typescript
+await toolService.addToolServersToAgent(
+  agent,
+  process.env.AGENTIC_USER_ID || '',
+  process.env.MCP_ENVIRONMENT_ID || "",
+  authorization,
+  turnContext,
+  process.env.MCP_AUTH_TOKEN || "",
+);
+```
+
+**What it does**: Connects your agent to external tools (like mail, calendar, notifications) that it can use to help users.
+
+**Environment Variables**:
+- `AGENTIC_USER_ID`: Identifier for the agent instance
+- `MCP_ENVIRONMENT_ID`: Environment ID for MCP server provisioning
+- `MCP_AUTH_TOKEN`: Bearer token for MCP authentication
+
+**Authentication Modes**:
+- **Agentic Authentication**: Enterprise-grade security with Azure AD (for production)
+- **Bearer Token Authentication**: Simple token-based security (for development and testing)
+
+**What happens**:
+1. **Read Manifest**: Loads ToolingManifest.json to discover available MCP servers
+2. **Register Tools**: Adds each tool server to the OpenAI agent
+3. **Authentication**: Maintains authorization context for tool access
+4. **Graceful Failure**: Logs warning but continues if tool registration fails
+
+---
+
+## Step 6: Message Processing
+
 ```typescript
 async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
   const userMessage = turnContext.activity.text?.trim() || '';
@@ -98,138 +272,62 @@ async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Pr
 }
 ```
 
-**Process Flow**:
-1. **Input Extraction**: Gets user message from activity and trims whitespace
-2. **Validation**: Checks for non-empty message
-3. **Client Creation**: Gets OpenAI client with authorization and turn context
-4. **Agent Invocation**: Calls agent with observability scope tracking
-5. **Response**: Sends AI-generated response back to user
-6. **Error Handling**: Provides user-friendly error messages
+**What it does**: Handles regular chat messages from users.
 
-**Key Features**:
-- **Simple Flow**: Direct message processing without state checks
-- **Authorization Integration**: Passes agent authorization to client factory
-- **Observability**: Uses `invokeAgentWithScope` for telemetry tracking
-- **Error Resilience**: Comprehensive exception handling
+**What happens**:
+1. **Extract Message**: Gets the user's text from the activity
+2. **Validate Input**: Checks for non-empty message
+3. **Create Client**: Gets OpenAI client with MCP tools and authorization
+4. **Invoke Agent**: Calls agent with observability tracking
+5. **Send Response**: Returns AI-generated response to user
+6. **Error Handling**: Catches problems and returns friendly error messages
 
-#### 1.3 Notification Handler (Lines 54-57)
+---
+
+## Step 7: Notification Handling
+
 ```typescript
 async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
-  context.sendActivity("Received an AgentNotification!");
+  context.sendActivity("Recieved an AgentNotification!");
   /* your logic here... */
 }
 ```
 
-**Purpose**:
-- **Event Recognition**: Receives and processes agent notification activities
-- **Response Handling**: Sends acknowledgment message
-- **Extensibility**: Placeholder for custom notification logic (email, Word mentions, etc.)
+**What it does**: Handles notifications from Microsoft 365 apps like Outlook and Word.
 
-## 🔧 Supporting Files
+**What happens**:
+- **Event Recognition**: Receives agent notification activities
+- **Acknowledgment**: Sends a simple acknowledgment message
+- **Extensibility**: Placeholder for custom notification logic
 
-### 1. client.ts - OpenAI Agents SDK Integration
+**To extend this handler, you would**:
+1. Check `agentNotificationActivity.notificationType` (e.g., EmailNotification, WpxComment)
+2. Extract notification-specific data from the activity
+3. Create a client and invoke the agent with notification context
+4. Return an appropriate response
 
-**Purpose**: Factory and wrapper for OpenAI agents with MCP tools
+---
 
-**Key Components**:
+## Step 8: Cleanup and Resource Management
 
-#### A. Client Factory Function
+Server lifecycle management is handled in `client.ts`:
+
 ```typescript
-export async function getClient(authorization: any, turnContext: TurnContext): Promise<Client> {
+async invokeAgent(prompt: string): Promise<string> {
   try {
-    await toolService.addToolServersToAgent(
-      agent,
-      process.env.AGENTIC_USER_ID || '',
-      process.env.MCP_ENVIRONMENT_ID || "",
-      authorization,
-      turnContext,
-      process.env.MCP_AUTH_TOKEN || "",
-    );
+    await this.connectToServers();
+
+    const result = await run(this.agent, prompt);
+    return result.finalOutput || "Sorry, I couldn't get a response from OpenAI :(";
   } catch (error) {
-    console.warn('Failed to register MCP tool servers:', error);
-  }
-
-  return new OpenAIClient(agent);
-}
-```
-
-**OpenAI Integration**:
-- **Global Agent**: Uses a globally created OpenAI Agent instance
-- **Tool Registration**: Dynamically adds MCP servers to agent via `addToolServersToAgent`
-- **Error Resilience**: Graceful handling of tool registration failures
-- **Authorization Flow**: Maintains A365 authentication context
-
-#### B. OpenAIClient Wrapper
-```typescript
-class OpenAIClient implements Client {
-  agent: Agent;
-
-  constructor(agent: Agent) {
-    this.agent = agent;
-  }
-
-  async invokeAgent(prompt: string): Promise<string> {
-    try {
-      await this.connectToServers();
-
-      const result = await run(this.agent, prompt);
-      return result.finalOutput || "Sorry, I couldn't get a response from OpenAI :(";
-    } catch (error) {
-      console.error('OpenAI agent error:', error);
-      const err = error as any;
-      return `Error: ${err.message || err}`;
-    } finally {
-      await this.closeServers();
-    }
-  }
-
-  async invokeAgentWithScope(prompt: string) {
-    const inferenceDetails: InferenceDetails = {
-      operationName: InferenceOperationType.CHAT,
-      model: this.agent.model,
-    };
-
-    const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
-    };
-
-    const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
-    };
-
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
-
-    const response = await this.invokeAgent(prompt);
-
-    // Record the inference response with token usage
-    scope?.recordOutputMessages([response]);
-    scope?.recordInputMessages([prompt]);
-    scope?.recordResponseId(`resp-${Date.now()}`);
-    scope?.recordInputTokens(45);
-    scope?.recordOutputTokens(78);
-    scope?.recordFinishReasons(['stop']);
-
-    return response;
+    console.error('OpenAI agent error:', error);
+    const err = error as any;
+    return `Error: ${err.message || err}`;
+  } finally {
+    await this.closeServers();
   }
 }
-```
 
-**Server Lifecycle Management**:
-- **Connection Handling**: Connects to MCP servers before execution
-- **Resource Cleanup**: Closes server connections after use
-- **Error Handling**: Comprehensive exception management
-- **Result Processing**: Extracts final output from agent execution
-
-**Observability Integration**:
-- **Inference Scoping**: Wraps agent invocations with observability tracking
-- **Token Tracking**: Records input/output tokens for monitoring
-- **Agent Details**: Captures agent ID, name, and conversation context
-- **Tenant Context**: Associates operations with tenant for multi-tenancy support
-
-#### C. MCP Server Management
-```typescript
 private async connectToServers(): Promise<void> {
   if (this.agent.mcpServers && this.agent.mcpServers.length > 0) {
     for (const server of this.agent.mcpServers) {
@@ -247,17 +345,22 @@ private async closeServers(): Promise<void> {
 }
 ```
 
-**Resource Management**:
-- **Connection Lifecycle**: Proper server connection management
-- **Memory Efficiency**: Cleanup prevents resource leaks
-- **Error Resilience**: Handles server connection failures
-- **Scalability**: Supports multiple concurrent server connections
+**What it does**: Properly manages MCP server connections for each request.
 
-### 2. index.ts - Express Server
+**What happens**:
+1. **Connect**: Opens connections to all MCP servers before agent invocation
+2. **Execute**: Runs the OpenAI agent with the user's prompt
+3. **Cleanup**: Closes all server connections in the finally block
+4. **Error Handling**: Logs errors but ensures cleanup always happens
 
-**Purpose**: HTTP server entry point with Bot Framework integration
+**Why it's important**: Prevents connection leaks and ensures efficient resource usage!
 
-**Key Implementation**:
+---
+
+## Step 9: Main Entry Point
+
+The main entry point is in `index.ts`:
+
 ```typescript
 import { configDotenv } from 'dotenv';
 configDotenv();
@@ -285,255 +388,123 @@ server.listen(port, async () => {
 })
 ```
 
-**Features**:
-- **Environment Loading**: Loads configuration from `.env` files first
-- **Authentication**: JWT-based authorization middleware with empty config object
-- **Bot Framework**: CloudAdapter for handling Bot Framework messages
-- **Graceful Startup**: Process event handling with error logging
+**What it does**: Starts the HTTP server and sets up Bot Framework integration.
 
-### 3. ToolingManifest.json
+**What happens**:
+1. **Load Environment**: Reads .env file before importing other modules
+2. **Create Express Server**: Sets up HTTP server with JSON parsing
+3. **JWT Authorization**: Adds authentication middleware
+4. **Bot Framework Endpoint**: Creates /api/messages endpoint for Bot Framework
+5. **Start Server**: Listens on configured port (default 3978)
 
-**Purpose**: MCP tools configuration for OpenAI agent
+**Why it's useful**: This is the entry point that makes your agent accessible via HTTP!
 
-**Structure**:
-```json
-{
-    "mcpServers": [
-        {
-            "mcpServerName": "mcp_MailTools"
-        },
-        {
-            "mcpServerName": "mcp_CalendarTools"
-        },
-        {
-            "mcpServerName": "mcp_NLWeb"
-        },
-        {
-            "mcpServerName": "mcp_SharePointTools"
-        },
-        {
-            "mcpServerName": "mcp_OneDriveServer"
-        }
-    ]
-}
-```
+---
 
-## 🎯 Design Patterns and Best Practices
+## Design Patterns and Best Practices
 
-### 1. Factory Pattern
-
-**Implementation**:
-- Client factory creates configured OpenAI agents
-- Global agent instance with dynamic tool loading
-- Separation of concerns between agent and client logic
-
-**Benefits**:
-- Testability through dependency injection
-- Flexible configuration management
-- Clean separation of OpenAI SDK specifics
-
-### 2. Resource Management Pattern
-
-**Server Lifecycle**:
+### 1. **Factory Pattern**
+Clean client creation through factory function:
 ```typescript
-async invokeAgent(prompt: string): Promise<string> {
-  try {
-    await this.connectToServers();
-    const result = await run(this.agent, prompt);
-    return result.finalOutput;
-  } finally {
-    await this.closeServers();
-  }
+const client = await getClient(authorization, turnContext);
+```
+
+### 2. **Resource Management**
+Proper lifecycle with try-finally:
+```typescript
+try {
+  await this.connectToServers();
+  return await run(this.agent, prompt);
+} finally {
+  await this.closeServers();
 }
 ```
 
-**Benefits**:
-- Prevents resource leaks
-- Ensures clean server connections
-- Handles connection failures gracefully
-
-### 3. Event-Driven Architecture
-
-**Bot Framework Integration**:
+### 3. **Event-Driven Architecture**
+Bot Framework event routing:
 ```typescript
 this.onActivity(ActivityTypes.Message, async (context, state) => {
   await this.handleAgentMessageActivity(context, state);
 });
 
-this.onAgentNotification("agents:*", async (context, state, agentNotificationActivity) => {
-  await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
+this.onAgentNotification("agents:*", async (context, state, activity) => {
+  await this.handleAgentNotificationActivity(context, state, activity);
 });
 ```
-
-**Benefits**:
-- Scalable message handling
-- Type-safe event routing
-- Easy extension for new activity types
-- Specific notification pattern matching
-
-## 🔍 Advanced Technical Details
-
-### 1. OpenAI Agents SDK Integration
-
-**Agent Execution**:
-```typescript
-const agent = new Agent({
-  name: 'OpenAI Agent',
-});
-
-const result = await run(agent, prompt);
-```
-
-**Native Integration Benefits**:
-- **Official SDK**: Uses OpenAI's official agents framework
-- **Native Tool Calling**: Direct OpenAI function calling support
-- **Model Optimization**: Optimized for OpenAI models and capabilities
-- **Future-Proof**: Automatic updates with OpenAI's latest features
-
-### 2. MCP Server Integration
-
-**Service Registration**:
-```typescript
-const toolService = new McpToolRegistrationService();
-await toolService.addToolServersToAgent(
-  agent,
-  process.env.AGENTIC_USER_ID || '',
-  process.env.MCP_ENVIRONMENT_ID || "",
-  authorization,
-  turnContext,
-  process.env.MCP_AUTH_TOKEN || "",
-);
-```
-
-**Integration Features**:
-- **Direct Registration**: MCP servers added directly to OpenAI agent
-- **Authentication Flow**: Maintains A365 authentication context
-- **Dynamic Discovery**: Tools discovered at runtime from ToolingManifest.json
-- **Error Resilience**: Graceful handling of tool failures
-
-### 3. Performance Optimizations
-
-**Connection Management**:
-- Server connections established per request
-- Clean resource cleanup after execution
-- Efficient memory usage patterns
-
-**Error Handling**:
-- Comprehensive exception catching
-- Graceful degradation on tool failures
-- User-friendly error messages
-
-## 🛠️ Extension Points
-
-### 1. Adding New MCP Tools
-
-**Manifest Update**:
-```json
-{
-  "mcpServerName": "new_server_name"
-}
-```
-
-**Automatic Integration**: OpenAI agent automatically discovers and uses new tools via `addToolServersToAgent`
-
-### 2. Custom Agent Configuration
-
-**Global Agent Setup**:
-```typescript
-const agent = new Agent({
-  name: 'Custom Agent',
-  description: 'Custom agent description',
-  instructions: 'Custom system instructions',
-  model: 'gpt-4-turbo',
-  temperature: 0.5,
-});
-```
-
-### 3. Enhanced Notification Handling
-
-**Implementation**:
-```typescript
-async handleAgentNotificationActivity(context, state, agentNotificationActivity) {
-  // Parse notification type and payload
-  // Implement custom business logic
-  // Use agent to process notification context
-  // Send appropriate responses
-}
-```
-
-## 🔬 Testing Considerations
-
-### 1. Unit Testing Targets
-
-- Agent message handling logic
-- Notification handling paths
-- Client factory functions
-- Server connection management
-- Error handling paths
-- Observability scope tracking
-
-### 2. Integration Testing
-
-- OpenAI agent behavior
-- MCP tool functionality
-- Server lifecycle management
-- End-to-end conversation scenarios
-- Authorization flow
-
-### 3. Performance Testing
-
-- Agent response times
-- Server connection overhead
-- Memory usage patterns
-- Concurrent conversation handling
-
-## 📊 Metrics and Monitoring
-
-### 1. Key Performance Indicators
-
-- **Response Time**: Target < 8 seconds for complex queries
-- **Success Rate**: Target > 95% successful agent invocations
-- **Tool Usage**: Track which tools are used most frequently
-- **Connection Health**: Monitor MCP server connectivity
-
-### 2. Health Monitoring
-
-- OpenAI agent initialization
-- MCP server availability
-- Model API status
-- Bot Framework endpoint health
-- Authorization configuration status
-
-## 🔄 Future Enhancements
-
-### 1. Advanced OpenAI Features
-
-- **Assistant API**: Integration with OpenAI Assistants
-- **Function Calling**: Enhanced function calling capabilities
-- **Streaming**: Real-time response streaming
-- **Vision**: Multi-modal capabilities with images
-
-### 2. Performance Improvements
-
-- **Connection Pooling**: Reuse server connections
-- **Agent Caching**: Cache agent instances
-- **Parallel Execution**: Concurrent tool invocations
-- **Result Caching**: Cache tool results
-
-### 3. Enhanced Integrations
-
-- **Custom Models**: Support for additional providers
-- **Rich Media**: File and image processing
-- **Workflow Automation**: Complex business processes
-- **Advanced Analytics**: Detailed usage analytics
-
-### 4. Notification Expansion
-
-- **Email Processing**: Full email notification handling
-- **Word Integration**: @-mention and comment processing
-- **Custom Events**: Additional notification types
-- **Notification Routing**: Smart notification distribution
 
 ---
 
-**Summary**: This implementation demonstrates a production-ready OpenAI Agents SDK MCP Agent with robust tool integration, comprehensive server lifecycle management, and comprehensive observability. The design leverages OpenAI's native agent capabilities with a global agent instance while maintaining clean integration with Microsoft 365 tools through MCP server registration and proper authorization flow.
+## Extension Points
+
+### 1. **Adding New Capabilities**
+Extend notification handling for specific types:
+```typescript
+async handleAgentNotificationActivity(context, state, activity) {
+  switch (activity.notificationType) {
+    case NotificationTypes.EMAIL_NOTIFICATION:
+      // Handle email
+      break;
+    case NotificationTypes.WPX_COMMENT:
+      // Handle Word comment
+      break;
+  }
+}
+```
+
+### 2. **Adding MCP Servers**
+Add new MCP servers in ToolingManifest.json:
+```json
+{
+  "mcpServerName": "mcp_Server"
+}
+```
+
+### 3. **Advanced Observability**
+Customize telemetry tracking:
+```typescript
+scope?.recordCustomMetric('metric-name', value);
+scope?.addTags({ key: 'value' });
+```
+
+---
+
+## Performance Considerations
+
+### 1. **Async Operations**
+- All I/O operations are asynchronous
+- Proper promise handling throughout
+- Efficient resource management
+
+### 2. **Memory Management**
+- Server connections opened and closed per request
+- In-memory storage for conversation state
+- Proper cleanup in finally blocks
+
+### 3. **Error Recovery**
+- Graceful degradation on tool failures
+- User-friendly error messages
+- Comprehensive error logging
+
+---
+
+## Debugging Guide
+
+### 1. **Enable Debug Logging**
+Set DEBUG environment variable:
+```bash
+DEBUG=*
+```
+
+### 2. **Test MCP Connection**
+Check MCP server registration:
+```typescript
+console.log('MCP Servers:', agent.mcpServers?.length);
+```
+
+### 3. **Verify Authorization**
+Check authorization configuration:
+```typescript
+console.log('Authorization:', this.authorization);
+```
+
+This architecture provides a solid foundation for building production-ready AI agents with OpenAI Agents SDK while maintaining flexibility for customization and extension.
