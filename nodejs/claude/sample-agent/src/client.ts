@@ -40,19 +40,16 @@ const agentConfig = {
 
 export async function getClient(authorization: any, turnContext: TurnContext): Promise<Client> {
   try {
-    // Get MCP servers configuration
-    const mcpServers = await toolService.getMcpServersConfig(
+    await toolService.addToolServersToAgent(
+      agent,
       process.env.AGENTIC_USER_ID || '',
       process.env.MCP_ENVIRONMENT_ID || "",
       authorization,
       turnContext,
       process.env.MCP_AUTH_TOKEN || "",
     );
-
-    // Update agent config with MCP servers
-    agentConfig.mcpServers = mcpServers || {};
   } catch (error) {
-    console.warn('Failed to retrieve MCP tool servers config:', error);
+    console.warn('Failed to register MCP tool servers:', error);
   }
 
   return new ClaudeClient(agentConfig);
