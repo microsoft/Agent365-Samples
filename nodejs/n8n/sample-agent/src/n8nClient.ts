@@ -75,10 +75,10 @@ export class N8nClient {
 
   public async invokeAgentWithScope(userMessage: string, fromUser: string = '') {
     const agentDetails = { agentId: process.env.AGENT_ID || 'sample-agent' };
-    
+
     const invokeAgentDetails: InvokeAgentDetails = {
       ...agentDetails,
-      agentName: 'N8N Agent',
+      agentName: 'n8n Agent',
     };
 
     const tenantDetails: TenantDetails = {
