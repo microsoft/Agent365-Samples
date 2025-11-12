@@ -4,7 +4,7 @@
 This guide explains how to use Cursor IDE to create a Microsoft Agent365 agent by providing a natural language prompt. For illustration, we use **TypeScript with Claude as the orchestrator** and an **email management use case**, but the same approach works for other languages, orchestrators, and scenarios (calendar management, document search, etc.).
 
 You will:
-- Attach key GitHub README URLs that describe the Microsoft Agents SDK and your chosen orchestrator (Claude, OpenAI, etc.).
+- Attach key GitHub README URLs that describe the Microsoft Agent365 SDK and your chosen orchestrator (Claude, OpenAI, etc.).
 - Send one concise prompt to Cursor so it scaffolds the project for you.
 - Know where to look for the generated README files and next steps.
 
@@ -15,19 +15,19 @@ Before you begin, make sure you have:
 - **[Anthropic (Claude) API key](https://console.anthropic.com/)** - Sign up at console.anthropic.com and retrieve your API key.
 - An idea of the use case you want the agent to support—in this example, summarizing and replying to unread emails.
 
-## 3. Gather References (Add URL)
+## 3. Gather References
 Cursor gives better results if it has the right references. Add the following GitHub README URLs using Cursor's "Add new doc" feature:
 
 ### 3.1 Adding GitHub README URLs
 1. In Cursor's chat interface at the bottom, click "@".
 2. Click on 'Add new doc'.
 3. Paste Microsoft's public URLs—preferably linking directly to README.md files for better indexing. For example, for the agent described in this document, add these GitHub README URLs:
-   - `https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-observability/README.md`
-   - `https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-notifications/README.md`
-   - `https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-runtime/README.md`
-   - `https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling-extensions-claude/README.md`
-   - `https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling/README.md`
-   - `https://github.com/microsoft/Agent365-Samples/blob/main/nodejs/claude/sample-agent/README.md`
+   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-observability/README.md>
+   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-notifications/README.md>
+   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-runtime/README.md>
+   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling-extensions-claude/README.md>
+   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling/README.md>
+   - <https://github.com/microsoft/Agent365-Samples/blob/main/nodejs/claude/sample-agent/README.md>
 4. Give each URL a descriptive name when prompted (e.g., "Observability", "Runtime", "Claude Tooling", "Sample Agent") so you can reference them easily in prompts.
 5. Cursor will fetch and index them. Refer to them in prompts by their names (e.g., `@Observability`, `@Runtime`) or by the full URL (e.g., `@https://...`).
 
@@ -47,7 +47,7 @@ Produce the code, config files, and README needed to run it with Node.js/TypeScr
 **Note:** You can adapt this prompt for other use cases—replace "summarize unread emails" with "manage calendar events," "search SharePoint documents," or any other scenario. Just mention the relevant tools (CalendarTools, SharePointTools, etc.) in the requirements.
 If it misses something—like tooling registration or observability—send a quick follow-up instruction to regenerate the affected files.
 
-### Plan Mode in Cursor
+### 4.1 Plan Mode in Cursor
 If you want Cursor to show a plan before generating code, switch the Composer into **Plan Mode** (click the lightning icon or toggle labeled “Plan”). After you submit the prompt, Cursor will propose a plan outlining the changes it intends to make. Review it carefully—if it matches your expectations, click **Build** to proceed. You can always edit the plan to suit your requirements.
 
 ## 5. Running the Prompt in Cursor
@@ -59,17 +59,7 @@ If you want Cursor to show a plan before generating code, switch the Composer in
 6. If you need tweaks, send a follow-up instruction (e.g., “Regenerate src/agent.ts with more logging” or “Include a Node.js Express server entry point”).
 7. The files are generated directly in your workspace folder and ready to use.
 
-## 6. Adapting the Prompt
-- **Different use case:** This is the most common customization. Replace "summarize unread emails" with your desired functionality:
-  - **Calendar management:** "manage calendar events, schedule meetings, and find available time slots" (use CalendarTools)
-  - **Document search:** "search SharePoint documents and summarize findings" (use SharePointTools)
-  - Mention the relevant tools in the requirements (e.g., "specifically CalendarTools for calendar operations").
-- **Different orchestrator:** Replace "Claude" with another provider (e.g., "OpenAI GPT-4") and attach the relevant docs.
-- **Different language:** If you want Python, C#, etc., adjust the prompt accordingly and attach language-specific docs (e.g., Python SDK guides). The rest of this guide still applies, but ensure your documentation references and environment are aligned with that stack.
-- **More or less guidance:** Add a sentence if you need something specific (e.g., "Use Express server hosting" or "Skip observability").
-
-## 7. After Prompt Generation
-
+## 6. After Prompt Generation
 1. **Read the generated README:** Cursor creates a README with prerequisites, configuration, 
    and run commands specific to your agent.
 2. **Configure environment variables:** 
@@ -85,6 +75,16 @@ If you want Cursor to show a plan before generating code, switch the Composer in
    npm start      # Start the agent
    ```
 5. **Test the agent:** Follow testing instructions in the generated README.
+
+## 7. Adapting the Prompt
+- **Different use case:** This is the most common customization. Replace "summarize unread emails" with your desired functionality:
+  - **Calendar management:** "manage calendar events, schedule meetings, and find available time slots" (use CalendarTools)
+  - **Document search:** "search SharePoint documents and summarize findings" (use SharePointTools)
+  - Mention the relevant tools in the requirements (e.g., "specifically CalendarTools for calendar operations").
+- **Different orchestrator:** Replace "Claude" with another provider (e.g., "OpenAI GPT-4") and attach the relevant docs.
+- **Different language:** If you want Python, C#, etc., adjust the prompt accordingly and attach language-specific docs (e.g., Python SDK guides). The rest of this guide still applies, but ensure your documentation references and environment are aligned with that stack.
+- **More or less guidance:** Add a sentence if you need something specific (e.g., "Use Express server hosting" or "Skip observability").
+
 
 By combining your TypeScript-oriented docs with this minimal prompt, Cursor can scaffold a Microsoft Agent 365 project quickly.
 
