@@ -17,8 +17,8 @@ This sample demonstrates how to build an agent using the Agent365 framework with
 
 1. **Setup environment variables**
    ```bash
-   # Copy the example environment file
-   cp .env.example .env
+   # Copy the template environment file
+   cp .env.template .env
    ```
 
 2. **Install dependencies**
