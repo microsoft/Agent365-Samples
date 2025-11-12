@@ -116,7 +116,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         operationName: InferenceOperationType.CHAT,
         model: "claude-3-7-sonnet-20250219",
         providerName: "cognition-ai",
-        inputTokens: Math.ceil(userMessage.length / 4), // Rough estimate,
+        inputTokens: Math.ceil(userMessage.length / 4), // Rough estimate
         responseId: `resp-${Date.now()}`,
         outputTokens: 0, // Will be updated after response,
         finishReasons: undefined,
