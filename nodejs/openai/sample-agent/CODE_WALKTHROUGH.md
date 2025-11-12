@@ -115,7 +115,7 @@ async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Pr
 #### 1.3 Notification Handler (Lines 54-57)
 ```typescript
 async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
-  context.sendActivity("Recieved an AgentNotification!");
+  context.sendActivity("Received an AgentNotification!");
   /* your logic here... */
 }
 ```
