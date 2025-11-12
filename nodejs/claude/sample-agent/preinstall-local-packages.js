@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Look for *.tgz files two directories above
-const tgzDir = join(__dirname, '../../');
+const tgzDir = join(__dirname, './packages/');
 
 // Define the installation order
 const installOrder = [
@@ -17,7 +17,7 @@ const installOrder = [
   'microsoft-agents-a365-notifications-',
   'microsoft-agents-a365-observability-',
   'microsoft-agents-a365-tooling-',
-  'microsoft-agents-a365-tooling-extensions-claude-'
+  'microsoft-agents-a365-tooling-extensions-openai-'
 ];
 
 async function findTgzFiles() {
@@ -36,7 +36,7 @@ function findFileForPattern(files, pattern) {
 
 async function installPackages() {
   const tgzFiles = await findTgzFiles();
-  
+
   if (tgzFiles.length === 0) {
     console.log('No .tgz files found in', tgzDir);
     return;
@@ -50,7 +50,7 @@ async function installPackages() {
       const filePath = join(tgzDir, file);
       console.log(`Installing ${file}...`);
       try {
-        execSync(`npm install "${filePath}"`, { 
+        execSync(`npm install "${filePath}"`, {
           stdio: 'inherit',
           cwd: __dirname
         });

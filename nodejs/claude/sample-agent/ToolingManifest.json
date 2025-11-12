@@ -1,19 +1,18 @@
 {
     "mcpServers": [
         {
-            "mcpServerName": "mcp_MailTools"
+            "mcpServerName": "mcp_MailTools",
+            "mcpServerUniqueName": "mcp_MailTools",
+            "url": "https://preprod.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_MailTools",
+            "scope": "McpServers.Mail.All",
+            "audience": "05879165-0320-489e-b644-f72b33f3edf0"
         },
         {
-            "mcpServerName": "mcp_CalendarTools"
-        },
-        {
-            "mcpServerName": "mcp_NLWeb"
-        },
-        {
-            "mcpServerName": "mcp_SharePointTools"
-        },
-        {
-            "mcpServerName": "mcp_OneDriveServer"
+            "mcpServerName": "mcp_WordServer",
+            "mcpServerUniqueName": "mcp_WordServer",
+            "url": "https://preprod.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_WordServer",
+            "scope": "McpServers.Word.All",
+            "audience": "05879165-0320-489e-b644-f72b33f3edf0"
         }
     ]
 }

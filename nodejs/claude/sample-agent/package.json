@@ -1,47 +1,31 @@
 {
-  "name": "agent365-sdk-claude-sample-agent",
-  "version": "0.1.0",
-  "description": "Sample agent integrating Claude Code SDK with Microsoft Agent 365 SDK",
-  "main": "src/index.js",
-  "type": "module",
+  "name": "claude-agents-sdk",
+  "version": "1.0.0",
+  "main": "index.js",
   "scripts": {
     "preinstall": "node preinstall-local-packages.js",
-    "start": "node src/index.js",
-    "dev": "node --env-file .env --watch src/index.js",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
-    "eval": "node --env-file .env src/evals/index.js",
-    "build": "babel src -d dist",
     "install:clean": "npm run clean && npm install",
-    "clean": "rimraf node_modules package-lock.json"
+    "clean": "rimraf dist node_modules package-lock.json",
+    "build": "tsc"
   },
-  "keywords": [
-    "claude-code-sdk",
-    "microsoft-365",
-    "agent",
-    "ai"
-  ],
-  "author": "airaamane@microsoft.com",
+  "keywords": [],
+  "author": "Microsoft",
   "license": "MIT",
+  "description": "",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.1.1",
-    "@microsoft/agents-activity": "^1.1.0-alpha.78",
-    "@microsoft/agents-hosting": "^1.1.0-alpha.78",
-    "@microsoft/agents-hosting-express": "^1.1.0-alpha.78",
-    "express": "^5.1.0",
-    "node-fetch": "^3.3.2",
-    "uuid": "^9.0.0"
-  },
-  "overrides": {
-    "@microsoft/agents-activity": "^1.1.0-alpha.78",
-    "@microsoft/agents-hosting": "^1.1.0-alpha.78",
-    "@microsoft/agents-hosting-express": "^1.1.0-alpha.78"
+    "@microsoft/agents-hosting": "^1.1.0-alpha.85",
+    "@anthropic-ai/claude-agent-sdk": "*",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0"
   },
   "devDependencies": {
-    "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",
-    "@babel/cli": "^7.28.3",
-    "@babel/core": "^7.28.4",
-    "@babel/preset-env": "^7.28.3",
-    "@microsoft/m365agentsplayground": "^0.2.16",
-    "rimraf": "^5.0.0"
+    "@microsoft/m365agentsplayground": "^0.2.18",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
   }
 }
