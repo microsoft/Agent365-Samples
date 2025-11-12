@@ -1,0 +1,36 @@
+{
+  "name": "perplexity-agent-sample",
+  "version": "1.0.0",
+  "description": "Perplexity AI Agent with Microsoft Agent 365 SDK",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "test-tool": "agentsplayground",
+    "clean": "rimraf dist",
+    "install:clean": "npm run clean && npm install"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@perplexity-ai/perplexity_ai": "^0.12.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "@microsoft/agents-a365-notifications": "*",
+    "@microsoft/agents-a365-observability": "*",
+    "@microsoft/agents-a365-tooling": "*",
+    "@microsoft/agents-a365-runtime": "*",
+    "@microsoft/agents-hosting": "^1.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@microsoft/m365agentsplayground": "^0.2.18",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.7",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.16.2",
+    "typescript": "^5.6.3"
+  }
+}
