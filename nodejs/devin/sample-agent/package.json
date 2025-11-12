@@ -1,0 +1,30 @@
+{
+  "name": "devin-agent-sample",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env dist/index.js",
+    "test-tool": "agentsplayground",
+    "install:clean": "npm run clean && npm install",
+    "clean": "rimraf dist node_modules package-lock.json"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@microsoft/agents-a365-notifications": "*",
+    "@microsoft/agents-a365-observability": "*",
+    "@microsoft/agents-a365-runtime": "*",
+    "@microsoft/agents-a365-tooling": "*",
+    "@microsoft/agents-hosting": "^1.0.15",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@microsoft/m365agentsplayground": "^0.2.20",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
