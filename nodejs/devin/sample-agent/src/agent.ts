@@ -118,7 +118,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         providerName: "cognition-ai",
         inputTokens: Math.ceil(userMessage.length / 4), // Rough estimate
         responseId: `resp-${Date.now()}`,
-        outputTokens: 0, // Will be updated after response,
+        outputTokens: 0, // Will be updated after response
         finishReasons: undefined,
       };
 
