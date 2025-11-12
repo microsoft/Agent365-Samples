@@ -1,0 +1,31 @@
+{
+  "name": "openai-agents-sdk",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "node preinstall-local-packages.js",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "test-tool": "agentsplayground",
+    "install:clean": "npm run clean && npm install",
+    "clean": "rimraf dist node_modules package-lock.json",
+    "build": "tsc"
+  },
+  "keywords": [],
+  "author": "jterrazas@microsoft.com",
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "@microsoft/agents-hosting": "^1.1.0-alpha.85",
+    "@openai/agents": "*",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@microsoft/m365agentsplayground": "^0.2.18",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
