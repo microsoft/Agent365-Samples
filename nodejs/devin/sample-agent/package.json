@@ -10,7 +10,6 @@
     "clean": "rimraf dist node_modules package-lock.json"
   },
   "keywords": [],
-  "author": "walterluna@microsoft.com",
   "license": "ISC",
   "description": "",
   "dependencies": {
@@ -18,10 +17,11 @@
     "@microsoft/agents-a365-observability": "*",
     "@microsoft/agents-a365-runtime": "*",
     "@microsoft/agents-a365-tooling": "*",
-    "@microsoft/agents-hosting": "^1.0.15"
+    "@microsoft/agents-hosting": "^1.0.15",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "@microsoft/m365agentsplayground": "^0.2.18",
+    "@microsoft/m365agentsplayground": "^0.2.20",
     "nodemon": "^3.1.10",
     "rimraf": "^5.0.0",
     "ts-node": "^10.9.2",

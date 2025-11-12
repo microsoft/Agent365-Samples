@@ -15,6 +15,7 @@ import {
   TurnState,
 } from "@microsoft/agents-hosting";
 import { Stream } from "stream";
+import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
 import { getAgentDetails, getTenantDetails } from "./utils";
 
@@ -36,6 +37,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         // Increment count state
         let count = state.conversation.count ?? 0;
         state.conversation.count = ++count;
+
         // Extract agent and tenant details from context
         const invokeAgentDetails = getAgentDetails(context);
         const tenantDetails = getTenantDetails(context);
@@ -44,7 +46,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         const baggageScope = new BaggageBuilder()
           .tenantId(tenantDetails.tenantId)
           .agentId(invokeAgentDetails.agentId)
-          .correlationId("73f5b5df-866e-4568-8ac7-ae0d36fc1de2") // TODO: ask, should a new uuid be generated each call?
+          .correlationId(uuidv4())
           .agentName(invokeAgentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();
@@ -165,7 +167,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     if (turnContext.activity.action === "add") {
       this.isApplicationInstalled = true;
       await turnContext.sendActivity(
-        'Thank you for hiring me! Looking forward to assisting you in your professional journey! Before I begin, could you please confirm that you accept the terms and conditions? Send "I accept" to accept.'
+        "Thank you for hiring me! Looking forward to assisting you in your professional journey!"
       );
     } else if (turnContext.activity.action === "remove") {
       this.isApplicationInstalled = false;
