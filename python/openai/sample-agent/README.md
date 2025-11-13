@@ -4,7 +4,7 @@ This directory contains a sample agent implementation using Python and OpenAI.
 
 ## Demonstrates
 
-This sample demonstrates how to build an agent using the Agent365 framework with Python and OpenAI.
+This sample demonstrates how to build an agent using the Microsoft Agent 365 SDK with Python and OpenAI.
 
 ## Prerequisites
 
