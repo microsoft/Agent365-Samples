@@ -54,6 +54,9 @@ from microsoft_agents_a365.tooling.services.mcp_tool_server_configuration_servic
 )
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+# Notifications
+from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+
 # </DependencyImports>
 
 
@@ -248,6 +251,23 @@ Always be friendly and explain your reasoning when using tools.
             raise
 
     # </McpServerSetup>
+
+    # =========================================================================
+    # NOTIFICATION HANDLING
+    # =========================================================================
+    # <NotificationHandling>
+
+    async def handle_agent_notification_activity(
+        self, notification_activity, _auth: Authorization, _context: TurnContext
+    ) -> str:
+        """Handle agent notification activities (email, Word mentions, etc.)"""
+        notification_type = notification_activity.notification_type
+        notification_cid = notification_activity.email.conversation_id
+        notification_body = notification_activity.email.html_body
+        notification_id = notification_activity.email.id
+        return f"Received notification of type: {notification_type},\n\tConversation ID: {notification_cid},\n\t ID: {notification_id},\n\t Body: {notification_body}"
+
+    # </NotificationHandling>
 
     # =========================================================================
     # MESSAGE PROCESSING WITH OBSERVABILITY
