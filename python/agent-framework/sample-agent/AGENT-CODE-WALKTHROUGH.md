@@ -20,7 +20,7 @@ Each section follows this pattern:
 
 ```python
 # =============================================================================
-# SECTION NAME  
+# SECTION NAME
 # =============================================================================
 # <XmlTagName>
 [actual code here]
@@ -73,19 +73,19 @@ from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_r
 def __init__(self):
     """Initialize the AgentFramework agent."""
     self.logger = logging.getLogger(self.__class__.__name__)
-    
+
     # Initialize observability
     self._setup_observability()
-    
+
     # Initialize authentication options
     self.auth_options = LocalAuthenticationOptions.from_environment()
-    
+
     # Create Azure OpenAI chat client
     self._create_chat_client()
-    
+
     # Create the agent with initial configuration
     self._create_agent()
-    
+
     # Initialize MCP services
     self._initialize_services()
 ```
@@ -109,14 +109,14 @@ def _create_chat_client(self):
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
     api_version = os.getenv("AZURE_OPENAI_API_VERSION")
-    
+
     if not endpoint:
         raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
     if not deployment:
         raise ValueError("AZURE_OPENAI_DEPLOYMENT environment variable is required")
     if not api_version:
         raise ValueError("AZURE_OPENAI_API_VERSION environment variable is required")
-    
+
     self.chat_client = AzureOpenAIChatClient(
         endpoint=endpoint,
         credential=AzureCliCredential(),
@@ -146,15 +146,15 @@ def _create_agent(self):
     """Create the AgentFramework agent with initial configuration"""
     try:
         logger.info("Creating AgentFramework agent...")
-        
+
         self.agent = ChatAgent(
             chat_client=self.chat_client,
             instructions="You are a helpful assistant with access to tools.",
             tools=[]  # Tools will be added dynamically by MCP setup
         )
-        
+
         logger.info("✅ AgentFramework agent created successfully")
-        
+
     except Exception as e:
         logger.error(f"Failed to create agent: {e}")
         raise
@@ -244,10 +244,10 @@ async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
         if not self.tool_service:
             logger.warning("⚠️ MCP tool service not available - skipping MCP server setup")
             return
-            
+
         agent_user_id = os.getenv("AGENT_ID", "user123")
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
-        
+
         if use_agentic_auth:
             self.agent = await self.tool_service.add_tool_servers_to_agent(
                 chat_client=self.chat_client,
@@ -267,7 +267,7 @@ async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
                 auth_token=self.auth_options.bearer_token,
                 turn_context=context,
             )
-            
+
         if self.agent:
             logger.info("✅ Agent MCP setup completed successfully")
         else:
@@ -342,11 +342,11 @@ async def handle_agent_notification_activity(
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
             if not hasattr(notification_activity, "email") or not notification_activity.email:
                 return "I could not find the email notification details."
-            
+
             email = notification_activity.email
             email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
             message = f"You have received the following email. Please follow any instructions in it. {email_body}"
-            
+
             result = await self.agent.run(message)
             return self._extract_result(result) or "Email notification processed."
 
@@ -354,17 +354,17 @@ async def handle_agent_notification_activity(
         elif notification_type == NotificationTypes.WPX_COMMENT:
             if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
                 return "I could not find the Word notification details."
-            
+
             wpx = notification_activity.wpx_comment
             doc_id = getattr(wpx, "document_id", "")
             comment_id = getattr(wpx, "initiating_comment_id", "")
             drive_id = "default"
-            
+
             # Get Word document content
             doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
             doc_result = await self.agent.run(doc_message)
             word_content = self._extract_result(doc_result)
-            
+
             # Process the comment with document context
             comment_text = notification_activity.text or ""
             response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
@@ -477,7 +477,7 @@ async def cleanup(self) -> None:
 
 **What it does**: Properly shuts down the agent and cleans up connections when it's done working.
 
-**What happens**: 
+**What happens**:
 - Safely closes connections to MCP tool servers
 - Makes sure no resources are left hanging around
 - Logs any cleanup issues but doesn't crash if something goes wrong
@@ -526,7 +526,7 @@ Clean separation of concerns through interfaces:
 ```python
 class AgentInterface(ABC):
     # Define contract without implementation details
-    
+
 class AgentFrameworkInterface(AgentInterface):
     # Specific implementation for AgentFramework
 ```

@@ -67,7 +67,7 @@ from token_cache import get_cached_agentic_token
 
 class AgentFrameworkAgent(AgentInterface):
     """AgentFramework Agent integrated with MCP servers and Observability"""
-    
+
     AGENT_PROMPT = "You are a helpful assistant with access to tools."
 
     # =========================================================================
@@ -93,7 +93,7 @@ class AgentFrameworkAgent(AgentInterface):
 
         # Initialize MCP services
         self._initialize_services()
-        
+
         # Track if MCP servers have been set up
         self.mcp_servers_initialized = False
 
@@ -186,7 +186,7 @@ class AgentFrameworkAgent(AgentInterface):
         """Set up MCP server connections"""
         if self.mcp_servers_initialized:
             return
-            
+
         try:
             if not self.tool_service:
                 logger.warning("⚠️ MCP tool service unavailable")
@@ -277,11 +277,11 @@ class AgentFrameworkAgent(AgentInterface):
             if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
                 if not hasattr(notification_activity, "email") or not notification_activity.email:
                     return "I could not find the email notification details."
-                
+
                 email = notification_activity.email
                 email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
                 message = f"You have received the following email. Please follow any instructions in it. {email_body}"
-                
+
                 result = await self.agent.run(message)
                 return self._extract_result(result) or "Email notification processed."
 
@@ -289,17 +289,17 @@ class AgentFrameworkAgent(AgentInterface):
             elif notification_type == NotificationTypes.WPX_COMMENT:
                 if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
                     return "I could not find the Word notification details."
-                
+
                 wpx = notification_activity.wpx_comment
                 doc_id = getattr(wpx, "document_id", "")
                 comment_id = getattr(wpx, "initiating_comment_id", "")
                 drive_id = "default"
-                
+
                 # Get Word document content
                 doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
                 doc_result = await self.agent.run(doc_message)
                 word_content = self._extract_result(doc_result)
-                
+
                 # Process the comment with document context
                 comment_text = notification_activity.text or ""
                 response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
