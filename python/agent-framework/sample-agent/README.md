@@ -38,4 +38,4 @@ For detailed information about this sample, please refer to:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/microsoft/Agent365/blob/main/LICENSE.md) file for details.
+This project is licensed under the MIT License - see the [LICENSE](../../LICENSE.md) file for details.
