@@ -126,7 +126,7 @@ class A365Agent(AgentApplication):
         self.conversation_update("membersAdded")(help_handler)
         self.message("/help")(help_handler)
 
-        @self.message("message", auth_handlers=handler)
+        @self.message("message")
         async def on_message(context: TurnContext, _: TurnState):
             try:
                 result = await self._setup_observability_token(context)
