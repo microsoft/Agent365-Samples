@@ -8,7 +8,6 @@ import os
 from os import environ
 
 # Import our agent base class
-from agent_interface import AgentInterface
 from dotenv import load_dotenv
 from agent_interface import AgentInterface
 from microsoft_agents.activity import load_configuration_from_env
@@ -83,7 +82,8 @@ class A365Agent(AgentApplication):
             authorization= Authorization(
                 storage,
                 connection_manager,
-                **agents_sdk_config),
+                **agents_sdk_config
+            ),
             **agents_sdk_config,
         )
 
@@ -158,11 +158,9 @@ class A365Agent(AgentApplication):
             notification_activity: AgentNotificationActivity,
         ):
             try:
-                # result = await self._setup_observability_token(context)
-                # if result is None:
-                #    return
-
-                result = "<unknown>", "<unknown>"
+                result = await self._setup_observability_token(context)
+                if result is None:
+                   return
 
                 tenant_id, agent_id = result
 
@@ -198,7 +196,7 @@ class A365Agent(AgentApplication):
         except Exception as e:
             logger.error(f"Error during agent cleanup: {e}")
 
-def token_resolver( agent_id: str, tenant_id: str) -> str | None:
+def token_resolver(agent_id: str, tenant_id: str) -> str | None:
     """
     Token resolver function for Agent 365 Observability exporter.
 
