@@ -1,36 +1,205 @@
-import { TurnState, AgentApplication, AttachmentDownloader, MemoryStorage, TurnContext } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
-import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
-import { PerplexityAgent } from './perplexityAgent.js';
+import {
+  TurnState,
+  AgentApplication,
+  AttachmentDownloader,
+  MemoryStorage,
+  TurnContext,
+} from "@microsoft/agents-hosting";
+import { ActivityTypes } from "@microsoft/agents-activity";
+import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
+import { PerplexityAgent } from "./perplexityAgent.js";
+import {
+  MentionInWordValue,
+  PlaygroundActivityTypes,
+  SendEmailActivity,
+} from "./playgroundActivityTypes.js";
 
+/**
+ * Conversation state interface for tracking message count.
+ */
 interface ConversationState {
   count: number;
 }
-type ApplicationTurnState = TurnState<ConversationState>
 
-const downloader = new AttachmentDownloader();
-const storage = new MemoryStorage();
+/**
+ * ApplicationTurnState combines TurnState with our ConversationState.
+ */
+type ApplicationTurnState = TurnState<ConversationState>;
 
-export const agentApplication = new AgentApplication<ApplicationTurnState>({
-  storage,
-  fileDownloaders: [downloader]
-});
+/**
+ * Instantiate the AttachmentDownloader.
+ */
+const downloader: AttachmentDownloader = new AttachmentDownloader();
 
-const perplexityAgent = new PerplexityAgent(undefined);
+/**
+ * Instantiate the MemoryStorage.
+ */
+const storage: MemoryStorage = new MemoryStorage();
 
-// Route agent notifications
-agentApplication.onAgentNotification("*", async (context: TurnContext, state: ApplicationTurnState, activity: AgentNotificationActivity) => {
-  await perplexityAgent.handleAgentNotificationActivity(context, state, activity);
-});
+/**
+ * Create the Agent Application instance with typed state.
+ */
+export const agentApplication: AgentApplication<ApplicationTurnState> =
+  new AgentApplication<ApplicationTurnState>({
+    storage,
+    fileDownloaders: [downloader],
+  });
 
-agentApplication.onActivity(ActivityTypes.Message, async (context: TurnContext, state: ApplicationTurnState) => {
-  // Increment count state
-  let count = state.conversation.count ?? 0;
-  state.conversation.count = ++count;
+/**
+ * Instantiate the PerplexityAgent.
+ */
+const perplexityAgent: PerplexityAgent = new PerplexityAgent(undefined);
 
-  await perplexityAgent.handleAgentMessageActivity(context, state);
-});
+/* --------------------------------------------------------------------
+ * ✅ Real Notification Events (Production)
+ * These handlers process structured AgentNotificationActivity objects
+ * sent by Microsoft 365 workloads (Word, Outlook, etc.) in production.
+ * -------------------------------------------------------------------- */
 
-agentApplication.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: ApplicationTurnState) => {
-  await perplexityAgent.handleInstallationUpdateActivity(context, state);
-});
+/**
+ * Handles ALL real notification events from any workload.
+ * Fires when an AgentNotificationActivity is received.
+ * Use this for generic notification handling logic.
+ */
+agentApplication.onAgentNotification(
+  "*",
+  async (
+    context: TurnContext,
+    state: ApplicationTurnState,
+    activity: AgentNotificationActivity
+  ): Promise<void> => {
+    await perplexityAgent.handleAgentNotificationActivity(
+      context,
+      state,
+      activity
+    );
+  }
+);
+
+/**
+ * Handles Word-specific notifications (e.g., comments, mentions in Word).
+ * Fires only for AgentNotificationActivity originating from Word.
+ */
+agentApplication.onAgenticWordNotification(
+  async (
+    context: TurnContext,
+    state: ApplicationTurnState,
+    activity: AgentNotificationActivity
+  ): Promise<void> => {
+    await perplexityAgent.handleAgentNotificationActivity(
+      context,
+      state,
+      activity
+    );
+  }
+);
+
+/**
+ * Handles Email-specific notifications (e.g., new mail, flagged items).
+ * Fires only for AgentNotificationActivity originating from Outlook/Email.
+ */
+agentApplication.onAgenticEmailNotification(
+  async (
+    context: TurnContext,
+    state: ApplicationTurnState,
+    activity: AgentNotificationActivity
+  ): Promise<void> => {
+    await perplexityAgent.handleAgentNotificationActivity(
+      context,
+      state,
+      activity
+    );
+  }
+);
+
+/* --------------------------------------------------------------------
+ * ✅ Playground Events (Simulated for Testing)
+ * These handlers process custom activityType strings sent via sendActivity()
+ * from the Playground UI. They DO NOT trigger real notification handlers.
+ * -------------------------------------------------------------------- */
+
+/**
+ * Handles simulated Word mention notifications.
+ * activityType: "mentionInWord"
+ * Useful for testing Word-related scenarios without real notifications.
+ */
+agentApplication.onActivity(
+  PlaygroundActivityTypes.MentionInWord,
+  async (context: TurnContext, _state: ApplicationTurnState): Promise<void> => {
+    const value: MentionInWordValue = context.activity
+      .value as MentionInWordValue;
+    const docName: string = value.mention.displayName;
+    const docUrl: string = value.docUrl;
+    const userName: string = value.mention.userPrincipalName;
+    const contextSnippet: string = value.context
+      ? `Context: ${value.context}`
+      : "";
+    const message: string = `✅ You were mentioned in **${docName}** by ${userName}\n📄 ${docUrl}\n${contextSnippet}`;
+    await context.sendActivity(message);
+  }
+);
+
+/**
+ * Handles simulated Email notifications.
+ * activityType: "sendEmail"
+ * Useful for testing email scenarios without real notifications.
+ */
+agentApplication.onActivity(
+  PlaygroundActivityTypes.SendEmail,
+  async (context: TurnContext, _state: ApplicationTurnState): Promise<void> => {
+    const activity: SendEmailActivity = context.activity as SendEmailActivity;
+    const email = activity.value;
+
+    const message: string = `📧 Email Notification:
+    From: ${email.from}
+    To: ${email.to.join(", ")}
+    Subject: ${email.subject}
+    Body: ${email.body}`;
+
+    await context.sendActivity(message);
+  }
+);
+
+/**
+ * Handles a generic custom notification.
+ * Custom activityType: "custom"
+ * ✅ To add more custom activities:
+ *    - Define a new handler using agentApplication.onActivity("<yourType>", ...)
+ *    - Implement logic similar to this block.
+ */
+agentApplication.onActivity(
+  PlaygroundActivityTypes.Custom,
+  async (context: TurnContext, _state: ApplicationTurnState): Promise<void> => {
+    await context.sendActivity("this is a custom activity handler");
+  }
+);
+
+/* --------------------------------------------------------------------
+ * ✅ Generic Activity Handlers
+ * These handle standard activity types like messages or installation updates.
+ * -------------------------------------------------------------------- */
+
+/**
+ * Handles standard message activities (ActivityTypes.Message).
+ * Increments conversation count and delegates to PerplexityAgent.
+ */
+agentApplication.onActivity(
+  ActivityTypes.Message,
+  async (context: TurnContext, state: ApplicationTurnState): Promise<void> => {
+    let count: number = state.conversation.count ?? 0;
+    state.conversation.count = ++count;
+
+    await perplexityAgent.handleAgentMessageActivity(context, state);
+  }
+);
+
+/**
+ * Handles installation update activities (ActivityTypes.InstallationUpdate).
+ * Useful for responding to app installation or update events.
+ */
+agentApplication.onActivity(
+  ActivityTypes.InstallationUpdate,
+  async (context: TurnContext, state: ApplicationTurnState): Promise<void> => {
+    await perplexityAgent.handleInstallationUpdateActivity(context, state);
+  }
+);

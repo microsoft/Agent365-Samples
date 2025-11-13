@@ -9,6 +9,7 @@ This sample demonstrates how to build an agent using the Agent 365 framework wit
 ## Features
 
 - ✅ **Chat with Perplexity** - Natural language conversations using Perplexity's Sonar models.
+- ✅ **Playground notification handling** - Responds to notifications triggered in the playground UI (@mention in word documents, emails, custom, etc.)
 
 ## Prerequisites
 
