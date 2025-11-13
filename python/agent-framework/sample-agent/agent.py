@@ -222,7 +222,10 @@ class AgentFrameworkAgent(AgentInterface):
         """Handle agent notification activities (email, Word mentions, etc.)"""
         try:
             notification_type = notification_activity.notification_type
-            return f"Received notification of type: {notification_type}"
+            notification_cid = notification_activity.email.conversation_id
+            notification_body = notification_activity.email.html_body
+            notification_id = notification_activity.email.id
+            return f"Received notification of type: {notification_type},\n\tConversation ID: {notification_cid},\n\t ID: {notification_id},\n\t Body: {notification_body}"
 
         except Exception as e:
             logger.error(f"Error processing notification: {e}")
