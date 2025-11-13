@@ -4,8 +4,8 @@ This directory contains a quickstart agent implementation using Node.js and Lang
 
 ## Demonstrates
 
-This sample is used to demonstrate how to build an agent using the Agent365 framework with Node.js and LangChain. The sample includes basic LangChain Agent SDK usage hosted with Agents SDK that is testable on [agentsplayground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project?tabs=windows).
-Please refer to this [quickstart guide](https://review.learn.microsoft.com/en-us/microsoft-agent-365/developer/quickstart-nodejs-langchain?branch=main) on how to extend your agent using Agent365 SDK.
+This sample is used to demonstrate how to build an agent using the Microsoft Agent 365 SDK with Node.js and LangChain. The sample includes basic LangChain Agent SDK usage hosted with Agents SDK that is testable on [agentsplayground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project?tabs=windows).
+Please refer to this [quickstart guide](https://review.learn.microsoft.com/en-us/microsoft-agent-365/developer/quickstart-nodejs-langchain?branch=main) on how to extend your agent using Microsoft Agent 365 SDK.
 
 ## Prerequisites
 
