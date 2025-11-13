@@ -11,6 +11,7 @@ from os import environ
 from dotenv import load_dotenv
 from agent_interface import AgentInterface
 from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity.activity_types import ActivityTypes
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -126,7 +127,7 @@ class A365Agent(AgentApplication):
         self.conversation_update("membersAdded")(help_handler)
         self.message("/help")(help_handler)
 
-        @self.message("message")
+        @self.activity(ActivityTypes.message, auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
             try:
                 result = await self._setup_observability_token(context)
@@ -150,7 +151,8 @@ class A365Agent(AgentApplication):
                 await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
         @self.agent_notifications.on_agent_notification(
-            channel_id=ChannelId(channel="agents", sub_channel="*")
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+            auth_handlers=handler
         )
         async def on_notification(
             context: TurnContext,

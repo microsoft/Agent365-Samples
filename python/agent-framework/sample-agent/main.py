@@ -25,7 +25,7 @@ from microsoft_agents.hosting.core import (
 
 try:
     from agent import AgentFrameworkAgent
-    from host_agent_server import create_host, A365Agent
+    from hosting import create_host, A365Agent
 except ImportError as e:
     print(f"Import error: {e}")
     print("Please ensure you're running from the correct directory")
@@ -99,6 +99,7 @@ def start_server(agent_app: AgentApplication):
     app.router.add_post("/api/messages", entry_point)
     app.router.add_get("/api/messages", lambda _: Response(status=200))
     app.router.add_get("/api/health", health)
+    app.router.add_get("/", lambda _: Response(status=200, text="Agent is running"))
 
     # Context
     app["agent_configuration"] = create_auth_configuration()
