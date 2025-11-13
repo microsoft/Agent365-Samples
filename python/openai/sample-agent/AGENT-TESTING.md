@@ -16,7 +16,7 @@ The OpenAI Agent sample supports multiple testing modes and scenarios:
 ### Required Software
 - Python 3.11 or higher
 - OpenAI API key with sufficient credits
-- Access to Microsoft Agent365 MCP servers (for tool testing)
+- Access to Microsoft Agent 365 MCP servers (for tool testing)
 
 ### Environment Setup
 1. Install uv (Python package manager):
