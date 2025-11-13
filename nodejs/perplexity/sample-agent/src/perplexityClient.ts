@@ -81,7 +81,7 @@ export class PerplexityClient {
   }
 
   /**
-   * Wrapper for invokeAgent that adds tracing and span management using Agent365 SDK.
+   * Wrapper for invokeAgent that adds tracing and span management using Microsoft Agent 365 SDK.
    */
   async invokeAgentWithScope(prompt: string): Promise<string> {
     const invokeAgentDetails: InvokeAgentDetails = {
