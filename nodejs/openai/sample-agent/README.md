@@ -4,7 +4,7 @@ This directory contains a sample agent implementation using Node.js and OpenAI.
 
 ## Demonstrates
 
-This sample demonstrates how to build an agent using the Agent365 framework with Node.js and OpenAI.
+This sample demonstrates how to build an agent using the Microsoft Agent 365 SDK with Node.js and OpenAI.
 
 ## Prerequisites
 

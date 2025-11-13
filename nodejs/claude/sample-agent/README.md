@@ -4,7 +4,7 @@ This directory contains a sample agent implementation using Node.js and Claude A
 
 ## Demonstrates
 
-This sample demonstrates how to build an agent using the Agent365 framework with Node.js and Claude Agent SDK.
+This sample demonstrates how to build an agent using the Microsoft Agent 365 SDK with Node.js and Claude Agent SDK.
 
 ## Prerequisites
 

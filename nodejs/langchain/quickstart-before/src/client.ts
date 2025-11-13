@@ -9,7 +9,7 @@ export interface Client {
 }
 
 /**
- * Creates and configures a LangChain client with Agent365 MCP tools.
+ * Creates and configures a LangChain client with Agent 365 MCP tools.
  *
  * This factory function initializes a LangChain React agent with access to
  * Microsoft 365 tools through MCP (Model Context Protocol) servers. It handles

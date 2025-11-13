@@ -1,10 +1,10 @@
 # Cursor IDE Prompt Guide
 
 ## 1. Introduction
-This guide explains how to use Cursor IDE to create a Microsoft Agent365 agent by providing a natural language prompt. For illustration, we use **TypeScript with Claude as the orchestrator** and an **email management use case**, but the same approach works for other languages, orchestrators, and scenarios (calendar management, document search, etc.).
+This guide explains how to use Cursor IDE to create a Microsoft Agent 365 agent by providing a natural language prompt. For illustration, we use **TypeScript with Claude as the orchestrator** and an **email management use case**, but the same approach works for other languages, orchestrators, and scenarios (calendar management, document search, etc.).
 
 You will:
-- Attach key GitHub README URLs that describe the Microsoft Agent365 SDK and your chosen orchestrator (Claude, OpenAI, etc.).
+- Attach key GitHub README URLs that describe the Microsoft Agent 365 SDK and your chosen orchestrator (Claude, OpenAI, etc.).
 - Send one concise prompt to Cursor so it scaffolds the project for you.
 - Know where to look for the generated README files and next steps.
 

@@ -1,7 +1,7 @@
 [project]
 name = "sample-openai-agent"
 version = "0.1.0"
-description = "Sample OpenAI Agent using Microsoft Agent365 SDK"
+description = "Sample OpenAI Agent using Microsoft Agent 365 SDK"
 authors = [
     { name = "Microsoft", email = "example@microsoft.com" }
 ]

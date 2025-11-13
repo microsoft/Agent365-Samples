@@ -79,7 +79,7 @@ class AgentFrameworkAgent(AgentInterface):
         """Initialize the AgentFramework agent."""
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # Initialize auto instrumentation with Agent365 observability SDK
+        # Initialize auto instrumentation with Agent 365 Observability SDK
         self._enable_agentframework_instrumentation()
 
         # Initialize authentication options
