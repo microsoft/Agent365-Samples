@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Represents the payload for a simulated Word mention activity in the Playground.
  * Includes document URL, user mention details, and optional context snippet.
