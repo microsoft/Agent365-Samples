@@ -17,8 +17,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="*-preview.*" />
-		<PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel" Version="*-preview.*" />
+		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="*-beta.*" />
+		<PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel" Version="*-beta.*" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -28,12 +28,16 @@
 		<PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.66.0" />
 		<PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.66.0" />
 		<PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.66.0" />
-		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.3.63-beta" />
-		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.3.63-beta" />
+		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.3.*-*" />
+		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.3.*-*" />
 		<PackageReference Include="ModelContextProtocol.Core" Version="0.3.0-preview.4" />
 		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\..\AspireOTelServiceDefaults\AspireOTelServiceDefaults.csproj" />
 	</ItemGroup>
 
 </Project>
