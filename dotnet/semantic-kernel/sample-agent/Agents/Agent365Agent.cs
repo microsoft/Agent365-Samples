@@ -9,8 +9,8 @@ using Agent365SemanticKernelSampleAgent.Plugins;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
-using Microsoft.Agents.Builder.UserAuth;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -38,21 +38,23 @@ public class Agent365Agent
         }}
         ";
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
-    /// </summary>
-    private Agent365Agent()
-    {
-    }
-
     public static async Task<Agent365Agent> CreateA365AgentWrapper(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, string authHandlerName, UserAuthorization userAuthorization, ITurnContext turnContext, IConfiguration configuration)
     {
         var _agent = new Agent365Agent();
-        await _agent.InitializeAgent365Agent(kernel, service, toolService, userAuthorization, authHandlerName, turnContext, configuration).ConfigureAwait(false);
+        await _agent.InitializeAgent365Agent(kernel, service, toolService, userAuthorization, authHandlerName,  turnContext, configuration).ConfigureAwait(false);
         return _agent;
     }
 
-    public async Task InitializeAgent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization, string authHandlerName, ITurnContext turnContext, IConfiguration configuration)
+    /// <summary>
+    /// 
+    /// </summary>
+    public Agent365Agent(){}
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
+    /// </summary>
+    /// <param name="serviceProvider">The service provider to use for dependency injection.</param>
+    public Agent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization, ITurnContext turnContext)
     {
         this._kernel = kernel;
 
@@ -62,7 +64,7 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext).ConfigureAwait(false);
+            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
         }
         else
         {
