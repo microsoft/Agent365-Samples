@@ -8,9 +8,12 @@ This script demonstrates direct usage without complex imports.
 
 import logging
 from os import environ
+import os
 import sys
 
 from aiohttp.web import Application, Request, Response, json_response, run_app
+from aiohttp.web_middlewares import middleware as web_middleware
+
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
     jwt_authorization_middleware,
@@ -21,6 +24,8 @@ from microsoft_agents.hosting.aiohttp import (
 from microsoft_agents.hosting.core import (
     AgentApplication,
     AgentAuthConfiguration,
+    ClaimsIdentity,
+    AuthenticationConstants,
 )
 
 try:
@@ -92,7 +97,25 @@ def start_server(agent_app: AgentApplication):
 
     # Build middleware list
     middlewares = []
-    middlewares.append(jwt_authorization_middleware)
+    auth_configuration = create_auth_configuration()
+    if auth_configuration:
+        middlewares.append(jwt_authorization_middleware)
+
+    # Anonymous claims middleware
+    @web_middleware
+    async def anonymous_claims(request, handler):
+        if not auth_configuration:
+            request["claims_identity"] = ClaimsIdentity(
+                {
+                    AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
+                    AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
+                },
+                False,
+                "Anonymous",
+            )
+        return await handler(request)
+
+    middlewares.append(anonymous_claims)
     app = Application(middlewares=middlewares)
 
     # Routes
@@ -102,7 +125,7 @@ def start_server(agent_app: AgentApplication):
     app.router.add_get("/", lambda _: Response(status=200, text="Agent is running"))
 
     # Context
-    app["agent_configuration"] = create_auth_configuration()
+    app["agent_configuration"] = auth_configuration
     app["agent_app"] = agent_app
     app["adapter"] = agent_app.adapter
 
@@ -126,9 +149,11 @@ def start_server(agent_app: AgentApplication):
         await cleanup(agent_app)
 
     app.on_shutdown.append(cleanup_on_shutdown)
+    print(__name__)
 
     try:
-        run_app(app, host="localhost", port=port, handle_signals=True)
+        host = "0.0.0.0" if os.getenv("WEBSITE_SITE_NAME") else "localhost"
+        run_app(app, host=host, port=port, handle_signals=True)
     except KeyboardInterrupt:
         print("\nServer stopped")
     except Exception as error:

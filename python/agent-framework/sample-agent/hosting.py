@@ -10,7 +10,7 @@ from os import environ
 # Import our agent base class
 from dotenv import load_dotenv
 from agent_interface import AgentInterface
-from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity import load_configuration_from_env, Activity
 from microsoft_agents.activity.activity_types import ActivityTypes
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
@@ -28,6 +28,9 @@ from microsoft_agents_a365.notifications.agent_notification import (
     AgentNotification,
     AgentNotificationActivity,
     ChannelId,
+)
+from microsoft_agents_a365.notifications import (
+    EmailResponse,
 )
 from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
@@ -94,9 +97,7 @@ class A365Agent(AgentApplication):
         self._setup_handlers()
 
     # --- Observability ---
-    async def _setup_observability_token(
-        self, context: TurnContext, tenant_id: str, agent_id: str
-    ):
+    async def _setup_observability_token(self, context: TurnContext):
         tenant_id = context.activity.recipient.tenant_id
         agent_id = context.activity.recipient.agentic_app_id
 
@@ -108,7 +109,7 @@ class A365Agent(AgentApplication):
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
         except Exception as e:
-            logger.warning(f"⚠️ Failed to cache observability token: {e}")
+            logger.warning(f"Failed to cache observability token: {e}")
 
         return tenant_id, agent_id
 
@@ -127,29 +128,6 @@ class A365Agent(AgentApplication):
         self.conversation_update("membersAdded")(help_handler)
         self.message("/help")(help_handler)
 
-        @self.activity(ActivityTypes.message, auth_handlers=handler)
-        async def on_message(context: TurnContext, _: TurnState):
-            try:
-                result = await self._setup_observability_token(context)
-                if result is None:
-                    return
-                tenant_id, agent_id = result
-
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    user_message = context.activity.text or ""
-                    if not user_message.strip() or user_message.strip() == "/help":
-                        return
-
-                    logger.info(f"📨 {user_message}")
-                    response = await self.agent.process_user_message(
-                        user_message, self.auth, context
-                    )
-                    await context.send_activity(response)
-
-            except Exception as e:
-                logger.error(f"❌ Error: {e}")
-                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
-
         @self.agent_notifications.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
             auth_handlers=handler
@@ -159,15 +137,15 @@ class A365Agent(AgentApplication):
             state: TurnState,
             notification_activity: AgentNotificationActivity,
         ):
-            try:
-                result = await self._setup_observability_token(context)
-                if result is None:
-                   return
+            response = ""
+            result = await self._setup_observability_token(context)
+            if result is None:
+                return
 
-                tenant_id, agent_id = result
-
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    logger.info(f"📬 {notification_activity.notification_type}")
+            tenant_id, agent_id = result
+            with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                try:
+                    logger.info(f"{notification_activity.notification_type}")
 
                     if not hasattr(
                         self.agent, "handle_agent_notification_activity"
@@ -183,13 +161,38 @@ class A365Agent(AgentApplication):
                             notification_activity, self.auth, context
                         )
                     )
+
+                    responseActivity = Activity(type=ActivityTypes.message)
+                    if responseActivity.entities is None:
+                        responseActivity.entities = []
+                    responseActivity.entities.append(EmailResponse(response))
+
+                    await context.send_activity(responseActivity)
+                except Exception as e:
+                    logger.error(f"Notification error: {e}")
+
+
+        @self.activity(ActivityTypes.message, auth_handlers=handler)
+        async def on_message(context: TurnContext, _: TurnState):
+            try:
+                result = await self._setup_observability_token(context)
+                if result is None:
+                    return
+                tenant_id, agent_id = result
+
+                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                    user_message = context.activity.text or ""
+                    if not user_message.strip() or user_message.strip() == "/help":
+                        return
+
+                    response = await self.agent.process_user_message(
+                        user_message, self.auth, context
+                    )
                     await context.send_activity(response)
 
             except Exception as e:
-                logger.error(f"Notification error: {e}")
-                await context.send_activity(
-                    f"Sorry, I encountered an error processing the notification: {str(e)}"
-                )
+                logger.error(f"on_message error: {e}")
+                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
     # --- Cleanup ---
     async def cleanup(self):

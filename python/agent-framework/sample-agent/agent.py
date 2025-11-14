@@ -17,7 +17,6 @@ Features:
 - Comprehensive error handling and cleanup
 """
 
-import asyncio
 import logging
 import os
 
@@ -220,7 +219,7 @@ class AgentFrameworkAgent(AgentInterface):
         """Handle agent notification activities (email, Word mentions, etc.)"""
         try:
             notification_type = notification_activity.notification_type
-            logger.info(f"📬 Processing notification: {notification_type}")
+            logger.info(f"Processing notification: {notification_type}")
 
             # Setup MCP servers on first call
             await self._create_agent_with_mcp(auth, context)
@@ -232,7 +231,8 @@ class AgentFrameworkAgent(AgentInterface):
 
                 email = notification_activity.email
                 email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
-                message = f"You have received the following email. Please follow any instructions in it. {email_body}"
+                email_id = getattr(email, "id", "")
+                message = f"You have received an email with id {email_id}. The following is the content of the email, please follow any instructions in it: {email_body}"
 
                 result = await self.agent.run(message)
                 return self._extract_result(result) or "Email notification processed."
