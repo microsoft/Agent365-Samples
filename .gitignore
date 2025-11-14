@@ -102,3 +102,8 @@ coverage/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# agents SDK Transcript logger. 
+agents_*/
+*transcript.json
+msteams*/
