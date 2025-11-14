@@ -3,12 +3,10 @@
 
 using Agent365SemanticKernelSampleAgent.Agents;
 using AgentNotification;
-using Azure;
 using Microsoft.Agents.A365.Notifications.Models;
 using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
-using Microsoft.Agents.Authentication;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
 using Microsoft.Agents.Builder.State;
@@ -21,9 +19,7 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using SemanticKernelSampleAgent;
 using System;
-using System.Configuration;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -49,24 +45,26 @@ public class MyAgent : AgentApplication
         _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
+        // Setup reusable auto sign-in handlers
+        var autoSignInHandlers = new[] { primaryAuthHandler };
 
-        bool useAgenticAuth = true;//Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "true";
-        var autoSignInHandlers = useAgenticAuth ? new[] { primaryAuthHandler } : null;
-
+        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first  you and then store that in a retrievable location. 
         MyAgent.TermsAndConditionsAccepted = true;
+
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
         this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: autoSignInHandlers);
-        OnMessage("--SignOut", OnSignOut, isAgenticOnly: false, autoSignInHandlers: autoSignInHandlers);
         OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync);
         OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, autoSignInHandlers: autoSignInHandlers);
     }
 
-    private async Task OnSignOut(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
-    {
-        await UserAuthorization.SignOutUserAsync(turnContext, turnState);
-    }
-
+    /// <summary>
+    /// This processes messages sent to the agent from chat clients.
+    /// </summary>
+    /// <param name="turnContext"></param>
+    /// <param name="turnState"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
         // Init the activity for observability
@@ -104,6 +102,7 @@ public class MyAgent : AgentApplication
                             new ServiceDescriptor(typeof(Kernel), _kernel),
                         ];
 
+            // Disabled for development purpose. 
             //if (!IsApplicationInstalled)
             //{
             //    await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);
@@ -120,7 +119,8 @@ public class MyAgent : AgentApplication
                     return;
                 }
             }
-            if (turnContext.Activity.ChannelId.Channel == Channels.Msteams)
+
+            if (turnContext.Activity.ChannelId.IsParentChannel(Channels.Msteams))
             {
                 await TeamsMessageActivityAsync(agent365Agent, turnContext, turnState, cancellationToken);
             }
@@ -136,6 +136,14 @@ public class MyAgent : AgentApplication
         }
     }
 
+    /// <summary>
+    /// This processes A365 Agent Notification Activities sent to the agent.
+    /// </summary>
+    /// <param name="turnContext"></param>
+    /// <param name="turnState"></param>
+    /// <param name="agentNotificationActivity"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     private async Task AgentNotificationActivityAsync(ITurnContext turnContext, ITurnState turnState, AgentNotificationActivity agentNotificationActivity, CancellationToken cancellationToken)
     {
         // Init the activity for observability
@@ -250,25 +258,33 @@ public class MyAgent : AgentApplication
 
     }
 
+
+    /// <summary>
+    /// This is the specific handler for teams messages sent to the agent from Teams chat clients.
+    /// </summary>
+    /// <param name="agent365Agent"></param>
+    /// <param name="turnContext"></param>
+    /// <param name="turnState"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     protected async Task TeamsMessageActivityAsync(Agent365Agent agent365Agent, ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
         // Init the activity for observability
         var activity = AgentMetrics.InitializeMessageHandlingActivity("TeamsMessageActivityAsync", turnContext);
         var routeStopwatch = Stopwatch.StartNew();
 
+        // Start a Streaming Process 
+        await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
         try
         {
-            // Start a Streaming Process 
-            //await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
-
             ChatHistory chatHistory = turnState.GetValue("conversation.chatHistory", () => new ChatHistory());
 
             // Invoke the Agent365Agent to process the message
-            Agent365AgentResponse response = await agent365Agent.InvokeAgentAsync(turnContext.Activity.Text, chatHistory);
-            await OutputResponseAsync(turnContext, turnState, response, cancellationToken);
+            Agent365AgentResponse response = await agent365Agent.InvokeAgentAsync(turnContext.Activity.Text, chatHistory , turnContext);
         }
         finally
         {
+            await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
             routeStopwatch.Stop();
             AgentMetrics.FinalizeMessageHandlingActivity(activity, turnContext, routeStopwatch.ElapsedMilliseconds, true);
         }
@@ -279,7 +295,6 @@ public class MyAgent : AgentApplication
         if (response == null)
         {
             await turnContext.SendActivityAsync("Sorry, I couldn't get an answer at the moment.");
-            //await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
             return;
         }
 
@@ -293,9 +308,15 @@ public class MyAgent : AgentApplication
             default:
                 break;
         }
-        //await turnContext.StreamingResponse.EndStreamAsync(cancellationToken); // End the streaming response
     }
 
+    /// <summary>
+    /// Process Agent Onboard Event.
+    /// </summary>
+    /// <param name="turnContext"></param>
+    /// <param name="turnState"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
     protected async Task OnHireMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
         // Init the activity for observability
@@ -357,6 +378,11 @@ public class MyAgent : AgentApplication
     }
 
 
+    /// <summary>
+    /// Resolve Tenant and Agent Id from the turn context.
+    /// </summary>
+    /// <param name="turnContext"></param>
+    /// <returns></returns>
     private async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(ITurnContext turnContext)
     {
         string agentId = "";
@@ -371,6 +397,14 @@ public class MyAgent : AgentApplication
         string tenantId = turnContext.Activity.Conversation.TenantId ?? turnContext.Activity.Recipient.TenantId;
         return (agentId, tenantId);
     }
+
+    /// <summary>
+    /// Sets up an in context instance of the Agent365Agent.. 
+    /// </summary>
+    /// <param name="serviceCollection"></param>
+    /// <param name="turnContext"></param>
+    /// <param name="authHandlerName"></param>
+    /// <returns></returns>
     private async Task<Agent365Agent> GetAgent365Agent(ServiceCollection serviceCollection, ITurnContext turnContext, string authHandlerName)
     {
         return await Agent365Agent.CreateA365AgentWrapper(_kernel, serviceCollection.BuildServiceProvider(), _toolsService, authHandlerName, UserAuthorization, turnContext, _configuration).ConfigureAwait(false);
