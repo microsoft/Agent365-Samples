@@ -23,11 +23,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 
-//System.Environment.SetEnvironmentVariable("EnableAgent365Exporter", "true");
-
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-
 
 // Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
  builder.ConfigureOpenTelemetry();
@@ -66,11 +63,7 @@ else
 // Configure observability.
 builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
 
-builder.AddA365Tracing(config =>
-{
-    config.WithSemanticKernel();
-});
-
+// Add A365 tracing with Semantic Kernel integration
 builder.AddA365Tracing(config =>
 {
     config.WithSemanticKernel();
