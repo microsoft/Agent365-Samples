@@ -27,7 +27,9 @@ To run the agent please follow the insturctions in this doc step by step: [Confi
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
+
 - **Documentation**: See the [Microsoft Agent 365 developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
@@ -42,11 +44,14 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ### Microsoft 365 Agents SDK
 
-The core SDK for building conversational AI agents for Microsoft 365 platforms.
+The Microsoft Agent 365 SDK core  for building conversational AI agents for Microsoft 365 platforms.
 
 - [Microsoft 365 Agents SDK - C# /.NET repository](https://github.com/Microsoft/Agents-for-net)
+
 - [Microsoft 365 Agents SDK - NodeJS /TypeScript repository](https://github.com/Microsoft/Agents-for-js)
+
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
+
 - [Microsoft 365 Agents documentation](https://learn.microsoft.com/microsoft-365/agents-sdk/)
 
 ### Microsoft Agent 365 SDK
@@ -54,9 +59,13 @@ The core SDK for building conversational AI agents for Microsoft 365 platforms.
 Enterprise-grade extensions for observability, notifications, runtime utilities, and developer tools.
 
 - [Microsoft Agent 365 SDK - C# /.NET  repository](https://github.com/microsoft/Agent365-dotnet)
+
 - [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
+
 - [Microsoft Agent 365 SDK - Node.js/TypeScript repository](https://github.com/microsoft/Agent365-nodejs)
+
 - [Microsoft Agent 365 SDK Samples repository](https://github.com/microsoft/Agent365-Samples)- You are here
+
 - [Microsoft Agent 365 developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 
 ## Contributing
