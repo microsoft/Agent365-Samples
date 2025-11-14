@@ -8,11 +8,14 @@ import {
   InferenceOperationType,
   InferenceScope,
   InvokeAgentScope,
+  ObservabilityManager,
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
+import { ClusterCategory } from "@microsoft/agents-a365-runtime";
 import { Activity, ActivityTypes } from "@microsoft/agents-activity";
 import {
   AgentApplication,
+  AgentApplicationOptions,
   DefaultConversationState,
   TurnContext,
   TurnState,
@@ -20,6 +23,7 @@ import {
 import { Stream } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
+import tokenCache from "./token-cache";
 import { getAgentDetails, getTenantDetails } from "./utils";
 
 interface ConversationState extends DefaultConversationState {
@@ -31,9 +35,47 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
   isApplicationInstalled: boolean = false;
   agentName = "Devin Agent";
 
-  constructor() {
-    super();
+  constructor(
+    options?: Partial<AgentApplicationOptions<ApplicationTurnState>> | undefined
+  ) {
+    super(options);
+    const clusterCategory: ClusterCategory =
+      (process.env.CLUSTER_CATEGORY as ClusterCategory) || "dev";
 
+    // Initialize Observability SDK
+    const observabilitySDK = ObservabilityManager.configure((builder) =>
+      builder
+        .withService("claude-travel-agent", "1.0.0")
+        .withTokenResolver(async (agentId, tenantId) => {
+          // Token resolver for authentication with Agent365 observability
+          console.log(
+            "🔑 Token resolver called for agent:",
+            agentId,
+            "tenant:",
+            tenantId
+          );
+
+          // Retrieve the cached agentic token
+          const cacheKey = this.createAgenticTokenCacheKey(agentId, tenantId);
+          const cachedToken = tokenCache.get(cacheKey);
+
+          if (cachedToken) {
+            console.log("🔑 Token retrieved from cache successfully");
+            return cachedToken;
+          }
+
+          console.log(
+            "⚠️ No cached token found - token should be cached during agent invocation"
+          );
+          return null;
+        })
+        .withClusterCategory(clusterCategory)
+    );
+
+    // Start the observability SDK
+    observabilitySDK.start();
+
+    // Handle messages
     this.onActivity(
       ActivityTypes.Message,
       async (context: TurnContext, state: ApplicationTurnState) => {
@@ -81,6 +123,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
       }
     );
 
+    // Handle installation activities
     this.onActivity(
       ActivityTypes.InstallationUpdate,
       async (context: TurnContext, state: TurnState) => {
@@ -178,6 +221,18 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         "Thank you for your time, I enjoyed working with you."
       );
     }
+  }
+
+  /**
+   * Create a cache key for the agentic token
+   */
+  private createAgenticTokenCacheKey(
+    agentId: string,
+    tenantId: string
+  ): string {
+    return tenantId
+      ? `agentic-token-${agentId}-${tenantId}`
+      : `agentic-token-${agentId}`;
   }
 }
 
