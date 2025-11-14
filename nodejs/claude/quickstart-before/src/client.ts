@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { query, Options } from "@anthropic-ai/claude-agent-sdk";
 
 export interface Client {
