@@ -17,6 +17,7 @@ import {
   AgentApplication,
   AgentApplicationOptions,
   DefaultConversationState,
+  MemoryStorage,
   TurnContext,
   TurnState,
 } from "@microsoft/agents-hosting";
@@ -236,4 +237,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
   }
 }
 
-export const agentApplication = new A365Agent();
+export const agentApplication = new A365Agent({
+  storage: new MemoryStorage(),
+  authorization: { agentic: {} }, // Type and scopes set in .env
+});
