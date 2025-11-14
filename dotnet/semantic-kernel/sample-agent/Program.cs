@@ -10,16 +10,27 @@ using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
+using Microsoft.Agents.Storage.Transcript;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
+using SemanticKernelSampleAgent;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 
+//System.Environment.SetEnvironmentVariable("EnableAgent365Exporter", "true");
+
+
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+
+// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
+ builder.ConfigureOpenTelemetry();
 
 if (builder.Environment.IsDevelopment())
 {
@@ -53,17 +64,18 @@ else
 }
 
 // Configure observability.
-if (Environment.GetEnvironmentVariable("EnableKairoS2S") == "true")
-{
-    builder.Services.AddServiceTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
-}
-else
-{
-    builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
-}
+builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
 
-builder.Services.AddTracing(config => config
-    .WithSemanticKernel());
+
+//builder.Services.AddTracing(config =>
+//{
+//    config.WithSemanticKernel();
+//});
+
+builder.AddA365Tracing(config =>
+{
+    config.WithSemanticKernel();
+});
 
 
 // Add AgentApplicationOptions from appsettings section "AgentApplication".
@@ -83,11 +95,11 @@ builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationSe
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 
 // Configure the HTTP request pipeline.
-
-// Add AspNet token validation for Azure Bot Service and Entra.  Authentication is
-// configured in the appsettings.json "TokenValidation" section.
+// Add AspNet token validation for Azure Bot Service and Entra.  Authentication is configured in the appsettings.json "TokenValidation" section.
 builder.Services.AddControllers();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
+
+builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
 
 WebApplication app = builder.Build();
 
@@ -100,7 +112,34 @@ app.MapGet("/", () => "Microsoft Agents SDK Sample");
 // This receives incoming messages from Azure Bot Service or other SDK Agents
 var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    await adapter.ProcessAsync(request, response, agent, cancellationToken);
+    using var activity = AgentMetrics.ActivitySource.StartActivity("agent.process_message");
+    try
+    {
+        activity?.SetTag("agent.type", agent.GetType().Name);
+        activity?.SetTag("request.path", request.Path);
+        activity?.SetTag("request.method", request.Method);
+
+        await adapter.ProcessAsync(request, response, agent, cancellationToken);
+
+        activity?.SetStatus(ActivityStatusCode.Ok);
+        AgentMetrics.MessageProcessedCounter.Add(1,
+            new KeyValuePair<string, object?>("agent.type", agent.GetType().Name),
+            new KeyValuePair<string, object?>("status", "success"));
+    }
+    catch (Exception ex)
+    {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.AddEvent(new ActivityEvent("exception", DateTimeOffset.UtcNow, new()
+        {
+            ["exception.type"] = ex.GetType().FullName,
+            ["exception.message"] = ex.Message,
+            ["exception.stacktrace"] = ex.StackTrace
+        }));
+        AgentMetrics.MessageProcessedCounter.Add(1,
+            new KeyValuePair<string, object?>("agent.type", agent.GetType().Name),
+            new KeyValuePair<string, object?>("status", "error"));
+        throw;
+    }
 });
 
 // Hardcoded for brevity and ease of testing. 

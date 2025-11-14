@@ -5,21 +5,25 @@ using Agent365SemanticKernelSampleAgent.Plugins;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System;
+using System.Configuration;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Agent365SemanticKernelSampleAgent.Agents;
 
 public class Agent365Agent
 {
-    private readonly Kernel _kernel;
-    private readonly ChatCompletionAgent _agent;
+    private Kernel _kernel;
+    private ChatCompletionAgent _agent;
 
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
@@ -32,15 +36,27 @@ public class Agent365Agent
         
         {{
             ""contentType"": ""'Text'"",
-            ""content"": ""{{The content of the responsein plain text}}""
+            ""content"": ""{{The content of the response in plain text}}""
         }}
         ";
+
+    public static async Task<Agent365Agent> CreateA365AgentWrapper(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, string authHandlerName, UserAuthorization userAuthorization, ITurnContext turnContext, IConfiguration configuration)
+    {
+        var _agent = new Agent365Agent();
+        await _agent.InitializeAgent365Agent(kernel, service, toolService, userAuthorization, authHandlerName,  turnContext, configuration).ConfigureAwait(false);
+        return _agent;
+    }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    public Agent365Agent(){}
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
     /// </summary>
     /// <param name="serviceProvider">The service provider to use for dependency injection.</param>
-    public Agent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization, ITurnContext turnContext)
+    public async Task InitializeAgent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization , string authHandlerName, ITurnContext turnContext, IConfiguration configuration)
     {
         this._kernel = kernel;
 
@@ -50,7 +66,7 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
+            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
         }
         else
         {
