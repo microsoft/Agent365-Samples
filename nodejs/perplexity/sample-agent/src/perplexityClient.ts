@@ -4,8 +4,6 @@
 import { Perplexity } from "@perplexity-ai/perplexity_ai";
 import {
   InferenceScope,
-  InvokeAgentScope,
-  InvokeAgentDetails,
   AgentDetails,
   TenantDetails,
   InferenceDetails,
@@ -47,9 +45,6 @@ export class PerplexityClient {
 
   /**
    * Sends a user message to the Perplexity SDK and returns the AI's response.
-   *
-   * @param {string} userMessage - The message or prompt to send to Perplexity.
-   * @returns {Promise<string>} The response from Perplexity, or an error message if the query fails.
    */
   async invokeAgent(userMessage: string): Promise<string> {
     try {
@@ -81,73 +76,58 @@ export class PerplexityClient {
   }
 
   /**
-   * Wrapper for invokeAgent that adds tracing and span management using Microsoft Agent 365 SDK.
+   * Wrapper for invokeAgent that adds tracing and span management using
+   * Microsoft Agent 365 SDK (InferenceScope only).
+   *
+   * The outer InvokeAgentScope is created in agent.ts around the activity handler.
    */
   async invokeAgentWithScope(prompt: string): Promise<string> {
-    const invokeAgentDetails: InvokeAgentDetails = {
-      agentId: process.env.AGENT_ID || "perplexity-agent",
-    };
-
     const agentDetails: AgentDetails = {
-      agentId: "perplexity-agent",
-      agentName: "Perplexity Agent",
+      agentId: process.env.AGENT_ID || "perplexity-agent",
+      agentName: process.env.AGENT_NAME || "Perplexity Agent",
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: "perplexity-sample-tenant",
+      tenantId: process.env.TENANT_ID || "perplexity-sample-tenant",
     };
 
-    const invokeAgentScope = InvokeAgentScope.start(
-      invokeAgentDetails,
-      tenantDetails,
-      agentDetails
+    const inferenceDetails: InferenceDetails = {
+      operationName: InferenceOperationType.CHAT,
+      model: this.model,
+      providerName: "perplexity",
+    };
+
+    const scope = InferenceScope.start(
+      inferenceDetails,
+      agentDetails,
+      tenantDetails
     );
 
-    if (!invokeAgentScope) {
+    // If observability isn't configured, just run the call
+    if (!scope) {
       await new Promise((resolve) => setTimeout(resolve, 200));
       return await this.invokeAgent(prompt);
     }
 
     try {
-      return await invokeAgentScope.withActiveSpanAsync(async () => {
-        const inferenceDetails: InferenceDetails = {
-          operationName: InferenceOperationType.CHAT,
-          model: this.model,
-          providerName: "perplexity",
-        };
+      const result = await scope.withActiveSpanAsync(async () => {
+        scope.recordInputMessages([prompt]);
 
-        const scope = InferenceScope.start(
-          inferenceDetails,
-          agentDetails,
-          tenantDetails
-        );
+        const response = await this.invokeAgent(prompt);
 
-        if (!scope) {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          return await this.invokeAgent(prompt);
-        }
+        scope.recordOutputMessages([response]);
+        scope.recordResponseId(`resp-${Date.now()}`);
+        scope.recordFinishReasons(["stop"]);
 
-        try {
-          const result = await scope.withActiveSpanAsync(async () => {
-            const response = await this.invokeAgent(prompt);
-
-            scope?.recordOutputMessages([response]);
-            scope?.recordResponseId(`resp-${Date.now()}`);
-            scope?.recordFinishReasons(["stop"]);
-
-            return response;
-          });
-
-          return result;
-        } catch (error) {
-          scope.recordError(error as Error);
-          throw error;
-        } finally {
-          scope.dispose();
-        }
+        return response;
       });
+
+      return result;
+    } catch (error) {
+      scope.recordError(error as Error);
+      throw error;
     } finally {
-      invokeAgentScope.dispose();
+      scope.dispose();
     }
   }
 }
