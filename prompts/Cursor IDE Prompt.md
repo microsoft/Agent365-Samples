@@ -22,11 +22,11 @@ Cursor gives better results if it has the right references. Add the following Gi
 1. In Cursor's chat interface at the bottom, click "@".
 2. Click on 'Add new doc'.
 3. Paste Microsoft's public URLs—preferably linking directly to README.md files for better indexing. For example, for the agent described in this document, add these GitHub README URLs:
-   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-observability/README.md>
-   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-notifications/README.md>
-   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-runtime/README.md>
-   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling-extensions-claude/README.md>
-   - <https://github.com/microsoft/Agent365-nodejs/blob/main/packages/agents-a365-tooling/README.md>
+   - <https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability?tabs=nodejs>
+   - <https://learn.microsoft.com/en-us/microsoft-agent-365/developer/notification?tabs=nodejs>
+   - <https://learn.microsoft.com/en-us/microsoft-agent-365/developer/?tabs=nodejs>
+   - <https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling?tabs=nodejs>
+   - <https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling?tabs=nodejs>
    - <https://github.com/microsoft/Agent365-Samples/blob/main/nodejs/claude/sample-agent/README.md>
 4. Give each URL a descriptive name when prompted (e.g., "Observability", "Runtime", "Claude Tooling", "Sample Agent") so you can reference them easily in prompts.
 5. Cursor will fetch and index them. Refer to them in prompts by their names (e.g., `@Observability`, `@Runtime`) or by the full URL (e.g., `@https://...`).
