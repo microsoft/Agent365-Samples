@@ -17,26 +17,29 @@ This sample demonstrates how to build an agent using the Agent365 framework with
 - Azure OpenAI access
 - Azure CLI (for authentication)
 
-## Documentation
+## How to run this sample
+To run the agent please follow the insturctions in this doc step by step:https://review.learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?branch=users%2Fmrunalhirve%2FAddTesting&tabs=python  
+ 
 
-For detailed information about this sample, please refer to:
+## Support
+For issues, questions, or feedback:
 
-- **[AGENT-TESTING.md](AGENT-TESTING.md)** - Complete setup and testing guide with step-by-step instructions
-- **[AGENT-CODE-WALKTHROUGH.md](AGENT-CODE-WALKTHROUGH.md)** - Detailed code explanation and architecture walkthrough
+Issues: Please file issues in the GitHub Issues section
+Documentation: See the Microsoft Agents 365 developer documentation
+Security: For security issues, please see SECURITY.md
 
-## 📚 Related Documentation
+## Contributing
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
 
-- [AgentFramework SDK Documentation](https://github.com/microsoft/Agent365)
-- [Microsoft Agent 365 Tooling](https://github.com/microsoft/Agent365/tree/main/python)
-- [Model Context Protocol (MCP)](https://github.com/microsoft/Agent365/tree/main/python/libraries/microsoft-agents-a365-tooling)
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
-## 🤝 Contributing
+This project has adopted the Microsoft Open Source Code of Conduct. For more information see the Code of Conduct FAQ or contact opencode@microsoft.com with any additional questions or comments.
 
-1. Follow the existing code patterns and structure
-2. Add comprehensive logging and error handling
-3. Update documentation for new features
-4. Test thoroughly with different authentication methods
 
-## 📄 License
+## Trademarks
+Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/microsoft/Agent365/blob/main/LICENSE.md) file for details.
+## License
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+Licensed under the MIT License - see the LICENSE file for details.
