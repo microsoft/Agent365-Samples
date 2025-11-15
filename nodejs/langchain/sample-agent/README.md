@@ -1,34 +1,34 @@
-# OpenAI Sample Agent - Python
+# LangChain Sample Agent - Node.js
 
-This sample demonstrates how to build an agent using OpenAI in Python with the Microsoft Agent 365 SDK. It covers:
+This sample demonstrates how to build an agent using LangChain in Node.js with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
 - **Notifications**: Services and models for managing user notifications
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
 
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Python 3.x
+- Node.js 18.x or higher
 - Microsoft Agent 365 SDK
-- OpenAI Agents SDK (openai-agents)
+- LangChain 1.0.1 or higher
 - Azure/OpenAI API credentials
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
-For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
+For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
 ## Support
 
 For issues, questions, or feedback:
 
-- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
 - **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
@@ -42,10 +42,10 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
-- [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
-- [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
-- [OpenAI API documentation](https://platform.openai.com/docs/)
-- [Python API documentation](https://learn.microsoft.com/python/api/?view=m365-agents-sdk&preserve-view=true)
+- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
+- [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
+- [LangChain documentation](https://js.langchain.com/)
+- [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 
 ## Trademarks
 

@@ -1,6 +1,6 @@
-# Agent Framework Sample - Python
+# Agent Framework Sample Agent - Python
 
-This sample demonstrates how to build an agent using the Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
+This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
 - **Notifications**: Services and models for managing user notifications
@@ -15,6 +15,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 - Python 3.x
 - Microsoft Agent 365 SDK
+- Agent Framework (agent-framework-azure-ai)
 - Azure/OpenAI API credentials
 
 ## Running the Agent
@@ -41,7 +42,9 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
+- [Agent Framework documentation](https://github.com/microsoft/Agent365-python/tree/main/packages/agent-framework)
 - [Python API documentation](https://learn.microsoft.com/python/api/?view=m365-agents-sdk&preserve-view=true)
 
 ## Trademarks
