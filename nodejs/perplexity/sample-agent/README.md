@@ -1,95 +1,55 @@
-# Agent Sample - Perplexity AI
+# Perplexity Sample Agent - Node.js
 
-This directory contains a sample agent implementation using Node.js and Perplexity AI.
+This sample demonstrates how to build an agent using Perplexity in Node.js with the Microsoft Agent 365 SDK. It covers:
 
-## Demonstrates
+- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Notifications**: Services and models for managing user notifications
+- **Tools**: Model Context Protocol tools for building advanced agent solutions
+- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample demonstrates how to build an agent using the Agent 365 framework with Node.js and Perplexity AI.
+This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
 
-## Features
-
-- ✅ **Chat with Perplexity** - Natural language conversations using Perplexity's Sonar models.
-- ✅ **Playground notification handling** - Responds to notifications triggered in the playground UI (@mention in word documents, emails, custom, etc.)
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Node.js 18+
-- Perplexity AI API Key from <https://perplexity.ai/account/api>
-- Agents SDK
+- Node.js 18.x or higher
+- Microsoft Agent 365 SDK
+- Perplexity API credentials
 
-## How to run this sample
+## Running the Agent
 
-### 1. Setup environment variables
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
-Copy the template and fill in your values:
+## Support
 
-```powershell
-# Copy the template environment file
-cp .env.template .env
-```
+For issues, questions, or feedback:
 
-**Minimum required:**
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
-```bash
-PERPLEXITY_API_KEY=your_perplexity_api_key_here
-AGENT_ID=perplexity-agent
-PORT=3978
-```
+## Contributing
 
-**For production/M365 integration, also add:**
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
 
-```bash
-CLIENT_ID=your_bot_app_id
-CLIENT_SECRET=your_bot_secret
-TENANT_ID=your_tenant_id
-```
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
-See `.env.template` for all available options.
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-### 2. Install dependencies
+## Additional Resources
 
-```powershell
-npm install
-```
+- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
+- [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
+- [Perplexity API documentation](https://docs.perplexity.ai/)
+- [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 
-### 3. Build the sample
+## Trademarks
 
-```powershell
-npm run build
-```
+*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
 
-### 4. Start the agent
+## License
 
-```powershell
-npm start
-```
+Copyright (c) Microsoft Corporation. All rights reserved.
 
-You should see:
-
-```powershell
-🚀 Perplexity Agent listening on port 3978
-   App ID: your-app-id
-   Debug: false
-
-✅ Agent ready to receive messages!
-```
-
-### 5. To test with M365 Agents Playground
-
-In a new terminal:
-
-```powershell
-npm run test-tool
-```
-
-This opens the M365 Agents Playground where you can chat with your agent.
-
-### 5. Optionally, while testing you can run in dev mode (auto-reload)
-
-```powershell
-npm run dev
-```
-
-This watches for file changes and auto-restarts the server.
-
-The agent will start and be ready to receive requests through the configured hosting mechanism.
+Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.

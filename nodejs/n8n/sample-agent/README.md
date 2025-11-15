@@ -1,54 +1,57 @@
-# n8n Agent
+# n8n Sample Agent - Node.js
 
-A Microsoft Agent 365 that integrates with n8n workflows for AI-powered automation.
+This sample demonstrates how to build an agent using n8n in Node.js with the Microsoft Agent 365 SDK. It covers:
 
-## Demonstrates
+- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Notifications**: Services and models for managing user notifications
+- **Tools**: Model Context Protocol tools for building advanced agent solutions
+- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This agent receives messages from Microsoft 365 (Teams, email, Word comments) and forwards them to an n8n workflow via webhook. The n8n workflow processes the request and returns a response.
+This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Node.js 18+
+- Node.js 18.x or higher
+- Microsoft Agent 365 SDK
 - n8n instance with webhook endpoint
-- Agentic Authentication registration
 
-## How to run this sample
+## Running the Agent
 
-1. **Configure n8n webhook:**
-   - Create a workflow in n8n with a webhook trigger
-   - Configure the webhook to accept POST requests
-   - The webhook should expect a JSON body with `text`, `from`, `type`, and optional `mcpServers` fields
-   - Return a JSON response with an `output` field containing the response text
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
-1. **Set environment variables:**
-   Copy `.env.example` to `.env` and configure:
+For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.MD).
 
-   ```bash
-   cp .env.example .env
-   ```
+## Support
 
-1. **Install dependencies**
-   ```bash
-   npm install
-   ```
+For issues, questions, or feedback:
 
-1. **Build the project**
-   ```bash
-   npm run build
-   ```
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
-1. **Start the agent**
-   ```bash
-   npm start
-   ```
+## Contributing
 
-1. **Optionally, while testing you can run in dev mode**
-   ```bash
-   npm run dev
-   ```
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
 
-1. **Optionally, for testing you can use the Agents Playground:**
-   ```bash
-   # Launch Agents Playground for testing
-   npm run test-tool
-   ```
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Additional Resources
+
+- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
+- [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
+- [n8n documentation](https://docs.n8n.io/)
+- [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
+
+## Trademarks
+
+*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
+
+## License
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.

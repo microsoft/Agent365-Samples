@@ -1,75 +1,56 @@
-# Sample Agent - Node.js Claude
+# Claude Sample Agent - Node.js
 
-This directory contains a sample agent implementation using Node.js and Claude Agent SDK.
+This sample demonstrates how to build an agent using Claude in Node.js with the Microsoft Agent 365 SDK. It covers:
 
-## Demonstrates
+- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Notifications**: Services and models for managing user notifications
+- **Tools**: Model Context Protocol tools for building advanced agent solutions
+- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample demonstrates how to build an agent using the Microsoft Agent 365 SDK with Node.js and Claude Agent SDK.
+This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Node.js 18+
-- Anthropic API access
-- Claude Agent SDK
-- Agents SDK
+- Node.js 18.x or higher
+- Microsoft Agent 365 SDK
+- Claude Agent SDK 0.1.1 or higher
+- Claude API credentials
 
-## How to run this sample
+## Running the Agent
 
-1. **Setup environment variables**
-   ```bash
-   # Copy the template environment file
-   cp .env.template .env
-   ```
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+## Support
 
-   **Note** Be sure to create the folder `./packages/` and add the a365 packages here for the preinstall script to work.
+For issues, questions, or feedback:
 
-3. **Build the project**
-   ```bash
-   npm run build
-   ```
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
-4. **Start the agent**
-   ```bash
-   npm start
-   ```
+## Contributing
 
-5. **Optionally, while testing you can run in dev mode**
-   ```bash
-   npm run dev
-   ```
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
 
-6. **Start AgentsPlayground to chat with your agent**
-   ```bash
-   agentsplayground
-   ```
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
-The agent will start and be ready to receive requests through the configured hosting mechanism.
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
 
-## Documentation
+## Additional Resources
 
-For detailed information about this sample, please refer to:
+- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
+- [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
+- [Claude API documentation](https://docs.anthropic.com/)
+- [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 
-- **[AGENT-CODE-WALKTHROUGH.md](AGENT-CODE-WALKTHROUGH.md)** - Detailed code explanation and architecture walkthrough
+## Trademarks
 
-## 📚 Related Documentation
+*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
 
-- [Claude Agent SDK Documentation](https://docs.claude.com/en/docs/agent-sdk/typescript.md)
-- [Microsoft Agent 365 Tooling](https://github.com/microsoft/Agent365-nodejs/tree/main/packages/agents-a365-tooling-extensions-claude)
-- [Model Context Protocol (MCP)](https://github.com/modelcontextprotocol/typescript-sdk/tree/main)
-- [AgentsPlayground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project?tabs=windows)
+## License
 
-## 🤝 Contributing
+Copyright (c) Microsoft Corporation. All rights reserved.
 
-1. Follow the existing code patterns and structure
-2. Add comprehensive logging and error handling
-3. Update documentation for new features
-4. Test thoroughly with different authentication methods
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](../../../LICENSE.md) file for details.
+Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
