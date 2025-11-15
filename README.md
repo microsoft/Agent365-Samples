@@ -1,4 +1,4 @@
-# Agent 365 SDK Samples
+# Microsoft Agent 365 SDK Samples
 
 The Microsoft Agent 365 SDK Samples extends the Microsoft Agents 365 SDK with enterprise-grade capabilities used to build sophisticated agents. This Microsoft Agent 365 SDK provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
