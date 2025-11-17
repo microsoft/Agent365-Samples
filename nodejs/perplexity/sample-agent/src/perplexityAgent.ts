@@ -55,14 +55,41 @@ export class PerplexityAgent {
       return;
     }
 
+    // Grab streamingResponse if this surface supports it
+    const streamingResponse = (turnContext as any).streamingResponse;
+
     try {
+      // Show temporary "I'm working" message with spinner (Playground, and any streaming-enabled client)
+      if (streamingResponse) {
+        streamingResponse.queueInformativeUpdate(
+          "I'm working on your request..."
+        );
+      }
+
       const perplexityClient = this.getPerplexityClient();
       const response = await perplexityClient.invokeAgentWithScope(userMessage);
-      await turnContext.sendActivity(response);
+
+      if (streamingResponse) {
+        // Send the final response as a streamed chunk
+        streamingResponse.queueTextChunk(response);
+        // Close the stream when done
+        await streamingResponse.endStream();
+      } else {
+        // Fallback for channels that don't support streaming
+        await turnContext.sendActivity(response);
+      }
     } catch (error) {
       console.error("Perplexity query error:", error);
       const err = error as any;
-      await turnContext.sendActivity(`Error: ${err.message || err}`);
+      const errorMessage = `Error: ${err.message || err}`;
+
+      if (streamingResponse) {
+        // Surface the error through the stream and close it
+        streamingResponse.queueTextChunk(errorMessage);
+        await streamingResponse.endStream();
+      } else {
+        await turnContext.sendActivity(errorMessage);
+      }
     }
   }
 
