@@ -1,0 +1,6 @@
+{
+  "id": "<<template-manifest-id>>",
+  "schemaVersion": "0.1.0-preview",
+  "agentIdentityBlueprintId": "<<blueprint-id>>",
+  "communicationProtocol": "activityProtocol"
+}
