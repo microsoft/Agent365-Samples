@@ -16,7 +16,6 @@ import { Activity, ActivityTypes } from "@microsoft/agents-activity";
 import {
   AgentApplication,
   AgentApplicationOptions,
-  DefaultConversationState,
   MemoryStorage,
   TurnContext,
   TurnState,
@@ -25,12 +24,8 @@ import { Stream } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
 import tokenCache from "./token-cache";
+import { ApplicationTurnState } from "./types/agent.types";
 import { getAgentDetails, getTenantDetails } from "./utils";
-
-interface ConversationState extends DefaultConversationState {
-  count: number;
-}
-type ApplicationTurnState = TurnState<ConversationState>;
 
 export class A365Agent extends AgentApplication<ApplicationTurnState> {
   isApplicationInstalled: boolean = false;
@@ -46,7 +41,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     // Initialize Observability SDK
     const observabilitySDK = ObservabilityManager.configure((builder) =>
       builder
-        .withService("claude-travel-agent", "1.0.0")
+        .withService("devin-sample-agent", "1.0.0")
         .withTokenResolver(async (agentId, tenantId) => {
           // Token resolver for authentication with Agent 365 observability
           console.log(
@@ -174,6 +169,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         agentDetails,
         tenantDetails
       );
+      inferenceScope.recordInputMessages([userMessage]);
 
       let totalResponseLength = 0;
       const responseStream = new Stream()
@@ -192,8 +188,6 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
           inferenceScope.recordOutputTokens(Math.ceil(totalResponseLength / 4)); // Rough estimate
           inferenceScope.recordFinishReasons(["stop"]);
         });
-
-      inferenceScope.recordInputMessages([userMessage]);
 
       await devinClient.invokeAgent(userMessage, responseStream);
     } catch (error) {
