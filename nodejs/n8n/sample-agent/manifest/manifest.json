@@ -11,10 +11,10 @@
         "full": "This sample demonstrates how to build an agent using n8n in Node.js with the Microsoft Agent 365 SDK."
     },
     "icons": {
-		"outline": "outline.png",
-		"color": "color.png"
-	},
-	"accentColor": "#07687d",
+        "outline": "outline.png",
+        "color": "color.png"
+    },
+    "accentColor": "#07687d",
     "version": "1.0.0",
     "manifestVersion": "devPreview",
     "developer":
