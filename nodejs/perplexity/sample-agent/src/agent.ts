@@ -8,7 +8,7 @@ import {
   MemoryStorage,
   TurnContext,
 } from "@microsoft/agents-hosting";
-import { Activity, ActivityTypes } from "@microsoft/agents-activity";
+import { ActivityTypes } from "@microsoft/agents-activity";
 import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
 import { PerplexityAgent } from "./perplexityAgent.js";
 import {
@@ -206,10 +206,6 @@ agentApplication.onActivity(
   async (context: TurnContext, state: ApplicationTurnState): Promise<void> => {
     let count: number = state.conversation.count ?? 0;
     state.conversation.count = ++count;
-
-    await context.sendActivity(
-      Activity.fromObject({ type: ActivityTypes.Typing })
-    );
 
     await perplexityAgent.handleAgentMessageActivity(context, state);
   }
