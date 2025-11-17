@@ -2,6 +2,7 @@
   "name": "claude-agents-sdk",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",

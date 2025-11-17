@@ -20,17 +20,17 @@ export class McpToolRegistrationService {
   private configService: McpToolServerConfigurationService = new McpToolServerConfigurationService();
 
   async getMcpServers(
-    agentUserId: string,
-    authorization: Authorization,
+    authHandlerName: string,
     turnContext: TurnContext,
     authToken: string
   ): Promise<McpServer[]> {
+    const authorization = turnContext.turnState.get('authorization');
     if (!authToken) {
       authToken = await AgenticAuthenticationService.GetAgenticUserToken(authorization, turnContext);
     }
 
     const mcpServers: McpServer[] = [];
-    const servers = await this.configService.listToolServers(agentUserId, authToken);
+    const servers = await this.configService.listToolServers(authHandlerName, authToken);
 
     for (const server of servers) {
       // Compose headers if values are available

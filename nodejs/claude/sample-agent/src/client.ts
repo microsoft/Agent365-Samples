@@ -38,12 +38,11 @@ const agentConfig = {
 };
 
 
-export async function getClient(authorization: Authorization, turnContext: TurnContext): Promise<Client> {
+export async function getClient(authorization: Authorization, authHandlerName: string, turnContext: TurnContext): Promise<Client> {
   try {
     await toolService.addToolServersToAgent(
       agentConfig,
-      process.env.AGENTIC_USER_ID || '',
-      authorization,
+      authHandlerName,
       turnContext,
       process.env.MCP_AUTH_TOKEN || "",
     );
