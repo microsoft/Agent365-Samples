@@ -31,18 +31,16 @@ sdk.start();
 
 const toolService = new McpToolRegistrationService();
 
-const agent = new Agent({
-    // You can customize the agent configuration here if needed
-    name: 'OpenAI Agent',
-  });
-
-
-export async function getClient(authorization: any, turnContext: TurnContext): Promise<Client> {
+export async function getClient(authorization: any, authHandlerName: string, turnContext: TurnContext): Promise<Client> {
+  const agent = new Agent({
+      // You can customize the agent configuration here if needed
+      name: 'OpenAI Agent',
+    });
   try {
     await toolService.addToolServersToAgent(
       agent,
-      process.env.AGENTIC_USER_ID || '',
       authorization,
+      authHandlerName,
       turnContext,
       process.env.MCP_AUTH_TOKEN || "",
     );
