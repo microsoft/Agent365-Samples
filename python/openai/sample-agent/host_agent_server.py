@@ -15,7 +15,7 @@ from agent_interface import AgentInterface, check_agent_inheritance
 from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
-from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity import load_configuration_from_env, ChannelId
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -39,6 +39,11 @@ from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
 from token_cache import cache_agentic_token
+
+from microsoft_agents_a365.notifications.agent_notification import (
+    AgentNotification,
+    AgentNotificationActivity,
+)
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -87,6 +92,8 @@ class GenericAgentHost:
             **agents_sdk_config,
         )
 
+        self.agent_notification = AgentNotification(self.agent_app)
+
         # Setup message handlers
         self._setup_handlers()
 
@@ -111,7 +118,7 @@ class GenericAgentHost:
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
         handler = ["AGENTIC"] if use_agentic_auth else None
 
-        @self.agent_app.activity("message", auth_handlers=handler)
+        @self.agent_app.message("message")
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
             try:
@@ -166,6 +173,47 @@ class GenericAgentHost:
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"
                 logger.error(f"❌ Error processing message: {e}")
+                await context.send_activity(error_msg)
+
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+        )
+        async def on_agent_notification(
+            context: TurnContext,
+            _: TurnState,
+            notification_activity: AgentNotificationActivity,
+        ):
+            """Handle agent notifications with the hosted agent"""
+            try:
+                tenant_id = context.activity.recipient.tenant_id
+                agent_id = context.activity.recipient.agentic_app_id
+                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                    # Ensure the agent is available
+                    if not self.agent_instance:
+                        error_msg = "❌ Sorry, the agent is not available."
+                        logger.error(error_msg)
+                        await context.send_activity(error_msg)
+                        return
+
+                    if not hasattr(
+                        self.agent_instance, "handle_agent_notification_activity"
+                    ):
+                        logger.warning("⚠️ Agent doesn't support notifications")
+                        await context.send_activity(
+                            "This agent doesn't support notification handling yet."
+                        )
+                        return
+
+                    # Process with the hosted agent
+                    response = await self.agent_instance.handle_agent_notification_activity(
+                        notification_activity, self.agent_app.auth, context
+                    )
+
+                    await context.send_activity(response)
+
+            except Exception as e:
+                error_msg = f"{str(e)}"
+                logger.error(f"❌ Error processing notification: {e}")
                 await context.send_activity(error_msg)
 
     async def initialize_agent(self):
