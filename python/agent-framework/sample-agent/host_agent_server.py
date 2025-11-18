@@ -88,6 +88,8 @@ class GenericAgentHost:
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
 
+        self.auth_handler_name = "AGENTIC"
+
         self.agent_class = agent_class
         self.agent_args = agent_args
         self.agent_kwargs = agent_kwargs
@@ -117,7 +119,7 @@ class GenericAgentHost:
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
-                auth_handler_id="AGENTIC",
+                auth_handler_id=self.auth_handler_name,
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
         except Exception as e:
@@ -138,8 +140,7 @@ class GenericAgentHost:
     # --- Handlers (Messages & Notifications) ---
     def _setup_handlers(self):
         """Setup message and notification handlers"""
-        use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
-        handler = ["AGENTIC"] if use_agentic_auth else None
+        handler = [self.auth_handler_name]
 
         async def help_handler(context: TurnContext, _: TurnState):
             await context.send_activity(
@@ -147,8 +148,8 @@ class GenericAgentHost:
                 "How can I help you today?"
             )
 
-        self.agent_app.conversation_update("membersAdded")(help_handler)
-        self.agent_app.message("/help")(help_handler)
+        self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
+        self.agent_app.message("/help", auth_handlers=handler)(help_handler)
 
         @self.agent_app.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
@@ -165,7 +166,7 @@ class GenericAgentHost:
 
                     logger.info(f"📨 {user_message}")
                     response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, context
+                        user_message, self.agent_app.auth, self.auth_handler_name, context
                     )
                     await context.send_activity(response)
 
@@ -202,7 +203,7 @@ class GenericAgentHost:
 
                     response = (
                         await self.agent_instance.handle_agent_notification_activity(
-                            notification_activity, self.agent_app.auth, context
+                            notification_activity, self.agent_app.auth, self.auth_handler_name, context
                         )
                     )
                     await context.send_activity(response)

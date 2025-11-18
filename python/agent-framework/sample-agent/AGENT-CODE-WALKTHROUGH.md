@@ -238,14 +238,13 @@ def _initialize_services(self):
         logger.warning(f"⚠️ Could not initialize MCP tool service: {e}")
         self.tool_service = None
 
-async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
+async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
     """Set up MCP server connections"""
     try:
         if not self.tool_service:
             logger.warning("⚠️ MCP tool service not available - skipping MCP server setup")
             return
 
-        agent_user_id = os.getenv("AGENT_ID", "user123")
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
 
         if use_agentic_auth:
@@ -253,8 +252,8 @@ async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
                 chat_client=self.chat_client,
                 agent_instructions="You are a helpful assistant with access to tools.",
                 initial_tools=[],
-                agent_user_id=agent_user_id,
                 auth=auth,
+                auth_handler_name=auth_handler_name,
                 turn_context=context,
             )
         else:
@@ -262,8 +261,8 @@ async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
                 chat_client=self.chat_client,
                 agent_instructions="You are a helpful assistant with access to tools.",
                 initial_tools=[],
-                agent_user_id=agent_user_id,
                 auth=auth,
+                auth_handler_name=auth_handler_name,
                 auth_token=self.auth_options.bearer_token,
                 turn_context=context,
             )
@@ -282,7 +281,6 @@ async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
 The agent supports multiple authentication modes and extensive configuration options:
 
 **Environment Variables**:
-- `AGENT_ID`: Unique identifier for this agent instance
 - `USE_AGENTIC_AUTH`: Choose between enterprise security (true) or simple tokens (false)
 - `ENV_ID`: Agent365 environment identifier
 - `BEARER_TOKEN`: Authentication token for MCP servers
@@ -303,11 +301,11 @@ The agent supports multiple authentication modes and extensive configuration opt
 
 ```python
 async def process_user_message(
-    self, message: str, auth: Authorization, context: TurnContext
+    self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Process user message using the AgentFramework SDK"""
     try:
-        await self.setup_mcp_servers(auth, context)
+        await self.setup_mcp_servers(auth, auth_handler_name, context)
         result = await self.agent.run(message)
         return self._extract_result(result) or "I couldn't process your request at this time."
     except Exception as e:
@@ -329,14 +327,14 @@ async def process_user_message(
 
 ```python
 async def handle_agent_notification_activity(
-    self, notification_activity, auth: Authorization, context: TurnContext
+    self, notification_activity, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Handle agent notification activities (email, Word mentions, etc.)"""
     try:
         notification_type = notification_activity.notification_type
         logger.info(f"📬 Processing notification: {notification_type}")
 
-        await self.setup_mcp_servers(auth, context)
+        await self.setup_mcp_servers(auth, auth_handler_name, context)
 
         # Handle Email Notifications
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
@@ -413,12 +411,12 @@ async def initialize(self):
         raise
 
 async def process_user_message(
-    self, message: str, auth: Authorization, context: TurnContext
+    self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Process user message using the AgentFramework SDK"""
     try:
         # Setup MCP servers
-        await self.setup_mcp_servers(auth, context)
+        await self.setup_mcp_servers(auth, auth_handler_name, context)
 
         # Run the agent with the user message
         result = await self.agent.run(message)

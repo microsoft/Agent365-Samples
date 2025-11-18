@@ -68,6 +68,8 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
+        self.auth_handler_name = "AGENTIC"
+
         self.agent_class = agent_class
         self.agent_args = agent_args
         self.agent_kwargs = agent_kwargs
@@ -108,9 +110,7 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
-        use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
-        handler = ["AGENTIC"] if use_agentic_auth else None
-
+        handler = [self.auth_handler_name]
         @self.agent_app.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
@@ -128,7 +128,7 @@ class GenericAgentHost:
                     exaau_token = await self.agent_app.auth.exchange_token(
                         context,
                         scopes=get_observability_authentication_scope(),
-                        auth_handler_id="AGENTIC",
+                        auth_handler_id=self.auth_handler_name,
                     )
 
                     # Cache the agentic token for Agent 365 Observability exporter use
@@ -152,7 +152,7 @@ class GenericAgentHost:
                     # Process with the hosted agent
                     logger.info(f"🤖 Processing with {self.agent_class.__name__}...")
                     response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, context
+                        user_message, self.agent_app.auth, self.auth_handler_name, context
                     )
 
                     # Send response back
