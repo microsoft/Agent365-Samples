@@ -17,6 +17,11 @@
   "description": "",
   "dependencies": {
     "@microsoft/agents-hosting": "^1.1.0-alpha.85",
+    "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-tooling-extensions-claude": "^0.1.0-preview.30",
     "@anthropic-ai/claude-agent-sdk": "^0.1.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0"
