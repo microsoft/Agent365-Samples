@@ -6,11 +6,11 @@ import { configDotenv } from 'dotenv';
 
 configDotenv();
 
-import { AuthConfiguration, authorizeJWT, CloudAdapter, Request } from '@microsoft/agents-hosting';
+import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
 
-const authConfig: AuthConfiguration = {};
+const authConfig: AuthConfiguration = loadAuthConfigFromEnv();
 
 const server = express()
 server.use(express.json())

@@ -11,6 +11,7 @@ import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications'
 import { Client, getClient } from './client';
 
 export class MyAgent extends AgentApplication<TurnState> {
+  static authHandlerName: string = 'agentic';
 
   constructor() {
     super({
@@ -45,7 +46,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     }
 
     try {
-      const client: Client = await getClient(this.authorization, turnContext);
+      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
       const response = await client.invokeAgentWithScope(userMessage);
       await turnContext.sendActivity(response);
     } catch (error) {

@@ -1,5 +1,5 @@
 import { McpToolServerConfigurationService, McpClientTool, MCPServerConfig } from '@microsoft/agents-a365-tooling';
-import { AgenticAuthenticationService, Authorization } from '@microsoft/agents-a365-runtime';
+import { AgenticAuthenticationService, Authorization, Utility as RuntimeUtility } from '@microsoft/agents-a365-runtime';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { TurnContext } from '@microsoft/agents-hosting';
@@ -20,17 +20,19 @@ export class McpToolRegistrationService {
   private configService: McpToolServerConfigurationService = new McpToolServerConfigurationService();
 
   async getMcpServers(
-    agentUserId: string,
-    authorization: Authorization,
+    authHandlerName: string,
     turnContext: TurnContext,
     authToken: string
   ): Promise<McpServer[]> {
+    const authorization = turnContext.turnState.get('authorization');
     if (!authToken) {
-      authToken = await AgenticAuthenticationService.GetAgenticUserToken(authorization, turnContext);
+      authToken = await AgenticAuthenticationService.GetAgenticUserToken(authorization, authHandlerName, turnContext);
     }
+   // Get the agentic user ID from authorization configuration
+    const agenticAppId = RuntimeUtility.ResolveAgentIdentity(turnContext, authToken);
 
     const mcpServers: McpServer[] = [];
-    const servers = await this.configService.listToolServers(agentUserId, authToken);
+    const servers = await this.configService.listToolServers(agenticAppId, authToken);
 
     for (const server of servers) {
       // Compose headers if values are available

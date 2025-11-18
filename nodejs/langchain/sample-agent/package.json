@@ -3,6 +3,7 @@
   "version": "2025.11.6",
   "description": "Sample agent integrating LangChain Agents with Microsoft 365 Agents SDK and Microsoft Agent 365 SDK",
   "main": "src/index.ts",
+  "type": "commonjs",
   "scripts": {
     "preinstall": "node preinstall-local-packages.js",
     "start": "node dist/index.js",

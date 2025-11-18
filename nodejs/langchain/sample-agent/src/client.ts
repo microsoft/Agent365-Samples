@@ -53,14 +53,13 @@ const agent = createAgent({
  * const response = await client.invokeAgent("Send an email to john@example.com");
  * ```
  */
-export async function getClient(authorization: Authorization, turnContext: TurnContext): Promise<Client> {
+export async function getClient(authorization: Authorization, authHandlerName: string, turnContext: TurnContext): Promise<Client> {
   // Get Mcp Tools
   let agentWithMcpTools = undefined;
   try {
     agentWithMcpTools = await toolService.addToolServersToAgent(
       agent,
-      '',
-      authorization,
+      authHandlerName,
       turnContext,
       process.env.BEARER_TOKEN || "",
     );
