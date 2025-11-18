@@ -8,27 +8,27 @@ authors = [
 dependencies = [
     # OpenAI Agents SDK - The official package
     "openai-agents",
-    
+
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp",
     "microsoft-agents-hosting-core",
     "microsoft-agents-authentication-msal",
     "microsoft-agents-activity",
-    
+
     # Core dependencies
     "python-dotenv",
     "aiohttp",
-    
+
     # HTTP server support for MCP servers
     "uvicorn[standard]>=0.20.0",
     "fastapi>=0.100.0",
-    
+
     # HTTP client
     "httpx>=0.24.0",
-    
+
     # Data validation
     "pydantic>=2.0.0",
-    
+
     # Additional utilities
     "typing-extensions>=4.0.0",
 
@@ -47,11 +47,6 @@ requires-python = ">=3.11"
 name = "pypi"
 url = "https://pypi.org/simple"
 default = true
-
-[[tool.uv.index]]
-name = "microsoft_agents_a365"
-url = "../../dist"
-format = "flat"
 
 [project.optional-dependencies]
 dev = [
