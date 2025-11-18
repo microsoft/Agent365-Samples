@@ -1,0 +1,38 @@
+name: CI - Build, Test, and Publish SDKs
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'dotnet/semantic-kernel/sample-agent/**/*'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'dotnet/semantic-kernel/sample-agent/**/*'
+
+jobs:
+  dotnet-semantickernel-sampleagent:
+    name: .NET Semantic Kernel Sample Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./dotnet/semantic-kernel/sample-agent
+
+    strategy:
+      matrix:
+        dotnet-version: ['8.0.x']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET ${{ matrix.dotnet-version }}
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ matrix.dotnet-version }}
+
+    - name: Restore dependencies
+      run: dotnet restore SemanticKernelSampleAgent.sln
+
+    - name: Build solution
+      run: dotnet build SemanticKernelSampleAgent.sln --no-restore --configuration Release
