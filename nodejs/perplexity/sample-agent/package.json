@@ -28,7 +28,7 @@
     "@types/node": "^20.12.12",
     "@microsoft/m365agentsplayground": "^0.2.18",
     "nodemon": "^3.1.10",
-    "rimraf": "^5.0.7",
+    "rimraf": "^6.1.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.16.2",
     "typescript": "^5.6.3"
