@@ -239,7 +239,6 @@ def _initialize_services(self):
     async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
         """Set up MCP server connections"""
         try:
-            agent_user_id = os.getenv("AGENT_ID", "user123")
 
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
             if use_agentic_auth:
