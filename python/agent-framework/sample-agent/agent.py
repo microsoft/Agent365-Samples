@@ -182,7 +182,7 @@ class AgentFrameworkAgent(AgentInterface):
             logger.warning(f"⚠️ MCP tool service failed: {e}")
             self.tool_service = None
 
-    async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
+    async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
         """Set up MCP server connections"""
         if self.mcp_servers_initialized:
             return
@@ -192,33 +192,24 @@ class AgentFrameworkAgent(AgentInterface):
                 logger.warning("⚠️ MCP tool service unavailable")
                 return
 
-            agent_user_id = os.getenv("AGENT_ID", "user123")
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
 
             if use_agentic_auth:
-                scope = os.getenv("AGENTIC_AUTH_SCOPE")
-                if not scope:
-                    logger.error("❌ AGENTIC_AUTH_SCOPE is required when USE_AGENTIC_AUTH is enabled")
-                    return
-                scopes = [scope]
-                authToken = await auth.exchange_token(context, scopes, "AGENTIC")
-                auth_token = authToken.token
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
                     agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
-                    agentic_app_id=agent_user_id,
                     auth=auth,
+                    auth_handler_name=auth_handler_name,
                     turn_context=context,
-                    auth_token=auth_token,
                 )
             else:
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     chat_client=self.chat_client,
                     agent_instructions=self.AGENT_PROMPT,
                     initial_tools=[],
-                    agentic_app_id=agent_user_id,
                     auth=auth,
+                    auth_handler_name=auth_handler_name,
                     auth_token=self.auth_options.bearer_token,
                     turn_context=context,
                 )
@@ -244,11 +235,11 @@ class AgentFrameworkAgent(AgentInterface):
         logger.info("Agent initialized")
 
     async def process_user_message(
-        self, message: str, auth: Authorization, context: TurnContext
+        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
     ) -> str:
         """Process user message using the AgentFramework SDK"""
         try:
-            await self.setup_mcp_servers(auth, context)
+            await self.setup_mcp_servers(auth, auth_handler_name, context)
             result = await self.agent.run(message)
             return self._extract_result(result) or "I couldn't process your request at this time."
         except Exception as e:
@@ -263,7 +254,7 @@ class AgentFrameworkAgent(AgentInterface):
     # <NotificationHandling>
 
     async def handle_agent_notification_activity(
-        self, notification_activity, auth: Authorization, context: TurnContext
+        self, notification_activity, auth: Authorization, auth_handler_name: str, context: TurnContext
     ) -> str:
         """Handle agent notification activities (email, Word mentions, etc.)"""
         try:
@@ -271,7 +262,7 @@ class AgentFrameworkAgent(AgentInterface):
             logger.info(f"📬 Processing notification: {notification_type}")
 
             # Setup MCP servers on first call
-            await self.setup_mcp_servers(auth, context)
+            await self.setup_mcp_servers(auth, auth_handler_name, context)
 
             # Handle Email Notifications
             if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
