@@ -33,7 +33,7 @@ export async function getClient(): Promise<Client> {
   const agent = createAgent({
     model: model,
     tools: [],
-    name: 'My Custom Agent',
+    name: 'MyCustomAgent',
   });
 
   return new LangChainClient(agent);

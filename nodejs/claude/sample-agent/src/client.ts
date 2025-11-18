@@ -42,9 +42,10 @@ export async function getClient(authorization: Authorization, authHandlerName: s
   try {
     await toolService.addToolServersToAgent(
       agentConfig,
+      authorization,
       authHandlerName,
       turnContext,
-      process.env.MCP_AUTH_TOKEN || "",
+      process.env.BEARER_TOKEN || "",
     );
   } catch (error) {
     console.warn('Failed to register MCP tool servers:', error);

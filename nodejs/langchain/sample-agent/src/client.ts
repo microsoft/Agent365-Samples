@@ -30,7 +30,7 @@ sdk.start();
 
 const toolService = new McpToolRegistrationService();
 
-const agentName = "LangChain A365 Agent";
+const agentName = "LangChainA365Agent";
 const agent = createAgent({
   model: new ChatOpenAI({ temperature: 0 }),
   name: agentName,
@@ -59,6 +59,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
   try {
     agentWithMcpTools = await toolService.addToolServersToAgent(
       agent,
+      authorization,
       authHandlerName,
       turnContext,
       process.env.BEARER_TOKEN || "",
