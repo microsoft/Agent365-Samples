@@ -105,6 +105,6 @@ var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, Htt
 
 // Hardcoded for brevity and ease of testing. 
 // In production, this should be set in configuration.
-app.Urls.Add($"http://localhost:3978");
+app.Urls.Add($"http://localhost:5280");
 
 app.Run();

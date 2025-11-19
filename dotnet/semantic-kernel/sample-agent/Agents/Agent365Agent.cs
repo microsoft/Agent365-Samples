@@ -50,7 +50,7 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
+            toolService.AddToolServersToAgent(kernel, "TODO", userAuthorization, turnContext);
         }
         else
         {
