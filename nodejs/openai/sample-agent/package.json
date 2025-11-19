@@ -9,8 +9,7 @@
     "test-tool": "agentsplayground",
     "install:clean": "npm run clean && npm install",
     "clean": "rimraf dist node_modules package-lock.json",
-    "build": "tsc",
-    "lint": "eslint src/**/*.ts"
+    "build": "tsc"
   },
   "keywords": [],
   "license": "MIT",
