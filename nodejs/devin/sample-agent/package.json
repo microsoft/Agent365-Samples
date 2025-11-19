@@ -5,9 +5,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node --env-file=.env dist/index.js",
-    "test-tool": "agentsplayground",
-    "install:clean": "npm run clean && npm install",
-    "clean": "rimraf dist node_modules package-lock.json"
+    "test-tool": "agentsplayground"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   },
   "keywords": [],
   "license": "ISC",
@@ -22,9 +23,6 @@
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.20",
-    "nodemon": "^3.1.10",
-    "rimraf": "^5.0.0",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   }
 }

@@ -236,24 +236,23 @@ def _initialize_services(self):
 
         # return tool_service, auth_options
 
-    async def setup_mcp_servers(self, auth: Authorization, context: TurnContext):
+    async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
         """Set up MCP server connections"""
         try:
-            agent_user_id = os.getenv("AGENT_ID", "user123")
 
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
             if use_agentic_auth:
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
-                    agent_user_id=agent_user_id,
                     auth=auth,
+                    auth_handler_name=auth_handler_name,
                     context=context,
                 )
             else:
                 self.agent = await self.tool_service.add_tool_servers_to_agent(
                     agent=self.agent,
-                    agent_user_id=agent_user_id,
                     auth=auth,
+                    auth_handler_name=auth_handler_name,
                     context=context,
                     auth_token=self.auth_options.bearer_token,
                 )
@@ -302,12 +301,12 @@ The agent supports multiple authentication modes and extensive configuration opt
 
 ```python
 async def process_user_message(
-        self, message: str, auth: Authorization, context: TurnContext
+        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
     ) -> str:
         """Process user message using the OpenAI Agents SDK"""
         try:
             # Setup MCP servers
-            await self.setup_mcp_servers(auth, context)
+            await self.setup_mcp_servers(auth, auth_handler_name, context)
 
             # Run the agent with the user message
             result = await self.runner.run(starting_agent=self.agent, input=message)

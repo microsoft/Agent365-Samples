@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import { ObservabilityManager } from "@microsoft/agents-a365-observability";
 import {
   AuthConfiguration,
   authorizeJWT,
@@ -40,10 +41,28 @@ const server = app
     console.log("Server is shutting down...");
   });
 
-process.on("SIGINT", () => {
-  console.log("Received SIGINT. Shutting down gracefully...");
-  server.close(() => {
-    console.log("Server closed.");
-    process.exit(0);
+process
+  .on("SIGINT", async () => {
+    console.log("\n🛑 Shutting down agent...");
+    try {
+      server.close();
+      await ObservabilityManager.shutdown();
+      console.log("🔭 Observability SDK shut down gracefully");
+      process.exit(0);
+    } catch (err) {
+      console.error("Error during shutdown:", err);
+      process.exit(1);
+    }
+  })
+  .on("SIGTERM", async () => {
+    console.log("\n🛑 Shutting down agent...");
+    try {
+      server.close();
+      await ObservabilityManager.shutdown();
+      console.log("🔭 Observability SDK shut down gracefully");
+      process.exit(0);
+    } catch (err) {
+      console.error("Error during shutdown:", err);
+      process.exit(1);
+    }
   });
-});

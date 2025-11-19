@@ -4,13 +4,12 @@ import { N8nClient } from './n8nClient';
 import { McpToolRegistrationService, McpServer } from './mcpToolRegistrationService';
 
 export class N8nAgent {
+  static authHandlerName: string = 'agentic';
   isApplicationInstalled: boolean = false;
   termsAndConditionsAccepted: boolean = false;
   toolService: McpToolRegistrationService = new McpToolRegistrationService();
-  authorization: any;
 
-  constructor(authorization: any) {
-    this.authorization = authorization;
+  constructor() {
   }
 
   /**
@@ -181,8 +180,7 @@ export class N8nAgent {
     const mcpServers: McpServer[] = [];
     try {
       mcpServers.push(...await this.toolService.getMcpServers(
-        process.env.AGENTIC_USER_ID || '',
-        this.authorization,
+        N8nAgent.authHandlerName,
         turnContext,
         process.env.MCP_AUTH_TOKEN || ""
       ));

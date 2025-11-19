@@ -3,7 +3,7 @@ name = "sample-openai-agent"
 version = "0.1.0"
 description = "Sample OpenAI Agent using Microsoft Agent 365 SDK"
 authors = [
-    { name = "Microsoft", email = "example@microsoft.com" }
+    { name = "Microsoft", email = "support@microsoft.com" }
 ]
 dependencies = [
     # OpenAI Agents SDK - The official package
@@ -32,13 +32,12 @@ dependencies = [
     # Additional utilities
     "typing-extensions>=4.0.0",
 
-    # Local packages from local index
-    # - Update package versions to match your built wheels
-    "microsoft_agents_a365_tooling >= 2025.10.20",
-    "microsoft_agents_a365_tooling_extensions_openai >= 2025.10.20",
-    "microsoft_agents_a365_observability_core >= 2025.10.20",
-    "microsoft_agents_a365_observability_extensions_openai >= 2025.10.20",
-    "microsoft_agents_a365_notifications >= 2025.10.20",
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_tooling_extensions_openai >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_observability_extensions_openai >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
 ]
 requires-python = ">=3.11"
 

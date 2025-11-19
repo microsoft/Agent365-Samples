@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "sample agent to integrate with n8n",
   "main": "src/index.ts",
+  "type": "commonjs",
   "scripts": {
     "start": "node ./dist/index.js",
     "dev": "tsx watch ./src/index.ts",

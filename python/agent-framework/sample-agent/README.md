@@ -1,41 +1,58 @@
-# Sample Agent - Python AgentFramework
+# Agent Framework Sample Agent - Python
 
-This directory contains a sample agent implementation using Python and Microsoft's Agent Framework SDK.
+This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
 
-## Demonstrates
+- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Notifications**: Services and models for managing user notifications
+- **Tools**: Model Context Protocol tools for building advanced agent solutions
+- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample demonstrates how to build an agent using the Microsoft Agent 365 SDK with Python and Agent Framework SDK, including:
-- Azure OpenAI integration with AgentFramework
-- MCP (Model Context Protocol) tool integration
-- Microsoft Agent 365 observability and tracing
-- Multiple authentication modes (anonymous and agentic)
-- Microsoft 365 Agents SDK hosting patterns
+This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Python 3.11+
-- Azure OpenAI access
-- Azure CLI (for authentication)
+- Python 3.x
+- Microsoft Agent 365 SDK
+- Agent Framework (agent-framework-azure-ai)
+- Azure/OpenAI API credentials
 
-## Documentation
+## Running the Agent
 
-For detailed information about this sample, please refer to:
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
 
-- **[AGENT-TESTING.md](AGENT-TESTING.md)** - Complete setup and testing guide with step-by-step instructions
-- **[AGENT-CODE-WALKTHROUGH.md](AGENT-CODE-WALKTHROUGH.md)** - Detailed code explanation and architecture walkthrough
+For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
 
-## 📚 Related Documentation
+## Support
 
-- [Agent Framework SDK](https://github.com/microsoft/agent-framework)
-- [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python)
+For issues, questions, or feedback:
 
-## 🤝 Contributing
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
-1. Follow the existing code patterns and structure
-2. Add comprehensive logging and error handling
-3. Update documentation for new features
-4. Test thoroughly with different authentication methods
+## Contributing
 
-## 📄 License
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
 
-This project is licensed under the MIT License - see the [LICENSE](../../LICENSE.md) file for details.
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Additional Resources
+
+- [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
+- [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
+- [Agent Framework documentation](https://github.com/microsoft/Agent365-python/tree/main/packages/agent-framework)
+- [Python API documentation](https://learn.microsoft.com/python/api/?view=m365-agents-sdk&preserve-view=true)
+
+## Trademarks
+
+*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
+
+## License
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.

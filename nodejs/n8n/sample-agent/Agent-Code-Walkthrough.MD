@@ -62,6 +62,42 @@ sample-agent/
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## 🔍 Configuration Requirements
+
+### Configure n8n webhook
+
+   - Create a workflow in n8n with a webhook trigger
+   - Configure the webhook to accept POST requests
+   - The webhook should expect a JSON body with `text`, `from`, `type`, and optional `mcpServers` fields
+   - Return a JSON response with an `output` field containing the response text
+
+### Required Environment Variables
+```bash
+# Agent Identity
+AGENT_ID=your-agent-id
+AGENTIC_USER_ID=your-user-id
+
+# n8n Integration
+N8N_WEBHOOK_URL=https://your-n8n-instance/webhook/path
+N8N_WEBHOOK_AUTH_HEADER="Basic base64credentials"
+
+# Service Connection (Authentication)
+connections__service_connection__settings__clientId=<client-id>
+connections__service_connection__settings__clientSecret=<client-secret>
+connections__service_connection__settings__tenantId=<tenant-id>
+
+# Agentic Authentication
+agentic_type=agentic
+agentic_altBlueprintConnectionName=service_connection
+agentic_scopes=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default
+
+# MCP Tools (Optional)
+MCP_AUTH_TOKEN=optional-bearer-token
+TOOLS_MODE=MCPPlatform
+```
+
+---
+
 ## 🔍 Core Components Deep Dive
 
 ### Code Overview
@@ -191,33 +227,6 @@ interface N8nResponse {
 }
 
 // Handle actions, show adaptive cards, etc.
-```
-
-## 🔍 Configuration Requirements
-
-### Required Environment Variables
-```bash
-# Agent Identity
-AGENT_ID=your-agent-id
-AGENTIC_USER_ID=your-user-id
-
-# n8n Integration
-N8N_WEBHOOK_URL=https://your-n8n-instance/webhook/path
-N8N_WEBHOOK_AUTH_HEADER="Basic base64credentials"
-
-# Service Connection (Authentication)
-connections__service_connection__settings__clientId=<client-id>
-connections__service_connection__settings__clientSecret=<client-secret>
-connections__service_connection__settings__tenantId=<tenant-id>
-
-# Agentic Authentication
-agentic_type=agentic
-agentic_altBlueprintConnectionName=service_connection
-agentic_scopes=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default
-
-# MCP Tools (Optional)
-MCP_AUTH_TOKEN=optional-bearer-token
-TOOLS_MODE=MCPPlatform
 ```
 
 ---

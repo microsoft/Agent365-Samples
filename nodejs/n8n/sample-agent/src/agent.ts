@@ -15,7 +15,7 @@ export const agentApplication = new AgentApplication<ApplicationTurnState>({
   fileDownloaders: [downloader]
 });
 
-const n8nAgent = new N8nAgent(undefined);
+const n8nAgent = new N8nAgent();
 
 agentApplication.onActivity(ActivityTypes.Message, async (context: TurnContext, state: ApplicationTurnState) => {
   // Increment count state
