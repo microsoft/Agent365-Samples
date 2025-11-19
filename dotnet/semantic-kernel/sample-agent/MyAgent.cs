@@ -46,7 +46,6 @@ public class MyAgent : AgentApplication
         OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, autoSignInHandlers: autoSignInHandlers);
     }
 
-    internal static bool IsApplicationInstalled { get; set; } = false;
     internal static bool TermsAndConditionsAccepted { get; set; } = false;
 
     protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -75,12 +74,6 @@ public class MyAgent : AgentApplication
             new ServiceDescriptor(typeof(ITurnContext), turnContext),
             new ServiceDescriptor(typeof(Kernel), _kernel),
         ];
-
-        if (!IsApplicationInstalled)
-        {
-            await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);
-            return;
-        }
 
         var agent365Agent = this.GetAgent365Agent(serviceCollection, turnContext);
         if (!TermsAndConditionsAccepted)
@@ -128,12 +121,6 @@ public class MyAgent : AgentApplication
             new ServiceDescriptor(typeof(ITurnContext), turnContext),
             new ServiceDescriptor(typeof(Kernel), _kernel),
         ];
-
-        if (!IsApplicationInstalled)
-        {
-            await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending notifications."), cancellationToken);
-            return;
-        }
 
         var agent365Agent = this.GetAgent365Agent(serviceCollection, turnContext);
         if (!TermsAndConditionsAccepted)
@@ -237,28 +224,6 @@ public class MyAgent : AgentApplication
         catch (Exception ex)
         {
             _logger.LogWarning($"There was an error registering for observability: {ex.Message}");
-        }
-
-        if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
-        {
-            bool useAgenticAuth = Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "true";
-
-            IsApplicationInstalled = true;
-            TermsAndConditionsAccepted = useAgenticAuth ? true : false;
-
-            string message = $"Thank you for hiring me! Looking forward to assisting you in your professional journey!"; 
-            if (!useAgenticAuth)
-            {
-                message += "Before I begin, could you please confirm that you accept the terms and conditions?";
-            }
-
-            await turnContext.SendActivityAsync(MessageFactory.Text(message), cancellationToken);
-        }
-        else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
-        {
-            IsApplicationInstalled = false;
-            TermsAndConditionsAccepted = false;
-            await turnContext.SendActivityAsync(MessageFactory.Text("Thank you for your time, I enjoyed working with you."), cancellationToken);
         }
     }
 
