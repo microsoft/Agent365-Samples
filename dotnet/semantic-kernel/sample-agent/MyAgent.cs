@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 using System;
-using System.Configuration;
-using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Agent365SemanticKernelSampleAgent.Agents;
@@ -21,7 +19,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace Agent365SemanticKernelSampleAgent;
@@ -84,12 +81,6 @@ public class MyAgent : AgentApplication
             new ServiceDescriptor(typeof(Kernel), _kernel),
         ];
 
-        if (!IsApplicationInstalled)
-        {
-            await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);
-            return;
-        }
-
         var agent365Agent = await this.GetAgent365AgentAsync(serviceCollection, turnContext, primaryAuthHandler);
         if (!TermsAndConditionsAccepted)
         {
@@ -140,12 +131,6 @@ public class MyAgent : AgentApplication
             new ServiceDescriptor(typeof(ITurnContext), turnContext),
             new ServiceDescriptor(typeof(Kernel), _kernel),
         ];
-
-        if (!IsApplicationInstalled)
-        {
-            await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending notifications."), cancellationToken);
-            return;
-        }
 
         var agent365Agent = await this.GetAgent365AgentAsync(serviceCollection, turnContext, primaryAuthHandler);
         if (!TermsAndConditionsAccepted)
@@ -223,7 +208,7 @@ public class MyAgent : AgentApplication
         switch (response.ContentType)
         {
             case Agent365AgentResponseContentType.Text:
-                turnContext.StreamingResponse.QueueTextChunk(response.Content!);
+                await turnContext.SendActivityAsync(response.Content!);
                 break;
             default:
                 break;
@@ -253,28 +238,6 @@ public class MyAgent : AgentApplication
         catch (Exception ex)
         {
             _logger.LogWarning($"There was an error registering for observability: {ex.Message}");
-        }
-
-        if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
-        {
-            bool useAgenticAuth = Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "true";
-
-            IsApplicationInstalled = true;
-            TermsAndConditionsAccepted = useAgenticAuth ? true : false;
-
-            string message = $"Thank you for hiring me! Looking forward to assisting you in your professional journey!"; 
-            if (!useAgenticAuth)
-            {
-                message += "Before I begin, could you please confirm that you accept the terms and conditions?";
-            }
-
-            await turnContext.SendActivityAsync(MessageFactory.Text(message), cancellationToken);
-        }
-        else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
-        {
-            IsApplicationInstalled = false;
-            TermsAndConditionsAccepted = false;
-            await turnContext.SendActivityAsync(MessageFactory.Text("Thank you for your time, I enjoyed working with you."), cancellationToken);
         }
     }
 
