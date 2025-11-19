@@ -23,6 +23,11 @@ To set up and test this agent, refer to the [Configure Agent Testing](https://le
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.MD).
 
+## Deploying the Agent
+
+Refer to the [Deploy and publish agents](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish-deploy-agent?tabs=nodejs) guide for complete instructions.
+
+
 ## Support
 
 For issues, questions, or feedback:
