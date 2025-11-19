@@ -9,42 +9,48 @@ namespace AgentFrameworkWeather.telemetry
 {
     public static class A365OtelWrapper
     {
-        public static async Task InvokeAgentOperation( 
+        public static async Task InvokeObservedAgentOperation(
             string operationName,
-            ITurnContext turnContext, 
+            ITurnContext turnContext,
             ITurnState turnState,
             IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
-            UserAuthorization authSystem, 
+            UserAuthorization authSystem,
             string authHandlerName,
             ILogger? logger,
             Func<Task> func
             )
         {
-            // Resolve the tenant and agent id being used to communicate with A365 services. 
-            (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName); 
-
-            using var baggageScope = new BaggageBuilder()
-            .TenantId(tenantId)
-            .AgentId(agentId)
-            .Build();
-
-            try
-            {
-                agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
+            // Wrap the operation with AgentSDK observability.
+            await AgentMetrics.InvokeObservedAgentOperation(
+                operationName,
+                turnContext,
+                async () =>
                 {
-                    UserAuthorization = authSystem,
-                    TurnContext = turnContext,
-                    AuthHandlerName = authHandlerName
-                }, EnvironmentUtils.GetObservabilityAuthenticationScope());
-            }
-            catch (Exception ex)
-            {
-                logger?.LogWarning($"There was an error registering for observability: {ex.Message}");
-            }
+                    // Resolve the tenant and agent id being used to communicate with A365 services. 
+                    (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName);
 
+                    using var baggageScope = new BaggageBuilder()
+                    .TenantId(tenantId)
+                    .AgentId(agentId)
+                    .Build();
 
-            // Placeholder for OpenTelemetry integration
-            await func().ConfigureAwait(false);
+                    try
+                    {
+                        agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
+                        {
+                            UserAuthorization = authSystem,
+                            TurnContext = turnContext,
+                            AuthHandlerName = authHandlerName
+                        }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogWarning($"There was an error registering for observability: {ex.Message}");
+                    }
+
+                    // Invoke the actual operation.
+                    await func().ConfigureAwait(false);
+                }).ConfigureAwait(false);
         }
 
         /// <summary>

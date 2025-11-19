@@ -43,7 +43,9 @@ namespace AgentFrameworkWeather.Agent
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<WeatherAgent>? _logger = null;
         private IMcpToolRegistrationService? _toolService = null;
-        
+        // Setup reusable auto sign-in handlers
+        private readonly string AgenticIdAuthHanlder = "agentic";
+        private readonly string MyAuthHanlder = "me";
         // Temp
         private static ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
@@ -66,8 +68,8 @@ namespace AgentFrameworkWeather.Agent
             // Handle A365 Notification Messages. 
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { "agentic" });
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false , autoSignInHandlers: new[] { "AIFoundry" });
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false , autoSignInHandlers: new[] { MyAuthHanlder });
         }
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -99,69 +101,57 @@ namespace AgentFrameworkWeather.Agent
             string ObservabilityAuthHandlerName = "";
             string ToolAuthHandlerName = "";
             if (turnContext.IsAgenticRequest())
-            {
-                ObservabilityAuthHandlerName = "agentic";
-                ToolAuthHandlerName = "agentic";
-            }
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHanlder;
             else
-            {
-                ObservabilityAuthHandlerName = "AIFoundry";
-                ToolAuthHandlerName = "AIFoundry";
-            }
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHanlder;
 
-            await AgentMetrics.InvokeObservedAgentOperation(
+
+            await A365OtelWrapper.InvokeObservedAgentOperation(
                 "MessageProcessor",
                 turnContext,
+                turnState,
+                _agentTokenCache,
+                UserAuthorization,
+                ObservabilityAuthHandlerName,
+                _logger,
                 async () =>
             {
-                await A365OtelWrapper.InvokeAgentOperation(
-                    "MessageProcessor",
-                    turnContext,
-                    turnState,
-                    _agentTokenCache,
-                    UserAuthorization,
-                    ObservabilityAuthHandlerName,
-                    _logger,
-                    async () =>
+                // Start a Streaming Process to let clients that support streaming know that we are processing the request. 
+                await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
+                try
                 {
-                    // Start a Streaming Process to let clients that support streaming know that we are processing the request. 
-                    await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
-                    try
+                    var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                    var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
+
+                    // Read or Create the conversation thread for this conversation.
+                    AgentThread? thread = GetConversationThread(_agent, turnState);
+
+                    if (turnContext?.Activity?.Attachments?.Count > 0)
                     {
-                        var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
-                        var _agent = await GetClientAgent(turnContext,turnState, _toolService, ToolAuthHandlerName);
-
-                        // Read or Create the conversation thread for this conversation.
-                        AgentThread? thread = GetConversationThread(_agent, turnState);
-
-                        if (turnContext?.Activity?.Attachments?.Count >0)
+                        foreach (var attachment in turnContext.Activity.Attachments)
                         {
-                            foreach (var attachment in turnContext.Activity.Attachments)
+                            if (attachment.ContentType == "application/vnd.microsoft.teams.file.download.info" && !string.IsNullOrEmpty(attachment.ContentUrl))
                             {
-                                if (attachment.ContentType == "application/vnd.microsoft.teams.file.download.info" && !string.IsNullOrEmpty(attachment.ContentUrl))
-                                {
-                                     userText += $"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]";
-                                }
+                                userText += $"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]";
                             }
                         }
+                    }
 
-                        // Stream the response back to the user as we receive it from the agent.
-                        await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
-                        {
-                            if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
-                            {
-                                turnContext?.StreamingResponse.QueueTextChunk(response.Text);
-                            }
-                        }
-                        turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
-                    }
-                    finally
+                    // Stream the response back to the user as we receive it from the agent.
+                    await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
                     {
-                        await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); // End the streaming response
+                        if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
+                        {
+                            turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                        }
                     }
-                });
+                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
+                }
+                finally
+                {
+                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); // End the streaming response
+                }
             });
-
         }
 
 
