@@ -1,4 +1,6 @@
 name: CI - Build .NET Semantic Kernel Sample Agent
+permissions:
+  contents: read
 
 on:
   push:
