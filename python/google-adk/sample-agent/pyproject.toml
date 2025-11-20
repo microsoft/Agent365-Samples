@@ -34,11 +34,12 @@ dependencies = [
 
     # Microsoft Agent 365 SDK packages
     "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
 ]
 requires-python = ">=3.11"
 
 # Package index configuration
-# PyPI is the default/primary source, local packages are fallback
+# PyPI is the default/primary source
 [[tool.uv.index]]
 name = "pypi"
 url = "https://pypi.org/simple"

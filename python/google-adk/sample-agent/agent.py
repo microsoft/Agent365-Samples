@@ -8,6 +8,11 @@ load_dotenv()
 
 from mcp_tool_registration_service import McpToolRegistrationService
 
+from microsoft_agents_a365.observability.core.config import configure
+from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
+    BaggageBuilder,
+)
+
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
@@ -45,9 +50,11 @@ async def main():
 
     # Run agent
     try:
-        _ = await runner.run_debug(
-                user_messages=["Send alias@example.com an email with a dad joke."]
-            )
+        user_message = "Send alias@example.com an email with a dad joke."
+        with BaggageBuilder().tenant_id("your-tenant-id").agent_id("agent123").build():
+            _ = await runner.run_debug(
+                    user_messages=[user_message]
+                )
     finally:
         agentTools = my_agent.tools
         for tool in agentTools:
@@ -55,6 +62,11 @@ async def main():
                 await tool.close()
 
 if __name__ == "__main__":
+    configure(
+        service_name="GoogleADKSampleAgent",
+        service_namespace="GoogleADKTesting",
+    )
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
