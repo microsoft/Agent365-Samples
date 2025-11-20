@@ -44,7 +44,12 @@ export function extractTenantDetailsFromTurnContext(context: TurnContext): {
   return { tenantId };
 }
 
-// Configure observability with token resolver (like Python's token_resolver function)
+/**
+ * Resolves the token for the given agent and tenant IDs.
+ * @param agentId The agent ID.
+ * @param tenantId The tenant ID.
+ * @returns The resolved token or null if not found.
+ */
 export const tokenResolver = (
   agentId: string,
   tenantId: string
@@ -64,6 +69,10 @@ export const tokenResolver = (
   }
 };
 
+/**
+ * Gets the cluster category from environment variables.
+ * @returns The cluster category as a ClusterCategory type.
+ */
 export const getClusterCategory = (): ClusterCategory => {
   const category = process.env.CLUSTER_CATEGORY;
   if (category) {
@@ -72,6 +81,12 @@ export const getClusterCategory = (): ClusterCategory => {
   return "prod" as ClusterCategory; // Safe fallback
 };
 
+/*
+ * Creates a cache key for storing/retrieving agentic tokens.
+ * @param agentId The agent ID.
+ * @param tenantId (Optional) The tenant ID.
+ * @returns A string representing the cache key.
+ */
 export function createAgenticTokenCacheKey(
   agentId: string,
   tenantId?: string
