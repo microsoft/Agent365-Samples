@@ -132,20 +132,13 @@ async function runWithTelemetry(
           invokeScope.recordOutputMessages([
             `${options.operationName} handled by PerplexityAgent`,
           ]);
-          invokeScope.recordResponse(`${options.operationName} succeeded`);
+          invokeScope.recordOutputMessages([
+            `${options.operationName} succeeded`,
+          ]);
         } catch (error) {
           const err = error as Error;
-
           // Error markers
           invokeScope.recordError(err);
-          invokeScope.recordOutputMessages([
-            `${options.operationName} failed`,
-            `Error: ${err.message ?? String(err)}`,
-          ]);
-          invokeScope.recordResponse(
-            `${options.operationName} failed: ${err.message ?? String(err)}`
-          );
-
           // Preserve original behavior by rethrowing
           throw error;
         }
