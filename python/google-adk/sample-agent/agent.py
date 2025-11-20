@@ -19,7 +19,7 @@ from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
 from microsoft_agents.activity import load_configuration_from_env, Activity, ChannelAccount, ActivityTypes
-from microsoft_agents.hosting.core import Authorization, MemoryStorage, TurnContext
+from microsoft_agents.hosting.core import Authorization, MemoryStorage, TurnContext, ClaimsIdentity, AuthenticationConstants
 from microsoft_agents.hosting.aiohttp import CloudAdapter
 from microsoft_agents.authentication.msal import MsalConnectionManager
 
@@ -50,6 +50,10 @@ async def main():
         request=Activity(
             type=ActivityTypes.message,
             text="",
+            from_property=ChannelAccount(
+                id='user1',
+                name='User One'
+            ),
             recipient=ChannelAccount(
                 id=os.getenv("AGENTIC_UPN", ""),
                 name=os.getenv("AGENTIC_NAME", ""),
@@ -58,8 +62,20 @@ async def main():
                 tenant_id=os.getenv("AGENTIC_TENANT_ID", ""),
                 role="agenticUser"
             )
+        ),
+        identity=ClaimsIdentity(
+            {
+                AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
+                AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
+            },
+            False,
+            "Anonymous",
         )
     )
+
+    if not (await auth._start_or_continue_sign_in(turnContext, None, 'AGENTIC')).sign_in_complete():
+        print("Sign-in required. Exiting.")
+        return
 
     tool_service = McpToolRegistrationService()
 
