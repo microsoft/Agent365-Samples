@@ -13,19 +13,20 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@microsoft/agents-hosting": "^1.1.0-alpha.85",
     "@microsoft/agents-hosting-express": "^1.1.0-alpha.85",
     "@microsoft/agents-a365-notifications": "*",
     "@microsoft/agents-a365-observability": "*",
     "@microsoft/agents-a365-runtime": "*",
     "@microsoft/agents-a365-tooling": "*",
-    "@modelcontextprotocol/sdk": "^1.18.1",
+    "@modelcontextprotocol/sdk": "^1.22.0",
     "express": "^5.1.0",
-    "dotenv": "^17.2.2"
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
-    "tsx": "^4.20.5",
-    "@microsoft/m365agentsplayground": "^0.2.18",
-    "@types/node": "^24.5.1",
-    "typescript": "^5.0.0"
+    "tsx": "^4.20.6",
+    "@microsoft/m365agentsplayground": "^0.2.20",
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
   }
 }
