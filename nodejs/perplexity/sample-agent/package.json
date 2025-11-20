@@ -22,6 +22,7 @@
     "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
     "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability-tokencache": "*",
     "@microsoft/agents-hosting": "^1.0.15"
   },
   "devDependencies": {
