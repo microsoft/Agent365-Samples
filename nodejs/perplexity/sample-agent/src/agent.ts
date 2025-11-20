@@ -92,6 +92,7 @@ async function runWithTelemetry(
     .callerId((context.activity.from as any)?.aadObjectId)
     .callerUpn(context.activity.from?.id)
     .correlationId(context.activity.id ?? `corr-${Date.now()}`)
+    .sourceMetadataName(context.activity.channelId)
     .build();
 
   await baggageScope.run(async () => {
