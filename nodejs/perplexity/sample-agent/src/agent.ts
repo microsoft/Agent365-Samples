@@ -27,7 +27,7 @@ import {
 } from "./telemetryHelpers.js";
 import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
 import tokenCache from "./tokenCache.js";
-import { AgenticTokenCacheInstance } from "@microsoft/agents-a365-observability-tokencache";
+// import { AgenticTokenCacheInstance } from "@microsoft/agents-a365-observability-tokencache";
 
 /**
  * Conversation state interface for tracking message count.
@@ -210,13 +210,13 @@ async function authenticateObservability(
         invokeScope.recordResponse(`${operationName}_Auth_NoToken`);
       }
     } else {
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
-        agentInfo.agentId,
-        tenantInfo.tenantId,
-        context,
-        agentApplication.authorization,
-        getObservabilityAuthenticationScope()
-      );
+      // await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      //   agentInfo.agentId,
+      //   tenantInfo.tenantId,
+      //   context,
+      //   agentApplication.authorization,
+      //   getObservabilityAuthenticationScope()
+      // );
 
       invokeScope.recordOutputMessages([
         `${operationName} auth: Shared cache refreshed`,
