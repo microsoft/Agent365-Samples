@@ -11,12 +11,7 @@ import {
 import { ActivityTypes } from "@microsoft/agents-activity";
 import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
 import { PerplexityAgent } from "./perplexityAgent.js";
-import {
-  MentionInWordValue,
-  PlaygroundActivityTypes,
-  SendEmailActivity,
-  SendTeamsMessageActivity,
-} from "./playgroundActivityTypes.js";
+import { PlaygroundActivityTypes } from "./playgroundActivityTypes.js";
 
 import {
   BaggageBuilder,
@@ -26,9 +21,13 @@ import {
   ServiceEndpoint,
 } from "@microsoft/agents-a365-observability";
 import {
+  createAgenticTokenCacheKey,
   extractAgentDetailsFromTurnContext,
   extractTenantDetailsFromTurnContext,
 } from "./telemetryHelpers.js";
+import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
+import tokenCache from "./tokenCache.js";
+// import { AgenticTokenCacheInstance } from "@microsoft/agents-a365-observability-tokencache";
 
 /**
  * Conversation state interface for tracking message count.
@@ -57,6 +56,9 @@ const storage: MemoryStorage = new MemoryStorage();
  */
 export const agentApplication: AgentApplication<ApplicationTurnState> =
   new AgentApplication<ApplicationTurnState>({
+    authorization: {
+      agentic: {}, // We have the type and scopes set in the .env file
+    },
     storage,
     fileDownloaders: [downloader],
   });
@@ -78,7 +80,7 @@ async function runWithTelemetry(
     executionType: ExecutionType;
     requestContent?: string;
   },
-  handler: () => Promise<void>
+  handler: (invokeScope?: InvokeAgentScope) => Promise<void>
 ): Promise<void> {
   const agentInfo = extractAgentDetailsFromTurnContext(context);
   const tenantInfo = extractTenantDetailsFromTurnContext(context);
@@ -120,8 +122,8 @@ async function runWithTelemetry(
       agentInfo
     );
 
-    // If observability isn't configured, just run the handler
     if (!invokeScope) {
+      // Observability not configured – just run the handler
       await handler();
       return;
     }
@@ -130,16 +132,143 @@ async function runWithTelemetry(
       await invokeScope.withActiveSpanAsync(async () => {
         invokeScope.recordInputMessages([requestContent]);
 
-        await handler();
+        // 🔐 auth (logged via telemetry)
+        await authenticateObservability(
+          context,
+          agentInfo,
+          tenantInfo,
+          options.operationName,
+          invokeScope
+        );
 
-        invokeScope.recordOutputMessages([
-          `${options.operationName} handled by PerplexityAgent`,
-        ]);
+        // 🔁 handler (logged via telemetry)
+        await executeHandlerWithTelemetry(
+          options.operationName,
+          invokeScope,
+          handler
+        );
       });
     } finally {
       invokeScope.dispose();
     }
   });
+}
+
+/**
+ * Authenticates observability using either custom resolver or shared cache.
+ * @param context The TurnContext.
+ * @param agentInfo The agent information.
+ * @param tenantInfo The tenant information.
+ * @param operationName The name of the operation.
+ * @param invokeScope The InvokeAgentScope instance.
+ * @returns Promise<void>
+ */
+async function authenticateObservability(
+  context: TurnContext,
+  agentInfo: { agentId: string },
+  tenantInfo: { tenantId?: string },
+  operationName: string,
+  invokeScope: InvokeAgentScope
+): Promise<void> {
+  // 🔧 Gate auth by environment / flag
+  if (
+    process.env.ENABLE_A365_OBSERVABILITY_EXPORTER === "false" ||
+    process.env.DEBUG === "true"
+  ) {
+    invokeScope.recordOutputMessages([
+      `${operationName} auth: skipped (debug/local environment)`,
+    ]);
+    invokeScope.recordResponse(`${operationName}_Auth_Skipped`);
+    return;
+  }
+
+  // 🔐 Real auth path (same logic as before)
+  try {
+    // Set Use_Custom_Resolver === 'true' to use a custom token resolver (see telemetry.ts) and a custom token cache (see token-cache.ts).
+    // Otherwise: use the default AgenticTokenCache via RefreshObservabilityToken.
+    if (process.env.Use_Custom_Resolver === "true") {
+      const aauToken = await agentApplication.authorization.exchangeToken(
+        context,
+        [...getObservabilityAuthenticationScope()],
+        "agentic"
+      );
+
+      const cacheKey = createAgenticTokenCacheKey(
+        agentInfo.agentId,
+        tenantInfo.tenantId
+      );
+
+      if (aauToken?.token) {
+        tokenCache.set(cacheKey, aauToken.token);
+        invokeScope.recordOutputMessages([
+          `${operationName} auth: Custom resolver token cached`,
+        ]);
+      } else {
+        invokeScope.recordOutputMessages([
+          `${operationName} auth: Custom resolver returned no token`,
+        ]);
+        invokeScope.recordResponse(`${operationName}_Auth_NoToken`);
+      }
+    } else {
+      // await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      //   agentInfo.agentId,
+      //   tenantInfo.tenantId,
+      //   context,
+      //   agentApplication.authorization,
+      //   getObservabilityAuthenticationScope()
+      // );
+
+      invokeScope.recordOutputMessages([
+        `${operationName} auth: Shared cache refreshed`,
+      ]);
+    }
+  } catch (authError) {
+    const err = authError as Error;
+    invokeScope.recordError(err);
+    invokeScope.recordOutputMessages([
+      `${operationName} auth: Failed`,
+      `Auth error: ${err.message ?? String(err)}`,
+    ]);
+    invokeScope.recordResponse(
+      `${operationName}_Auth_Failed: ${err.message ?? String(err)}`
+    );
+    // Optional: rethrow if you want auth failure to abort the whole operation
+    // throw authError;
+  }
+}
+
+/**
+ * Executes the handler with telemetry recording.
+ * @param operationName The name of the operation.
+ * @param invokeScope The InvokeAgentScope instance.
+ * @param handler The handler function to execute.
+ */
+async function executeHandlerWithTelemetry(
+  operationName: string,
+  invokeScope: InvokeAgentScope,
+  handler: (invokeScope?: InvokeAgentScope) => Promise<void>
+): Promise<void> {
+  try {
+    await handler(invokeScope);
+
+    invokeScope.recordOutputMessages([
+      `${operationName} handled by PerplexityAgent`,
+    ]);
+    invokeScope.recordResponse(`${operationName} succeeded`);
+  } catch (error) {
+    const err = error as Error;
+
+    invokeScope.recordError(err);
+    invokeScope.recordOutputMessages([
+      `${operationName} failed`,
+      `Handler error: ${err.message ?? String(err)}`,
+    ]);
+    invokeScope.recordResponse(
+      `${operationName} failed: ${err.message ?? String(err)}`
+    );
+
+    throw error;
+  }
 }
 
 /* --------------------------------------------------------------------
@@ -164,11 +293,12 @@ agentApplication.onAgentNotification(
         executionType: ExecutionType.EventToAgent,
         requestContent: `NotificationType=${activity.notificationType}`,
       },
-      async () => {
+      async (invokeScope) => {
         await perplexityAgent.handleAgentNotificationActivity(
           context,
           state,
-          activity
+          activity,
+          invokeScope
         );
       }
     );
@@ -192,11 +322,12 @@ agentApplication.onAgenticWordNotification(
         executionType: ExecutionType.EventToAgent,
         requestContent: `WordNotificationType=${activity.notificationType}`,
       },
-      async () => {
+      async (invokeScope) => {
         await perplexityAgent.handleAgentNotificationActivity(
           context,
           state,
-          activity
+          activity,
+          invokeScope
         );
       }
     );
@@ -220,11 +351,12 @@ agentApplication.onAgenticEmailNotification(
         executionType: ExecutionType.EventToAgent,
         requestContent: `EmailNotificationType=${activity.notificationType}`,
       },
-      async () => {
+      async (invokeScope) => {
         await perplexityAgent.handleAgentNotificationActivity(
           context,
           state,
-          activity
+          activity,
+          invokeScope
         );
       }
     );
@@ -232,7 +364,7 @@ agentApplication.onAgenticEmailNotification(
 );
 
 /* --------------------------------------------------------------------
- * ✅ Playground Events (Simulated) + telemetry
+ * ✅ Playground Events (Simulated) + telemetry (delegated to PerplexityAgent)
  * -------------------------------------------------------------------- */
 
 agentApplication.onActivity(
@@ -246,17 +378,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async () => {
-        const value: MentionInWordValue = context.activity
-          .value as MentionInWordValue;
-        const docName: string = value.mention.displayName;
-        const docUrl: string = value.docUrl;
-        const userName: string = value.mention.userPrincipalName;
-        const contextSnippet: string = value.context
-          ? `Context: ${value.context}`
-          : "";
-        const message: string = `✅ You were mentioned in **${docName}** by ${userName}\n📄 ${docUrl}\n${contextSnippet}`;
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundMentionInWord(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -273,17 +400,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async () => {
-        const activity = context.activity as SendEmailActivity;
-        const email = activity.value;
-
-        const message: string = `📧 Email Notification:
-          From: ${email.from}
-          To: ${email.to.join(", ")}
-          Subject: ${email.subject}
-          Body: ${email.body}`;
-
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundSendEmail(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -300,10 +422,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async () => {
-        const activity = context.activity as SendTeamsMessageActivity;
-        const message = `💬 Teams Message: ${activity.value.text} (Scope: ${activity.value.destination.scope})`;
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundSendTeamsMessage(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -320,8 +444,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: "custom",
       },
-      async () => {
-        await context.sendActivity("this is a custom activity handler");
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundCustom(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -346,8 +474,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: context.activity.text || "Unknown text",
       },
-      async () => {
-        await perplexityAgent.handleAgentMessageActivity(context, state);
+      async (invokeScope) => {
+        await perplexityAgent.handleAgentMessageActivity(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -370,8 +502,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.EventToAgent,
         requestContent: `InstallationUpdate action=${action}`,
       },
-      async () => {
-        await perplexityAgent.handleInstallationUpdateActivity(context, state);
+      async (invokeScope) => {
+        await perplexityAgent.handleInstallationUpdateActivity(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
