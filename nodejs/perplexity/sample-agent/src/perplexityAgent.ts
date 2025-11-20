@@ -87,7 +87,7 @@ export class PerplexityAgent implements AgentState {
 
     if (isToolInvocation) {
       invokeScope?.recordOutputMessages(["Message path: ToolOnly_Start"]);
-      await this.toolRunner.runToolFlow(turnContext, invokeScope);
+      await this.toolRunner.runToolFlow(turnContext);
       invokeScope?.recordOutputMessages(["Message path: ToolOnly_Completed"]);
       return;
     }

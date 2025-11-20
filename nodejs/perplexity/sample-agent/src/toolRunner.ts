@@ -6,7 +6,6 @@ import {
   AgentDetails,
   ExecuteToolScope,
   TenantDetails,
-  type InvokeAgentScope,
   type ToolCallDetails,
 } from "@microsoft/agents-a365-observability";
 import {
@@ -24,10 +23,7 @@ export class ToolRunner {
    * @param invokeScope The scope for invoking the agent.
    * @returns The result of the tool call.
    */
-  async runToolFlow(
-    turnContext: TurnContext,
-    invokeScope?: InvokeAgentScope
-  ): Promise<void> {
+  async runToolFlow(turnContext: TurnContext): Promise<void> {
     const streamingResponse = (turnContext as any).streamingResponse;
 
     // Show progress indicator (streaming or normal)
@@ -67,10 +63,7 @@ export class ToolRunner {
         ? toolScope.withActiveSpanAsync(() => this.runDemoToolWork(toolScope))
         : this.runDemoToolWork());
 
-      invokeScope?.recordOutputMessages([
-        "ToolCall path: Completed",
-        "ToolCall_Success",
-      ]);
+      toolScope?.recordResponse(response);
 
       if (streamingResponse) {
         streamingResponse.queueTextChunk(`Tool Response: ${response}`);
@@ -80,11 +73,6 @@ export class ToolRunner {
       }
     } catch (error) {
       toolScope?.recordError(error as Error);
-      invokeScope?.recordOutputMessages([
-        "ToolCall path: Error",
-        "ToolCall_Error",
-      ]);
-
       const err = error as any;
       const errorMessage = `Tool error: ${err.message || err}`;
 
