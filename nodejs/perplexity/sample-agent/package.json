@@ -18,10 +18,10 @@
     "@perplexity-ai/perplexity_ai": "^0.12.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
-    "@microsoft/agents-a365-notifications": "*",
-    "@microsoft/agents-a365-observability": "*",
-    "@microsoft/agents-a365-tooling": "*",
-    "@microsoft/agents-a365-runtime": "*",
+    "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
     "@microsoft/agents-hosting": "^1.0.15"
   },
   "devDependencies": {
