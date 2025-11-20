@@ -36,8 +36,9 @@ export class PerplexityAgent {
     invokeScope?: InvokeAgentScope
   ): Promise<void> {
     if (!this.isApplicationInstalled) {
-      invokeScope?.recordOutputMessages(["Message path: AppNotInstalled"]);
-      invokeScope?.recordResponse("Message_AppNotInstalled");
+      invokeScope?.recordOutputMessages([
+        "Message path: AppNotInstalled, Message_AppNotInstalled",
+      ]);
 
       await turnContext.sendActivity(
         "Please install the application before sending messages."
@@ -53,8 +54,8 @@ export class PerplexityAgent {
 
         invokeScope?.recordOutputMessages([
           "Message path: TermsAcceptedOnMessage",
+          "Message_TermsAccepted",
         ]);
-        invokeScope?.recordResponse("Message_TermsAccepted");
 
         await turnContext.sendActivity(
           "Thank you for accepting the terms and conditions! How can I assist you today?"
@@ -63,8 +64,8 @@ export class PerplexityAgent {
       } else {
         invokeScope?.recordOutputMessages([
           "Message path: TermsNotYetAccepted",
+          "Message_TermsNotAccepted",
         ]);
-        invokeScope?.recordResponse("Message_TermsNotAccepted");
 
         await turnContext.sendActivity(
           "Please accept the terms and conditions to proceed. Send 'I accept' to accept."
@@ -76,8 +77,10 @@ export class PerplexityAgent {
     const userMessage = turnContext.activity.text?.trim() || "";
 
     if (!userMessage) {
-      invokeScope?.recordOutputMessages(["Message path: EmptyUserMessage"]);
-      invokeScope?.recordResponse("Message_Empty");
+      invokeScope?.recordOutputMessages([
+        "Message path: EmptyUserMessage",
+        "Message_Empty",
+      ]);
 
       await turnContext.sendActivity(
         "Please send me a message and I'll help you!"
@@ -114,7 +117,7 @@ export class PerplexityAgent {
         await turnContext.sendActivity(response);
       }
 
-      invokeScope?.recordResponse("Message_Success");
+      invokeScope?.recordOutputMessages(["Message_Success"]);
     } catch (error) {
       console.error("Perplexity query error:", error);
       const err = error as any;
@@ -124,8 +127,8 @@ export class PerplexityAgent {
       invokeScope?.recordOutputMessages([
         "Message path: PerplexityInvocationError",
         errorMessage,
+        "Message_Error",
       ]);
-      invokeScope?.recordResponse("Message_Error");
 
       if (streamingResponse) {
         streamingResponse.queueTextChunk(errorMessage);
@@ -149,8 +152,8 @@ export class PerplexityAgent {
       if (!this.isApplicationInstalled) {
         invokeScope?.recordOutputMessages([
           "Notification path: AppNotInstalled",
+          "Notification_AppNotInstalled",
         ]);
-        invokeScope?.recordResponse("Notification_AppNotInstalled");
 
         await turnContext.sendActivity(
           "Please install the application before sending notifications."
@@ -166,8 +169,8 @@ export class PerplexityAgent {
 
           invokeScope?.recordOutputMessages([
             "Notification path: TermsAcceptedOnNotification",
+            "Notification_TermsAccepted",
           ]);
-          invokeScope?.recordResponse("Notification_TermsAccepted");
 
           await turnContext.sendActivity(
             "Thank you for accepting the terms and conditions! How can I assist you today?"
@@ -176,8 +179,8 @@ export class PerplexityAgent {
         } else {
           invokeScope?.recordOutputMessages([
             "Notification path: TermsNotYetAccepted",
+            "Notification_TermsNotAccepted",
           ]);
-          invokeScope?.recordResponse("Notification_TermsNotAccepted");
 
           await turnContext.sendActivity(
             "Please accept the terms and conditions to proceed. Send 'I accept' to accept."
@@ -217,23 +220,22 @@ export class PerplexityAgent {
         default:
           invokeScope?.recordOutputMessages([
             "Notification path: UnsupportedNotificationType",
+            "Notification_UnsupportedType",
           ]);
-          invokeScope?.recordResponse("Notification_UnsupportedType");
 
           await turnContext.sendActivity(
             "Notification type not yet implemented."
           );
       }
     } catch (error) {
-      console.error("Error handling agent notification activity:", error);
       const err = error as any;
 
       invokeScope?.recordError(error as Error);
       invokeScope?.recordOutputMessages([
         "Notification path: HandlerException",
         `Error handling notification: ${err.message || err}`,
+        "Notification_Error",
       ]);
-      invokeScope?.recordResponse("Notification_Error");
 
       await turnContext.sendActivity(
         `Error handling notification: ${err.message || err}`
@@ -256,8 +258,10 @@ export class PerplexityAgent {
       this.isApplicationInstalled = true;
       this.termsAndConditionsAccepted = false;
 
-      invokeScope?.recordOutputMessages(["Installation path: Added"]);
-      invokeScope?.recordResponse("Installation_Add");
+      invokeScope?.recordOutputMessages([
+        "Installation path: Added",
+        "Installation_Add",
+      ]);
 
       await turnContext.sendActivity(
         'Thank you for hiring me! Looking forward to assisting you with Perplexity AI! Before I begin, could you please confirm that you accept the terms and conditions? Send "I accept" to accept.'
@@ -266,15 +270,19 @@ export class PerplexityAgent {
       this.isApplicationInstalled = false;
       this.termsAndConditionsAccepted = false;
 
-      invokeScope?.recordOutputMessages(["Installation path: Removed"]);
-      invokeScope?.recordResponse("Installation_Remove");
+      invokeScope?.recordOutputMessages([
+        "Installation path: Removed",
+        "Installation_Remove",
+      ]);
 
       await turnContext.sendActivity(
         "Thank you for your time, I enjoyed working with you."
       );
     } else {
-      invokeScope?.recordOutputMessages(["Installation path: UnknownAction"]);
-      invokeScope?.recordResponse("Installation_UnknownAction");
+      invokeScope?.recordOutputMessages([
+        "Installation path: UnknownAction",
+        "Installation_UnknownAction",
+      ]);
     }
   }
 
@@ -300,8 +308,8 @@ export class PerplexityAgent {
     if (!mentionNotificationEntity) {
       invokeScope?.recordOutputMessages([
         "WordNotification path: MissingEntity",
+        "WordNotification_MissingEntity",
       ]);
-      invokeScope?.recordResponse("WordNotification_MissingEntity");
 
       const msg = "I could not find the mention notification details.";
       await stream.sendFinal(msg);
@@ -328,8 +336,10 @@ export class PerplexityAgent {
       `You have received the following comment. Please follow any instructions in it. ${commentContent}`
     );
 
-    invokeScope?.recordOutputMessages(["WordNotification path: Completed"]);
-    invokeScope?.recordResponse("WordNotification_Success");
+    invokeScope?.recordOutputMessages([
+      "WordNotification path: Completed",
+      "WordNotification_Success",
+    ]);
 
     await stream.sendFinal(response);
   }
@@ -356,8 +366,8 @@ export class PerplexityAgent {
     if (!emailNotificationEntity) {
       invokeScope?.recordOutputMessages([
         "EmailNotification path: MissingEntity",
+        "EmailNotification_MissingEntity",
       ]);
-      invokeScope?.recordResponse("EmailNotification_MissingEntity");
 
       const msg = "I could not find the email notification details.";
       await stream.sendFinal(msg);
@@ -382,8 +392,10 @@ export class PerplexityAgent {
       `You have received the following email. Please follow any instructions in it. ${emailContent}`
     );
 
-    invokeScope?.recordOutputMessages(["EmailNotification path: Completed"]);
-    invokeScope?.recordResponse("EmailNotification_Success");
+    invokeScope?.recordOutputMessages([
+      "EmailNotification path: Completed",
+      "EmailNotification_Success",
+    ]);
 
     await stream.sendFinal(response);
   }
@@ -408,8 +420,8 @@ export class PerplexityAgent {
 
       invokeScope?.recordOutputMessages([
         "Playground_MentionInWord path: InvalidPayload",
+        "Playground_MentionInWord_InvalidPayload",
       ]);
-      invokeScope?.recordResponse("Playground_MentionInWord_InvalidPayload");
 
       await turnContext.sendActivity(msg);
       return;
@@ -425,8 +437,8 @@ export class PerplexityAgent {
 
     invokeScope?.recordOutputMessages([
       "Playground_MentionInWord path: Completed",
+      "Playground_MentionInWord_Success",
     ]);
-    invokeScope?.recordResponse("Playground_MentionInWord_Success");
 
     await turnContext.sendActivity(message);
   }
@@ -446,21 +458,23 @@ export class PerplexityAgent {
 
       invokeScope?.recordOutputMessages([
         "Playground_SendEmail path: InvalidPayload",
+        "Playground_SendEmail_InvalidPayload",
       ]);
-      invokeScope?.recordResponse("Playground_SendEmail_InvalidPayload");
 
       await turnContext.sendActivity(msg);
       return;
     }
 
     const message: string = `📧 Email Notification:
-From: ${email.from}
-To: ${email.to?.join(", ")}
-Subject: ${email.subject}
-Body: ${email.body}`;
+      From: ${email.from}
+      To: ${email.to?.join(", ")}
+      Subject: ${email.subject}
+      Body: ${email.body}`;
 
-    invokeScope?.recordOutputMessages(["Playground_SendEmail path: Completed"]);
-    invokeScope?.recordResponse("Playground_SendEmail_Success");
+    invokeScope?.recordOutputMessages([
+      "Playground_SendEmail path: Completed",
+      "Playground_SendEmail_Success",
+    ]);
 
     await turnContext.sendActivity(message);
   }
@@ -482,8 +496,8 @@ Body: ${email.body}`;
 
       invokeScope?.recordOutputMessages([
         "Playground_SendTeamsMessage path: InvalidPayload",
+        "Playground_SendTeamsMessage_InvalidPayload",
       ]);
-      invokeScope?.recordResponse("Playground_SendTeamsMessage_InvalidPayload");
 
       await turnContext.sendActivity(msg);
       return;
@@ -493,8 +507,8 @@ Body: ${email.body}`;
 
     invokeScope?.recordOutputMessages([
       "Playground_SendTeamsMessage path: Completed",
+      "Playground_SendTeamsMessage_Success",
     ]);
-    invokeScope?.recordResponse("Playground_SendTeamsMessage_Success");
 
     await turnContext.sendActivity(message);
   }
@@ -508,8 +522,10 @@ Body: ${email.body}`;
 
     const message = "this is a custom activity handler";
 
-    invokeScope?.recordOutputMessages(["Playground_Custom path: Completed"]);
-    invokeScope?.recordResponse("Playground_Custom_Success");
+    invokeScope?.recordOutputMessages([
+      "Playground_Custom path: Completed",
+      "Playground_Custom_Success",
+    ]);
 
     await turnContext.sendActivity(message);
   }
