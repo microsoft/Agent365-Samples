@@ -7,40 +7,15 @@ import {
   AgentNotificationActivity,
   NotificationType,
 } from "@microsoft/agents-a365-notifications";
+import {
+  MentionInWordValue,
+  SendEmailActivity,
+  SendTeamsMessageActivity,
+} from "./playgroundActivityTypes.js";
 import type { InvokeAgentScope } from "@microsoft/agents-a365-observability";
 
 /**
- * Helper for handling streaming vs non-streaming surfaces in a unified way.
- * For streaming-enabled clients, we use queueInformativeUpdate / queueTextChunk + endStream.
- * For others, we fall back to sendActivity.
- */
-function getStreamingOrFallback(turnContext: TurnContext) {
-  const streamingResponse = (turnContext as any).streamingResponse;
-
-  return {
-    hasStreaming: !!streamingResponse,
-    async sendProgress(message: string): Promise<void> {
-      if (streamingResponse) {
-        streamingResponse.queueInformativeUpdate(message);
-      } else {
-        await turnContext.sendActivity(message);
-      }
-    },
-    async sendFinal(message: string): Promise<void> {
-      if (streamingResponse) {
-        streamingResponse.queueTextChunk(message);
-        await streamingResponse.endStream();
-      } else {
-        await turnContext.sendActivity(message);
-      }
-    },
-  };
-}
-
-/**
- * PerplexityAgent integrates with the Perplexity AI SDK to handle user messages
- * and agent notification activities. It manages installation state, terms acceptance,
- * and routes messages to the PerplexityClient for processing.
+ * Perplexity Agent class handling message and notification activities.
  */
 export class PerplexityAgent {
   isApplicationInstalled: boolean = false;
@@ -53,10 +28,11 @@ export class PerplexityAgent {
 
   /**
    * Handles incoming user messages and sends responses using Perplexity.
+   * Streaming is used only around the Perplexity call.
    */
   async handleAgentMessageActivity(
     turnContext: TurnContext,
-    state: TurnState,
+    _state: TurnState,
     invokeScope?: InvokeAgentScope
   ): Promise<void> {
     if (!this.isApplicationInstalled) {
@@ -109,11 +85,10 @@ export class PerplexityAgent {
       return;
     }
 
-    // Grab streamingResponse if this surface supports it
+    // Long-running path: call Perplexity with streaming visuals if supported.
     const streamingResponse = (turnContext as any).streamingResponse;
 
     try {
-      // Show temporary "I'm working" message with spinner (Playground, and any streaming-enabled client)
       if (streamingResponse) {
         streamingResponse.queueInformativeUpdate(
           "I'm working on your request..."
@@ -133,12 +108,9 @@ export class PerplexityAgent {
       ]);
 
       if (streamingResponse) {
-        // Send the final response as a streamed chunk
         streamingResponse.queueTextChunk(response);
-        // Close the stream when done
         await streamingResponse.endStream();
       } else {
-        // Fallback for channels that don't support streaming
         await turnContext.sendActivity(response);
       }
 
@@ -156,7 +128,6 @@ export class PerplexityAgent {
       invokeScope?.recordResponse("Message_Error");
 
       if (streamingResponse) {
-        // Surface the error through the stream and close it
         streamingResponse.queueTextChunk(errorMessage);
         await streamingResponse.endStream();
       } else {
@@ -215,7 +186,7 @@ export class PerplexityAgent {
         }
       }
 
-      // Find the first known notification type entity
+      // Route to specific handlers
       switch (agentNotificationActivity.notificationType) {
         case NotificationType.EmailNotification:
           invokeScope?.recordOutputMessages([
@@ -272,10 +243,11 @@ export class PerplexityAgent {
 
   /**
    * Handles agent installation and removal events.
+   * Instant responses only (no streaming).
    */
   async handleInstallationUpdateActivity(
     turnContext: TurnContext,
-    state: TurnState,
+    _state: TurnState,
     invokeScope?: InvokeAgentScope
   ): Promise<void> {
     const action = (turnContext.activity as any).action;
@@ -307,18 +279,18 @@ export class PerplexityAgent {
   }
 
   /**
-   * Handles @-mention notification activities.
+   * Handles @-mention notification activities (real Word notifications).
+   * Long-running: Perplexity calls + streaming visuals where supported.
    */
   async wordNotificationHandler(
     turnContext: TurnContext,
-    state: TurnState,
+    _state: TurnState,
     mentionActivity: AgentNotificationActivity,
     invokeScope?: InvokeAgentScope
   ): Promise<void> {
     invokeScope?.recordOutputMessages(["WordNotification path: Starting"]);
 
-    const stream = getStreamingOrFallback(turnContext);
-
+    const stream = this.getStreamingOrFallback(turnContext);
     await stream.sendProgress(
       "Thanks for the @-mention notification! Working on a response..."
     );
@@ -363,18 +335,18 @@ export class PerplexityAgent {
   }
 
   /**
-   * Handles email notification activities.
+   * Handles email notification activities (real email notifications).
+   * Long-running: Perplexity calls + streaming visuals where supported.
    */
   async emailNotificationHandler(
     turnContext: TurnContext,
-    state: TurnState,
+    _state: TurnState,
     emailActivity: AgentNotificationActivity,
     invokeScope?: InvokeAgentScope
   ): Promise<void> {
     invokeScope?.recordOutputMessages(["EmailNotification path: Starting"]);
 
-    const stream = getStreamingOrFallback(turnContext);
-
+    const stream = this.getStreamingOrFallback(turnContext);
     await stream.sendProgress(
       "Thanks for the email notification! Working on a response..."
     );
@@ -416,6 +388,132 @@ export class PerplexityAgent {
     await stream.sendFinal(response);
   }
 
+  /* ------------------------------------------------------------------
+   * ✅ Playground handlers (telemetry only, no streaming for snappy UX)
+   * ------------------------------------------------------------------ */
+
+  async handlePlaygroundMentionInWord(
+    turnContext: TurnContext,
+    _state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    invokeScope?.recordOutputMessages([
+      "Playground_MentionInWord path: Starting",
+    ]);
+
+    const value = turnContext.activity.value as MentionInWordValue | undefined;
+
+    if (!value || !value.mention) {
+      const msg = "Invalid playground MentionInWord payload.";
+
+      invokeScope?.recordOutputMessages([
+        "Playground_MentionInWord path: InvalidPayload",
+      ]);
+      invokeScope?.recordResponse("Playground_MentionInWord_InvalidPayload");
+
+      await turnContext.sendActivity(msg);
+      return;
+    }
+
+    const docName: string = value.mention.displayName;
+    const docUrl: string = value.docUrl;
+    const userName: string = value.mention.userPrincipalName;
+    const contextSnippet: string = value.context
+      ? `Context: ${value.context}`
+      : "";
+    const message: string = `✅ You were mentioned in **${docName}** by ${userName}\n📄 ${docUrl}\n${contextSnippet}`;
+
+    invokeScope?.recordOutputMessages([
+      "Playground_MentionInWord path: Completed",
+    ]);
+    invokeScope?.recordResponse("Playground_MentionInWord_Success");
+
+    await turnContext.sendActivity(message);
+  }
+
+  async handlePlaygroundSendEmail(
+    turnContext: TurnContext,
+    _state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    invokeScope?.recordOutputMessages(["Playground_SendEmail path: Starting"]);
+
+    const activity = turnContext.activity as SendEmailActivity;
+    const email = activity.value;
+
+    if (!email) {
+      const msg = "Invalid playground SendEmail payload.";
+
+      invokeScope?.recordOutputMessages([
+        "Playground_SendEmail path: InvalidPayload",
+      ]);
+      invokeScope?.recordResponse("Playground_SendEmail_InvalidPayload");
+
+      await turnContext.sendActivity(msg);
+      return;
+    }
+
+    const message: string = `📧 Email Notification:
+          From: ${email.from}
+          To: ${email.to?.join(", ")}
+          Subject: ${email.subject}
+          Body: ${email.body}`;
+
+    invokeScope?.recordOutputMessages(["Playground_SendEmail path: Completed"]);
+    invokeScope?.recordResponse("Playground_SendEmail_Success");
+
+    await turnContext.sendActivity(message);
+  }
+
+  async handlePlaygroundSendTeamsMessage(
+    turnContext: TurnContext,
+    _state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    invokeScope?.recordOutputMessages([
+      "Playground_SendTeamsMessage path: Starting",
+    ]);
+
+    const activity = turnContext.activity as SendTeamsMessageActivity;
+    const value = activity.value;
+
+    if (!value) {
+      const msg = "Invalid playground SendTeamsMessage payload.";
+
+      invokeScope?.recordOutputMessages([
+        "Playground_SendTeamsMessage path: InvalidPayload",
+      ]);
+      invokeScope?.recordResponse("Playground_SendTeamsMessage_InvalidPayload");
+
+      await turnContext.sendActivity(msg);
+      return;
+    }
+
+    const message = `💬 Teams Message: ${value.text} (Scope: ${value.destination?.scope})`;
+
+    invokeScope?.recordOutputMessages([
+      "Playground_SendTeamsMessage path: Completed",
+    ]);
+    invokeScope?.recordResponse("Playground_SendTeamsMessage_Success");
+
+    await turnContext.sendActivity(message);
+  }
+
+  async handlePlaygroundCustom(
+    turnContext: TurnContext,
+    _state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    invokeScope?.recordOutputMessages(["Playground_Custom path: Starting"]);
+
+    const message = "this is a custom activity handler";
+
+    invokeScope?.recordOutputMessages(["Playground_Custom path: Completed"]);
+    invokeScope?.recordResponse("Playground_Custom_Success");
+
+    await turnContext.sendActivity(message);
+  }
+
   /**
    * Creates a Perplexity client instance with configured API key.
    */
@@ -427,5 +525,32 @@ export class PerplexityAgent {
 
     const model = process.env.PERPLEXITY_MODEL || "sonar";
     return new PerplexityClient(apiKey, model);
+  }
+
+  /**
+   * Helper for handling streaming vs non-streaming surfaces in a unified way.
+   * For streaming-enabled clients, we use queueInformativeUpdate / queueTextChunk + endStream.
+   * For others, we only send the final response.
+   */
+  private getStreamingOrFallback(turnContext: TurnContext) {
+    const streamingResponse = (turnContext as any).streamingResponse;
+
+    return {
+      hasStreaming: !!streamingResponse,
+      async sendProgress(message: string): Promise<void> {
+        if (streamingResponse) {
+          streamingResponse.queueInformativeUpdate(message);
+        }
+        // For non-streaming surfaces, skip progress bubbles to avoid double messages.
+      },
+      async sendFinal(message: string): Promise<void> {
+        if (streamingResponse) {
+          streamingResponse.queueTextChunk(message);
+          await streamingResponse.endStream();
+        } else {
+          await turnContext.sendActivity(message);
+        }
+      },
+    };
   }
 }

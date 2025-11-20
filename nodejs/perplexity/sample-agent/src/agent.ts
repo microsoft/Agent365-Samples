@@ -11,12 +11,7 @@ import {
 import { ActivityTypes } from "@microsoft/agents-activity";
 import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
 import { PerplexityAgent } from "./perplexityAgent.js";
-import {
-  MentionInWordValue,
-  PlaygroundActivityTypes,
-  SendEmailActivity,
-  SendTeamsMessageActivity,
-} from "./playgroundActivityTypes.js";
+import { PlaygroundActivityTypes } from "./playgroundActivityTypes.js";
 
 import {
   BaggageBuilder,
@@ -254,7 +249,7 @@ agentApplication.onAgenticEmailNotification(
 );
 
 /* --------------------------------------------------------------------
- * ✅ Playground Events (Simulated) + telemetry
+ * ✅ Playground Events (Simulated) + telemetry (delegated to PerplexityAgent)
  * -------------------------------------------------------------------- */
 
 agentApplication.onActivity(
@@ -268,17 +263,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async (_invokeScope) => {
-        const value: MentionInWordValue = context.activity
-          .value as MentionInWordValue;
-        const docName: string = value.mention.displayName;
-        const docUrl: string = value.docUrl;
-        const userName: string = value.mention.userPrincipalName;
-        const contextSnippet: string = value.context
-          ? `Context: ${value.context}`
-          : "";
-        const message: string = `✅ You were mentioned in **${docName}** by ${userName}\n📄 ${docUrl}\n${contextSnippet}`;
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundMentionInWord(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -295,17 +285,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async (_invokeScope) => {
-        const activity = context.activity as SendEmailActivity;
-        const email = activity.value;
-
-        const message: string = `📧 Email Notification:
-          From: ${email.from}
-          To: ${email.to.join(", ")}
-          Subject: ${email.subject}
-          Body: ${email.body}`;
-
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundSendEmail(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -322,10 +307,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: JSON.stringify(context.activity.value ?? {}),
       },
-      async (_invokeScope) => {
-        const activity = context.activity as SendTeamsMessageActivity;
-        const message = `💬 Teams Message: ${activity.value.text} (Scope: ${activity.value.destination.scope})`;
-        await context.sendActivity(message);
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundSendTeamsMessage(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
@@ -342,8 +329,12 @@ agentApplication.onActivity(
         executionType: ExecutionType.HumanToAgent,
         requestContent: "custom",
       },
-      async (_invokeScope) => {
-        await context.sendActivity("this is a custom activity handler");
+      async (invokeScope) => {
+        await perplexityAgent.handlePlaygroundCustom(
+          context,
+          state,
+          invokeScope
+        );
       }
     );
   }
