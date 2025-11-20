@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-  Create or update an OAuth2 delegated permission grant for an Agent Application and enable consent permission inheritance.
+  Create or update an OAuth2 delegated permission grant for an Agent Blueprint and enable consent permission inheritance.
 
 .PARAMETER AgentBlueprintApplicationId
   Application ID (App ID) of the Agent Blueprint. This is used to look up the Agent Blueprint application and service principal.
 
 .EXAMPLE
-  .\SetGrantAndInheritenceForAA.ps1 -AgentBlueprintApplicationId "11111111-2222-3333-4444-555555555555"
+  .\Set-AgentBlueprintPermissions.ps1 -AgentBlueprintApplicationId "11111111-2222-3333-4444-555555555555"
 #>
 
 [CmdletBinding()]
