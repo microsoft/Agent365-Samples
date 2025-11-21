@@ -1,8 +1,11 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { McpToolServerConfigurationService, McpClientTool, MCPServerConfig } from '@microsoft/agents-a365-tooling';
-import { AgenticAuthenticationService, Authorization, Utility as RuntimeUtility } from '@microsoft/agents-a365-runtime';
+import { AgenticAuthenticationService, Utility as RuntimeUtility } from '@microsoft/agents-a365-runtime';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { TurnContext } from '@microsoft/agents-hosting';
+import { AgentApplication, TurnContext, TurnState } from '@microsoft/agents-hosting';
 
 export type McpServer = MCPServerConfig & {
   type: string,
@@ -22,12 +25,14 @@ export class McpToolRegistrationService {
   async getMcpServers(
     authHandlerName: string,
     turnContext: TurnContext,
+    agentApplication: AgentApplication<TurnState>,
     authToken: string
   ): Promise<McpServer[]> {
-    const authorization = turnContext.turnState.get('authorization');
     if (!authToken) {
+      const authorization = agentApplication.authorization;
       authToken = await AgenticAuthenticationService.GetAgenticUserToken(authorization, authHandlerName, turnContext);
     }
+
    // Get the agentic user ID from authorization configuration
     const agenticAppId = RuntimeUtility.ResolveAgentIdentity(turnContext, authToken);
 
