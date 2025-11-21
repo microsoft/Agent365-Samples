@@ -2,7 +2,7 @@
 import json
 import os
 from hosting import MyAgent
-from agent import GoogleADKAgentWrapper
+from agent import GoogleADKAgent
 
 # Server imports
 from aiohttp.web import Application, Request, Response, run_app
@@ -94,7 +94,7 @@ def main():
         service_namespace="GoogleADKTesting",
     )
 
-    agent_application = MyAgent(GoogleADKAgentWrapper())
+    agent_application = MyAgent(GoogleADKAgent())
     start_server(agent_application)
 
 
