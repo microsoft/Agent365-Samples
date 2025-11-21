@@ -1,0 +1,89 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: Auto-Award Points
+
+on:
+  pull_request:
+    types: [closed]
+  issues:
+    types: [closed]
+
+jobs:
+  award-points:
+    if: github.event.pull_request.merged == true || github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd gamification/python
+          pip install -r requirements.txt
+      
+      - name: Award points for merged PR
+        if: github.event.pull_request.merged == true
+        run: |
+          cd gamification/python
+          python -c "
+          from database import GamificationDatabase
+          from points_service import PointsService
+          
+          db = GamificationDatabase()
+          service = PointsService(db)
+          
+          # Get PR details
+          username = '${{ github.event.pull_request.user.login }}'
+          pr_number = ${{ github.event.pull_request.number }}
+          
+          # Award points
+          result = service.award_points(
+              username,
+              'pr_merged',
+              {'pr_number': pr_number}
+          )
+          
+          print(f'Awarded {result[\"points_earned\"]} points to {username}')
+          db.close()
+          "
+      
+      - name: Award points for closed issue
+        if: github.event_name == 'issues'
+        run: |
+          cd gamification/python
+          python -c "
+          from database import GamificationDatabase
+          from points_service import PointsService
+          
+          db = GamificationDatabase()
+          service = PointsService(db)
+          
+          username = '${{ github.event.issue.user.login }}'
+          issue_number = ${{ github.event.issue.number }}
+          
+          result = service.award_points(
+              username,
+              'issue_closed',
+              {'issue_number': issue_number}
+          )
+          
+          print(f'Awarded {result[\"points_earned\"]} points to {username}')
+          db.close()
+          "
+      
+      - name: Commit database changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add gamification/python/gamification.db
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: update gamification points [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
