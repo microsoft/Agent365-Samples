@@ -42,9 +42,6 @@ class GoogleADKAgent:
         self.description = description
         self.instruction = instruction
         self.agent: Optional[Agent] = None
-        self.runner: Optional[Runner] = None
-        self.auth: Optional[Authorization] = None
-        self.turn_context: Optional[TurnContext] = None
 
         self.agent = Agent(
             name=self.agent_name,
