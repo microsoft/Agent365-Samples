@@ -15,7 +15,7 @@ export const a365Observability = ObservabilityManager.configure(
     // exporterOptions.maxQueueSize = 10; // customized per request
 
     builder
-      .withService("TypeScript Sample Agent", "1.0.0")
+      .withService("Perplexity Agent", "1.0.0")
       .withClusterCategory(getClusterCategory());
     //.withExporterOptions(exporterOptions);
     // Opt-in custom token resolver via env flag `Use_Custom_Resolver=true`
