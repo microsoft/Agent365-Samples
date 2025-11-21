@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using AgentFrameworkWeather;
-using AgentFrameworkWeather.Agent;
-using AgentFrameworkWeather.telemetry;
+using Agent365AgentFrameworkSampleAgent;
+using Agent365AgentFrameworkSampleAgent.Agent;
+using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Agents.A365.Observability;

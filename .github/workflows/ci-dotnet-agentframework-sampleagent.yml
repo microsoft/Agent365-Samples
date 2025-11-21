@@ -1,0 +1,40 @@
+name: CI - Build .NET Semantic Kernel Sample Agent
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'dotnet/agent-framework/sample-agent/**/*'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'dotnet/agent-framework/sample-agent/**/*'
+
+jobs:
+  dotnet-agentframework-sampleagent:
+    name: .NET Agent Framework Sample Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./dotnet/agent-framework
+
+    strategy:
+      matrix:
+        dotnet-version: ['8.0.x']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET ${{ matrix.dotnet-version }}
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ matrix.dotnet-version }}
+
+    - name: Restore dependencies
+      run: dotnet restore AgentFrameworkSampleAgent.sln
+
+    - name: Build solution
+      run: dotnet build AgentFrameworkSampleAgent.sln --no-restore --configuration Release

@@ -12,7 +12,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 
-namespace AgentFrameworkWeather;
+namespace Agent365AgentFrameworkSampleAgent;
 
 public static class AspNetExtensions
 {
