@@ -17,6 +17,9 @@
 		},
 		{
 			"mcpServerName": "mcp_MeServer"
+		},
+		{
+			"mcpServerName": "mcp_WordServer"
 		}
 	]
 }

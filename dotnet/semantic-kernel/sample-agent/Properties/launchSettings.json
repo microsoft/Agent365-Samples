@@ -5,7 +5,7 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "USE_AGENTIC_AUTH": "false",
+        "USE_AGENTIC_AUTH": "false"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }

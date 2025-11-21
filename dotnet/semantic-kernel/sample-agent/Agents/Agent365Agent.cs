@@ -1,20 +1,19 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using System;
-using System.Text;
-using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 using Agent365SemanticKernelSampleAgent.Plugins;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
-using Microsoft.Agents.Builder.UserAuth;
 using Microsoft.Extensions.Configuration;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+using System;
+using System.Text;
+using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 
 namespace Agent365SemanticKernelSampleAgent.Agents;
 
@@ -38,21 +37,30 @@ public class Agent365Agent
         }}
         ";
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
-    /// </summary>
-    private Agent365Agent()
-    {
-    }
+    private string AgentInstructions_Streaming() => $@"
+        You are a friendly assistant that helps office workers with their daily tasks.
+        {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
+
+        Respond in Markdown format
+        ";
 
     public static async Task<Agent365Agent> CreateA365AgentWrapper(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, string authHandlerName, UserAuthorization userAuthorization, ITurnContext turnContext, IConfiguration configuration)
     {
         var _agent = new Agent365Agent();
-        await _agent.InitializeAgent365Agent(kernel, service, toolService, userAuthorization, authHandlerName, turnContext, configuration).ConfigureAwait(false);
+        await _agent.InitializeAgent365Agent(kernel, service, toolService, userAuthorization, authHandlerName,  turnContext, configuration).ConfigureAwait(false);
         return _agent;
     }
 
-    public async Task InitializeAgent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization, string authHandlerName, ITurnContext turnContext, IConfiguration configuration)
+    /// <summary>
+    /// 
+    /// </summary>
+    public Agent365Agent(){}
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
+    /// </summary>
+    /// <param name="serviceProvider">The service provider to use for dependency injection.</param>
+    public async Task InitializeAgent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization , string authHandlerName, ITurnContext turnContext, IConfiguration configuration)
     {
         this._kernel = kernel;
 
@@ -62,7 +70,9 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext).ConfigureAwait(false);
+            await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+
+            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
         }
         else
         {
@@ -75,7 +85,7 @@ public class Agent365Agent
             new()
             {
                 Id = turnContext.Activity.Recipient.AgenticAppId ?? Guid.NewGuid().ToString(),
-                Instructions = AgentInstructions(),
+                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming() : AgentInstructions(),
                 Name = AgentName,
                 Kernel = this._kernel,
                 Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()
@@ -83,7 +93,7 @@ public class Agent365Agent
 #pragma warning disable SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
                     FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new() { RetainArgumentTypes = true }),
 #pragma warning restore SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-                    ResponseFormat = "json_object",
+                    ResponseFormat = turnContext.StreamingResponse.IsStreamingChannel ? "text" : "json_object", 
                 }),
             };
     }
@@ -93,35 +103,59 @@ public class Agent365Agent
     /// </summary>
     /// <param name="input">A message to process.</param>
     /// <returns>An instance of <see cref="Agent365AgentResponse"/></returns>
-    public async Task<Agent365AgentResponse> InvokeAgentAsync(string input, ChatHistory chatHistory)
+    public async Task<Agent365AgentResponse> InvokeAgentAsync(string input, ChatHistory chatHistory, ITurnContext? context = null)
     {
         ArgumentNullException.ThrowIfNull(chatHistory);
         AgentThread thread = new ChatHistoryAgentThread();
         ChatMessageContent message = new(AuthorRole.User, input);
         chatHistory.Add(message);
 
-        StringBuilder sb = new();
-        await foreach (ChatMessageContent response in this._agent.InvokeAsync(chatHistory, thread: thread))
+        if (context!.StreamingResponse.IsStreamingChannel)
         {
-            chatHistory.Add(response);
-            sb.Append(response.Content);
-        }
-
-        // Make sure the response is in the correct format and retry if necessary
-        try
-        {
-            string resultContent = sb.ToString();
-            var jsonNode = JsonNode.Parse(resultContent);
-            Agent365AgentResponse result = new()
+            await foreach (var response in _agent!.InvokeStreamingAsync(chatHistory, thread: thread))
             {
-                Content = jsonNode!["content"]!.ToString(),
-                ContentType = Enum.Parse<Agent365AgentResponseContentType>(jsonNode["contentType"]!.ToString(), true)
-            };
-            return result;
+                if (!string.IsNullOrEmpty(response.Message.Content))
+                {
+                    context?.StreamingResponse.QueueTextChunk(response.Message.Content);
+                }
+            }
+            return new Agent365AgentResponse()
+            {
+                Content = "Boo",
+                ContentType = Enum.Parse<Agent365AgentResponseContentType>("text", true)
+            }; ; 
         }
-        catch (Exception je)
+        else
         {
-            return await InvokeAgentAsync($"That response did not match the expected format. Please try again. Error: {je.Message}", chatHistory);
+            StringBuilder sb = new();
+            await foreach (ChatMessageContent response in _agent!.InvokeAsync(chatHistory, thread: thread))
+            {
+                if (!string.IsNullOrEmpty(response.Content))
+                {
+                    var jsonNode = JsonNode.Parse(response.Content);
+                    context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
+                }
+
+                chatHistory.Add(response);
+                sb.Append(response.Content);
+            }
+
+            // Make sure the response is in the correct format and retry if necessary
+            try
+            {
+                string resultContent = sb.ToString();
+                var jsonNode = JsonNode.Parse(resultContent);
+                Agent365AgentResponse result = new()
+                {
+                    Content = jsonNode!["content"]!.ToString(),
+                    ContentType = Enum.Parse<Agent365AgentResponseContentType>(jsonNode["contentType"]!.ToString(), true)
+                };
+                return result;
+            }
+            catch (Exception je)
+            {
+                return await InvokeAgentAsync($"That response did not match the expected format. Please try again. Error: {je.Message}", chatHistory);
+            }
         }
     }
 }

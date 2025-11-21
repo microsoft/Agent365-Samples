@@ -1,4 +1,4 @@
-name: CI - Build .NET Semantic Kernel Sample Agent
+name: CI - Build .NET Agent Framework Sample Agent
 permissions:
   contents: read
 
@@ -6,19 +6,19 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'dotnet/semantic-kernel/sample-agent/**/*'
+      - 'dotnet/agent-framework/sample-agent/**/*'
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'dotnet/semantic-kernel/sample-agent/**/*'
+      - 'dotnet/agent-framework/sample-agent/**/*'
 
 jobs:
-  dotnet-semantickernel-sampleagent:
-    name: .NET Semantic Kernel Sample Agent
+  dotnet-agentframework-sampleagent:
+    name: .NET Agent Framework Sample Agent
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./dotnet/semantic-kernel
+        working-directory: ./dotnet/agent-framework
 
     strategy:
       matrix:
@@ -34,7 +34,7 @@ jobs:
         dotnet-version: ${{ matrix.dotnet-version }}
 
     - name: Restore dependencies
-      run: dotnet restore SemanticKernelSampleAgent.sln
+      run: dotnet restore AgentFrameworkSample.sln
 
     - name: Build solution
-      run: dotnet build SemanticKernelSampleAgent.sln --no-restore --configuration Release
+      run: dotnet build AgentFrameworkSample.sln --no-restore --configuration Release
