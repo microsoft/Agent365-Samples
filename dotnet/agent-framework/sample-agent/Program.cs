@@ -60,7 +60,7 @@ builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.AddAgentApplicationOptions();
 
 // Add the bot (which is transient)
-builder.AddAgent<WeatherAgent>();
+builder.AddAgent<MyAgent>();
 
 // Register IChatClient with correct types
 builder.Services.AddSingleton<IChatClient>(sp => {
