@@ -2,11 +2,9 @@
 
 import asyncio
 import os
+from typing import Optional
 from google.adk.agents import Agent
 from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 from mcp_tool_registration_service import McpToolRegistrationService
 
@@ -18,106 +16,134 @@ from microsoft_agents_a365.observability.core.middleware.baggage_builder import 
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
-from microsoft_agents.activity import load_configuration_from_env, Activity, ChannelAccount, ActivityTypes
-from microsoft_agents.hosting.core import Authorization, MemoryStorage, TurnContext, ClaimsIdentity, AuthenticationConstants
-from microsoft_agents.hosting.aiohttp import CloudAdapter
-from microsoft_agents.authentication.msal import MsalConnectionManager
+from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.hosting.core import Authorization, TurnContext
 
-agents_sdk_config = load_configuration_from_env(os.environ)
+class GoogleADKAgentWrapper:
+    """Wrapper class for Google ADK Agent with Microsoft Agent 365 integration."""
 
-async def main():
-    # Google ADK expects root_agent to be defined at module level
-    # Create the base agent synchronously
-    my_agent = Agent(
-        name="my_agent",
-        model="gemini-2.0-flash",
-        description=(
-            "Agent to test Mcp tools."
-        ),
-        instruction=(
-            "You are a helpful agent who can use tools. If you encounter any errors, please provide the exact error message you encounter."
-        ),
-    )
+    def __init__(
+        self,
+        agent_name: str = "my_agent",
+        model: str = "gemini-2.0-flash",
+        description: str = "Agent to test Mcp tools.",
+        instruction: str = "You are a helpful agent who can use tools. If you encounter any errors, please provide the exact error message you encounter.",
+    ):
+        """
+        Initialize the Google ADK Agent Wrapper.
 
-    auth = Authorization(
-        storage=MemoryStorage(),
-        connection_manager=MsalConnectionManager(**agents_sdk_config),
-        **agents_sdk_config
-    )
+        Args:
+            agent_name: Name of the agent
+            model: Google ADK model to use
+            description: Agent description
+            instruction: Agent instruction/prompt
+        """
+        self.agent_name = agent_name
+        self.model = model
+        self.description = description
+        self.instruction = instruction
+        self.agent: Optional[Agent] = None
+        self.runner: Optional[Runner] = None
+        self.auth: Optional[Authorization] = None
+        self.turn_context: Optional[TurnContext] = None
 
-    turnContext = TurnContext(
-        adapter_or_context=CloudAdapter(),
-        request=Activity(
-            type=ActivityTypes.message,
-            text="",
-            from_property=ChannelAccount(
-                id='user1',
-                name='User One'
-            ),
-            recipient=ChannelAccount(
-                id=os.getenv("AGENTIC_UPN", ""),
-                name=os.getenv("AGENTIC_NAME", ""),
-                agentic_user_id=os.getenv("AGENTIC_USER_ID", ""),
-                agentic_app_id=os.getenv("AGENTIC_APP_ID", ""),
-                tenant_id=os.getenv("AGENTIC_TENANT_ID", ""),
-                role="agenticUser"
-            )
-        ),
-        identity=ClaimsIdentity(
-            {
-                AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
-                AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
-            },
-            False,
-            "Anonymous",
+        self.agent = Agent(
+            name=self.agent_name,
+            model=self.model,
+            description=self.description,
+            instruction=self.instruction,
         )
-    )
 
-    if not (await auth._start_or_continue_sign_in(turnContext, None, 'AGENTIC')).sign_in_complete():
-        print("Sign-in required. Exiting.")
-        return
+    async def invoke_agent(
+        self,
+        message: str,
+        auth: Authorization,
+        auth_handler_name: str,
+        context: TurnContext
+    ) -> str:
+        """
+        Invoke the agent with a user message.
 
-    tool_service = McpToolRegistrationService()
+        Args:
+            message: The message from the user
 
-    my_agent = await tool_service.add_tool_servers_to_agent(
-            agent=my_agent,
-            agentic_app_id=os.getenv("AGENTIC_APP_ID", "agent123"),
-            auth=auth,
-            context=turnContext,
-            auth_token=os.getenv("BEARER_TOKEN", ""),
-    )
+        Returns:
+            List of response messages from the agent
+        """
+        agent = await self._initialize_agent(auth, auth_handler_name, context)
 
-    # Create runner
-    runner = Runner(
-        app_name="agents",
-        agent=my_agent,
-        session_service=InMemorySessionService(),
-    )
+        # Create the runner
+        runner = Runner(
+            app_name="agents",
+            agent=agent,
+            session_service=InMemorySessionService(),
+        )
 
-    # Run agent
-    try:
-        user_message = input("Enter your message to the agent: ")
-        with BaggageBuilder().tenant_id("your-tenant-id").agent_id("agent123").build():
-            _ = await runner.run_debug(
-                    user_messages=[user_message]
-                )
-    finally:
-        agent_tools = my_agent.tools
-        for tool in agent_tools:
-            if hasattr(tool, "close"):
-                await tool.close()
+        responses = []
+        result = await runner.run_debug(
+            user_messages=[message]
+        )
 
-if __name__ == "__main__":
-    configure(
-        service_name="GoogleADKSampleAgent",
-        service_namespace="GoogleADKTesting",
-    )
+        # Extract text responses from the result
+        if not hasattr(result, '__iter__'):
+            return responses
 
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    except Exception as e:
-        # Ignore cleanup errors during shutdown
-        if "cancel scope" not in str(e) and "RuntimeError" not in type(e).__name__:
-            raise
+        for event in result:
+            if not (hasattr(event, 'content') and event.content):
+                continue
+
+            if not hasattr(event.content, 'parts'):
+                continue
+
+            for part in event.content.parts:
+                if hasattr(part, 'text') and part.text:
+                    responses.append(part.text)
+
+        await self._cleanup_agent(agent)
+
+        return responses[-1] if responses else "I couldn't get a response from the agent. :("
+
+    async def invoke_agent_with_scope(
+            self,
+            message: str,
+            auth: Authorization,
+            auth_handler_name: str,
+            context: TurnContext
+    ) -> str:
+        """
+        Invoke the agent with a user message within an observability scope.
+
+        Args:
+            message: The message from the user
+
+        Returns:
+            List of response messages from the agent
+        """
+        with BaggageBuilder().tenant_id("tenant123").agent_id("agent123").build():
+            return await self.invoke_agent(message=message, auth=auth, auth_handler_name=auth_handler_name, context=context)
+
+    async def _cleanup_agent(self, agent: Agent):
+        """Clean up agent resources."""
+        if agent and hasattr(agent, 'tools'):
+            for tool in agent.tools:
+                if hasattr(tool, "close"):
+                    await tool.close()
+
+    async def _initialize_agent(self, auth, auth_handler_name, turn_context):
+        """Initialize the agent with MCP tools and authentication."""
+        try:
+            # Perform sign-in
+            if not (await auth._start_or_continue_sign_in(turn_context, None, auth_handler_name)).sign_in_complete():
+                raise RuntimeError("Sign-in required but not completed")
+
+            # Add MCP tools to the agent
+            tool_service = McpToolRegistrationService()
+            return await tool_service.add_tool_servers_to_agent(
+                agent=self.agent,
+                agentic_app_id=os.getenv("AGENTIC_APP_ID", "agent123"),
+                auth=auth,
+                context=turn_context,
+                auth_token=os.getenv("BEARER_TOKEN", ""),
+            )
+        except Exception as e:
+            print(f"Error during agent initialization: {e}")
