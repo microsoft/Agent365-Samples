@@ -198,7 +198,7 @@ class GenericAgentHost:
                     client_id=client_id,
                     tenant_id=tenant_id,
                     client_secret=client_secret,
-                    scopes=["https://api.botframework.com/.default"],
+                    scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
                 )
             except Exception as e:
                 logger.error(

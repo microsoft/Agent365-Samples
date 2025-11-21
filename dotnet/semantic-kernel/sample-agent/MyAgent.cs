@@ -1,6 +1,11 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using System;
+using System.Configuration;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using Agent365SemanticKernelSampleAgent.Agents;
 using AgentNotification;
 using Microsoft.Agents.A365.Notifications.Models;
@@ -11,33 +16,34 @@ using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
 using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Core.Models;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
-using System;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Agent365SemanticKernelSampleAgent;
 
 public class MyAgent : AgentApplication
 {
+    private const string primaryAuthHandler = "agentic";
+    private readonly IConfiguration _configuration;
     private readonly Kernel _kernel;
     private readonly IMcpToolRegistrationService _toolsService;
     private readonly IExporterTokenCache<AgenticTokenStruct> _agentTokenCache;
     private readonly ILogger<MyAgent> _logger;
 
-    public MyAgent(AgentApplicationOptions options, Kernel kernel, IMcpToolRegistrationService toolService, IExporterTokenCache<AgenticTokenStruct> agentTokenCache, ILogger<MyAgent> logger) : base(options)
+    public MyAgent(AgentApplicationOptions options, IConfiguration configuration, Kernel kernel, IMcpToolRegistrationService toolService, IExporterTokenCache<AgenticTokenStruct> agentTokenCache, ILogger<MyAgent> logger) : base(options)
     {
+        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
         _toolsService = toolService ?? throw new ArgumentNullException(nameof(toolService));
         _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        bool useAgenticAuth = Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "true";
-        var autoSignInHandlers = useAgenticAuth ? new[] { "agentic" } : null;
+        var autoSignInHandlers = new[] { primaryAuthHandler };
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
         this.OnAgentNotification("*", AgentNotificationActivityAsync,RouteRank.Last,  autoSignInHandlers: autoSignInHandlers);
@@ -51,17 +57,20 @@ public class MyAgent : AgentApplication
 
     protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        using var baggageScope = new BaggageBuilder()
-            .TenantId(turnContext.Activity.Recipient.TenantId)
-            .AgentId(turnContext.Activity.Recipient.AgenticAppId)
-            .Build();
+        // Resolve the tenant and agent id being used to communicate with A365 services.
+        (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext).ConfigureAwait(false);
 
+        using var baggageScope = new BaggageBuilder()
+            .TenantId(tenantId)
+            .AgentId(agentId)
+            .Build();
         try 
         {
-            _agentTokenCache.RegisterObservability(turnContext.Activity.Recipient.AgenticAppId, turnContext.Activity.Recipient.TenantId, new AgenticTokenStruct
+            _agentTokenCache.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
             {
                 UserAuthorization = UserAuthorization,
-                TurnContext = turnContext
+                TurnContext = turnContext,
+                AuthHandlerName = primaryAuthHandler
             }, EnvironmentUtils.GetObservabilityAuthenticationScope());
         }
         catch (Exception ex)
@@ -82,7 +91,7 @@ public class MyAgent : AgentApplication
             return;
         }
 
-        var agent365Agent = this.GetAgent365Agent(serviceCollection, turnContext);
+        var agent365Agent = await this.GetAgent365AgentAsync(serviceCollection, turnContext, primaryAuthHandler);
         if (!TermsAndConditionsAccepted)
         {
             if (turnContext.Activity.ChannelId.Channel == Channels.Msteams)
@@ -104,17 +113,21 @@ public class MyAgent : AgentApplication
 
     private async Task AgentNotificationActivityAsync(ITurnContext turnContext, ITurnState turnState, AgentNotificationActivity activity, CancellationToken cancellationToken)
     {
+        // Resolve the tenant and agent id being used to communicate with A365 services.
+        (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext).ConfigureAwait(false);
+
         using var baggageScope = new BaggageBuilder()
-            .TenantId(turnContext.Activity.Recipient.TenantId)
-            .AgentId(turnContext.Activity.Recipient.AgenticAppId)
+            .TenantId(tenantId)
+            .AgentId(agentId)
             .Build();
 
         try
         {
-            _agentTokenCache.RegisterObservability(turnContext.Activity.Recipient.AgenticAppId, turnContext.Activity.Recipient.TenantId, new AgenticTokenStruct
+            _agentTokenCache.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
             {
                 UserAuthorization = UserAuthorization,
-                TurnContext = turnContext
+                TurnContext = turnContext,
+                AuthHandlerName = primaryAuthHandler
             }, EnvironmentUtils.GetObservabilityAuthenticationScope());
         }
         catch (Exception ex)
@@ -135,7 +148,7 @@ public class MyAgent : AgentApplication
             return;
         }
 
-        var agent365Agent = this.GetAgent365Agent(serviceCollection, turnContext);
+        var agent365Agent = await this.GetAgent365AgentAsync(serviceCollection, turnContext, primaryAuthHandler);
         if (!TermsAndConditionsAccepted)
         {
             var response = await agent365Agent.InvokeAgentAsync(turnContext.Activity.Text, new ChatHistory());
@@ -221,17 +234,21 @@ public class MyAgent : AgentApplication
 
     protected async Task OnHireMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
+        // Resolve the tenant and agent id being used to communicate with A365 services.
+        (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext).ConfigureAwait(false);
+
         using var baggageScope = new BaggageBuilder()
-            .TenantId(turnContext.Activity.Recipient.TenantId)
-            .AgentId(turnContext.Activity.Recipient.AgenticAppId)
+            .TenantId(tenantId)
+            .AgentId(agentId)
             .Build();
 
         try
         {
-            _agentTokenCache.RegisterObservability(turnContext.Activity.Recipient.AgenticAppId, turnContext.Activity.Recipient.TenantId, new AgenticTokenStruct
+            _agentTokenCache.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
             {
                 UserAuthorization = UserAuthorization,
-                TurnContext = turnContext
+                TurnContext = turnContext,
+                AuthHandlerName = primaryAuthHandler
             }, EnvironmentUtils.GetObservabilityAuthenticationScope());
         }
         catch (Exception ex)
@@ -262,8 +279,35 @@ public class MyAgent : AgentApplication
         }
     }
 
-    private Agent365Agent GetAgent365Agent(ServiceCollection serviceCollection, ITurnContext turnContext)
+    /// <summary>
+    /// Resolve Tenant and Agent Id from the turn context.
+    /// </summary>
+    /// <param name="turnContext"></param>
+    /// <returns></returns>
+    private async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(ITurnContext turnContext)
     {
-        return new Agent365Agent(_kernel, serviceCollection.BuildServiceProvider(), _toolsService, UserAuthorization, turnContext);
+        string agentId = "";
+        if (turnContext.Activity.IsAgenticRequest())
+        {
+            agentId = turnContext.Activity.GetAgenticInstanceId();
+        }
+        else
+        {
+            agentId = Microsoft.Agents.A365.Runtime.Utils.Utility.GetAppIdFromToken(await UserAuthorization.GetTurnTokenAsync(turnContext, primaryAuthHandler));
+        }
+        string tenantId = turnContext.Activity.Conversation.TenantId ?? turnContext.Activity.Recipient.TenantId;
+        return (agentId, tenantId);
+    }
+
+    private async Task<Agent365Agent> GetAgent365AgentAsync(ServiceCollection serviceCollection, ITurnContext turnContext, string authHandlerName)
+    {
+        return await Agent365Agent.CreateA365AgentWrapper(
+            _kernel,
+            serviceCollection.BuildServiceProvider(),
+            _toolsService,
+            authHandlerName,
+            UserAuthorization,
+            turnContext,
+            _configuration).ConfigureAwait(false);
     }
 }

@@ -62,9 +62,10 @@ else
     builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
 }
 
-builder.Services.AddTracing(config => config
-    .WithSemanticKernel());
-
+builder.AddA365Tracing(config =>
+{
+    config.WithSemanticKernel();
+});
 
 // Add AgentApplicationOptions from appsettings section "AgentApplication".
 builder.AddAgentApplicationOptions();

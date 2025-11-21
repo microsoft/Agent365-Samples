@@ -13,13 +13,17 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Prerequisites
 
-- Node.js 18.x or higher
+- Node.js 24.x or higher
 - Microsoft Agent 365 SDK
 - Devin API credentials
 
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+
+## Deploying the Agent
+
+Refer to the [Deploy and publish agents](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish-deploy-agent?tabs=nodejs) guide for complete instructions.
 
 ## Support
 

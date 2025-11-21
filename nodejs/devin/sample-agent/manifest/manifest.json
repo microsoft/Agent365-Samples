@@ -1,0 +1,32 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
+    "id": "80939348-93ed-4478-9e24-a585b859c9a0",
+    "name": {
+        "short": "Devin Sample Agent",
+        "full": "Devin Sample Agent"
+    },
+    "description": {
+        "short": "Devin is the AI software engineer.",
+        "full": "Devin is an AI coding agent and software engineer that helps developers build better software faster."
+    },
+    "icons": {
+        "outline": "outline.png",
+        "color": "color.png"
+    },
+    "accentColor": "#07687d",
+    "version": "1.0.0",
+    "manifestVersion": "devPreview",
+    "developer": {
+        "name": "Agent Developer",
+        "mpnId": "",
+        "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518021",
+        "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518021",
+        "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+    },
+    "agenticUserTemplates": [
+        {
+            "id": "66f7a59f-d970-47a7-b178-4994374441c3",
+            "file": "agenticUserTemplateManifest.json"
+        }
+    ]
+}

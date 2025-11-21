@@ -2,266 +2,207 @@
 // Licensed under the MIT License.
 
 import { TurnContext, TurnState } from "@microsoft/agents-hosting";
+import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
+import type { InvokeAgentScope } from "@microsoft/agents-a365-observability";
 import { PerplexityClient } from "./perplexityClient.js";
-import {
-  AgentNotificationActivity,
-  NotificationType,
-} from "@microsoft/agents-a365-notifications";
+import { GuardService, GuardContext, AgentState } from "./guardService.js";
+import { ChatFlowService } from "./chatFlowService.js";
+import { ToolRunner } from "./toolRunner.js";
+import { NotificationService } from "./notificationService.js";
+import { PlaygroundService } from "./playgroundService.js";
 
-export class PerplexityAgent {
-  isApplicationInstalled: boolean = false;
-  termsAndConditionsAccepted: boolean = false;
+/**
+ * PerplexityAgent is the main agent class handling messages, notifications, and playground actions.
+ */
+export class PerplexityAgent implements AgentState {
+  isApplicationInstalled = false;
+  termsAndConditionsAccepted = false;
+
   authorization: any;
+
+  private readonly guards: GuardService;
+  private readonly toolRunner: ToolRunner;
+  private readonly chatFlow: ChatFlowService;
+  private readonly notifications: NotificationService;
+  private readonly playground: PlaygroundService;
 
   constructor(authorization: any) {
     this.authorization = authorization;
+    this.guards = new GuardService(this);
+
+    this.toolRunner = new ToolRunner();
+
+    this.chatFlow = new ChatFlowService(() => this.getPerplexityClient());
+
+    this.notifications = new NotificationService(this, this.guards, () =>
+      this.getPerplexityClient()
+    );
+
+    this.playground = new PlaygroundService();
   }
 
-  /**
-   * Handles incoming user messages and sends responses using Perplexity.
-   */
+  /* ------------------------------------------------------------------
+   * ✅ Message path (human chat)
+   * ------------------------------------------------------------------ */
+
   async handleAgentMessageActivity(
     turnContext: TurnContext,
-    state: TurnState
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
   ): Promise<void> {
-    if (!this.isApplicationInstalled) {
-      await turnContext.sendActivity(
-        "Please install the application before sending messages."
-      );
+    // Guard: app must be installed
+    if (
+      !(await this.guards.ensureApplicationInstalled(
+        turnContext,
+        invokeScope,
+        GuardContext.Message
+      ))
+    ) {
       return;
     }
 
-    if (!this.termsAndConditionsAccepted) {
-      if (turnContext.activity.text?.trim().toLowerCase() === "i accept") {
-        this.termsAndConditionsAccepted = true;
-        await turnContext.sendActivity(
-          "Thank you for accepting the terms and conditions! How can I assist you today?"
-        );
-        return;
-      } else {
-        await turnContext.sendActivity(
-          "Please accept the terms and conditions to proceed. Send 'I accept' to accept."
-        );
-        return;
-      }
+    // Guard: terms must be accepted
+    if (
+      !(await this.guards.ensureTermsAccepted(
+        turnContext,
+        invokeScope,
+        GuardContext.Message
+      ))
+    ) {
+      return;
     }
 
-    const userMessage = turnContext.activity.text?.trim() || "";
-
+    // Guard: non-empty user message
+    const userMessage = await this.guards.ensureUserMessage(
+      turnContext,
+      invokeScope
+    );
     if (!userMessage) {
-      await turnContext.sendActivity(
-        "Please send me a message and I'll help you!"
-      );
       return;
     }
 
-    // Grab streamingResponse if this surface supports it
-    const streamingResponse = (turnContext as any).streamingResponse;
+    // Long-running flow: tool invocation
+    const lower = userMessage.toLowerCase().trim();
+    const isToolInvocation = lower === "tool" || lower.startsWith("tool ");
 
-    try {
-      // Show temporary "I'm working" message with spinner (Playground, and any streaming-enabled client)
-      if (streamingResponse) {
-        streamingResponse.queueInformativeUpdate(
-          "I'm working on your request..."
-        );
-      }
-
-      const perplexityClient = this.getPerplexityClient();
-      const response = await perplexityClient.invokeAgentWithScope(userMessage);
-
-      if (streamingResponse) {
-        // Send the final response as a streamed chunk
-        streamingResponse.queueTextChunk(response);
-        // Close the stream when done
-        await streamingResponse.endStream();
-      } else {
-        // Fallback for channels that don't support streaming
-        await turnContext.sendActivity(response);
-      }
-    } catch (error) {
-      console.error("Perplexity query error:", error);
-      const err = error as any;
-      const errorMessage = `Error: ${err.message || err}`;
-
-      if (streamingResponse) {
-        // Surface the error through the stream and close it
-        streamingResponse.queueTextChunk(errorMessage);
-        await streamingResponse.endStream();
-      } else {
-        await turnContext.sendActivity(errorMessage);
-      }
+    if (isToolInvocation) {
+      invokeScope?.recordOutputMessages(["Message path: ToolOnly_Start"]);
+      await this.toolRunner.runToolFlow(turnContext);
+      invokeScope?.recordOutputMessages(["Message path: ToolOnly_Completed"]);
+      return;
     }
+
+    // Long-running flow: Perplexity (with streaming + telemetry)
+    await this.chatFlow.runChatFlow(
+      turnContext,
+      state,
+      userMessage,
+      invokeScope
+    );
   }
 
-  /**
-   * Handles agent notification activities by parsing the activity type.
-   */
+  /* ------------------------------------------------------------------
+   * ✅ Real notifications (Word/email) + installation updates
+   * ------------------------------------------------------------------ */
+
   async handleAgentNotificationActivity(
     turnContext: TurnContext,
     state: TurnState,
-    agentNotificationActivity: AgentNotificationActivity
+    activity: AgentNotificationActivity,
+    invokeScope?: InvokeAgentScope
   ): Promise<void> {
-    try {
-      if (!this.isApplicationInstalled) {
-        await turnContext.sendActivity(
-          "Please install the application before sending notifications."
-        );
-        return;
-      }
-
-      if (!this.termsAndConditionsAccepted) {
-        if (turnContext.activity.text?.trim().toLowerCase() === "i accept") {
-          this.termsAndConditionsAccepted = true;
-          await turnContext.sendActivity(
-            "Thank you for accepting the terms and conditions! How can I assist you today?"
-          );
-          return;
-        } else {
-          await turnContext.sendActivity(
-            "Please accept the terms and conditions to proceed. Send 'I accept' to accept."
-          );
-          return;
-        }
-      }
-
-      // Find the first known notification type entity
-      switch (agentNotificationActivity.notificationType) {
-        case NotificationType.EmailNotification:
-          await this.emailNotificationHandler(
-            turnContext,
-            state,
-            agentNotificationActivity
-          );
-          break;
-        case NotificationType.WpxComment:
-          await this.wordNotificationHandler(
-            turnContext,
-            state,
-            agentNotificationActivity
-          );
-          break;
-        default:
-          await turnContext.sendActivity(
-            "Notification type not yet implemented."
-          );
-      }
-    } catch (error) {
-      console.error("Error handling agent notification activity:", error);
-      const err = error as any;
-      await turnContext.sendActivity(
-        `Error handling notification: ${err.message || err}`
-      );
-    }
+    await this.notifications.handleAgentNotificationActivity(
+      turnContext,
+      state,
+      activity,
+      invokeScope
+    );
   }
 
-  /**
-   * Handles agent installation and removal events.
-   */
   async handleInstallationUpdateActivity(
     turnContext: TurnContext,
-    state: TurnState
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
   ): Promise<void> {
-    if (turnContext.activity.action === "add") {
-      this.isApplicationInstalled = true;
-      this.termsAndConditionsAccepted = false;
-      await turnContext.sendActivity(
-        'Thank you for hiring me! Looking forward to assisting you with Perplexity AI! Before I begin, could you please confirm that you accept the terms and conditions? Send "I accept" to accept.'
-      );
-    } else if (turnContext.activity.action === "remove") {
-      this.isApplicationInstalled = false;
-      this.termsAndConditionsAccepted = false;
-      await turnContext.sendActivity(
-        "Thank you for your time, I enjoyed working with you."
-      );
-    }
+    await this.notifications.handleInstallationUpdate(
+      turnContext,
+      state,
+      invokeScope
+    );
   }
 
-  /**
-   * Handles @-mention notification activities.
-   */
   async wordNotificationHandler(
     turnContext: TurnContext,
     state: TurnState,
-    mentionActivity: AgentNotificationActivity
+    activity: AgentNotificationActivity,
+    invokeScope?: InvokeAgentScope
   ): Promise<void> {
-    await turnContext.sendActivity(
-      "Thanks for the @-mention notification! Working on a response..."
+    await this.notifications.handleWordNotification(
+      turnContext,
+      state,
+      activity,
+      invokeScope
     );
-    const mentionNotificationEntity = mentionActivity.wpxCommentNotification;
-
-    if (!mentionNotificationEntity) {
-      await turnContext.sendActivity(
-        "I could not find the mention notification details."
-      );
-      return;
-    }
-
-    const documentId = mentionNotificationEntity.documentId;
-    const odataId = mentionNotificationEntity["odata.id"];
-    const initiatingCommentId = mentionNotificationEntity.initiatingCommentId;
-    const subjectCommentId = mentionNotificationEntity.subjectCommentId;
-
-    let mentionPrompt = `You have been mentioned in a Word document.
-      Document ID: ${documentId || "N/A"}
-      OData ID: ${odataId || "N/A"}
-      Initiating Comment ID: ${initiatingCommentId || "N/A"}
-      Subject Comment ID: ${subjectCommentId || "N/A"}
-      Please retrieve the text of the initiating comment and return it in plain text.`;
-
-    const perplexityClient = this.getPerplexityClient();
-    const commentContent = await perplexityClient.invokeAgentWithScope(
-      mentionPrompt
-    );
-    const response = await perplexityClient.invokeAgentWithScope(
-      `You have received the following comment. Please follow any instructions in it. ${commentContent}`
-    );
-    await turnContext.sendActivity(response);
   }
 
-  /**
-   * Handles email notification activities.
-   */
   async emailNotificationHandler(
     turnContext: TurnContext,
     state: TurnState,
-    emailActivity: AgentNotificationActivity
+    activity: AgentNotificationActivity,
+    invokeScope?: InvokeAgentScope
   ): Promise<void> {
-    await turnContext.sendActivity(
-      "Thanks for the email notification! Working on a response..."
+    await this.notifications.handleEmailNotification(
+      turnContext,
+      state,
+      activity,
+      invokeScope
     );
-    const emailNotificationEntity = emailActivity.emailNotification;
-
-    if (!emailNotificationEntity) {
-      await turnContext.sendActivity(
-        "I could not find the email notification details."
-      );
-      return;
-    }
-
-    const emailNotificationId = emailNotificationEntity.id;
-    const emailNotificationConversationId =
-      emailNotificationEntity.conversationId;
-    const emailNotificationConversationIndex =
-      emailNotificationEntity.conversationIndex;
-    const emailNotificationChangeKey = emailNotificationEntity.changeKey;
-
-    const perplexityClient = this.getPerplexityClient();
-    const emailContent = await perplexityClient.invokeAgentWithScope(
-      `You have a new email from ${turnContext.activity.from?.name} with id '${emailNotificationId}',
-      ConversationId '${emailNotificationConversationId}', ConversationIndex '${emailNotificationConversationIndex}',
-      and ChangeKey '${emailNotificationChangeKey}'. Please retrieve this message and return it in text format.`
-    );
-
-    const response = await perplexityClient.invokeAgentWithScope(
-      `You have received the following email. Please follow any instructions in it. ${emailContent}`
-    );
-
-    await turnContext.sendActivity(response);
   }
 
-  /**
-   * Creates a Perplexity client instance with configured API key.
-   */
+  /* ------------------------------------------------------------------
+   * ✅ Playground handlers
+   * ------------------------------------------------------------------ */
+
+  async handlePlaygroundMentionInWord(
+    turnContext: TurnContext,
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    await this.playground.handleMentionInWord(turnContext, state, invokeScope);
+  }
+
+  async handlePlaygroundSendEmail(
+    turnContext: TurnContext,
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    await this.playground.handleSendEmail(turnContext, state, invokeScope);
+  }
+
+  async handlePlaygroundSendTeamsMessage(
+    turnContext: TurnContext,
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    await this.playground.handleSendTeamsMessage(
+      turnContext,
+      state,
+      invokeScope
+    );
+  }
+
+  async handlePlaygroundCustom(
+    turnContext: TurnContext,
+    state: TurnState,
+    invokeScope?: InvokeAgentScope
+  ): Promise<void> {
+    await this.playground.handleCustom(turnContext, state, invokeScope);
+  }
+
+  /* ------------------------------------------------------------------
+   * 🔧 Shared Perplexity client factory
+   * ------------------------------------------------------------------ */
+
   private getPerplexityClient(): PerplexityClient {
     const apiKey = process.env.PERPLEXITY_API_KEY;
     if (!apiKey) {
