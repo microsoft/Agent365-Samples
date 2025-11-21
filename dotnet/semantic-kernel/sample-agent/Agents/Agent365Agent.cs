@@ -23,8 +23,8 @@ namespace Agent365SemanticKernelSampleAgent.Agents;
 
 public class Agent365Agent
 {
-    private Kernel? _kernel;
-    private ChatCompletionAgent? _agent;
+    private Kernel _kernel;
+    private ChatCompletionAgent _agent;
 
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
@@ -64,7 +64,7 @@ public class Agent365Agent
     /// Initializes a new instance of the <see cref="Agent365Agent"/> class.
     /// </summary>
     /// <param name="serviceProvider">The service provider to use for dependency injection.</param>
-    public Agent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization, ITurnContext turnContext)
+    public async Task InitializeAgent365Agent(Kernel kernel, IServiceProvider service, IMcpToolRegistrationService toolService, UserAuthorization userAuthorization , string authHandlerName, ITurnContext turnContext, IConfiguration configuration)
     {
         this._kernel = kernel;
 
@@ -74,7 +74,7 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
         }
         else
         {
@@ -95,7 +95,7 @@ public class Agent365Agent
 #pragma warning disable SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
                     FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new() { RetainArgumentTypes = true }),
 #pragma warning restore SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-                    ResponseFormat = "json_object", 
+                    ResponseFormat = turnContext.StreamingResponse.IsStreamingChannel ? "text" : "json_object", 
                 }),
             };
     }
