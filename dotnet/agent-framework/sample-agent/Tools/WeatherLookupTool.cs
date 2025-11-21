@@ -8,7 +8,7 @@ using OpenWeatherMapSharp;
 using OpenWeatherMapSharp.Models;
 using System.ComponentModel;
 
-namespace AgentFrameworkWeather.Tools
+namespace Agent365AgentFrameworkSampleAgent.Tools
 {
     public class WeatherLookupTool(ITurnContext turnContext, IConfiguration configuration)
     {

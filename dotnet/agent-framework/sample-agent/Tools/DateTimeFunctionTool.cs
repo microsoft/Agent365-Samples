@@ -3,7 +3,7 @@
 
 using System.ComponentModel;
 
-namespace AgentFrameworkWeather.Tools
+namespace Agent365AgentFrameworkSampleAgent.Tools
 {
     public static class DateTimeFunctionTool
     {

@@ -5,7 +5,7 @@ using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
 using Microsoft.Agents.Builder.State;
 
-namespace AgentFrameworkWeather.telemetry
+namespace Agent365AgentFrameworkSampleAgent.telemetry
 {
     public static class A365OtelWrapper
     {

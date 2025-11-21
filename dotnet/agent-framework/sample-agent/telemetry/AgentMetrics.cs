@@ -10,7 +10,7 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
-namespace AgentFrameworkWeather.telemetry
+namespace Agent365AgentFrameworkSampleAgent.telemetry
 {
     public static class AgentMetrics
     {

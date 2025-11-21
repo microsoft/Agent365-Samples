@@ -1,8 +1,8 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using AgentFrameworkWeather.telemetry;
-using AgentFrameworkWeather.Tools;
+using Agent365AgentFrameworkSampleAgent.telemetry;
+using Agent365AgentFrameworkSampleAgent.Tools;
 using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
@@ -17,7 +17,7 @@ using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
 using System.Text.Json;
 
-namespace AgentFrameworkWeather.Agent
+namespace Agent365AgentFrameworkSampleAgent.Agent
 {
     public class WeatherAgent : AgentApplication
     {
