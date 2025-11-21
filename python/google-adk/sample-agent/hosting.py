@@ -94,7 +94,7 @@ class MyAgent(AgentApplication):
                 await context.send_activity("Please send me a message and I'll help you!")
                 return
 
-            response = await self.agent.invoke_agent(
+            response = await self.agent.invoke_agent_with_scope(
                 message=user_message,
                 auth=self.auth,
                 auth_handler_name="AGENTIC",
