@@ -24,34 +24,11 @@ load_dotenv()
 import logging
 logger = logging.getLogger(__name__)
 
-async def playground_auth_workaround(req: Request) -> Request:
-    """Workaround to set recipient field since agentsplayground does not set it."""
-    body = await req.text()
-    body = json.loads(body)
-
-    body['recipient'] = {
-        "id": os.getenv("AGENTIC_UPN", ""),
-        "name": os.getenv("AGENTIC_NAME", ""),
-        "agenticUserId": os.getenv("AGENTIC_USER_ID", ""),
-        "agenticAppId": os.getenv("AGENTIC_APP_ID", ""),
-        "tenantId": os.getenv("AGENTIC_TENANT_ID", ""),
-        "role": "agenticUser"
-    }
-
-    async def text():
-        return json.dumps(body).encode("utf-8")
-
-    req.text = text
-
-    return req
-
 def start_server(agent_app: AgentApplication):
     """Start the agent application server."""
     isProduction = os.getenv("WEBSITE_SITE_NAME") is not None
 
     async def entry_point(req: Request) -> Response:
-        # Workaround for Agents Playground missing recipient field
-        req = await playground_auth_workaround(req)
         return await start_agent_process(req, agent_app, agent_app.adapter)
 
     # Configure middlewares
