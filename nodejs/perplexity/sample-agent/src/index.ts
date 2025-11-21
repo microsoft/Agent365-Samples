@@ -13,7 +13,7 @@ import {
   loadAuthConfigFromEnv,
   Request,
 } from "@microsoft/agents-hosting";
-import express, { Response } from "express";
+import express, { NextFunction, Response } from "express";
 import { agentApplication } from "./agent.js";
 import { a365Observability } from "./telemetry.js";
 
@@ -25,6 +25,18 @@ app.use(express.json());
 app.use(authorizeJWT(authConfig));
 
 a365Observability.start();
+
+// Mock authentication middleware for development
+// This is only required when running from agents playground
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Create a mock identity when JWT is disabled
+  req.user = {
+    aud: authConfig.clientId || "mock-client-id",
+    appid: authConfig.clientId || "mock-client-id",
+    azp: authConfig.clientId || "mock-client-id",
+  };
+  next();
+});
 
 app.post("/api/messages", async (req: Request, res: Response) => {
   await adapter.process(req, res, async (context) => {

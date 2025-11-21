@@ -58,9 +58,9 @@ const storage: MemoryStorage = new MemoryStorage();
  */
 export const agentApplication: AgentApplication<ApplicationTurnState> =
   new AgentApplication<ApplicationTurnState>({
-    authorization: {
-      agentic: {}, // We have the type and scopes set in the .env file
-    },
+    // authorization: {
+    //   agentic: {}, // We have the type and scopes set in the .env file
+    // },
     storage,
     fileDownloaders: [downloader],
   });
