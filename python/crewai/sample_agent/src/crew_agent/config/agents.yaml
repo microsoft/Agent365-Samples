@@ -11,7 +11,7 @@ weather_checker:
 
 driving_safety_advisor:
   role: >
-    MX-5 Driving Safety Specialist
+    Driving Safety Specialist
   goal: >
     Assess whether it's safe to drive with summer tires based on current weather conditions
   backstory: >
