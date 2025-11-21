@@ -16,7 +16,6 @@ from microsoft_agents_a365.observability.core.middleware.baggage_builder import 
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
-from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 class GoogleADKAgentWrapper:

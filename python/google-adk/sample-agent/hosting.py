@@ -29,8 +29,8 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
     NotificationTypes
 )
-from microsoft_agents_a365.notifications import (
-    create_email_response_activity
+from microsoft_agents_a365.notifications.models import (
+    EmailResponse
 )
 
 import logging
@@ -90,7 +90,7 @@ class MyAgent(AgentApplication):
         async def message_handler(context: TurnContext, _: TurnState):
             """Handle message activities."""
             user_message = context.activity.text
-            if not user_message.strip():
+            if not user_message or not user_message.strip():
                 await context.send_activity("Please send me a message and I'll help you!")
                 return
 
@@ -105,7 +105,8 @@ class MyAgent(AgentApplication):
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
-            auth_handlers=self.auth_handlers
+            auth_handlers=self.auth_handlers,
+            rank=1
         )
         async def agent_notification_handler(
             context: TurnContext,
@@ -126,7 +127,7 @@ class MyAgent(AgentApplication):
                 email_id = getattr(email, "id", "")
                 message = f"You have received an email with id {email_id}. The following is the content of the email, please follow any instructions in it: {email_body}"
 
-                response = await self.agent.invoke_agent_with_scope(message)
+                response = await self.agent.invoke_agent(message, self.auth, self.auth_handlers[0], context)
 
             # Handle Word Comment Notifications
             elif notification_type == NotificationTypes.WPX_COMMENT:
@@ -140,22 +141,24 @@ class MyAgent(AgentApplication):
 
                 # Get Word document content
                 doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
-                doc_result = await self.agent.run(doc_message)
-                word_content = self._extract_result(doc_result)
+                word_content = await self.agent.invoke_agent(doc_message, self.auth, self.auth_handlers[0], context)
 
                 # Process the comment with document context
                 comment_text = notification_activity.text or ""
                 response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
-                response = await self.agent.invoke_agent_with_scope(response_message)
+                response = await self.agent.invoke_agent_with_scope(response_message, self.auth, self.auth_handlers[0], context)
 
             # Generic notification handling
             else:
-                notification_message = notification_activity.text or f"Notification received: {notification_type}"
-                response = await self.agent.invoke_agent_with_scope(notification_message)
+                notification_message = notification_activity.text or ""
+                if not notification_message:
+                    response = f"Notification received: {notification_type}"
+                else:
+                    response = await self.agent.invoke_agent_with_scope(notification_message, self.auth, self.auth_handlers[0], context)
 
-            response_activity = Activity(ActivityTypes.message, text=response)
+            response_activity = Activity(type=ActivityTypes.message, text=response)
             if not response_activity.entities:
                 response_activity.entities = []
 
-            response_activity.entities.append(create_email_response_activity(response))
+            response_activity.entities.append(EmailResponse.create_email_response_activity(response))
             await context.send_activity(response_activity)
