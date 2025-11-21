@@ -115,7 +115,9 @@ class GoogleADKAgent:
         Returns:
             List of response messages from the agent
         """
-        with BaggageBuilder().tenant_id("tenant123").agent_id("agent123").build():
+        tenant_id = context.activity.recipient.tenant_id
+        agent_id = context.activity.recipient.agentic_user_id
+        with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
             return await self.invoke_agent(message=message, auth=auth, auth_handler_name=auth_handler_name, context=context)
 
     async def _cleanup_agent(self, agent: Agent):
