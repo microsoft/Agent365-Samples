@@ -5,6 +5,9 @@ on:
     types: [submitted]
   issue_comment:
     types: [created]
+    
+permissions:
+  contents: write # Explicitly restrict GITHUB_TOKEN to only what you need
 
 jobs:
   assign-points:
