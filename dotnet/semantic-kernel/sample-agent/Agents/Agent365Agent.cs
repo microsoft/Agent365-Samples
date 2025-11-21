@@ -1,10 +1,6 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using System;
-using System.Text;
-using System.Text.Json.Nodes;
-using System.Threading.Tasks;
 using Agent365SemanticKernelSampleAgent.Plugins;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
@@ -74,7 +70,9 @@ public class Agent365Agent
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
 
-            toolService.AddToolServersToAgent(kernel, userAuthorization, turnContext);
+            await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+
+            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
         }
         else
         {
