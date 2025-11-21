@@ -12,6 +12,7 @@ import { ActivityTypes } from "@microsoft/agents-activity";
 import { AgentNotificationActivity } from "@microsoft/agents-a365-notifications";
 import { PerplexityAgent } from "./perplexityAgent.js";
 import { PlaygroundActivityTypes } from "./playgroundActivityTypes.js";
+// import { AgenticTokenCacheInstance } from "@microsoft/agents-a365-observability-tokencache";
 
 import {
   BaggageBuilder,
@@ -19,11 +20,16 @@ import {
   InvokeAgentScope,
   ExecutionType,
   ServiceEndpoint,
+  AgentDetails,
+  TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import {
+  createAgenticTokenCacheKey,
   extractAgentDetailsFromTurnContext,
   extractTenantDetailsFromTurnContext,
 } from "./telemetryHelpers.js";
+import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
+import tokenCache from "./tokenCache.js";
 
 /**
  * Conversation state interface for tracking message count.
@@ -52,6 +58,9 @@ const storage: MemoryStorage = new MemoryStorage();
  */
 export const agentApplication: AgentApplication<ApplicationTurnState> =
   new AgentApplication<ApplicationTurnState>({
+    authorization: {
+      agentic: {}, // We have the type and scopes set in the .env file
+    },
     storage,
     fileDownloaders: [downloader],
   });
@@ -65,6 +74,103 @@ const perplexityAgent: PerplexityAgent = new PerplexityAgent(undefined);
  * 🔧 Shared telemetry helper
  * -------------------------------------------------------------------- */
 
+/**
+ * Authenticates observability using either custom resolver or shared cache.
+ */
+async function authenticateObservability(
+  context: TurnContext,
+  agentInfo: AgentDetails,
+  tenantInfo: TenantDetails,
+  operationName: string,
+  invokeScope: InvokeAgentScope
+): Promise<void> {
+  // Gate auth by environment / flag
+  if (
+    process.env.ENABLE_A365_OBSERVABILITY_EXPORTER === "false" ||
+    process.env.DEBUG === "true"
+  ) {
+    invokeScope.recordOutputMessages([
+      `${operationName} auth: skipped (debug/local environment)`,
+    ]);
+    return;
+  }
+
+  try {
+    if (process.env.Use_Custom_Resolver === "true") {
+      // Custom resolver + custom cache
+      const aauToken = await agentApplication.authorization.exchangeToken(
+        context,
+        [...getObservabilityAuthenticationScope()],
+        "agentic"
+      );
+
+      const cacheKey = createAgenticTokenCacheKey(
+        agentInfo.agentId,
+        tenantInfo.tenantId
+      );
+
+      if (aauToken?.token) {
+        tokenCache.set(cacheKey, aauToken.token);
+        invokeScope.recordOutputMessages([
+          `${operationName} auth: Custom resolver token cached`,
+        ]);
+      } else {
+        invokeScope.recordOutputMessages([
+          `${operationName} auth: Custom resolver returned no token`,
+        ]);
+      }
+    } else {
+      // Shared AgenticTokenCache path
+      // await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      //   agentInfo.agentId,
+      //   tenantInfo.tenantId,
+      //   context,
+      //   agentApplication.authorization,
+      //   getObservabilityAuthenticationScope()
+      // );
+
+      invokeScope.recordOutputMessages([
+        `${operationName} auth: Shared cache refreshed`,
+      ]);
+    }
+  } catch (authError) {
+    const err = authError as Error;
+    invokeScope.recordError(err);
+    invokeScope.recordOutputMessages([
+      `${operationName} auth: Failed`,
+      `Auth error: ${err.message ?? String(authError)}`,
+    ]);
+    // Optional: rethrow if you want auth failure to abort the whole operation
+    // throw authError;
+  }
+}
+
+/**
+ * Wraps handler execution with basic telemetry on start/complete/error.
+ */
+async function executeHandlerWithTelemetry(
+  operationName: string,
+  invokeScope: InvokeAgentScope,
+  handler: (invokeScope?: InvokeAgentScope) => Promise<void>
+): Promise<void> {
+  try {
+    invokeScope.recordOutputMessages([`${operationName} handler: Started`]);
+    await handler(invokeScope);
+    invokeScope.recordOutputMessages([`${operationName} handler: Completed`]);
+  } catch (error) {
+    const err = error as Error;
+    invokeScope.recordError(err);
+    invokeScope.recordOutputMessages([
+      `${operationName} handler: Failed`,
+      `Handler error: ${err.message ?? String(error)}`,
+    ]);
+    throw error;
+  }
+}
+
+/**
+ * Runs an operation with InvokeAgentScope + Baggage + observability auth.
+ */
 async function runWithTelemetry(
   context: TurnContext,
   _state: ApplicationTurnState,
@@ -124,25 +230,24 @@ async function runWithTelemetry(
 
     try {
       await invokeScope.withActiveSpanAsync(async () => {
+        // Record input for the operation
         invokeScope.recordInputMessages([requestContent]);
 
-        try {
-          await handler(invokeScope);
+        // Observability auth step
+        await authenticateObservability(
+          context,
+          agentInfo,
+          tenantInfo,
+          options.operationName,
+          invokeScope
+        );
 
-          // Default "happy path" marker
-          invokeScope.recordOutputMessages([
-            `${options.operationName} handled by PerplexityAgent`,
-          ]);
-          invokeScope.recordOutputMessages([
-            `${options.operationName} succeeded`,
-          ]);
-        } catch (error) {
-          const err = error as Error;
-          // Error markers
-          invokeScope.recordError(err);
-          // Preserve original behavior by rethrowing
-          throw error;
-        }
+        // Execute the handler with telemetry
+        await executeHandlerWithTelemetry(
+          options.operationName,
+          invokeScope,
+          handler
+        );
       });
     } finally {
       invokeScope.dispose();
