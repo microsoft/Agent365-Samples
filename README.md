@@ -1,5 +1,7 @@
 # Microsoft Agent 365 SDK Samples and Prompts
 
+https://img.shields.io/badge/dynamic/json?color=blue&label=Top%20Contributor&query=$.top&url=https://raw.githubusercontent.com/<username>/<repo>/main/leaderboard.json
+
 This repository contains sample agents and prompts for building with the Microsoft Agent 365 SDK. The Microsoft Agent 365 SDK extends the Microsoft 365 Agents SDK with enterprise-grade capabilities for building sophisticated agents. It provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
 - **Sample agents** are available in C# (.NET), Python, and Node.js/TypeScript

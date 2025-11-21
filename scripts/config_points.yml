@@ -1,0 +1,5 @@
+points:
+  basic_review: 5
+  detailed_review: 10
+  performance_improvement: 4
+  approve_pr: 3
