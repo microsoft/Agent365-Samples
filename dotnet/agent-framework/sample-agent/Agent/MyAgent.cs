@@ -19,7 +19,7 @@ using System.Text.Json;
 
 namespace Agent365AgentFrameworkSampleAgent.Agent
 {
-    public class WeatherAgent : AgentApplication
+    public class MyAgent : AgentApplication
     {
         private readonly string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access";
 
@@ -41,7 +41,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IChatClient? _chatClient = null;
         private readonly IConfiguration? _configuration = null;
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
-        private readonly ILogger<WeatherAgent>? _logger = null;
+        private readonly ILogger<MyAgent>? _logger = null;
         private IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers
         private readonly string AgenticIdAuthHanlder = "agentic";
@@ -49,12 +49,12 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         // Temp
         private static ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
-        public WeatherAgent(AgentApplicationOptions options,
+        public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
             IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
-            ILogger<WeatherAgent> logger) : base(options)
+            ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
