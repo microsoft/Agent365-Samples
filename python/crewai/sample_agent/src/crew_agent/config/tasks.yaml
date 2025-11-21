@@ -1,0 +1,34 @@
+weather_check_task:
+  description: >
+    Check the current weather conditions for the location: {location}
+    Use the weather tool to get comprehensive weather information including:
+    - Temperature (current and feels like)
+    - Precipitation and weather conditions
+    - Wind speed and direction
+    - Humidity and visibility
+    - Any weather warnings or adverse conditions
+  expected_output: >
+    A detailed weather report for {location} with all relevant weather metrics
+    and conditions clearly formatted.
+  agent: weather_checker
+
+driving_safety_task:
+  description: >
+    Based on the weather information provided, assess whether it is safe to drive
+    with summer tires in {location}.
+    
+    Consider the following factors:
+    - Temperature: Summer tires lose effectiveness below 7°C (45°F)
+    - Precipitation: Rain, snow, or ice significantly reduce summer tire performance
+    - Road conditions: Wet, icy, or snowy roads are dangerous with summer tires
+    - Wind conditions: High winds can affect vehicle stability
+    - Visibility: Poor visibility affects overall driving safety
+    
+    Provide a clear safety assessment with specific reasons based on the weather data.
+  expected_output: >
+    A clear safety assessment stating whether it's safe to drive with summer
+    tires in the current weather conditions, along with specific reasons and any
+    recommendations or warnings. Format as a clear decision with supporting details.
+  agent: driving_safety_advisor
+  context:
+    - weather_check_task
