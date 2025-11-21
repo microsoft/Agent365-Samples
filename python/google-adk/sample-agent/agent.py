@@ -18,7 +18,7 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
-class GoogleADKAgentWrapper:
+class GoogleADKAgent:
     """Wrapper class for Google ADK Agent with Microsoft Agent 365 integration."""
 
     def __init__(
