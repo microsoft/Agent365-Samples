@@ -1,0 +1,25 @@
+# Contributor Points Configuration
+#
+# All keyword matching is CASE-INSENSITIVE. Contributors can use any capitalization.
+# For example: "detailed", "Detailed", "DETAILED" all work the same way.
+#
+# Scoring Rules:
+# 1. Review types are mutually exclusive (only highest value applies)
+#    - "detailed" keyword awards detailed_review points
+#    - "basic review" keyword awards basic_review points (only if "detailed" not present)
+# 2. Bonuses are additive and can stack with review types:
+#    - "performance" keyword adds performance_improvement bonus
+#    - Approved PR (state=approved) adds approve_pr bonus
+#
+# Examples (all case-insensitive):
+#   - "basic review" OR "Basic Review" OR "BASIC REVIEW" = 5 points
+#   - "detailed analysis" OR "Detailed Analysis" = 10 points
+#   - "detailed performance review" OR "DETAILED PERFORMANCE REVIEW" = 10 + 4 = 14 points
+#   - Approved PR with "basic review" = 5 + 3 = 8 points
+#   - Approved PR with "detailed performance review" = 10 + 4 + 3 = 17 points
+
+points:
+  basic_review: 5              # Simple review with "basic review" keyword (case-insensitive)
+  detailed_review: 10          # In-depth review with "detailed" keyword (case-insensitive, overrides basic)
+  performance_improvement: 4   # Bonus for mentioning "performance" (case-insensitive, additive)
+  approve_pr: 3                # Bonus for approving a PR (additive)
