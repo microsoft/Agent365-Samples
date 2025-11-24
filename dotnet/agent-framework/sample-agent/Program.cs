@@ -115,7 +115,7 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
     await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
         await adapter.ProcessAsync(request, response, agent, cancellationToken);
-    });
+    }).ConfigureAwait(false);
 });
 
 
