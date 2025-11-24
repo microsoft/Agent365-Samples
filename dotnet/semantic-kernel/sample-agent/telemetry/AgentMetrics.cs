@@ -90,7 +90,7 @@ namespace Agent365SemanticKernelSampleAgent.telemetry
             activity?.Dispose(); 
         }
 
-        public static void InvokeObservedHttpOperation(string operationName, Action func)
+        public static Task InvokeObservedHttpOperation(string operationName, Action func)
         {
             using var activity = ActivitySource.StartActivity(operationName);
             try
@@ -109,6 +109,7 @@ namespace Agent365SemanticKernelSampleAgent.telemetry
                 }));
                 throw;
             }
+            return Task.CompletedTask;
         }
 
         public static Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
