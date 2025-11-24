@@ -47,7 +47,7 @@ public class MyAgent : AgentApplication
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
 
-        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first  you and then store that in a retrievable location. 
+        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
         TermsAndConditionsAccepted = true;
 
 
@@ -99,7 +99,7 @@ public class MyAgent : AgentApplication
                             new ServiceDescriptor(typeof(Kernel), _kernel),
              ];
 
-             // Disabled for development purpose. 
+             // Disabled for development purposes. 
              //if (!IsApplicationInstalled)
              //{
              //    await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);

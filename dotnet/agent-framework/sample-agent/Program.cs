@@ -110,12 +110,12 @@ app.UseAuthorization();
 
 
 // Map the /api/messages endpoint to the AgentApplication
-app.MapPost("/api/messages", (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
+app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
+    await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
         await adapter.ProcessAsync(request, response, agent, cancellationToken);
-    }); 
+    });
 });
 
 

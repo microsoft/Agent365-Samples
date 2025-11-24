@@ -1,7 +1,7 @@
 # Agent Framework (Simple) Sample
 
 ## Overview
-This is a simple sample showing how to use the [Agent Framework](https://github.com/microsoft/agent-framework) as an the orchestrator in an agent using the Microsoft Agent 365 SDK and Microsoft 365 Agents SDK
+This is a simple sample showing how to use the [Agent Framework](https://github.com/microsoft/agent-framework) as the orchestrator in an agent using the Microsoft Agent 365 SDK and Microsoft 365 Agents SDK
 It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
@@ -18,7 +18,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 - .NET 8.0 or higher
 - Microsoft Agent 365 SDK
 - Azure/OpenAI API credentials
-- OpenWeather Credentails (if using the OpenWeather Tool) 
+- OpenWeather Credentials (if using the OpenWeather Tool) 
     - see: https://openweathermap.org/price - You will need to create a free account to get an API key (its at the bottom of the page).
 
 ## Running the Agent

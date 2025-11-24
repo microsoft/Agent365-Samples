@@ -7,7 +7,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
 {
     public static class DateTimeFunctionTool
     {
-        [Description("Use the tool to be able to return back the date and time right now)")]
+        [Description("Use this tool to get the current date and time")]
         public static string getDate(string input)
         {
             string date = DateTimeOffset.Now.ToString("D", null);

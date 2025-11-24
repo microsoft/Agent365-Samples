@@ -42,12 +42,12 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IConfiguration? _configuration = null;
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
-        private IMcpToolRegistrationService? _toolService = null;
+        private readonly IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers
         private readonly string AgenticIdAuthHanlder = "agentic";
         private readonly string MyAuthHanlder = "me";
         // Temp
-        private static ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
+        private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
