@@ -102,3 +102,7 @@ coverage/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Gamification system - auto-generated files
+LEADERBOARD.md
+scripts/processed_ids.json

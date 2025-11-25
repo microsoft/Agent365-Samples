@@ -1,0 +1,49 @@
+# Contributor Points Configuration
+#
+# All keyword matching is CASE-INSENSITIVE. Contributors can use any capitalization.
+# For example: "detailed", "Detailed", "DETAILED" all work the same way.
+#
+# Scoring Rules:
+# 1. Review types are mutually exclusive (only highest value applies)
+#    - "detailed" keyword awards detailed_review points
+#    - "basic review" keyword awards basic_review points (only if "detailed" not present)
+# 2. Bonuses are additive and can stack with review types:
+#    - "performance" keyword adds performance_improvement bonus
+#    - Approved PR (state=approved) adds approve_pr bonus
+# 3. Contribution types are awarded based on GitHub events:
+#    - PR merged awards pr_merged points
+#    - Issue closed awards issue_resolved points
+#    - Documentation changes award documentation points
+#    - Security fixes award security_fix points
+#
+# Examples (all case-insensitive):
+#   - "basic review" OR "Basic Review" OR "BASIC REVIEW" = 5 points
+#   - "detailed analysis" OR "Detailed Analysis" = 10 points
+#   - "detailed performance review" OR "DETAILED PERFORMANCE REVIEW" = 10 + 4 = 14 points
+#   - Approved PR with "basic review" = 5 + 3 = 8 points
+#   - Approved PR with "detailed performance review" = 10 + 4 + 3 = 17 points
+#   - PR merged = 5 points
+#   - Issue closed = 1 point
+#   - Documentation update = 3 points
+#   - Security fix = 8 points
+
+points:
+  # Code review points
+  basic_review: 5              # Simple review with "basic review" keyword (case-insensitive)
+  detailed_review: 10          # In-depth review with "detailed" keyword (case-insensitive, overrides basic)
+  performance_improvement: 4   # Bonus for mentioning "performance" (case-insensitive, additive)
+  approve_pr: 3                # Bonus for approving a PR (additive)
+  
+  # Contribution points (event-based, no keywords needed)
+  pr_merged: 5                 # Points for getting a PR merged into main
+  issue_resolved: 1            # Points for closing an issue
+  documentation: 3             # Points for documentation improvements (README, docs/ folder)
+  security_fix: 8              # Points for security-related fixes
+  code_contribution: 2         # Points for general code contributions
+
+# Badge thresholds (total points required to earn each badge)
+badges:
+  bronze_contributor: 10       # 🥉 First contributions
+  silver_contributor: 25       # 🥈 Regular contributor
+  gold_contributor: 50         # 🥇 Valued contributor
+  platinum_legend: 100         # 💎 Top contributor

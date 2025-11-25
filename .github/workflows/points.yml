@@ -1,0 +1,77 @@
+name: Points Allocation
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [closed]
+  issues:
+    types: [closed]
+  issue_comment:
+    types: [created]
+    
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  assign-points:
+    runs-on: ubuntu-latest
+    # Run for:
+    # - PR reviews
+    # - PR closed (merged or not)
+    # - Issue closed
+    # - Comments on PRs (not regular issues)
+    if: >
+      github.event_name == 'pull_request_review' ||
+      github.event_name == 'pull_request' ||
+      github.event_name == 'issues' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Run points script
+        id: assign_points
+        run: |
+          set +e  # Don't exit on error
+          python scripts/assign_points.py
+          exit_code=$?
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          
+          # Exit codes:
+          # 0 = Success (points awarded)
+          # 2 = No-op (no points, but not an error)
+          # 1 or other = Actual error
+          
+          if [ $exit_code -eq 0 ] || [ $exit_code -eq 2 ]; then
+            exit 0
+          else
+            exit $exit_code
+          fi
+
+      - name: Update leaderboard markdown
+        if: steps.assign_points.outputs.exit_code == '0'
+        run: python scripts/update_leaderboard.py
+
+      - name: Commit and push leaderboard changes
+        if: steps.assign_points.outputs.exit_code == '0'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add leaderboard.json LEADERBOARD.md
+          git diff --staged --quiet || git commit -m "Update leaderboard [skip ci]"
+          git diff --staged --quiet || git push origin main
