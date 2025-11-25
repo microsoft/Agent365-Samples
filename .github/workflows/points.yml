@@ -20,12 +20,12 @@ jobs:
     runs-on: ubuntu-latest
     # Run for:
     # - PR reviews
-    # - PR closed (merged or not)
+    # - PR closed AND merged (not abandoned)
     # - Issue closed
     # - Comments on PRs (not regular issues)
     if: >
       github.event_name == 'pull_request_review' ||
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
       github.event_name == 'issues' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
     steps:
