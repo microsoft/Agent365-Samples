@@ -5,13 +5,13 @@
 #
 # Scoring Rules:
 # 1. Any PR review submission = review_submission points (base points)
-# 2. Substantial review (100+ characters) = detailed_review bonus (additive)
+# 2. Substantial review (100+ characters, excluding whitespace) = detailed_review bonus (additive)
 # 3. PR approval (state=approved) = approve_pr bonus (additive)
 # 4. PR comment (not a full review) = pr_comment points
 #
 # Examples:
 #   - Simple review with short comment = 5 points
-#   - Review with detailed feedback (100+ chars) = 5 + 5 = 10 points
+#   - Review with detailed comment (100+ characters) = 5 + 5 = 10 points
 #   - Approved PR = 5 + 3 = 8 points
 #   - Approved PR with detailed feedback = 5 + 5 + 3 = 13 points
 #   - Comment on PR (not a review) = 2 points

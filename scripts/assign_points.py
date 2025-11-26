@@ -45,7 +45,7 @@ def load_config():
     # Validate that config has the expected structure
     if not isinstance(config, dict) or 'points' not in config:
         print(f"ERROR: Invalid config structure in {CONFIG_FILE}", file=sys.stderr)
-        print("Expected format: { points: { basic_review: 5, ... } }", file=sys.stderr)
+        print("Expected format: { points: { review_submission: 5, detailed_review: 5, approve_pr: 3, pr_comment: 2 } }", file=sys.stderr)
         sys.exit(1)
     
     return config
@@ -58,8 +58,14 @@ def load_event():
     if not os.path.exists(event_path):
         print(f"ERROR: Event file not found: {event_path}")
         sys.exit(1)
-    with open(event_path, 'r', encoding='utf-8') as f:
-        event = json.load(f)
+    
+    try:
+        with open(event_path, 'r', encoding='utf-8') as f:
+            event = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in event file: {e}", file=sys.stderr)
+        print(f"File location: {event_path}", file=sys.stderr)
+        sys.exit(1)
     
     # Validate that this is a PR-related event, not a regular issue comment
     if 'issue' in event and 'pull_request' not in event.get('issue', {}):
@@ -72,10 +78,10 @@ def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
         with open(PROCESSED_FILE, 'r', encoding='utf-8') as f:
             try:
-                return json.load(f)
+                return set(json.load(f))
             except json.JSONDecodeError:
-                return []
-    return []
+                return set()
+    return set()
 
 def save_processed_ids(ids):
     """
@@ -86,7 +92,7 @@ def save_processed_ids(ids):
     """
     try:
         with open(PROCESSED_FILE, 'w', encoding='utf-8') as f:
-            json.dump(ids, f, indent=2)
+            json.dump(list(ids), f, indent=2)
     except PermissionError as e:
         print(f"ERROR: Permission denied when saving processed IDs to {PROCESSED_FILE}: {e}", file=sys.stderr)
         print("Check file permissions and ensure the workflow has write access.", file=sys.stderr)
@@ -161,7 +167,6 @@ def detect_points(event, cfg):
 
     review_body = review.get('body') or ''
     review_state = (review.get('state') or '').lower()
-    comment_body = comment.get('body') or ''
 
     user, source = extract_user(event)
     
@@ -181,8 +186,8 @@ def detect_points(event, cfg):
     scoring_breakdown = []
 
     # Determine if this is a review or just a comment
-    is_review = action == "submitted" and 'review' in event
-    is_comment = 'comment' in event and 'review' not in event
+    is_review = action == "submitted" and event.get('review') is not None and event.get('review')
+    is_comment = event.get('comment') is not None and event.get('comment') and not is_review
 
     if is_review:
         # Base points for any PR review submission
@@ -269,9 +274,8 @@ def main():
     # Update leaderboard first, then mark as processed
     # This order ensures we can retry if processed_ids save fails
     update_leaderboard(user, points)
-    processed_ids.append(event_id)
+    processed_ids.add(event_id)
     save_processed_ids(processed_ids)
-    print(f"Points awarded: {points} to {user}")
     sys.exit(0)  # Exit code 0 = success (points awarded)
 
 if __name__ == "__main__":

@@ -29,9 +29,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          check-latest: true
+          cache: 'pip'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install PyYAML
 
       - name: Run points script
         id: assign_points
@@ -61,8 +63,9 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          add: 'leaderboard.json,LEADERBOARD.md'
           commit-message: "Update leaderboard"
-          branch: leaderboard-update-${{ github.run_number }}
+          branch: leaderboard-update-${{ github.run_id }}
           delete-branch: true
           title: "Update contributor leaderboard"
           body: |
