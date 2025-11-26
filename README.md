@@ -37,6 +37,23 @@ When you submit a pull request, a CLA bot will automatically determine whether y
 
 This project has adopted the Microsoft Open Source Code of Conduct. For more information see the Code of Conduct FAQ or contact opencode@microsoft.com with any additional questions or comments.
 
+<!-- GAMIFICATION_START -->
+## 🏆 Contributor Leaderboard
+
+🎉 **Be the first contributor!**
+
+Start earning points by:
+- Reviewing pull requests
+- Contributing code
+- Improving documentation
+- Fixing security issues
+- Closing issues
+
+**[View full leaderboard and badges →](LEADERBOARD.md)**
+
+*Leaderboard updated automatically by GitHub Actions.*
+<!-- GAMIFICATION_END -->
+
 ## Useful Links
 
 ### Microsoft 365 Agents SDK

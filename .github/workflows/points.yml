@@ -3,19 +3,32 @@ name: Points Allocation
 on:
   pull_request_review:
     types: [submitted]
+    branches: [main]  # Only award points for reviews on PRs targeting main
+  pull_request:
+    types: [closed]
+    branches: [main]  # Only award points for merges to main
+  issues:
+    types: [closed]
   issue_comment:
     types: [created]
     
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   assign-points:
     runs-on: ubuntu-latest
-    # Only run for PR reviews or comments on PRs (not regular issues)
+    # Run for:
+    # - PR reviews
+    # - PR closed AND merged (not abandoned)
+    # - Issue closed
+    # - Comments on PRs (not regular issues)
     if: >
       github.event_name == 'pull_request_review' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      github.event_name == 'issues' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
     steps:
       - name: Checkout repository
@@ -31,7 +44,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install pyyaml requests
 
       - name: Run points script
         id: assign_points

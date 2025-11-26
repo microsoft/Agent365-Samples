@@ -4,6 +4,7 @@ import os
 import json
 import yaml
 import sys
+import requests
 
 # Exit codes used by this script:
 # 0 = Success - points were awarded and leaderboard updated
@@ -61,10 +62,13 @@ def load_event():
     with open(event_path, 'r', encoding='utf-8') as f:
         event = json.load(f)
     
-    # Validate that this is a PR-related event, not a regular issue comment
-    if 'issue' in event and 'pull_request' not in event.get('issue', {}):
-        print("INFO: Skipping - this is a comment on a regular issue, not a pull request.")
-        sys.exit(2)  # Exit code 2 = no-op
+    # Allow issue comments only if they're on PRs (for reviews)
+    # But allow issue close events (for issue_resolved points)
+    action = event.get('action', '')
+    if 'comment' in event and 'issue' in event and 'pull_request' not in event.get('issue', {}):
+        if action != 'closed':
+            print("INFO: Skipping - this is a comment on a regular issue, not a pull request.")
+            sys.exit(2)  # Exit code 2 = no-op
     
     return event
 
@@ -104,14 +108,34 @@ def extract_user(event):
     Extract user login from GitHub event with multiple fallback strategies.
     
     Priority:
-    1. review.user.login (for pull_request_review events)
-    2. comment.user.login (for issue_comment events)
-    3. sender.login (top-level event sender)
+    1. pull_request.user.login (for PR merged events - the PR author)
+    2. issue.user.login (for issue closed events - the issue author)
+    3. review.user.login (for pull_request_review events)
+    4. comment.user.login (for issue_comment events)
+    5. sender.login (top-level event sender)
     
     Returns:
         tuple: (user_login: str, source: str) or (None, None) if extraction fails
     """
-    # Try review user first
+    # For PR merged events, credit the PR author
+    pull_request = event.get('pull_request')
+    if pull_request and isinstance(pull_request, dict) and event.get('action') == 'closed' and pull_request.get('merged'):
+        pr_user = pull_request.get('user')
+        if pr_user and isinstance(pr_user, dict):
+            login = pr_user.get('login')
+            if login:
+                return login, 'pull_request.user'
+    
+    # For issue closed events, credit the issue author
+    issue = event.get('issue')
+    if issue and isinstance(issue, dict) and event.get('action') == 'closed' and not pull_request:
+        issue_user = issue.get('user')
+        if issue_user and isinstance(issue_user, dict):
+            login = issue_user.get('login')
+            if login:
+                return login, 'issue.user'
+    
+    # Try review user for review events
     review = event.get('review')
     if review and isinstance(review, dict):
         review_user = review.get('user')
@@ -120,7 +144,7 @@ def extract_user(event):
             if login:
                 return login, 'review.user'
     
-    # Try comment user second
+    # Try comment user for comment events
     comment = event.get('comment')
     if comment and isinstance(comment, dict):
         comment_user = comment.get('user')
@@ -129,7 +153,7 @@ def extract_user(event):
             if login:
                 return login, 'comment.user'
     
-    # Fallback to top-level sender (most reliable)
+    # Fallback to top-level sender
     sender = event.get('sender')
     if sender and isinstance(sender, dict):
         login = sender.get('login')
@@ -155,6 +179,12 @@ def detect_points(event, cfg):
        - Include "performance" anywhere = performance_improvement bonus (+4)
        - Approve the PR (state=approved) = approve_pr bonus (+3)
     
+    3. Contribution points (event-based):
+       - PR merged = pr_merged points (5)
+       - Issue closed = issue_resolved points (1)
+       - Documentation changes = documentation points (3)
+       - Security fixes = security_fix points (8)
+    
     Keyword Examples (all case-insensitive):
     - "detailed", "Detailed", "DETAILED" all work
     - "basic review", "Basic Review", "BASIC REVIEW" all work
@@ -166,10 +196,14 @@ def detect_points(event, cfg):
     - "detailed performance review" = 10 + 4 = 14 points
     - Approved PR with "Basic Review" = 5 + 3 = 8 points
     - Approved PR with "Detailed PERFORMANCE review" = 10 + 4 + 3 = 17 points
+    - PR merged = 5 points
+    - Issue closed with "security" label = 8 points
     """
     action = event.get('action', '')
     review = event.get('review') or {}
     comment = event.get('comment') or {}
+    pull_request = event.get('pull_request') or {}
+    issue = event.get('issue') or {}
 
     # Convert to lowercase for case-insensitive matching
     review_body = (review.get('body') or '').lower()
@@ -184,6 +218,8 @@ def detect_points(event, cfg):
             'has_review': 'review' in event,
             'has_comment': 'comment' in event,
             'has_sender': 'sender' in event,
+            'has_pull_request': 'pull_request' in event,
+            'has_issue': 'issue' in event,
             'action': action
         }, indent=2))
         sys.exit(1)
@@ -193,6 +229,65 @@ def detect_points(event, cfg):
     points = 0
     scoring_breakdown = []
 
+    # EVENT-BASED SCORING (PR merges, issue closes)
+    # Check for PR merged event
+    if action == "closed" and pull_request and pull_request.get('merged'):
+        points += cfg['points']['pr_merged']
+        scoring_breakdown.append(f"pr_merged: +{cfg['points']['pr_merged']}")
+        
+        # Check for documentation changes by examining files changed
+        # We need to make an API call to get the list of files
+        import requests
+        repo = os.getenv('GITHUB_REPOSITORY')
+        pr_number = pull_request.get('number')
+        token = os.getenv('GITHUB_TOKEN')
+        
+        if repo and pr_number and token:
+            files_url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/files"
+            headers = {
+                'Authorization': f'token {token}',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+            try:
+                response = requests.get(files_url, headers=headers)
+                if response.status_code == 200:
+                    files = response.json()
+                    # Check if any file is documentation-related
+                    doc_patterns = ['README', '.md', 'docs/', 'documentation/']
+                    is_doc_change = any(
+                        any(pattern.lower() in file.get('filename', '').lower() for pattern in doc_patterns)
+                        for file in files
+                    )
+                    if is_doc_change:
+                        points += cfg['points']['documentation']
+                        scoring_breakdown.append(f"documentation: +{cfg['points']['documentation']}")
+            except Exception as e:
+                print(f"Warning: Could not fetch PR files: {e}")
+        
+        # Check for security fixes (labels or keywords)
+        labels = [label.get('name', '').lower() for label in pull_request.get('labels', [])]
+        if 'security' in labels or any('security' in label for label in labels):
+            points += cfg['points']['security_fix']
+            scoring_breakdown.append(f"security_fix: +{cfg['points']['security_fix']}")
+    
+    # Check for issue closed event
+    elif action == "closed" and issue and not pull_request:
+        # Only award points if the issue was closed as completed (not just closed without reason)
+        state_reason = issue.get('state_reason', '').lower()
+        if state_reason == 'completed':
+            points += cfg['points']['issue_resolved']
+            scoring_breakdown.append(f"issue_resolved: +{cfg['points']['issue_resolved']}")
+            
+            # Check for security issue
+            labels = [label.get('name', '').lower() for label in issue.get('labels', [])]
+            if 'security' in labels or any('security' in label for label in labels):
+                points += cfg['points']['security_fix']
+                scoring_breakdown.append(f"security_fix: +{cfg['points']['security_fix']}")
+        else:
+            print(f"INFO: Issue closed but state_reason is '{state_reason}', not 'completed'. No points awarded.")
+            sys.exit(2)  # Exit code 2 = no-op
+
+    # REVIEW-BASED SCORING (original logic)
     # Review type scoring (mutually exclusive - detailed takes precedence)
     # All matching is case-insensitive due to .lower() above
     if "detailed" in review_body:
@@ -260,10 +355,20 @@ def main():
     points, user = detect_points(event, cfg)
 
     # Extract unique ID for duplicate prevention
-    event_id = event.get('review', {}).get('id') or event.get('comment', {}).get('id')
+    # Priority: review ID > comment ID > PR number > issue number
+    event_id = (event.get('review', {}).get('id') or 
+                event.get('comment', {}).get('id') or
+                event.get('pull_request', {}).get('number') or
+                event.get('issue', {}).get('number'))
+    
     if not event_id:
         print("No unique ID found in event. Skipping duplicate check.")
         sys.exit(2)  # Exit code 2 = no-op (not an error)
+    
+    # Create composite ID for PR/issue events to prevent re-scoring on each close
+    action = event.get('action', '')
+    if action == 'closed':
+        event_id = f"{action}_{event_id}"
 
     processed_ids = load_processed_ids()
     if event_id in processed_ids:

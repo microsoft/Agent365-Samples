@@ -4,10 +4,12 @@ import json
 import os
 import sys
 import argparse
+import yaml
 from datetime import datetime, timezone
 
 LB_JSON = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'leaderboard.json')
 OUT_MD = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'LEADERBOARD.md')
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config_points.yml')
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -78,6 +80,46 @@ def load_leaderboard(create_if_missing=True):
 
     return data
 
+def load_badge_config():
+    """
+    Load badge thresholds from config_points.yml.
+    Returns default thresholds if config is missing or invalid.
+    """
+    default_badges = {
+        'bronze_contributor': 10,
+        'silver_contributor': 25,
+        'gold_contributor': 50,
+        'platinum_legend': 100
+    }
+    
+    if not os.path.exists(CONFIG_FILE):
+        print(f"WARNING: Config file not found, using default badge thresholds", file=sys.stderr)
+        return default_badges
+    
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            return config.get('badges', default_badges)
+    except Exception as e:
+        print(f"WARNING: Failed to load badge config, using defaults: {e}", file=sys.stderr)
+        return default_badges
+
+def get_badge_for_points(points, badge_config):
+    """
+    Determine the highest badge earned for given points.
+    Returns tuple of (badge_name, badge_emoji).
+    """
+    if points >= badge_config.get('platinum_legend', 100):
+        return ('Platinum Legend', '💎')
+    elif points >= badge_config.get('gold_contributor', 50):
+        return ('Gold Contributor', '🥇')
+    elif points >= badge_config.get('silver_contributor', 25):
+        return ('Silver Contributor', '🥈')
+    elif points >= badge_config.get('bronze_contributor', 10):
+        return ('Bronze Contributor', '🥉')
+    else:
+        return ('', '')
+
 def normalize_scores(leaderboard):
     """
     Ensure points are integers and filter out non-user keys other than 'top'.
@@ -124,31 +166,43 @@ def write_badge_top(leaderboard, items, no_badge=False):
 
 def render_markdown(items, limit=0):
     """
-    Build the markdown leaderboard table with optional row limit and a 'Last updated' footer.
+    Build the markdown leaderboard table with badges, optional row limit, and a 'Last updated' footer.
     """
+    badge_config = load_badge_config()
+    
     if limit > 0:
         items = items[:limit]
 
     lines = []
     lines.append("# Contributor Leaderboard\n\n")
     
+    lines.append("## Badge Levels\n\n")
+    lines.append("- 🥉 **Bronze Contributor** - {} points\n".format(badge_config.get('bronze_contributor', 10)))
+    lines.append("- 🥈 **Silver Contributor** - {} points\n".format(badge_config.get('silver_contributor', 25)))
+    lines.append("- 🥇 **Gold Contributor** - {} points\n".format(badge_config.get('gold_contributor', 50)))
+    lines.append("- 💎 **Platinum Legend** - {} points\n\n".format(badge_config.get('platinum_legend', 100)))
+    
     if not items:
         lines.append("_No contributors yet. Be the first!_\n\n")
     else:
-        lines.append("| Rank | User | Points |\n")
-        lines.append("|------|------|--------|\n")
+        lines.append("| Rank | User | Points | Badge |\n")
+        lines.append("|------|------|--------|-------|\n")
         
         for rank, (user, points) in enumerate(items, start=1):
             # Add medal emoji for top 3
-            medal = ""
+            rank_medal = ""
             if rank == 1:
-                medal = "🥇 "
+                rank_medal = "🏆 "
             elif rank == 2:
-                medal = "🥈 "
+                rank_medal = "🥈 "
             elif rank == 3:
-                medal = "🥉 "
+                rank_medal = "🥉 "
             
-            lines.append(f"| {rank} | {medal}{user} | {points} |\n")
+            # Get badge for points
+            badge_name, badge_emoji = get_badge_for_points(points, badge_config)
+            badge_display = f"{badge_emoji} {badge_name}" if badge_name else "-"
+            
+            lines.append(f"| {rank} | {rank_medal}{user} | {points} | {badge_display} |\n")
         
         lines.append("\n")
 
