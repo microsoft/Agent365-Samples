@@ -141,40 +141,27 @@ def extract_user(event):
 
 def detect_points(event, cfg):
     """
-    Calculate points for a GitHub event based on review content and actions.
-    
-    All keyword matching is CASE-INSENSITIVE. Contributors can use any capitalization.
+    Calculate points for a GitHub event based on review actions.
     
     Scoring Rules:
-    1. Review types (mutually exclusive - only the highest applies):
-       - Include "detailed" anywhere in your review = detailed_review points (10)
-       - Include "basic review" anywhere in your review = basic_review points (5)
-       - If both keywords present, only "detailed" counts (higher value)
-    
-    2. Bonus points (additive - can stack with review types):
-       - Include "performance" anywhere = performance_improvement bonus (+4)
-       - Approve the PR (state=approved) = approve_pr bonus (+3)
-    
-    Keyword Examples (all case-insensitive):
-    - "detailed", "Detailed", "DETAILED" all work
-    - "basic review", "Basic Review", "BASIC REVIEW" all work
-    - "performance", "Performance", "PERFORMANCE" all work
+    1. Any PR review submission = review_submission points (base points)
+    2. PR approval (state=approved) = approve_pr bonus (additive)
+    3. Substantial review (comment length >= 100 characters) = detailed_review bonus (additive)
     
     Scoring Examples:
-    - "This is a basic review" = 5 points
-    - "This is a DETAILED analysis" = 10 points (case doesn't matter)
-    - "detailed performance review" = 10 + 4 = 14 points
-    - Approved PR with "Basic Review" = 5 + 3 = 8 points
-    - Approved PR with "Detailed PERFORMANCE review" = 10 + 4 + 3 = 17 points
+    - Simple review with short comment = 5 points (base)
+    - Review with detailed feedback (100+ chars) = 5 + 5 = 10 points
+    - Approved PR = 5 + 3 = 8 points
+    - Approved PR with detailed feedback = 5 + 3 + 5 = 13 points
+    - Comment on PR (not a review) = 2 points
     """
     action = event.get('action', '')
     review = event.get('review') or {}
     comment = event.get('comment') or {}
 
-    # Convert to lowercase for case-insensitive matching
-    review_body = (review.get('body') or '').lower()
+    review_body = review.get('body') or ''
     review_state = (review.get('state') or '').lower()
-    comment_body = (comment.get('body') or '').lower()
+    comment_body = comment.get('body') or ''
 
     user, source = extract_user(event)
     
@@ -193,24 +180,29 @@ def detect_points(event, cfg):
     points = 0
     scoring_breakdown = []
 
-    # Review type scoring (mutually exclusive - detailed takes precedence)
-    # All matching is case-insensitive due to .lower() above
-    if "detailed" in review_body:
-        points += cfg['points']['detailed_review']
-        scoring_breakdown.append(f"detailed_review: +{cfg['points']['detailed_review']}")
-    elif "basic review" in review_body:
-        points += cfg['points']['basic_review']
-        scoring_breakdown.append(f"basic_review: +{cfg['points']['basic_review']}")
+    # Determine if this is a review or just a comment
+    is_review = action == "submitted" and 'review' in event
+    is_comment = 'comment' in event and 'review' not in event
 
-    # Performance improvement bonus (additive)
-    if "performance" in comment_body or "performance" in review_body:
-        points += cfg['points']['performance_improvement']
-        scoring_breakdown.append(f"performance_improvement: +{cfg['points']['performance_improvement']}")
-
-    # PR approval bonus (additive)
-    if action == "submitted" and review_state == "approved":
-        points += cfg['points']['approve_pr']
-        scoring_breakdown.append(f"approve_pr: +{cfg['points']['approve_pr']}")
+    if is_review:
+        # Base points for any PR review submission
+        points += cfg['points']['review_submission']
+        scoring_breakdown.append(f"review_submission: +{cfg['points']['review_submission']}")
+        
+        # Bonus for substantial review (100+ characters)
+        if len(review_body.strip()) >= 100:
+            points += cfg['points']['detailed_review']
+            scoring_breakdown.append(f"detailed_review: +{cfg['points']['detailed_review']}")
+        
+        # Bonus for approving the PR
+        if review_state == "approved":
+            points += cfg['points']['approve_pr']
+            scoring_breakdown.append(f"approve_pr: +{cfg['points']['approve_pr']}")
+    
+    elif is_comment:
+        # Points for commenting on a PR (less than review)
+        points += cfg['points']['pr_comment']
+        scoring_breakdown.append(f"pr_comment: +{cfg['points']['pr_comment']}")
 
     # Log scoring breakdown for transparency
     if scoring_breakdown:

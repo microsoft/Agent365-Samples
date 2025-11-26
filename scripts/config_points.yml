@@ -1,25 +1,23 @@
 # Contributor Points Configuration
 #
-# All keyword matching is CASE-INSENSITIVE. Contributors can use any capitalization.
-# For example: "detailed", "Detailed", "DETAILED" all work the same way.
+# Scoring is based on actual review actions, not keywords.
+# All contributions are valued and tracked automatically.
 #
 # Scoring Rules:
-# 1. Review types are mutually exclusive (only highest value applies)
-#    - "detailed" keyword awards detailed_review points
-#    - "basic review" keyword awards basic_review points (only if "detailed" not present)
-# 2. Bonuses are additive and can stack with review types:
-#    - "performance" keyword adds performance_improvement bonus
-#    - Approved PR (state=approved) adds approve_pr bonus
+# 1. Any PR review submission = review_submission points (base points)
+# 2. Substantial review (100+ characters) = detailed_review bonus (additive)
+# 3. PR approval (state=approved) = approve_pr bonus (additive)
+# 4. PR comment (not a full review) = pr_comment points
 #
-# Examples (all case-insensitive):
-#   - "basic review" OR "Basic Review" OR "BASIC REVIEW" = 5 points
-#   - "detailed analysis" OR "Detailed Analysis" = 10 points
-#   - "detailed performance review" OR "DETAILED PERFORMANCE REVIEW" = 10 + 4 = 14 points
-#   - Approved PR with "basic review" = 5 + 3 = 8 points
-#   - Approved PR with "detailed performance review" = 10 + 4 + 3 = 17 points
+# Examples:
+#   - Simple review with short comment = 5 points
+#   - Review with detailed feedback (100+ chars) = 5 + 5 = 10 points
+#   - Approved PR = 5 + 3 = 8 points
+#   - Approved PR with detailed feedback = 5 + 5 + 3 = 13 points
+#   - Comment on PR (not a review) = 2 points
 
 points:
-  basic_review: 5              # Simple review with "basic review" keyword (case-insensitive)
-  detailed_review: 10          # In-depth review with "detailed" keyword (case-insensitive, overrides basic)
-  performance_improvement: 4   # Bonus for mentioning "performance" (case-insensitive, additive)
-  approve_pr: 3                # Bonus for approving a PR (additive)
+  review_submission: 5         # Base points for submitting any PR review
+  detailed_review: 5           # Bonus for substantial review (100+ characters of feedback)
+  approve_pr: 3                # Bonus for approving a PR
+  pr_comment: 2                # Points for commenting on a PR (not a full review)
