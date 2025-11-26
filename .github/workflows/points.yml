@@ -19,19 +19,21 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
+          check-latest: true
+          cache: 'pip'
 
       - name: Install dependencies
-        run: pip install pyyaml
+        run: pip install PyYAML
 
       - name: Run points script
         id: assign_points
@@ -56,11 +58,25 @@ jobs:
         if: steps.assign_points.outputs.exit_code == '0'
         run: python scripts/update_leaderboard.py
 
-      - name: Commit and push leaderboard changes
+      - name: Create Pull Request
         if: steps.assign_points.outputs.exit_code == '0'
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add leaderboard.json LEADERBOARD.md
-          git diff --staged --quiet || git commit -m "Update leaderboard [skip ci]"
-          git diff --staged --quiet || git push origin main
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          add: 'leaderboard.json,LEADERBOARD.md'
+          commit-message: "Update leaderboard"
+          branch: leaderboard-update-${{ github.run_id }}
+          delete-branch: true
+          title: "Update contributor leaderboard"
+          body: |
+            ## Leaderboard Update
+            
+            This PR updates the contributor leaderboard based on recent PR review activity.
+            
+            **Triggered by:** ${{ github.event_name }}
+            **Run:** ${{ github.run_number }}
+            
+            Please review and merge to update the leaderboard.
+          labels: |
+            leaderboard
+            automated
