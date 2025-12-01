@@ -269,7 +269,7 @@ class GenericAgentHost:
             # Log incoming request
             body = await req.text()
             logger.info(f"🌐 Incoming request to /api/messages")
-            logger.info(f"📋 Request body preview: {body[:200]}...")
+            # Removed logging of request body to avoid exposing sensitive information
             return await start_agent_process(
                 req, req.app["agent_app"], req.app["adapter"]
             )
