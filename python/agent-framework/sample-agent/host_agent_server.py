@@ -151,27 +151,48 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
         self.agent_app.message("/help", auth_handlers=handler)(help_handler)
 
-        @self.agent_app.activity("message", auth_handlers=handler)
+        @self.agent_app.activity("installationUpdate", auth_handlers=handler)
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            """Handle agent installation/uninstallation events"""
+            try:
+                action = getattr(context.activity, "action", None)
+                logger.info(f"📦 Installation event: {action} in conversation {context.activity.conversation.id}")
+                
+                # Optionally send a welcome message when installed
+                if action == "add":
+                    await context.send_activity(
+                        f"👋 Thanks for installing **{self.agent_class.__name__}**! "
+                        "I'm ready to help. Send me a message or type /help to get started."
+                    )
+            except Exception as e:
+                logger.error(f"Error handling installation update: {e}")
+
+        @self.agent_app.activity("message")
         async def on_message(context: TurnContext, _: TurnState):
             try:
+                logger.info(f"📨 Processing message: '{context.activity.text}'")
+                
                 result = await self._validate_agent_and_setup_context(context)
                 if result is None:
+                    logger.warning("⚠️ Agent validation failed")
                     return
                 tenant_id, agent_id = result
 
                 with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
                     user_message = context.activity.text or ""
+                    
                     if not user_message.strip() or user_message.strip() == "/help":
+                        logger.info("⏭️ Skipping empty or help message")
                         return
 
-                    logger.info(f"📨 {user_message}")
                     response = await self.agent_instance.process_user_message(
                         user_message, self.agent_app.auth, self.auth_handler_name, context
                     )
+                    logger.info(f"📤 Sending response: {response[:100] if len(response) > 100 else response}")
                     await context.send_activity(response)
 
             except Exception as e:
-                logger.error(f"❌ Error: {e}")
+                logger.error(f"❌ Error: {e}", exc_info=True)
                 await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
         @self.agent_notification.on_agent_notification(
@@ -245,6 +266,10 @@ class GenericAgentHost:
     # --- Server ---
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         async def entry_point(req: Request) -> Response:
+            # Log incoming request
+            body = await req.text()
+            logger.info(f"🌐 Incoming request to /api/messages")
+            logger.info(f"📋 Request body preview: {body[:200]}...")
             return await start_agent_process(
                 req, req.app["agent_app"], req.app["adapter"]
             )
