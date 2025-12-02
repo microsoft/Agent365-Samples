@@ -58,7 +58,7 @@ else
 }
 
 // Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
+builder.Services.AddAgenticTracingExporter();
 
 // Add A365 tracing with Semantic Kernel integration
 builder.AddA365Tracing(config =>
