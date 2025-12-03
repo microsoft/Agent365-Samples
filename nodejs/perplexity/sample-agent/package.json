@@ -21,7 +21,7 @@
     "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
     "@microsoft/agents-hosting": "^1.0.15",
     "@perplexity-ai/perplexity_ai": "^0.12.0",
-    "dotenv": "^17.2.2",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0"
   },
   "devDependencies": {
