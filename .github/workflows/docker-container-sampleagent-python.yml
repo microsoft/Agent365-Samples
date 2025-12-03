@@ -49,6 +49,15 @@ jobs:
             --admin-enabled true
         fi
 
+    - name: Set up Docker
+      run: |
+        # Remove bad Docker environment variables
+        unset DOCKER_CERT_PATH DOCKER_MACHINE_NAME DOCKER_TLS_VERIFY DOCKER_HOST
+        # Use default Docker context
+        docker context use default
+        # Verify Docker works
+        docker version
+
     - name: Login to Azure Container Registry
       run: |
         az acr login --name ${{ env.ACR_NAME }}
