@@ -77,7 +77,9 @@ jobs:
 
     - name: Login to Azure Container Registry
       run: |
-        az acr login --name ${{ env.ACR_NAME }}
+        # Get ACR token and login to Docker
+        TOKEN=$(az acr login --name ${{ env.ACR_NAME }} --expose-token --output tsv --query accessToken)
+        echo $TOKEN | docker login ${{ steps.acr-login-server.outputs.login_server }} -u 00000000-0000-0000-0000-000000000000 --password-stdin
 
     - name: Build Docker Image
       run: |
