@@ -9,6 +9,7 @@ import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
 
 import { Client, getClient } from './client';
+import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 
 export class MyAgent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -45,15 +46,31 @@ export class MyAgent extends AgentApplication<TurnState> {
       return;
     }
 
-    try {
-      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
-      const response = await client.invokeAgentWithScope(userMessage);
-      await turnContext.sendActivity(response);
-    } catch (error) {
-      console.error('LLM query error:', error);
-      const err = error as any;
-      await turnContext.sendActivity(`Error: ${err.message || err}`);
-    }
+    // Build and run with telemetry baggage and span scope
+    const baggageScope = new BaggageBuilder()
+      .tenantId((turnContext.activity as any)?.tenantId)
+      .agentId('openai-sample-agent')
+      .agentName('OpenAI Sample Agent')
+      .conversationId(turnContext.activity.conversation?.id)
+      .callerId((turnContext.activity.from as any)?.aadObjectId)
+      .callerUpn(turnContext.activity.from?.id)
+      .correlationId(turnContext.activity.id ?? `corr-${Date.now()}`)
+      .sourceMetadataName(turnContext.activity.channelId)
+      .build();
+
+    await baggageScope.run(async () => {
+
+      try {
+        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
+        const response = await client.invokeAgentWithScope(userMessage);
+        await turnContext.sendActivity(response);
+      } catch (error) {
+        console.error('LLM query error:', error);
+        const err = error as any;
+        await turnContext.sendActivity(`Error: ${err.message || err}`);
+      }
+    });
+     baggageScope.dispose();
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {

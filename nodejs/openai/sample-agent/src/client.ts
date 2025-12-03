@@ -98,6 +98,8 @@ class OpenAIClient implements Client {
   }
 
   async invokeAgentWithScope(prompt: string) {
+    console.log('Invoking agent with observability scope...');
+    let response = '';
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: this.agent.model.toString(),
@@ -112,19 +114,20 @@ class OpenAIClient implements Client {
     const tenantDetails: TenantDetails = {
       tenantId: 'typescript-sample-tenant',
     };
-
+    
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    await scope.withActiveSpanAsync(async () => { 
+    response = await this.invokeAgent(prompt);
 
-    const response = await this.invokeAgent(prompt);
-
-    // Record the inference response with token usage
-    scope?.recordOutputMessages([response]);
-    scope?.recordInputMessages([prompt]);
-    scope?.recordResponseId(`resp-${Date.now()}`);
-    scope?.recordInputTokens(45);
-    scope?.recordOutputTokens(78);
-    scope?.recordFinishReasons(['stop']);
-
+      // Record the inference response with token usage
+      scope.recordOutputMessages([response]);
+      scope.recordInputMessages([prompt]);
+      scope.recordResponseId(`resp-${Date.now()}`);
+      scope.recordInputTokens(45);
+      scope.recordOutputTokens(78);
+      scope.recordFinishReasons(['stop']);
+    });
+    scope.dispose();
     return response;
   }
 
