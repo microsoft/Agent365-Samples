@@ -9,6 +9,10 @@ on:
       - '.github/workflows/docker-container-sampleagent-python.yml'
   workflow_dispatch:
 
+permissions:
+  id-token: write  # Required for OIDC authentication
+  contents: read
+
 env:
   AZURE_RESOURCE_GROUP: agent365-samples-rg
   ACR_NAME: agent365samplesacr
