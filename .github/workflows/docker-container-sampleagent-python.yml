@@ -85,12 +85,17 @@ jobs:
         find . -name "Dockerfile" -type f
         echo "Checking specific path:"
         ls -la ./python/agent-framework/sample-agent || echo "Path does not exist"
-    - name: Reset Docker Context
+    - name: Fix Docker Environment Variables
       run: |
+        # Unset problematic Docker environment variables that point to old contexts
+        unset DOCKER_CERT_PATH
+        unset DOCKER_MACHINE_NAME
+        unset DOCKER_TLS_VERIFY
+        unset DOCKER_HOST
+        
         # Reset Docker to use default context
         docker context use default || true
-        # Remove any problematic contexts
-        docker context rm "./python/agent-framework/sample-agent" 2>/dev/null || true
+        
         # Verify Docker is working
         docker info
 
