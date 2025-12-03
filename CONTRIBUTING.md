@@ -51,7 +51,7 @@ We appreciate any help! There are several ways you can contribute to this projec
 
 ## License
 
-By contributing to this project, you agree that your contributions will be licensed under the same license as the project. See [LICENSE](https://github.com/microsoft/Agent365-Samples/blob/main/LICENSE.md) for more details.
+By contributing to this project, you agree that your contributions will be licensed under the same license as the project. See [LICENSE](LICENSE.md) for more details.
 
 ---
 
