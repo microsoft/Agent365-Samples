@@ -16,6 +16,7 @@ import {
   TenantDetails,
   InferenceDetails
 } from '@microsoft/agents-a365-observability';
+import { OpenAIAgentsTraceInstrumentor } from '@microsoft/agents-a365-observability-extensions-openai';
 
 export interface Client {
   invokeAgentWithScope(prompt: string): Promise<string>;
@@ -27,7 +28,15 @@ const sdk = ObservabilityManager.configure(
       .withService('TypeScript Sample Agent', '1.0.0')
 );
 
+// Initialize OpenAI Agents instrumentation
+const openAIAgentsTraceInstrumentor = new OpenAIAgentsTraceInstrumentor({
+  enabled: true,
+  tracerName: 'openai-agent-auto-instrumentation',
+  tracerVersion: '1.0.0'
+});
+
 sdk.start();
+openAIAgentsTraceInstrumentor.enable();
 
 const toolService = new McpToolRegistrationService();
 
@@ -116,18 +125,21 @@ class OpenAIClient implements Client {
     };
     
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
-    await scope.withActiveSpanAsync(async () => { 
-    response = await this.invokeAgent(prompt);
+    try {
+      await scope.withActiveSpanAsync(async () => { 
+        response = await this.invokeAgent(prompt);
 
-      // Record the inference response with token usage
-      scope.recordOutputMessages([response]);
-      scope.recordInputMessages([prompt]);
-      scope.recordResponseId(`resp-${Date.now()}`);
-      scope.recordInputTokens(45);
-      scope.recordOutputTokens(78);
-      scope.recordFinishReasons(['stop']);
-    });
-    scope.dispose();
+        // Record the inference response with token usage
+        scope.recordOutputMessages([response]);
+        scope.recordInputMessages([prompt]);
+        scope.recordResponseId(`resp-${Date.now()}`);
+        scope.recordInputTokens(45);
+        scope.recordOutputTokens(78);
+        scope.recordFinishReasons(['stop']);
+      });
+    } finally {
+      scope.dispose();
+    }
     return response;
   }
 
