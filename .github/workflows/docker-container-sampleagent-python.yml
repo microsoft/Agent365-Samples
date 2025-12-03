@@ -171,3 +171,4 @@ jobs:
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --tail 50 \
             --follow false
+            
