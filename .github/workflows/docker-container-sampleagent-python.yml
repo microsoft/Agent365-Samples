@@ -75,30 +75,6 @@ jobs:
         echo "login_server=$ACR_LOGIN_SERVER" >> $GITHUB_OUTPUT
         echo "ACR Login Server: $ACR_LOGIN_SERVER"
 
-    - name: Debug - Check directory structure
-      run: |
-        echo "Current directory:"
-        pwd
-        echo "Directory contents:"
-        ls -la
-        echo "Looking for Dockerfile:"
-        find . -name "Dockerfile" -type f
-        echo "Checking specific path:"
-        ls -la ./python/agent-framework/sample-agent || echo "Path does not exist"
-    - name: Fix Docker Environment Variables
-      run: |
-        # Unset problematic Docker environment variables that point to old contexts
-        unset DOCKER_CERT_PATH
-        unset DOCKER_MACHINE_NAME
-        unset DOCKER_TLS_VERIFY
-        unset DOCKER_HOST
-        
-        # Reset Docker to use default context
-        docker context use default || true
-        
-        # Verify Docker is working
-        docker info
-
     - name: Login to Azure Container Registry
       run: |
         # Get ACR credentials
