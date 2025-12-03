@@ -123,6 +123,7 @@ jobs:
                 USE_AGENTIC_AUTH=true \
                 ENABLE_OBSERVABILITY=true \
                 PYTHON_ENVIRONMENT=production
+          fi
 
       - name: Get Container App URL
         run: |
