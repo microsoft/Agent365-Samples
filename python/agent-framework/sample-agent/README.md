@@ -3,6 +3,7 @@
 This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Application Insights**: Optional integration with Azure Application Insights for production monitoring
 - **Notifications**: Services and models for managing user notifications
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
@@ -10,6 +11,18 @@ This sample demonstrates how to build an agent using Agent Framework in Python w
 This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
 
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+
+## Optional Features
+
+### Application Insights Integration
+
+This sample includes optional Application Insights integration for production monitoring and telemetry. Application Insights provides:
+- Distributed tracing and performance monitoring
+- Exception tracking and diagnostics
+- Live metrics and real-time monitoring
+- Custom metrics and events
+
+**To enable Application Insights**, see the [Application Insights Integration Guide](APPLICATION_INSIGHTS.md) for detailed setup instructions.
 
 ## Prerequisites
 
