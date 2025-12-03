@@ -58,15 +58,6 @@ jobs:
         pwd
         ls -R .
 
-    - name: Set up Docker
-      run: |
-        # Remove bad Docker environment variables
-        unset DOCKER_CERT_PATH DOCKER_MACHINE_NAME DOCKER_TLS_VERIFY DOCKER_HOST
-        # Use default Docker context
-        docker context use default
-        # Verify Docker works
-        docker version
-
     - name: Login to Azure Container Registry
       run: |
         az acr login --name ${{ env.ACR_NAME }}
@@ -74,9 +65,10 @@ jobs:
     - name: Build Docker Image
       run: |
         docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
-                     -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
-                     -f python/agent-framework/sample-agent/Dockerfile \
-                     python/agent-framework/sample-agent
+             -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+             -f "${{ github.workspace }}/${{ env.DOCKERFILE_PATH }}" \
+             "${{ github.workspace }}/${{ env.DOCKER_CONTEXT }}"
+
 
     - name: Push Docker Image to ACR
       run: |
