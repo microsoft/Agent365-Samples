@@ -136,3 +136,12 @@ jobs:
           echo "🌐 URL: https://$FQDN"
           echo "📍 Health: https://$FQDN/api/health"
           echo "📨 Messages: https://$FQDN/api/messages"
+
+      - name: View Container App Logs
+        run: |
+          echo "📋 Fetching recent logs..."
+          az containerapp logs show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --tail 50 \
+            --follow false
