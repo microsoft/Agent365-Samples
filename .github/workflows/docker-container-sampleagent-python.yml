@@ -53,6 +53,11 @@ jobs:
             --admin-enabled true
         fi
 
+    - name: List files
+      run: |
+        pwd
+        ls -R .
+
     - name: Set up Docker
       run: |
         # Remove bad Docker environment variables
