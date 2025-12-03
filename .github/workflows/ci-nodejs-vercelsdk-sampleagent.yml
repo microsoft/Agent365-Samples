@@ -1,0 +1,45 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI - Build Node.js Vercel SDK Sample Agent
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'nodejs/vercel-sdk/sample-agent/**/*'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'nodejs/vercel-sdk/sample-agent/**/*'
+
+jobs:
+  nodejs-openai-sampleagent:
+    name: Node.js Vercel SDK Sample Agent
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./nodejs/vercel-sdk/sample-agent
+
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: '**/package-lock.json'
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build
+      run: npm run build
