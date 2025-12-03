@@ -1,0 +1,25 @@
+# Docker Compose for AgentFramework Sample Agent
+version: '3.8'
+
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3978:3978"
+    env_file:
+      - .env
+    environment:
+      # Override port to ensure container uses 3978
+      - PORT=3978
+    volumes:
+      # Mount .env for local development (optional)
+      - ./.env:/app/.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3978/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
