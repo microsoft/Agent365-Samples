@@ -31,6 +31,24 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+    - name: Check and Create Resource Group
+      id: check-rg
+      run: |
+        echo "Checking if Resource Group exists..."
+        RG_EXISTS=$(az group exists --name ${{ env.AZURE_RESOURCE_GROUP }})
+        
+        if [ "$RG_EXISTS" = "false" ]; then
+          echo "Resource Group does not exist. Creating..."
+          az group create \
+            --name ${{ env.AZURE_RESOURCE_GROUP }} \
+            --location eastus
+          echo "rg_created=true" >> $GITHUB_OUTPUT
+          echo "✅ Resource Group created: ${{ env.AZURE_RESOURCE_GROUP }}"
+        else
+          echo "✅ Resource Group already exists: ${{ env.AZURE_RESOURCE_GROUP }}"
+          echo "rg_created=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Check and Create Azure Container Registry
       id: check-acr
       run: |
@@ -181,4 +199,3 @@ jobs:
       run: |
         az logout
 
-        
