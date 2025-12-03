@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 /**
  * Simple in-memory token cache
  * In production, use a more robust caching solution like Redis
