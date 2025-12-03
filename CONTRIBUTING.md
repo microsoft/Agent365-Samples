@@ -15,7 +15,7 @@ We welcome contributions from everyone, whether you're fixing bugs, adding new f
 
 ## Code of Conduct
 
-By participating in this project, you agree to abide by the [Code of Conduct](https://github.com/microsoft/Agent365-Samples/blob/main/CODE_OF_CONDUCT.md). Please be respectful and considerate to others, as we want to foster a friendly and inclusive community.
+By participating in this project, you agree to abide by the [Code of Conduct](CODE_OF_CONDUCT.md). Please be respectful and considerate to others, as we want to foster a friendly and inclusive community.
 
 ## How to Contribute
 
