@@ -58,21 +58,19 @@ export class MyAgent extends AgentApplication<TurnState> {
       .sourceMetadataName(turnContext.activity.channelId)
       .build();
 
-    try {
-      await baggageScope.run(async () => {
-        try {
-          const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
-          const response = await client.invokeAgentWithScope(userMessage);
-          await turnContext.sendActivity(response);
-        } catch (error) {
-          console.error('LLM query error:', error);
-          const err = error as any;
-          await turnContext.sendActivity(`Error: ${err.message || err}`);
-        }
-      });
-    } finally {
-      baggageScope.dispose();
-    }
+    await baggageScope.run(async () => {
+      try {
+        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
+        const response = await client.invokeAgentWithScope(userMessage);
+        await turnContext.sendActivity(response);
+      } catch (error) {
+        console.error('LLM query error:', error);
+        const err = error as any;
+        await turnContext.sendActivity(`Error: ${err.message || err}`);
+      }
+    });
+
+    baggageScope.dispose();
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
