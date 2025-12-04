@@ -30,7 +30,7 @@ For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
 - **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
+- **Security**: For security issues, please see [SECURITY.md](../../../SECURITY.md)
 
 ## Contributing
 
@@ -55,4 +55,4 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 Copyright (c) Microsoft Corporation. All rights reserved.
 
-Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
+Licensed under the MIT License - see the [LICENSE](../../../LICENSE.md) file for details.
