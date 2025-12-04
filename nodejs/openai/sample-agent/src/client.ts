@@ -127,15 +127,21 @@ class OpenAIClient implements Client {
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
     try {
       await scope.withActiveSpanAsync(async () => { 
-        response = await this.invokeAgent(prompt);
+        try {
+          response = await this.invokeAgent(prompt);
 
-        // Record the inference response with token usage
-        scope.recordOutputMessages([response]);
-        scope.recordInputMessages([prompt]);
-        scope.recordResponseId(`resp-${Date.now()}`);
-        scope.recordInputTokens(45);
-        scope.recordOutputTokens(78);
-        scope.recordFinishReasons(['stop']);
+          // Record the inference response with token usage
+          scope.recordOutputMessages([response]);
+          scope.recordInputMessages([prompt]);
+          scope.recordResponseId(`resp-${Date.now()}`);
+          scope.recordInputTokens(45);
+          scope.recordOutputTokens(78);
+          scope.recordFinishReasons(['stop']);
+        } catch (error) {
+          scope.recordError(error as Error);
+          scope.recordFinishReasons(['error']);
+          throw error;
+        }
       });
     } finally {
       scope.dispose();
