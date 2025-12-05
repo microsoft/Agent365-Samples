@@ -1,7 +1,0 @@
-.env
-__pycache__/
-.DS_Store
-
-# VS Code - exclude secrets but keep settings
-.vscode/settings.json
-.vscode/launch.json
