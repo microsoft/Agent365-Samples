@@ -17,7 +17,7 @@ import {
 } from '@microsoft/agents-a365-observability';
 
 export interface Client {
-  invokeAgentWithScope(prompt: string): Promise<string>;
+  invokeInferenceScope(prompt: string): Promise<string>;
 }
 
 const sdk = ObservabilityManager.configure(
@@ -132,7 +132,7 @@ class LangChainClient implements Client {
     return agentMessage;
   }
 
-  async invokeAgentWithScope(prompt: string) {
+  async invokeInferenceScope(prompt: string) {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: "gpt-4o-mini",
@@ -148,18 +148,25 @@ class LangChainClient implements Client {
       tenantId: 'typescript-sample-tenant',
     };
 
+    let response = '';
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
-
-    const response = await this.invokeAgent(prompt);
-
-    // Record the inference response with token usage
-    scope?.recordOutputMessages([response]);
-    scope?.recordInputMessages([prompt]);
-    scope?.recordResponseId(`resp-${Date.now()}`);
-    scope?.recordInputTokens(45);
-    scope?.recordOutputTokens(78);
-    scope?.recordFinishReasons(['stop']);
-
+    try {
+      await scope.withActiveSpanAsync(async () => {
+      response = await this.invokeAgent(prompt);
+      // Record the inference response with token usage
+      scope.recordOutputMessages([response]);
+      scope.recordInputMessages([prompt]);
+      scope.recordResponseId(`resp-${Date.now()}`);
+      scope.recordInputTokens(45);
+      scope.recordOutputTokens(78);
+      scope.recordFinishReasons(['stop']);
+      });      
+    } catch (error) {
+      scope.recordError(error as Error);
+      throw error;
+    } finally {
+      scope.dispose();
+    }
     return response;
   }
 }

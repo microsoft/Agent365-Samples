@@ -95,7 +95,7 @@ class VercelAiClient implements Client {
     return agentMessage;
   }
 
-  async invokeAgentWithScope(prompt: string) {
+  async invokeAgentWithScope(prompt: string): Promise<string> {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: modelName,
@@ -111,18 +111,27 @@ class VercelAiClient implements Client {
       tenantId: 'typescript-sample-tenant',
     };
 
+    let response = '';
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
-
-    const response = await this.invokeAgent(prompt);
-
-    // Record the inference response with token usage
-    scope?.recordOutputMessages([response]);
-    scope?.recordInputMessages([prompt]);
-    scope?.recordResponseId(`resp-${Date.now()}`);
-    scope?.recordInputTokens(45);
-    scope?.recordOutputTokens(78);
-    scope?.recordFinishReasons(['stop']);
-
+    try {
+      await scope.withActiveSpanAsync(async () => {
+        try {
+          response = await this.invokeAgent(prompt);
+          scope.recordOutputMessages([response]);
+          scope.recordInputMessages([prompt]);
+          scope.recordResponseId(`resp-${Date.now()}`);
+          scope.recordInputTokens(45);
+          scope.recordOutputTokens(78);
+          scope.recordFinishReasons(['stop']);
+        } catch (error) {
+          scope.recordError(error as Error);
+          scope.recordFinishReasons(['error']);
+          throw error;
+        }
+      });
+    } finally {
+      scope.dispose();
+    }
     return response;
   }
 }
