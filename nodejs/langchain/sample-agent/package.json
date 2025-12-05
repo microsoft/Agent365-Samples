@@ -42,6 +42,7 @@
     "@babel/core": "^7.28.4",
     "@babel/preset-env": "^7.28.3",
     "@microsoft/m365agentsplayground": "^0.2.16",
+    "@types/express": "^5.0.3",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2"
   }
