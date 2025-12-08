@@ -5,8 +5,7 @@ import { Agent, run } from '@openai/agents';
 import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
-import {BaggageBuilderUtils} from '@microsoft/agents-a365-observability-hosting'
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
+import { AgenticTokenCacheInstance} from '@microsoft/agents-a365-observability-hosting'
 
 // Observability Imports
 import {
@@ -16,19 +15,35 @@ import {
   InferenceOperationType,
   AgentDetails,
   TenantDetails,
-  InferenceDetails
+  InferenceDetails,
+  Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
 import { OpenAIAgentsTraceInstrumentor } from '@microsoft/agents-a365-observability-extensions-openai';
+import { tokenResolver } from './token-cache';
 
 export interface Client {
   invokeAgentWithScope(prompt: string): Promise<string>;
 }
 
-const sdk = ObservabilityManager.configure(
-  (builder: Builder) =>
-    builder
-      .withService('TypeScript Sample Agent', '1.0.0')
-);
+export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
+  const exporterOptions = new Agent365ExporterOptions();
+  exporterOptions.maxQueueSize = 10; // customized queue size
+
+  builder
+    .withService('TypeScript Claude Sample Agent', '1.0.0')
+    .withExporterOptions(exporterOptions);
+
+  // Configure token resolver is required if environment variable ENABLE_A365_OBSERVABILITY_EXPORTER is true, otherwise use console exporter by default
+  if (process.env.Use_Custom_Resolver === 'true') {
+    builder.withTokenResolver(tokenResolver);
+  }
+  else {
+    // use build-in token resolver from observability hosting package
+    builder.withTokenResolver((agentId: string, tenantId: string) => 
+      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
+    );
+  }
+});
 
 // Initialize OpenAI Agents instrumentation
 const openAIAgentsTraceInstrumentor = new OpenAIAgentsTraceInstrumentor({
@@ -37,7 +52,7 @@ const openAIAgentsTraceInstrumentor = new OpenAIAgentsTraceInstrumentor({
   tracerVersion: '1.0.0'
 });
 
-sdk.start();
+a365Observability.start();
 openAIAgentsTraceInstrumentor.enable();
 
 const toolService = new McpToolRegistrationService();
