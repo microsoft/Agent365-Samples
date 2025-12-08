@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
     "eval": "node --env-file .env src/evals/index.js",
     "build": "tsc"
