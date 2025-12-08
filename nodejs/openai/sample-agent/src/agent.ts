@@ -3,13 +3,14 @@
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { ActivityTypes } from '@microsoft/agents-activity';
+import { BaggageBuilder } from '@microsoft/agents-a365-observability';
+import {BaggageBuilderUtils} from '@microsoft/agents-a365-observability-hosting'
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
 
 import { Client, getClient } from './client';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 
 export class MyAgent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -46,15 +47,28 @@ export class MyAgent extends AgentApplication<TurnState> {
       return;
     }
 
-     try {
-          const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
-          const response = await client.invokeAgentWithScope(userMessage);
-          await turnContext.sendActivity(response);
-        } catch (error) {
-          console.error('LLM query error:', error);
-          const err = error as any;
-          await turnContext.sendActivity(`Error: ${err.message || err}`);
-        }  
+    // Populate baggage consistently from TurnContext using hosting utilities
+    const baggageScope = BaggageBuilderUtils.fromTurnContext(
+      new BaggageBuilder(),
+      turnContext
+    ).sessionDescription('Initial onboarding session')
+      .correlationId("7ff6dca0-917c-4bb0-b31a-794e533d8aad")
+      .build();
+
+
+    try {
+      await baggageScope.run(async () => {
+        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
+        const response = await client.invokeAgentWithScope(userMessage);
+        await turnContext.sendActivity(response);
+      });
+    } catch (error) {
+      console.error('LLM query error:', error);
+      const err = error as any;
+      await turnContext.sendActivity(`Error: ${err.message || err}`);
+    } finally {
+      baggageScope.dispose();
+    }
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
