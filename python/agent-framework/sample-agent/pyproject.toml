@@ -8,6 +8,10 @@ authors = [
 dependencies = [
     # AgentFramework SDK - The official package
     "agent-framework-azure-ai",
+    
+    # Azure AI Projects - explicitly require pre-release version
+    "azure-ai-agents>=1.2.0b5",
+    "azure-ai-projects>=2.0.0b2",
 
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp",
