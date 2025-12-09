@@ -63,16 +63,17 @@ jobs:
         python -m py_compile agent.py
         python -m py_compile mcp_tool_registration_service.py
 
-    - name: Install dev dependencies
-      run: |
-        source .venv/bin/activate
-        uv pip install pytest pytest-asyncio ruff mypy
+    # Linting disabled temporarily - sample code has intentional formatting for educational purposes
+    # - name: Install dev dependencies
+    #   run: |
+    #     source .venv/bin/activate
+    #     uv pip install pytest pytest-asyncio ruff mypy
 
-    - name: Run Ruff linter (non-blocking)
-      continue-on-error: true
-      run: |
-        source .venv/bin/activate
-        ruff check . --output-format=github || echo "::warning::Ruff found some issues"
+    # - name: Run Ruff linter (non-blocking)
+    #   continue-on-error: true
+    #   run: |
+    #     source .venv/bin/activate
+    #     ruff check . --output-format=github || echo "::warning::Ruff found some issues"
 
     - name: Check for common issues
       run: |

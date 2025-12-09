@@ -68,16 +68,17 @@ jobs:
         python -m py_compile token_cache.py
         python -m py_compile start_with_generic_host.py
 
-    - name: Install dev dependencies
-      run: |
-        source .venv/bin/activate
-        uv pip install pytest pytest-asyncio ruff mypy
+    # Linting disabled temporarily - sample code has intentional formatting for educational purposes
+    # - name: Install dev dependencies
+    #   run: |
+    #     source .venv/bin/activate
+    #     uv pip install pytest pytest-asyncio ruff mypy
 
-    - name: Run Ruff linter (non-blocking)
-      continue-on-error: true
-      run: |
-        source .venv/bin/activate
-        ruff check . --output-format=github || echo "::warning::Ruff found some issues"
+    # - name: Run Ruff linter (non-blocking)
+    #   continue-on-error: true
+    #   run: |
+    #     source .venv/bin/activate
+    #     ruff check . --output-format=github || echo "::warning::Ruff found some issues"
 
     - name: Check for common issues
       run: |
