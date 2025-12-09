@@ -63,14 +63,10 @@ jobs:
         python -c "import fastapi; print('OK: fastapi')"
         python -c "import pydantic; print('OK: pydantic')"
 
-    - name: Validate syntax
+    - name: Compile and validate Python syntax
       run: |
-        python -m py_compile agent.py
-        python -m py_compile agent_interface.py
-        python -m py_compile host_agent_server.py
-        python -m py_compile local_authentication_options.py
-        python -m py_compile token_cache.py
-        python -m py_compile start_with_generic_host.py
+        python -m compileall -f -q . || (echo "Syntax validation failed" && exit 1)
+        echo "All Python files compiled successfully"
 
     - name: Test imports
       continue-on-error: true
