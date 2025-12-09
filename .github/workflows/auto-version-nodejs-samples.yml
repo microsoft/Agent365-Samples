@@ -1,0 +1,173 @@
+name: Auto-version Node.js Samples
+
+on:
+  push:
+    branches:
+      - main
+      - 'users/**'
+    paths:
+      - 'nodejs/**/src/**'
+      - 'nodejs/**/package.json'
+      - 'nodejs/**/tsconfig.json'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Configure Git
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+    - name: Auto-version changed samples
+      id: version-bump
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = require('path');
+          const { execSync } = require('child_process');
+          
+          // Get changed files
+          let changedFiles;
+          if (context.payload.before === '0000000000000000000000000000000000000000') {
+            changedFiles = execSync('git ls-files nodejs/', { encoding: 'utf-8' })
+              .split('\n')
+              .filter(f => f.trim());
+          } else {
+            changedFiles = execSync(`git diff --name-only ${{ github.event.before }} ${{ github.sha }}`, { encoding: 'utf-8' })
+              .split('\n')
+              .filter(f => f.startsWith('nodejs/'));
+          }
+          
+          console.log('Changed files:', changedFiles);
+          
+          // Find unique sample directories
+          const sampleDirs = new Set();
+          for (const file of changedFiles) {
+            let dir = path.dirname(file);
+            while (dir !== '.' && dir !== 'nodejs') {
+              const packageJsonPath = path.join(dir, 'package.json');
+              if (fs.existsSync(packageJsonPath)) {
+                sampleDirs.add(dir);
+                break;
+              }
+              dir = path.dirname(dir);
+            }
+          }
+          
+          const sampleDirsArray = Array.from(sampleDirs);
+          console.log('Sample directories:', sampleDirsArray);
+          
+          if (sampleDirsArray.length === 0) {
+            console.log('No samples to version');
+            return { hasChanges: false, bumped: [] };
+          }
+          
+          // Auto-version based on git history
+          const bumped = [];
+          for (const dir of sampleDirsArray) {
+            const packageJsonPath = path.join(dir, 'package.json');
+            console.log(`\nProcessing ${packageJsonPath}`);
+            
+            // Get git commit count for this directory (auto-incrementing patch version)
+            const commitCount = execSync(`git rev-list --count HEAD -- ${dir}`, { encoding: 'utf-8' }).trim();
+            
+            // Read package.json
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            const currentVersion = packageJson.version;
+            const versionParts = currentVersion.split('.');
+            
+            // Generate new version: major.minor.commitCount
+            const newVersion = `${versionParts[0]}.${versionParts[1]}.${commitCount}`;
+            
+            console.log(`  Current version: ${currentVersion}`);
+            console.log(`  Git commits: ${commitCount}`);
+            console.log(`  New version: ${newVersion}`);
+            
+            if (newVersion !== currentVersion) {
+              // Update package.json
+              packageJson.version = newVersion;
+              fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n', 'utf-8');
+              
+              bumped.push({ 
+                dir, 
+                oldVersion: currentVersion, 
+                newVersion,
+                commits: commitCount
+              });
+              
+              // Stage the file
+              execSync(`git add ${packageJsonPath}`);
+            } else {
+              console.log(`  Version unchanged`);
+            }
+          }
+          
+          return { hasChanges: bumped.length > 0, bumped };
+        result-encoding: json
+
+    - name: Create Pull Request with version bumps
+      if: steps.version-bump.outputs.result != null && fromJson(steps.version-bump.outputs.result).hasChanges == true
+      uses: peter-evans/create-pull-request@v6
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "chore: auto-version Node.js samples based on git history"
+        branch: auto-version-bump-${{ github.run_id }}
+        delete-branch: true
+        title: "chore: Auto-version Node.js samples (GitVersion-style)"
+        body: |
+          ## 🤖 Automated Version Update (GitVersion-style)
+          
+          This PR automatically updates package versions based on git commit history.
+          
+          ### 📦 Version Strategy
+          
+          Versions follow: `major.minor.commitCount`
+          - **major.minor**: Manually set in package.json (e.g., 1.0)
+          - **patch**: Auto-generated from git commit count for that directory
+          
+          ### 📋 Samples Updated
+          
+          ```json
+          ${{ toJson(fromJson(steps.version-bump.outputs.result).bumped) }}
+          ```
+          
+          ### ✅ Benefits
+          
+          - ✅ Versions increment automatically with each commit
+          - ✅ Version = commit count (traceable)
+          - ✅ No manual version bumping needed
+          - ✅ Similar to GitVersion/semantic versioning
+          
+          ### 🔍 How It Works
+          
+          1. Counts git commits in each sample directory
+          2. Sets patch version to commit count
+          3. Major/minor versions remain as set in package.json
+          
+          ---
+          
+          _Generated by workflow: `${{ github.workflow }}`_  
+          _Triggered by: `${{ github.event_name }}` on commit `${{ github.sha }}`_
+        labels: |
+          automated
+          version-bump
+          gitversion
+        assignees: ${{ github.actor }}
