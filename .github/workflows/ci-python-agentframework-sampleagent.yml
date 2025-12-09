@@ -15,16 +15,18 @@ on:
       - '.github/workflows/ci-python-agentframework-sampleagent.yml'
 
 jobs:
-  python-agentframework-sampleagent:
-    name: Python Agent Framework Sample Agent
-    runs-on: ubuntu-latest
+  validate-sample:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: ./python/agent-framework/sample-agent
 
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.11', '3.12']
+        os: [ubuntu-latest, windows-latest]
 
     steps:
     - name: Checkout repository
@@ -35,48 +37,25 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install UV package manager
+    - name: Display environment
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        python --version
+        pip --version
 
-    - name: Verify UV installation
-      run: uv --version
-
-    - name: Create virtual environment
-      run: uv venv
-
-    - name: Install dependencies with error handling
-      id: install_deps
-      continue-on-error: true
+    - name: Install dependencies from PyPI
       run: |
-        source .venv/bin/activate
-        echo "Attempting to install dependencies..."
-        uv pip install -e . 2>&1 | tee install.log
-        
-    - name: Check installation results
+        python -m pip install --upgrade pip
+        pip install -e .
+
+    - name: Verify dependencies installed
       run: |
-        source .venv/bin/activate
-        if [ ${{ steps.install_deps.outcome }} == 'failure' ]; then
-          echo "::warning::Some dependencies failed to install. Checking what succeeded..."
-          cat install.log
-        fi
-        echo "Installed packages:"
         pip list
-        
-    - name: Verify imports
-      continue-on-error: true
-      id: verify_imports
-      run: |
-        source .venv/bin/activate
-        echo "Testing imports..."
-        python -c "import agent; print('✓ agent.py imports successfully')" || echo "::error::Failed to import agent.py"
-        python -c "import agent_interface; print('✓ agent_interface.py imports successfully')" || echo "::error::Failed to import agent_interface.py"
-        python -c "import host_agent_server; print('✓ host_agent_server.py imports successfully')" || echo "::error::Failed to import host_agent_server.py"
+        python -c "import aiohttp; print('✓ aiohttp')"
+        python -c "import fastapi; print('✓ fastapi')"
+        python -c "import pydantic; print('✓ pydantic')"
 
-    - name: Check Python syntax
+    - name: Validate syntax
       run: |
-        source .venv/bin/activate
         python -m py_compile agent.py
         python -m py_compile agent_interface.py
         python -m py_compile host_agent_server.py
@@ -84,28 +63,15 @@ jobs:
         python -m py_compile token_cache.py
         python -m py_compile start_with_generic_host.py
 
-    # Linting disabled temporarily - sample code has intentional formatting for educational purposes
-    # - name: Install dev dependencies
-    #   run: |
-    #     source .venv/bin/activate
-    #     uv pip install pytest pytest-asyncio ruff mypy
-
-    # - name: Run Ruff linter (non-blocking)
-    #   continue-on-error: true
-    #   run: |
-    #     source .venv/bin/activate
-    #     ruff check . --output-format=github || echo "::warning::Ruff found some issues"
-    - name: Verify package installation
+    - name: Test imports
+      continue-on-error: true
       run: |
-        source .venv/bin/activate
-        echo "Verifying installed packages..."
-        pip list --format=freeze | head -20
-        echo "✓ Environment ready"
+        python -c "import agent"
+        python -c "import agent_interface"
+        python -c "import host_agent_server"
 
-    - name: Build validation summary
+    - name: Summary
       if: always()
+      shell: bash
       run: |
-        echo "### ✅ Validation Complete for Python ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- Dependencies installed successfully" >> $GITHUB_STEP_SUMMARY
-        echo "- Python syntax validation passed" >> $GITHUB_STEP_SUMMARY
-        echo "- Import checks passed" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Agent Framework Sample - Python ${{ matrix.python-version }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
