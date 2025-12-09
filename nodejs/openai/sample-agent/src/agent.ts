@@ -9,6 +9,7 @@ import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
 
 import { Client, getClient } from './client';
+import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 
 export class MyAgent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -45,15 +46,15 @@ export class MyAgent extends AgentApplication<TurnState> {
       return;
     }
 
-    try {
-      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
-      const response = await client.invokeAgentWithScope(userMessage);
-      await turnContext.sendActivity(response);
-    } catch (error) {
-      console.error('LLM query error:', error);
-      const err = error as any;
-      await turnContext.sendActivity(`Error: ${err.message || err}`);
-    }
+     try {
+          const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
+          const response = await client.invokeAgentWithScope(userMessage);
+          await turnContext.sendActivity(response);
+        } catch (error) {
+          console.error('LLM query error:', error);
+          const err = error as any;
+          await turnContext.sendActivity(`Error: ${err.message || err}`);
+        }  
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {

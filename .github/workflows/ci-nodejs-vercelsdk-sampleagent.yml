@@ -1,27 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-name: CI - Build Node.js OpenAI Sample Agent
+name: CI - Build Node.js Vercel SDK Sample Agent
 
 on:
   push:
     branches: [ main, master ]
     paths:
-      - 'nodejs/openai/sample-agent/**/*'
+      - 'nodejs/vercel-sdk/sample-agent/**/*'
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'nodejs/openai/sample-agent/**/*'
+      - 'nodejs/vercel-sdk/sample-agent/**/*'
 
 jobs:
-  nodejs-openai-sampleagent:
-    name: Node.js OpenAI Sample Agent
+  nodejs-vercelsdk-sampleagent:
+    name: Node.js Vercel SDK Sample Agent
     permissions:
       contents: read
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./nodejs/openai/sample-agent
+        working-directory: ./nodejs/vercel-sdk/sample-agent
 
     strategy:
       matrix:

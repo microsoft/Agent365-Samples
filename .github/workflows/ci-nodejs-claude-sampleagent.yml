@@ -1,27 +1,26 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-name: CI - Build Node.js OpenAI Sample Agent
+name: CI - Build Node.js Claude Sample Agent
 
 on:
   push:
     branches: [ main, master ]
     paths:
-      - 'nodejs/openai/sample-agent/**/*'
+      - 'nodejs/claude/sample-agent/**/*'
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'nodejs/openai/sample-agent/**/*'
-
+      - 'nodejs/claude/sample-agent/**/*'
 jobs:
-  nodejs-openai-sampleagent:
-    name: Node.js OpenAI Sample Agent
+  nodejs-claude-sampleagent:
+    name: Node.js Claude Sample Agent
     permissions:
       contents: read
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./nodejs/openai/sample-agent
+        working-directory: ./nodejs/claude/sample-agent
 
     strategy:
       matrix:
