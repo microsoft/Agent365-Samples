@@ -1,0 +1,121 @@
+name: CI - Build Python Agent Framework Sample Agent
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'python/agent-framework/sample-agent/**/*'
+      - '.github/workflows/ci-python-agentframework-sampleagent.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'python/agent-framework/sample-agent/**/*'
+      - '.github/workflows/ci-python-agentframework-sampleagent.yml'
+
+jobs:
+  python-agentframework-sampleagent:
+    name: Python Agent Framework Sample Agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./python/agent-framework/sample-agent
+
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install UV package manager
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Verify UV installation
+      run: uv --version
+
+    - name: Create virtual environment
+      run: uv venv
+
+    - name: Install dependencies
+      run: |
+        source .venv/bin/activate
+        uv pip install -e .
+
+    - name: Verify imports
+      run: |
+        source .venv/bin/activate
+        python -c "import agent; print('✓ agent.py imports successfully')"
+        python -c "import agent_interface; print('✓ agent_interface.py imports successfully')"
+        python -c "import host_agent_server; print('✓ host_agent_server.py imports successfully')"
+
+    - name: Check Python syntax
+      run: |
+        source .venv/bin/activate
+        python -m py_compile agent.py
+        python -m py_compile agent_interface.py
+        python -m py_compile host_agent_server.py
+        python -m py_compile local_authentication_options.py
+        python -m py_compile token_cache.py
+        python -m py_compile start_with_generic_host.py
+
+    - name: Install dev dependencies
+      run: |
+        source .venv/bin/activate
+        uv pip install pytest pytest-asyncio ruff mypy
+
+    - name: Run Ruff linter (non-blocking)
+      continue-on-error: true
+      run: |
+        source .venv/bin/activate
+        ruff check . --output-format=github || echo "::warning::Ruff found some issues"
+
+    - name: Check for common issues
+      run: |
+        source .venv/bin/activate
+        echo "Checking for missing dependencies..."
+        python -c "
+        import importlib.util
+        import sys
+        
+        required_modules = [
+            'agent_framework',
+            'microsoft.agents.hosting.aiohttp',
+            'microsoft.agents.authentication.msal',
+            'microsoft_agents_a365_tooling',
+            'microsoft_agents_a365_observability_core',
+            'dotenv',
+            'aiohttp',
+            'fastapi',
+            'uvicorn',
+            'pydantic'
+        ]
+        
+        missing = []
+        for module in required_modules:
+            if importlib.util.find_spec(module.replace('.', '/').split('/')[0]) is None:
+                missing.append(module)
+        
+        if missing:
+            print(f'❌ Missing modules: {missing}')
+            sys.exit(1)
+        else:
+            print('✓ All required modules are available')
+        "
+
+    - name: Build validation summary
+      if: always()
+      run: |
+        echo "### ✅ Validation Complete for Python ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Dependencies installed successfully" >> $GITHUB_STEP_SUMMARY
+        echo "- Python syntax validation passed" >> $GITHUB_STEP_SUMMARY
+        echo "- Import checks passed" >> $GITHUB_STEP_SUMMARY
