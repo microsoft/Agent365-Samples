@@ -50,9 +50,9 @@ jobs:
     - name: Verify dependencies installed
       run: |
         pip list
-        python -c "import aiohttp; print('✓ aiohttp')"
-        python -c "import fastapi; print('✓ fastapi')"
-        python -c "import pydantic; print('✓ pydantic')"
+        python -c "import aiohttp; print('OK: aiohttp')"
+        python -c "import fastapi; print('OK: fastapi')"
+        python -c "import pydantic; print('OK: pydantic')"
 
     - name: Validate syntax
       run: |
@@ -74,4 +74,4 @@ jobs:
       if: always()
       shell: bash
       run: |
-        echo "✅ Agent Framework Sample - Python ${{ matrix.python-version }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
+        echo "### Agent Framework Sample - Python ${{ matrix.python-version }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
