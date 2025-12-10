@@ -51,6 +51,14 @@ public class Agent365Agent
         return _agent;
     }
 
+    public static (bool, string?) UseBearerTokenForDevelopment()
+    {
+        var token = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+
+        return (Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "false"
+            && !string.IsNullOrEmpty(token), token);
+    }
+
     /// <summary>
     /// 
     /// </summary>
@@ -72,10 +80,9 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            var token = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+            var (useBearerToken, token) = UseBearerTokenForDevelopment();
 
-            if (Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "false" 
-                && !string.IsNullOrEmpty(token))
+            if (useBearerToken)
             {
                 await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, token);
             }

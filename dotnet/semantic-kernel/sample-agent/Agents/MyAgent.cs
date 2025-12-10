@@ -31,8 +31,8 @@ public class MyAgent : AgentApplication
     private readonly ILogger<MyAgent> _logger;
     private readonly IConfiguration _configuration;
     // Setup reusable auto sign-in handlers
-    private readonly string AgenticIdAuthHanlder = "agentic";
-    private readonly string MyAuthHanlder = "me";
+    private readonly string AgenticIdAuthHandler = "agentic";
+    private readonly string MyAuthHandler = "me";
 
 
     internal static bool IsApplicationInstalled { get; set; } = false;
@@ -49,13 +49,13 @@ public class MyAgent : AgentApplication
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
         TermsAndConditionsAccepted = true;
 
-        bool useBearerToken = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BEARER_TOKEN"));
-        string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHanlder };
+        var (useBearerToken, token) = Agent365Agent.UseBearerTokenForDevelopment();
+        string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHandler };
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
-        this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
-        OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
-        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+        this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHandler });
+        OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
+        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
         OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: false, autoSignInHandlers: autoSignInHandlersForNotAgenticAuth);
     }
 
@@ -72,13 +72,13 @@ public class MyAgent : AgentApplication
         string ToolAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
-            ToolAuthHandlerName = AgenticIdAuthHanlder;
+            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
+            ToolAuthHandlerName = AgenticIdAuthHandler;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHanlder;
-            ToolAuthHandlerName = MyAuthHanlder;
+            ObservabilityAuthHandlerName = MyAuthHandler;
+            ToolAuthHandlerName = MyAuthHandler;
         }
         // Init the activity for observability
 
@@ -144,13 +144,13 @@ public class MyAgent : AgentApplication
         string ToolAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
-            ToolAuthHandlerName = AgenticIdAuthHanlder;
+            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
+            ToolAuthHandlerName = AgenticIdAuthHandler;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHanlder;
-            ToolAuthHandlerName = MyAuthHanlder;
+            ObservabilityAuthHandlerName = MyAuthHandler;
+            ToolAuthHandlerName = MyAuthHandler;
         }
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -259,11 +259,11 @@ public class MyAgent : AgentApplication
         string ObservabilityAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
+            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHanlder;
+            ObservabilityAuthHandlerName = MyAuthHandler;
         }
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
