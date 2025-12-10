@@ -1,7 +1,8 @@
 {
 	"mcpServers": [
 		{
-			"mcpServerName": "mcp_MailTools"
+			"mcpServerName": "mcp_MailTools",
+			"url": "https://test.agent365.svc.cloud.dev.microsoft/"
 		},
 		{
 			"mcpServerName": "mcp_CalendarTools"
