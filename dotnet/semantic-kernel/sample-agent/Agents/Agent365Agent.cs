@@ -72,7 +72,17 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            var token = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+
+            if (Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "false" 
+                && !string.IsNullOrEmpty(token))
+            {
+                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, token);
+            }
+            else
+            {
+                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            }
         }
         else
         {
