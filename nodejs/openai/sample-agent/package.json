@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
     "install:clean": "npm run clean && npm install",
     "clean": "rimraf dist node_modules package-lock.json",
