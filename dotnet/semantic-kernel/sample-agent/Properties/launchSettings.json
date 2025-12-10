@@ -6,6 +6,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "USE_AGENTIC_AUTH": "false",
+        "MCP_PLATFORM_ENDPOINT": "https://test.agent365.svc.cloud.dev.microsoft" // ATG - Mail and all other 
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }

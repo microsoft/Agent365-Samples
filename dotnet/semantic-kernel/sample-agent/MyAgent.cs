@@ -46,10 +46,10 @@ public class MyAgent : AgentApplication
         var autoSignInHandlers = new[] { primaryAuthHandler };
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
-        this.OnAgentNotification("*", AgentNotificationActivityAsync,RouteRank.Last,  autoSignInHandlers: autoSignInHandlers);
+        this.OnAgentNotification("*", AgentNotificationActivityAsync,RouteRank.Last);
 
         OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync);
-        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, autoSignInHandlers: autoSignInHandlers);
+        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last);
     }
 
     internal static bool IsApplicationInstalled { get; set; } = false;

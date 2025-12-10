@@ -61,8 +61,8 @@ public class Agent365Agent
         {
             // Provide the tool service with necessary parameters to connect to A365
             this._kernel.ImportPluginFromType<TermsAndConditionsAcceptedPlugin>();
-
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext).ConfigureAwait(false);
+            var bearerToken = "";
+            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken).ConfigureAwait(false);
         }
         else
         {
