@@ -7,10 +7,10 @@ using Azure.AI.Agents.Persistent;
 using AzureAIFoundrySampleAgent.Telemetry;
 using Microsoft.Agents.A365.Notifications.Models;
 using Microsoft.Agents.A365.Observability.Caching;
-using Microsoft.Agents.A365.Runtime.Authentication;
 using Microsoft.Agents.A365.Tooling.Extensions.AzureFoundry.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
+using Microsoft.Agents.Builder.App.UserAuth;
 using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.Configuration;
@@ -27,12 +27,12 @@ namespace AzureAIFoundrySampleAgent.Agent
         private readonly IConfiguration _configuration;
         private readonly string _modelDeploymentName;
         
-        // Tool resources cache for reuse across runs
-        private ToolResources? _cachedToolResources;
-        private bool _toolResourcesInitialized = false;
-        
         // Setup reusable auto sign-in handlers
         private readonly string AgenticIdAuthHandler = "agentic";
+
+        // Cached tool resources for reuse across runs
+        private ToolResources? _cachedToolResources = null;
+        private bool _toolResourcesRetrieved = false;
 
         internal static bool IsApplicationInstalled { get; set; } = false;
         internal static bool TermsAndConditionsAccepted { get; set; } = false;
@@ -71,17 +71,14 @@ namespace AzureAIFoundrySampleAgent.Agent
         /// </summary>
         protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            string observabilityAuthHandlerName = AgenticIdAuthHandler;
-            string toolAuthHandlerName = observabilityAuthHandlerName;
-
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Processing your message...", cancellationToken);
 
             try
             {
                 var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
                 
-                // Create or get agent with MCP tools
-                var agent = await GetOrCreateAgentAsync(toolAuthHandlerName, turnContext);
+                // Create agent with MCP tools
+                var agent = await GetOrCreateAgentAsync(AgenticIdAuthHandler, turnContext);
                 
                 // Create thread for communication
                 Response<PersistentAgentThread> threadResponse = _agentClient.Threads.CreateThread();
@@ -125,16 +122,13 @@ namespace AzureAIFoundrySampleAgent.Agent
             AgentNotificationActivity agentNotificationActivity, 
             CancellationToken cancellationToken)
         {
-            string observabilityAuthHandlerName = AgenticIdAuthHandler;
-            string toolAuthHandlerName = observabilityAuthHandlerName;
-
             switch (agentNotificationActivity.NotificationType)
             {
                 case NotificationTypeEnum.EmailNotification:
-                    await HandleEmailNotificationAsync(turnContext, agentNotificationActivity, toolAuthHandlerName, cancellationToken);
+                    await HandleEmailNotificationAsync(turnContext, agentNotificationActivity, cancellationToken);
                     break;
                 case NotificationTypeEnum.WpxComment:
-                    await HandleWordCommentAsync(turnContext, agentNotificationActivity, toolAuthHandlerName, cancellationToken);
+                    await HandleWordCommentAsync(turnContext, agentNotificationActivity, cancellationToken);
                     break;
                 default:
                     await turnContext.SendActivityAsync("Notification type not supported.", cancellationToken: cancellationToken);
@@ -147,8 +141,6 @@ namespace AzureAIFoundrySampleAgent.Agent
         /// </summary>
         protected async Task OnHireMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            string observabilityAuthHandlerName = AgenticIdAuthHandler;
-
             if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
             {
                 IsApplicationInstalled = true;
@@ -190,88 +182,76 @@ namespace AzureAIFoundrySampleAgent.Agent
         /// </summary>
         private async Task<PersistentAgent> GetOrCreateAgentAsync(string authHandlerName, ITurnContext turnContext)
         {
-            // Create agent
+            // Step 1: Create the agent without tools first
             Response<PersistentAgent> agentResponse = _agentClient.Administration.CreateAgent(
                 model: _modelDeploymentName,
                 name: "AzureAIFoundryAgent",
                 instructions: "You are a helpful assistant with access to MCP tools. Use the available tools to help answer user questions.");
 
             PersistentAgent agent = agentResponse.Value;
+            _logger.LogInformation($"Created agent {agent.Id}");
 
-            // Configure MCP tools
+            // Step 2: Initialize tool resources once for reuse in runs
+            await InitializeToolResourcesAsync(agent.Id, turnContext);
+
+            // Step 3: Add MCP tools to the agent using AddToolServersToAgentAsync
+            // Pass agent.Id as the agentInstanceId parameter
             try
             {
                 await _toolsService.AddToolServersToAgentAsync(
-                    _agentClient,
-                    UserAuthorization,
-                    authHandlerName,
-                    turnContext);
+                    agentClient: _agentClient,
+                    userAuthorization: UserAuthorization,
+                    authHandlerName: authHandlerName,
+                    turnContext: turnContext,
+                    authToken: null);
 
-                // Initialize tool resources once for reuse in runs
-                await InitializeToolResourcesAsync(authHandlerName, turnContext);
+                _logger.LogInformation("Successfully configured MCP tools for agent");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to configure MCP tools: {ex.Message}");
+                _logger.LogError(ex, "Failed to configure MCP tools for agent");
+                throw;
             }
 
-            // Get the updated agent
-            Response<PersistentAgent> updatedAgentResponse = _agentClient.Administration.GetAgent(agent.Id);
+            // Step 4: Get the updated agent to see the configured tools
+            var updatedAgentResponse = _agentClient.Administration.GetAgent(agent.Id);
             return updatedAgentResponse.Value;
         }
 
         /// <summary>
-        /// Initialize tool resources once and cache them for subsequent runs
+        /// Initialize tool resources once for reuse in runs
         /// </summary>
-        private async Task InitializeToolResourcesAsync(string authHandlerName, ITurnContext turnContext)
+        private async Task InitializeToolResourcesAsync(string agentInstanceId, ITurnContext turnContext)
         {
-            if (_toolResourcesInitialized)
+            if (_toolResourcesRetrieved)
                 return;
 
             try
             {
                 _logger.LogInformation("Initializing tool resources...");
                 
-                // Get agenticAppId from turnContext
-                var agenticAppId = turnContext.Activity.Recipient.AgenticAppId;
-                
-                // Get auth token
-                var authToken = await AgenticAuthenticationService.GetAgenticUserTokenAsync(
-                    UserAuthorization,
-                    authHandlerName,
-                    turnContext,
-                    _configuration);
-                
                 var (_, resources) = await _toolsService.GetMcpToolDefinitionsAndResourcesAsync(
-                    agenticAppId,
-                    authToken ?? string.Empty,
-                    turnContext);
+                    agentInstanceId: agentInstanceId,
+                    authToken: null,
+                    turnContext: turnContext);
 
                 _cachedToolResources = resources;
-                _toolResourcesInitialized = true;
+                _toolResourcesRetrieved = true;
                 _logger.LogInformation($"Tool resources initialized: {_cachedToolResources != null}");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to initialize tool resources: {ex.Message}");
-                _toolResourcesInitialized = true; // Don't keep retrying
+                _logger.LogError(ex, "Failed to initialize tool resources");
+                _toolResourcesRetrieved = true; // Don't keep retrying
             }
         }
 
         /// <summary>
-        /// Create a run with cached tool resources
+        /// Create a run for the agent
         /// </summary>
         private ThreadRun CreateRunWithToolResources(PersistentAgentThread thread, PersistentAgent agent)
         {
-            // Use cached tool resources if available
-            if (_cachedToolResources != null)
-            {
-                return _agentClient.Runs.CreateRun(thread, agent, _cachedToolResources);
-            }
-            else
-            {
-                return _agentClient.Runs.CreateRun(thread, agent);
-            }
+            return _agentClient.Runs.CreateRun(thread, agent);
         }
 
         /// <summary>
@@ -327,7 +307,6 @@ namespace AzureAIFoundrySampleAgent.Agent
         private async Task HandleEmailNotificationAsync(
             ITurnContext turnContext, 
             AgentNotificationActivity notification,
-            string authHandlerName,
             CancellationToken cancellationToken)
         {
             if (notification.EmailNotification == null)
@@ -339,7 +318,7 @@ namespace AzureAIFoundrySampleAgent.Agent
 
             try
             {
-                var agent = await GetOrCreateAgentAsync(authHandlerName, turnContext);
+                var agent = await GetOrCreateAgentAsync(AgenticIdAuthHandler, turnContext);
                 Response<PersistentAgentThread> threadResponse = _agentClient.Threads.CreateThread();
                 PersistentAgentThread thread = threadResponse.Value;
                 
@@ -366,7 +345,6 @@ namespace AzureAIFoundrySampleAgent.Agent
         private async Task HandleWordCommentAsync(
             ITurnContext turnContext,
             AgentNotificationActivity notification,
-            string authHandlerName,
             CancellationToken cancellationToken)
         {
             if (notification.WpxCommentNotification == null)
@@ -379,7 +357,7 @@ namespace AzureAIFoundrySampleAgent.Agent
             {
                 await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Processing Word comment...", cancellationToken);
                 
-                var agent = await GetOrCreateAgentAsync(authHandlerName, turnContext);
+                var agent = await GetOrCreateAgentAsync(AgenticIdAuthHandler, turnContext);
                 Response<PersistentAgentThread> threadResponse = _agentClient.Threads.CreateThread();
                 PersistentAgentThread thread = threadResponse.Value;
                 
