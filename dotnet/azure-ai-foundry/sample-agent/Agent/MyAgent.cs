@@ -6,7 +6,6 @@ using Azure;
 using Azure.AI.Agents.Persistent;
 using AzureAIFoundrySampleAgent.Telemetry;
 using Microsoft.Agents.A365.Notifications.Models;
-using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Tooling.Extensions.AzureFoundry.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
@@ -22,7 +21,6 @@ namespace AzureAIFoundrySampleAgent.Agent
     {
         private readonly PersistentAgentsClient _agentClient;
         private readonly IMcpToolRegistrationService _toolsService;
-        private readonly IExporterTokenCache<AgenticTokenStruct> _agentTokenCache;
         private readonly ILogger<MyAgent> _logger;
         private readonly IConfiguration _configuration;
         private readonly string _modelDeploymentName;
@@ -42,13 +40,11 @@ namespace AzureAIFoundrySampleAgent.Agent
             IConfiguration configuration, 
             PersistentAgentsClient agentClient,
             IMcpToolRegistrationService toolService, 
-            IExporterTokenCache<AgenticTokenStruct> agentTokenCache, 
             ILogger<MyAgent> logger) : base(options)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _agentClient = agentClient ?? throw new ArgumentNullException(nameof(agentClient));
             _toolsService = toolService ?? throw new ArgumentNullException(nameof(toolService));
-            _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
             _modelDeploymentName = _configuration["AzureAIFoundry:ModelDeploymentName"] 

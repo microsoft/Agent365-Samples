@@ -14,11 +14,11 @@ namespace AzureAIFoundrySampleAgent.Telemetry
 {
     public static class AgentMetrics
     {
-        public static readonly string SourceName = "A365.AgentFramework";
+        public static readonly string SourceName = "A365.AzureAIFoundry";
 
         public static readonly ActivitySource ActivitySource = new(SourceName);
 
-        private static readonly Meter Meter = new ("A365.AgentFramework", "1.0.0");
+        private static readonly Meter Meter = new ("A365.AzureAIFoundry", "1.0.0");
 
         public static readonly Counter<long> MessageProcessedCounter = Meter.CreateCounter<long>(
             "agent.messages.processed",

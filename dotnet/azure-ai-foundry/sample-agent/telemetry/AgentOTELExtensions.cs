@@ -61,8 +61,8 @@ namespace AzureAIFoundrySampleAgent.Telemetry
                 .ConfigureResource(r => r
                 .Clear()
                 .AddService(
-                    serviceName: "A365.AgentFramework",
-                    serviceVersion: "1.0.0",
+                    serviceName: "A365.AzureAIFoundry",
+                    serviceVersion: "1.0",
                     serviceInstanceId: Environment.MachineName)
                 .AddAttributes(new Dictionary<string, object>
                 {
@@ -84,10 +84,10 @@ namespace AzureAIFoundrySampleAgent.Telemetry
                 {
                     tracing.AddSource(builder.Environment.ApplicationName)
                         .AddSource(
-                            "A365.AgentFramework",
+                            "A365.AzureAIFoundry",
                             "Microsoft.Agents.Builder",
                             "Microsoft.Agents.Hosting",
-                            "A365.AgentFramework.MyAgent",
+                            "A365.AzureAIFoundry.MyAgent",
                             "Microsoft.AspNetCore",
                             "System.Net.Http"
                         )

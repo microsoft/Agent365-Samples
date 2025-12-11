@@ -12,7 +12,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 
-namespace Agent365AgentFrameworkSampleAgent;
+namespace AzureAIFoundrySampleAgent;
 
 public static class AspNetExtensions
 {

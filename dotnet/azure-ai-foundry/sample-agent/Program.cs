@@ -95,7 +95,7 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
     }).ConfigureAwait(false);
 });
 
-if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
+if (app.Environment.IsDevelopment())
 {
     app.MapGet("/", () => "Azure AI Foundry Example Agent");
     app.UseDeveloperExceptionPage();
