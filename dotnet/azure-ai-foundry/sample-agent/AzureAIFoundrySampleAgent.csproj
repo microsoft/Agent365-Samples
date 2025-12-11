@@ -21,7 +21,6 @@
 	<ItemGroup>
 		<!-- A365 SDK Packages  -->
 		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="0.1.72-beta" />
-		<PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.AgentFramework" Version="0.1.72-beta" />
 		<PackageReference Include="Microsoft.Agents.A365.Observability.Runtime" Version="0.1.72-beta" />
 		<PackageReference Include="Microsoft.Agents.A365.Observability.Hosting" Version="0.1.72-beta" />
 		
@@ -37,6 +36,7 @@
 		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
 		<PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="9.5.0" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
+		<PackageReference Include="OpenTelemetry.Exporter.Console" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />

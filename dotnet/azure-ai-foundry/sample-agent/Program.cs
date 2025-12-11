@@ -28,8 +28,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
+// Configure observability - Using console exporter for development
+// Removed AddAgenticTracingExporter dependency, using OpenTelemetry Console exporter instead
 
 // Add A365 tracing
 builder.AddA365Tracing();

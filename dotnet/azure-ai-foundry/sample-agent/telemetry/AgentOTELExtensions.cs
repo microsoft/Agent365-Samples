@@ -145,7 +145,9 @@ namespace AzureAIFoundrySampleAgent.Telemetry
                             // Example filter: suppress telemetry for health checks
                             o.FilterHttpRequestMessage = request =>
                                 !request.RequestUri?.AbsolutePath.Contains("health", StringComparison.OrdinalIgnoreCase) ?? true;
-                        });
+                        })
+                        // Add console exporter for development/debugging
+                        .AddConsoleExporter();
                 });
 
             //builder.AddOpenTelemetryExporters();
