@@ -1,23 +1,46 @@
 # Contributor Points Configuration
 #
-# Scoring is based on actual review actions, not keywords.
-# All contributions are valued and tracked automatically.
+# This configuration defines point values for various contribution activities.
+# Points are calculated automatically by the workflow and displayed in PR comments.
 #
 # Scoring Rules:
-# 1. Any PR review submission = review_submission points (base points)
-# 2. Substantial review (100+ characters, excluding whitespace) = detailed_review bonus (additive)
-# 3. PR approval (state=approved) = approve_pr bonus (additive)
-# 4. PR comment (not a full review) = pr_comment points
+# 1. Review submission = base points
+# 2. Detailed review (100+ characters) = bonus points (additive)
+# 3. PR approval = bonus points (additive)
+# 4. PR comment = fixed points
+# 5. PR merged = points for author
+# 6. Special labels (bug, priority, docs) = bonus points
+# 7. First-time contributor = bonus points
 #
 # Examples:
 #   - Simple review with short comment = 5 points
-#   - Review with detailed comment (100+ characters) = 5 + 5 = 10 points
-#   - Approved PR = 5 + 3 = 8 points
-#   - Approved PR with detailed feedback = 5 + 5 + 3 = 13 points
-#   - Comment on PR (not a review) = 2 points
+#   - Review with detailed comment (100+ chars) = 10 points (5 + 5)
+#   - Approved PR with detailed feedback = 13 points (5 + 5 + 3)
+#   - PR comment = 2 points
+#   - PR merged with bug fix = 10 points (5 + 5)
 
 points:
+  # Review & Comment Points
   review_submission: 5         # Base points for submitting any PR review
-  detailed_review: 5           # Bonus for substantial review (100+ characters of feedback)
+  detailed_review: 5           # Bonus for substantial review (100+ characters)
   approve_pr: 3                # Bonus for approving a PR
-  pr_comment: 2                # Points for commenting on a PR (not a full review)
+  
+  # PR Author Points
+  pr_merged: 5                 # Points when PR is successfully merged
+  
+  # Label-Based Bonuses (for PR authors)
+  bug_fix: 5                   # Bonus for fixing bugs
+  high_priority: 3             # Bonus for high-priority work
+  critical_bug: 10             # Bonus for critical bug fixes
+  documentation: 4             # Bonus for documentation contributions
+  performance_improvement: 6   # Bonus for performance enhancements
+  security_fix: 15             # Bonus for security fixes
+  
+  # Special Bonuses
+  first_time_contributor: 5    # Bonus for first-time contributors
+  
+  # Future Implementation (not currently calculated)
+  # speed_bonus_24h: 3           # TODO: Bonus for PRs merged within 24 hours
+  # test_coverage: 8             # TODO: Bonus for adding comprehensive tests
+  # mentorship: 10               # TODO: Points for mentoring sessions
+  # issue_triage: 2              # TODO: Points for triaging issues

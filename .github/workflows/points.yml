@@ -1,29 +1,37 @@
-name: Points Allocation
+name: Contributor Points Tracker
 
 on:
   pull_request_review:
-    types: [submitted]
+    types: [submitted, edited, dismissed]
   issue_comment:
-    types: [created]
+    types: [created, edited]
+  pull_request:
+    types: [opened, closed, reopened, labeled, unlabeled]
+  pull_request_review_comment:
+    types: [created, edited]
+  issues:
+    types: [opened, closed, labeled]
     
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
+  issues: write
 
 jobs:
-  assign-points:
+  track-points:
     runs-on: ubuntu-latest
-    # Only run for PR reviews or comments on PRs (not regular issues)
+    # Only run for PR-related events or issue events (not regular issue comments)
     if: >
       github.event_name == 'pull_request_review' ||
+      github.event_name == 'pull_request_review_comment' ||
+      github.event_name == 'pull_request' ||
+      github.event_name == 'issues' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request != null)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -33,51 +41,13 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install PyYAML
-
-      - name: Run points script
-        id: assign_points
         run: |
-          set +e  # Don't exit on error
-          python scripts/assign_points.py
-          exit_code=$?
-          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
-          
-          # Exit codes:
-          # 0 = Success (points awarded)
-          # 2 = No-op (no points, but not an error)
-          # 1 or other = Actual error
-          
-          if [ $exit_code -eq 0 ] || [ $exit_code -eq 2 ]; then
-            exit 0
-          else
-            exit $exit_code
-          fi
+          pip install PyYAML requests
 
-      - name: Update leaderboard markdown
-        if: steps.assign_points.outputs.exit_code == '0'
-        run: python scripts/update_leaderboard.py
-
-      - name: Create Pull Request
-        if: steps.assign_points.outputs.exit_code == '0'
-        uses: peter-evans/create-pull-request@v6
-        continue-on-error: true
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          add: 'leaderboard.json,LEADERBOARD.md'
-          commit-message: "Update leaderboard"
-          branch: leaderboard-update-${{ github.run_id }}
-          delete-branch: true
-          title: "Update contributor leaderboard"
-          body: |
-            ## Leaderboard Update
-            
-            This PR updates the contributor leaderboard based on recent PR review activity.
-            
-            **Triggered by:** ${{ github.event_name }}
-            **Run:** ${{ github.run_number }}
-            
-            Please review and merge to update the leaderboard.
-          labels: |
-            leaderboard
-            automated
+      - name: Calculate and update points
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python scripts/track_points.py
