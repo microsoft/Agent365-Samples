@@ -19,6 +19,7 @@
     "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
     "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability-hosting": "^0.1.0-preview.53",
     "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
     "@microsoft/agents-a365-tooling-extensions-openai": "^0.1.0-preview.30",
     "@microsoft/agents-a365-observability-extensions-openai": "^0.1.0-preview.30",

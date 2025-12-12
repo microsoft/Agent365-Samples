@@ -5,6 +5,8 @@ import { Agent, run } from '@openai/agents';
 import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
+import {BaggageBuilderUtils} from '@microsoft/agents-a365-observability-hosting'
+import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 
 // Observability Imports
 import {
