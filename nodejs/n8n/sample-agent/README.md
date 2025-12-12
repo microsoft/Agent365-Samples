@@ -1,31 +1,78 @@
-# n8n Sample Agent - Node.js
+# n8n Sample Agent
 
-This sample demonstrates how to build an agent using n8n in Node.js with the Microsoft Agent 365 SDK. It covers:
+This sample demonstrates how to build an agent using n8n with its Microsoft Agent 365 node. The new Microsoft Agent 365 node in n8n has built in:
 
-- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Observability**: End-to-end tracing, caching, and monitoring for the agent
 - **Notifications**: Services and models for managing user notifications
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
-- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
-
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
-
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
-- Node.js 18.x or higher
-- Microsoft Agent 365 SDK
-- n8n instance with webhook endpoint
+- Microsoft Agent 365
+- n8n instance with Microsoft Agent 365 Node
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+This sample is fully contained within n8n. The **Microsoft Agent 365** node encapsulates all necessary code and integrations for the agent to function. There is no external code to run or compile; simply use your n8n workflow and connect it to Agent Identity as explained below.
+ 
+## Deploying the agent
 
-For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.MD).
+This guide will walk you through creating an Agent 365 using n8n's Microsoft Agent 365 node.
 
-## Deploying the Agent
+### Overview
 
-Refer to the [Deploy and publish agents](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish-deploy-agent?tabs=nodejs) guide for complete instructions.
+1. **Create Agent Blueprint** - Register your agent identity in Microsoft Teams Developer Portal
+2. **Publish to Microsoft Admin Center** - Make your agent available for administration (skip deployment step)
+3. **Add Client Secret** - Configure authentication credentials in Azure Portal
+4. **Create n8n Workflow** - Build your agent logic using the Microsoft Agent 365 node
+5. **Configure Backend URL** - Connect your agent blueprint to the n8n webhook
+
+### Detailed Setup
+
+#### Step 1: Create Agent Blueprint
+
+Create your agent identity in the Microsoft Teams Developer Portal:
+- Follow the [Agent Identity Blueprint guide](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#agent-identity-blueprint)
+- Or alternatively: [agent registration process](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/registration)
+- Note down your **Blueprint ID** and **Tenant ID** for later use
+
+#### Step 2: Publish to Microsoft Admin Center
+
+Publish your agent for administrative management:
+- Follow the [publish guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish-deploy-agent?tabs=dotnet#step-2-publish-to-microsoft-admin-center)
+- **Important**: Skip the "Deploy" step since your agent code runs in n8n, not as a separate service
+- Use the sample manifest in `./manifest/` as a starting point 
+
+#### Step 3: Add Client Secret
+
+Configure authentication credentials:
+- Navigate to your app registration in the Azure Portal
+- Follow the [credentials guide](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
+- Copy the **Client Secret** value (you'll only see this once)
+
+#### Step 4: Create n8n Workflow
+
+Build your agent logic in n8n:
+- Create a new workflow in your n8n instance
+- Add the Microsoft Agent 365 node to your workflow
+- Configure the node with your credentials:
+  - **Blueprint ID** (from Step 1)
+  - **Tenant ID** (from Step 1)
+  - **Client Secret** (from Step 3)
+- Design your agent's conversation logic and tool integrations
+- **Copy the webhook URL** from the trigger node - you'll need this for the final step
+
+For n8n workflow creation guidance, see the [n8n documentation](https://docs.n8n.io/).
+
+#### Step 5: Configure Backend URL
+
+Connect your agent blueprint to the n8n workflow:
+- Return to the [Microsoft Teams Developer Portal](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#configure-the-agent-identity-blueprint)
+- Navigate to your Agent Blueprint → **Configuration**
+- Select **API Based** as the configuration type
+- Set the **Backend URL** to your n8n workflow's webhook URL from Step 4
+
+Your agent is now ready to handle conversations through Microsoft 365!
 
 
 ## Support
@@ -46,6 +93,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/)
 - [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
 - [n8n documentation](https://docs.n8n.io/)
