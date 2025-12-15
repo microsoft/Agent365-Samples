@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent.telemetry;
@@ -45,9 +45,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers
         // Setup reusable auto sign-in handler for agentic requests
-        private readonly string AgenticIdAuthHanlder = "agentic";
+        private readonly string AgenticIdAuthHandler = "agentic";
         // Setup reusable auto sign-in handler for OBO (On-Behalf-Of) authentication
-        private readonly string MyAuthHanlder = "me";
+        private readonly string MyAuthHandler = "me";
         // Temp
         private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
@@ -71,9 +71,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
             // Agentic requests require the "agentic" handler for user authorization
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
             // Non-agentic requests use OBO authentication via the "me" handler
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: new[] { MyAuthHanlder });
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: new[] { MyAuthHandler });
         }
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -106,9 +106,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             string ObservabilityAuthHandlerName = "";
             string ToolAuthHandlerName = "";
             if (turnContext.IsAgenticRequest())
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHanlder;
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHandler;
             else
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHanlder;
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHandler;
 
 
             await A365OtelWrapper.InvokeObservedAgentOperation(
