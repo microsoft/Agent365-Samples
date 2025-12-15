@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
     "install:clean": "npm run clean && npm install",
     "clean": "rimraf dist node_modules package-lock.json",
@@ -21,6 +21,7 @@
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
     "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
     "@microsoft/agents-a365-tooling-extensions-openai": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability-extensions-openai": "^0.1.0-preview.30",
     "@openai/agents": "*",
     "dotenv": "^17.2.2",
     "express": "^5.1.0"

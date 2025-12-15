@@ -6,7 +6,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
     "eval": "node --env-file .env src/evals/index.js",
     "build": "tsc"
@@ -19,10 +19,10 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@langchain/core": "*",
-    "@langchain/langgraph": "*",
-    "@langchain/mcp-adapters": "*",
-    "@langchain/openai": "*",
+    "@langchain/core": "^1.0.2",
+    "@langchain/langgraph": "^1.0.2",
+    "@langchain/mcp-adapters": "^1.0.0",
+    "@langchain/openai": "^1.0.2",
     "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
     "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",

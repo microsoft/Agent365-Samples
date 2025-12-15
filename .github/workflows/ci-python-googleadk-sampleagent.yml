@@ -1,0 +1,77 @@
+name: CI - Build Python Google ADK Sample Agent
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'python/google-adk/sample-agent/**/*'
+      - '.github/workflows/ci-python-googleadk-sampleagent.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'python/google-adk/sample-agent/**/*'
+      - '.github/workflows/ci-python-googleadk-sampleagent.yml'
+
+jobs:
+  validate-sample:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ./python/google-adk/sample-agent
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Display environment
+      run: |
+        python --version
+        pip --version
+
+    - name: Install dependencies from PyPI
+      run: |
+        python -m pip install --upgrade pip
+        pip install --pre -e .
+
+    - name: Display installed package versions
+      run: |
+        pip show microsoft-agents-a365-sdk microsoft-agents-core microsoft-agents-orchestration microsoft-agents-teams-channel microsoft-agents-python-channels 2>/dev/null || echo "Package version information unavailable"
+      shell: bash
+
+    - name: Verify dependencies installed
+      run: |
+        pip list
+        python -c "import aiohttp; print('OK: aiohttp')"
+        python -c "import fastapi; print('OK: fastapi')"
+        python -c "import pydantic; print('OK: pydantic')"
+
+    - name: Compile and validate Python syntax
+      run: |
+        python -m compileall -f -q . || (echo "Syntax validation failed" && exit 1)
+        echo "All Python files compiled successfully"
+
+    - name: Test imports
+      continue-on-error: true
+      run: |
+        python -c "import agent"
+        python -c "import mcp_tool_registration_service"
+
+    - name: Summary
+      if: always()
+      shell: bash
+      run: |
+        echo "### Google ADK Sample - Python ${{ matrix.python-version }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY

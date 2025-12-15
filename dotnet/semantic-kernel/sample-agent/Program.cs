@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Agent365SemanticKernelSampleAgent;
+using Agent365SemanticKernelSampleAgent.Agents;
+using Agent365SemanticKernelSampleAgent.telemetry;
 using Microsoft.Agents.A365.Observability;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
 using Microsoft.Agents.A365.Observability.Runtime;
@@ -10,16 +11,20 @@ using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
+using Microsoft.Agents.Storage.Transcript;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
-using System;
 using System.Threading;
 
+
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
+ builder.ConfigureOpenTelemetry();
 
 if (builder.Environment.IsDevelopment())
 {
@@ -53,19 +58,14 @@ else
 }
 
 // Configure observability.
-if (Environment.GetEnvironmentVariable("EnableKairoS2S") == "true")
-{
-    builder.Services.AddServiceTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
-}
-else
-{
-    builder.Services.AddAgenticTracingExporter(clusterCategory: builder.Environment.IsDevelopment() ? "preprod" : "production");
-}
+builder.Services.AddAgenticTracingExporter();
 
+// Add A365 tracing with Semantic Kernel integration
 builder.AddA365Tracing(config =>
 {
     config.WithSemanticKernel();
 });
+
 
 // Add AgentApplicationOptions from appsettings section "AgentApplication".
 builder.AddAgentApplicationOptions();
@@ -84,11 +84,11 @@ builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationSe
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 
 // Configure the HTTP request pipeline.
-
-// Add AspNet token validation for Azure Bot Service and Entra.  Authentication is
-// configured in the appsettings.json "TokenValidation" section.
+// Add AspNet token validation for Azure Bot Service and Entra.  Authentication is configured in the appsettings.json "TokenValidation" section.
 builder.Services.AddControllers();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
+
+builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
 
 WebApplication app = builder.Build();
 
@@ -96,16 +96,27 @@ WebApplication app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/", () => "Microsoft Agents SDK Sample");
-
 // This receives incoming messages from Azure Bot Service or other SDK Agents
 var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    await adapter.ProcessAsync(request, response, agent, cancellationToken);
+    await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
+    {
+        await adapter.ProcessAsync(request, response, agent, cancellationToken);
+    }).ConfigureAwait(false);
 });
 
-// Hardcoded for brevity and ease of testing. 
-// In production, this should be set in configuration.
-app.Urls.Add($"http://localhost:3978");
+if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
+{
+    app.MapGet("/", () => "Agent 365 Semantic Kernel Example Agent");
+    app.UseDeveloperExceptionPage();
+    app.MapControllers().AllowAnonymous();
 
+    // Hard coded for brevity and ease of testing. 
+    // In production, this should be set in configuration.
+    app.Urls.Add($"http://localhost:3978");
+}
+else
+{
+    app.MapControllers();
+}
 app.Run();

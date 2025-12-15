@@ -1,0 +1,82 @@
+name: CI - Build Python OpenAI Sample Agent
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'python/openai/sample-agent/**/*'
+      - '.github/workflows/ci-python-openai-sampleagent.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'python/openai/sample-agent/**/*'
+      - '.github/workflows/ci-python-openai-sampleagent.yml'
+
+jobs:
+  validate-sample:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ./python/openai/sample-agent
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Display environment
+      run: |
+        python --version
+        pip --version
+
+    - name: Install dependencies from PyPI
+      run: |
+        python -m pip install --upgrade pip
+        pip install --pre -e .
+        
+    - name: Display installed package versions
+      run: |
+        echo "=== Microsoft Agent 365 SDK Versions ==="
+        pip show microsoft-agents-a365-tooling || echo "Not installed"
+        pip show microsoft-agents-a365-tooling-extensions-openai || echo "Not installed"
+        pip show microsoft-agents-a365-observability-core || echo "Not installed"
+        echo ""
+
+    - name: Verify dependencies installed
+      run: |
+        pip list
+        python -c "import openai; print('OK: openai')"
+        python -c "import aiohttp; print('OK: aiohttp')"
+        python -c "import fastapi; print('OK: fastapi')"
+        python -c "import pydantic; print('OK: pydantic')"
+
+    - name: Compile and validate Python syntax
+      run: |
+        python -m compileall -f -q . || (echo "Syntax validation failed" && exit 1)
+        echo "All Python files compiled successfully"
+
+    - name: Test imports
+      continue-on-error: true
+      run: |
+        python -c "import agent"
+        python -c "import agent_interface"
+        python -c "import host_agent_server"
+
+    - name: Summary
+      if: always()
+      shell: bash
+      run: |
+        echo "### OpenAI Sample - Python ${{ matrix.python-version }} on ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY

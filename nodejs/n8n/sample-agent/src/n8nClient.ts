@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { InferenceScope, InvokeAgentScope, TenantDetails, InvokeAgentDetails, InferenceOperationType } from '@microsoft/agents-a365-observability';
 import { McpServer } from './mcpToolRegistrationService';
 

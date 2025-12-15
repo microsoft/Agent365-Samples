@@ -14,6 +14,9 @@
 		},
 		{
 			"mcpServerName": "mcp_KnowledgeTools"
+		},
+		{
+			"mcpServerName": "mcp_MeServer"
 		}
 	]
 }

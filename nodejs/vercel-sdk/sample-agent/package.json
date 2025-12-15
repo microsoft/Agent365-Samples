@@ -3,9 +3,10 @@
   "version": "2025.11.6",
   "description": "Sample agent integrating Vercel AI SDK Agents with Microsoft 365 Agents SDK and Microsoft Agent 365 SDK",
   "main": "src/index.ts",
+  "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src/*.ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "test-tool": "agentsplayground",
     "eval": "node --env-file .env src/evals/index.js",
     "build": "tsc"

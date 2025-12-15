@@ -8,6 +8,10 @@ This repository contains sample agents and prompts for building with the Microso
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
+## Survey
+
+Please help improve the Microsoft Agent 365 SDK and CLI by taking our survey: [Agent365 SDK Integration Feedback Survey](https://forms.office.com/r/wj0edu361y)
+
 ## Current Repository State
 
 This samples repository is currently in active development and contains:

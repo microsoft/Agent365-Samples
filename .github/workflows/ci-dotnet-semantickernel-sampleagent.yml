@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./dotnet/semantic-kernel/sample-agent
+        working-directory: ./dotnet/semantic-kernel
 
     strategy:
       matrix:

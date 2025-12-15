@@ -1,0 +1,50 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.22",
+    "version": "1.0.0",
+    "id": "${{TEAMS_APP_ID}}",
+    "developer": {
+        "name": "Microsoft, Inc.",
+        "websiteUrl": "https://www.example.com",
+        "privacyUrl": "https://www.example.com/privacy",
+        "termsOfUseUrl": "https://www.example.com/termofuse"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "Agent 365 AIF Sample Agent",
+        "full": "Agent 365 SDK Agent Framework Sample Agent"
+    },
+    "description": {
+        "short": "Sample demonstrating Agent 365 SDK, Teams, and Agent Framework",
+        "full": "Sample demonstrating Agent 365 SDK, Teams, and Agent Framework"
+    },
+    "accentColor": "#FFFFFF",
+    "copilotAgents": {
+        "customEngineAgents": [
+            {
+                "id": "${{AAD_APP_CLIENT_ID}}",
+                "type": "bot"
+            }
+        ]
+    },
+    "bots": [
+        {
+            "botId": "${{AAD_APP_CLIENT_ID}}",
+            "scopes": [
+                "personal"
+            ],
+            "supportsFiles": false,
+            "isNotificationOnly": false
+        }
+    ],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": [
+        "<<BOT_DOMAIN>>"
+    ]
+}

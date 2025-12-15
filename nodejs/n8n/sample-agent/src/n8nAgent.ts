@@ -1,37 +1,24 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { AgentNotificationActivity, NotificationType, createAgentNotificationActivity } from '@microsoft/agents-a365-notifications';
-import { TurnContext, TurnState } from '@microsoft/agents-hosting';
+import { AgentApplication, TurnContext, TurnState } from '@microsoft/agents-hosting';
 import { N8nClient } from './n8nClient';
 import { McpToolRegistrationService, McpServer } from './mcpToolRegistrationService';
 
 export class N8nAgent {
   static authHandlerName: string = 'agentic';
-  isApplicationInstalled: boolean = false;
-  termsAndConditionsAccepted: boolean = false;
   toolService: McpToolRegistrationService = new McpToolRegistrationService();
+  agentApplication: AgentApplication<TurnState>;
 
-  constructor() {
+  constructor(agentApplication: AgentApplication<TurnState>) {
+    this.agentApplication = agentApplication;
   }
 
   /**
    * Handles incoming user messages and sends responses using n8n.
    */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
-    if (!this.isApplicationInstalled) {
-      await turnContext.sendActivity("Please install the application before sending messages.");
-      return;
-    }
-
-    if (!this.termsAndConditionsAccepted) {
-      if (turnContext.activity.text?.trim().toLowerCase() === "i accept") {
-        this.termsAndConditionsAccepted = true;
-        await turnContext.sendActivity("Thank you for accepting the terms and conditions! How can I assist you today?");
-        return;
-      } else {
-        await turnContext.sendActivity("Please accept the terms and conditions to proceed. Send 'I accept' to accept.");
-        return;
-      }
-    }
-
     const userMessage = turnContext.activity.text?.trim() || '';
     const fromUser = turnContext.activity.from?.name || '';
 
@@ -62,22 +49,6 @@ export class N8nAgent {
         return;
       }
 
-      if (!this.isApplicationInstalled) {
-        await turnContext.sendActivity("Please install the application before sending notifications.");
-        return;
-      }
-
-      if (!this.termsAndConditionsAccepted) {
-        if (turnContext.activity.text?.trim().toLowerCase() === "i accept") {
-          this.termsAndConditionsAccepted = true;
-          await turnContext.sendActivity("Thank you for accepting the terms and conditions! How can I assist you today?");
-          return;
-        } else {
-          await turnContext.sendActivity("Please accept the terms and conditions to proceed. Send 'I accept' to accept.");
-          return;
-        }
-      }
-
       // Find the first known notification type entity
       const agentNotificationActivity = createAgentNotificationActivity(activity);
 
@@ -103,12 +74,8 @@ export class N8nAgent {
    */
   async handleInstallationUpdateActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     if (turnContext.activity.action === 'add') {
-      this.isApplicationInstalled = true;
-      this.termsAndConditionsAccepted = false;
       await turnContext.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey! Before I begin, could you please confirm that you accept the terms and conditions? Send "I accept" to accept.');
     } else if (turnContext.activity.action === 'remove') {
-      this.isApplicationInstalled = false;
-      this.termsAndConditionsAccepted = false;
       await turnContext.sendActivity('Thank you for your time, I enjoyed working with you.');
     }
   }
@@ -182,6 +149,7 @@ export class N8nAgent {
       mcpServers.push(...await this.toolService.getMcpServers(
         N8nAgent.authHandlerName,
         turnContext,
+        this.agentApplication,
         process.env.MCP_AUTH_TOKEN || ""
       ));
     } catch (error) {

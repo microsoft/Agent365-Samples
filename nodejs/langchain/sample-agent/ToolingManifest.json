@@ -2,9 +2,6 @@
     "mcpServers": [
         {
             "mcpServerName": "mcp_MailTools"
-        },
-        {
-            "mcpServerName": "mcp_NLWeb"
         }
     ]
 }

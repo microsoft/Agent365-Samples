@@ -110,14 +110,12 @@ TOOLS_MODE=MCPPlatform
 - Handles graceful shutdown on SIGINT/SIGTERM signals
 
 #### agent.ts - Agent Application Setup
-- Defines conversation state interface (`ConversationState` with message count)
 - Creates `AgentApplication` with memory storage and file download support
 - Registers activity handlers:
-  - **Message Activity**: Increments counter, delegates to `N8nAgent.handleAgentMessageActivity`
+  - **Message Activity**: Delegates to `N8nAgent.handleAgentMessageActivity`
   - **InstallationUpdate Activity**: Delegates to `N8nAgent.handleInstallationUpdateActivity`
 
 #### n8nAgent.ts - Core Business Logic
-- Manages agent state: `isApplicationInstalled` and `termsAndConditionsAccepted`
 - **Message Handler**: Enforces installation → terms acceptance → processing flow
 - **Installation Handler**: Sets state flags and sends welcome/goodbye messages
 - **Notification Handlers**: Processes email and Word @-mention notifications with two-stage flow (metadata extraction → content retrieval via n8n)
@@ -152,19 +150,6 @@ TOOLS_MODE=MCPPlatform
 - **n8nClient.ts**: External integration
 - **mcpToolRegistrationService.ts**: Tool management
 - **telemetry.ts**: Observability configuration
-
-### Lifecycle State Management
-```typescript
-// Installation → Terms → Active → Uninstall
-isApplicationInstalled: false → true → true → false
-termsAndConditionsAccepted: false → false → true → false
-```
-
-**Flow**:
-1. User installs agent → Welcome message
-2. User sends "I accept" → Terms accepted
-3. User sends messages → Forwarded to n8n
-4. Answer is sent back to user
 
 ### Observability-First Design
 - All n8n invocations wrapped with InvokeAgentScope

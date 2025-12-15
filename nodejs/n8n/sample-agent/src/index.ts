@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import express, { Response } from 'express';
 import 'dotenv/config';
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
@@ -5,7 +8,7 @@ import { observabilityManager } from './telemetry';
 import { agentApplication } from './agent';
 
 const authConfig: AuthConfiguration = loadAuthConfigFromEnv();
-const adapter = new CloudAdapter(authConfig);
+const adapter = agentApplication.adapter as CloudAdapter;
 const app = express();
 const port = process.env.PORT ?? 3978;
 
@@ -23,7 +26,7 @@ app.post('/api/messages', async (req: Request, res: Response) => {
 });
 
 const server = app.listen(port, () => {
-  console.log(`\nServer listening to port ${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`);
+  console.log(`\nServer listening to port ${port} for appId ${authConfig.clientId} debug ${!!process.env.DEBUG}`);
 }).on('error', async (err) => {
   console.error(err);
   await observabilityManager.shutdown();
@@ -40,7 +43,6 @@ process.on('SIGINT', () => {
     process.exit(0);
   });
 });
-
 
 process.on('SIGTERM', () => {
   server.close(() => {

@@ -9,6 +9,7 @@ import { Client, getClient } from './client';
 
 export class A365Agent extends AgentApplication<TurnState> {
   agentName = "A365 Agent";
+  static authHandlerName: string = 'agentic';
 
   constructor() {
     super({
@@ -24,11 +25,11 @@ export class A365Agent extends AgentApplication<TurnState> {
     // Route agent notifications
     this.onAgentNotification("agents:*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
       await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
-    });
+    }, 1, [A365Agent.authHandlerName]);
 
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
-    });
+    }, [A365Agent.authHandlerName]);
   }
 
     /**
