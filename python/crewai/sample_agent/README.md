@@ -15,7 +15,6 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 - Python 3.11+
 - Microsoft Agent 365 SDK
-- OpenAI Agents SDK (openai-agents)
 - Azure/OpenAI API credentials
 - UV (recommended for dependency management)
 
