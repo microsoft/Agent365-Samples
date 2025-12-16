@@ -5,7 +5,7 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "USE_BEARER_TOKEN": "true"
+        "USE_BEARER_TOKEN": "false"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }
