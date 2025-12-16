@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using Agent365SemanticKernelSampleAgent.Constants;
 using Agent365SemanticKernelSampleAgent.Plugins;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
@@ -11,7 +12,10 @@ using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
@@ -53,10 +57,75 @@ public class Agent365Agent
 
     public static (bool, string?) UseBearerTokenForDevelopment()
     {
-        var token = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+        var useToken = Environment.GetEnvironmentVariable("USE_BEARER_TOKEN");
+        if (useToken != "true")
+        {
+            return (false, null);
+        }
+        var token = ReadMcpBearerToken();
 
-        return (Environment.GetEnvironmentVariable("USE_AGENTIC_AUTH") == "false"
-            && !string.IsNullOrEmpty(token), token);
+        return (true, token);
+    }
+
+    /// <summary>
+    /// Reads the cached MCP bearer token from the a365 CLI cache.
+    /// Throws an exception if the token is missing, invalid, or expired.
+    /// </summary>
+    /// <returns>Valid access token string</returns>
+    /// <exception cref="InvalidOperationException">Thrown when token is missing, invalid, or expired</exception>
+    public static string ReadMcpBearerToken()
+    {
+        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var tokenCachePath = Path.Combine(appDataPath,
+            Agent365Constants.A365CliCacheDirectory,
+            Agent365Constants.McpBearerTokenFileName);
+
+        if (!File.Exists(tokenCachePath))
+        {
+            throw new InvalidOperationException(
+                $"Token cache file not found at: {tokenCachePath}\n" +
+                "Run 'a365 develop gettoken' to authenticate.");
+        }
+
+        try
+        {
+            var json = File.ReadAllText(tokenCachePath);
+            using var doc = JsonDocument.Parse(json);
+
+            var root = doc.RootElement;
+            var accessToken = root.GetProperty("AccessToken").GetString();
+            var expiresOn = root.GetProperty("ExpiresOn").GetDateTime();
+
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                throw new InvalidOperationException(
+                    "Invalid token in cache file. Run 'a365 develop gettoken' to re-authenticate.");
+            }
+
+            // Check if token is expired (with 5 minute buffer)
+            if (expiresOn <= DateTime.UtcNow.AddMinutes(5))
+            {
+                throw new InvalidOperationException(
+                    $"Token expired at {expiresOn:u}. Run 'a365 develop gettoken' to refresh.");
+            }
+
+            return accessToken;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to parse token cache file: {ex.Message}. Run 'a365 develop gettoken' to re-authenticate.", ex);
+        }
+        catch (KeyNotFoundException)
+        {
+            throw new InvalidOperationException(
+                "Invalid token format in cache file. Run 'a365 develop gettoken' to re-authenticate.");
+        }
+        catch (IOException ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to read token cache file: {ex.Message}", ex);
+        }
     }
 
     /// <summary>
