@@ -6,7 +6,6 @@ Generic Agent Host Server for CrewAI wrapper.
 """
 
 import logging
-import os
 import socket
 from os import environ
 
