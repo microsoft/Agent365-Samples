@@ -13,10 +13,6 @@ NOTE:
 
         start_with_generic_host.py
 
-    That file demonstrates the recommended Microsoft Agent 365 hosting pattern
-    (Agentic identity, MCP server discovery, observability, token auth, and
-    Bot Framework-compatible endpoints).
-
 This file is retained only for developers who want to run CrewAI directly
 without Agent365 hosting. It should not be referenced as the main sample entry
 point in documentation or reviews.
