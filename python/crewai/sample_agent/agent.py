@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 """
 CrewAI Agent wrapper hosted with Microsoft Agents SDK.
 
@@ -11,7 +12,6 @@ This keeps the CrewAI logic inside src/crew_agent  and wraps it with:
 import asyncio
 import logging
 import os
-from datetime import datetime
 
 from dotenv import load_dotenv
 
