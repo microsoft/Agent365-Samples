@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 #!/usr/bin/env python
 import sys
 import warnings
@@ -32,7 +34,7 @@ def run():
     try:
         CrewAgent().crew().kickoff(inputs=inputs)
     except Exception as e:
-        raise Exception(f"An error occurred while running the crew: {e}")
+        raise Exception(f"An error occurred while running the crew: {e}") from e
 
 
 def train():
@@ -47,7 +49,7 @@ def train():
         CrewAgent().crew().train(n_iterations=int(sys.argv[1]), filename=sys.argv[2], inputs=inputs)
 
     except Exception as e:
-        raise Exception(f"An error occurred while training the crew: {e}")
+        raise Exception(f"An error occurred while training the crew: {e}") from e
 
 def replay():
     """
@@ -57,7 +59,7 @@ def replay():
         CrewAgent().crew().replay(task_id=sys.argv[1])
 
     except Exception as e:
-        raise Exception(f"An error occurred while replaying the crew: {e}")
+        raise Exception(f"An error occurred while replaying the crew: {e}") from e
 
 def test():
     """
@@ -72,7 +74,7 @@ def test():
         CrewAgent().crew().test(n_iterations=int(sys.argv[1]), eval_llm=sys.argv[2], inputs=inputs)
 
     except Exception as e:
-        raise Exception(f"An error occurred while testing the crew: {e}")
+        raise Exception(f"An error occurred while testing the crew: {e}") from e
 
 def run_with_trigger():
     """
@@ -98,4 +100,4 @@ def run_with_trigger():
         result = CrewAgent().crew().kickoff(inputs=inputs)
         return result
     except Exception as e:
-        raise Exception(f"An error occurred while running the crew with trigger: {e}")
+        raise Exception(f"An error occurred while running the crew with trigger: {e}") from e

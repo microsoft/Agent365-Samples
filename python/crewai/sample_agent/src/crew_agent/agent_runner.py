@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 #!/usr/bin/env python
 """
 Agent Runner - External trigger interface for running the crew.

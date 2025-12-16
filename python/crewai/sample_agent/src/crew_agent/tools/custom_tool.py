@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 from crewai.tools import BaseTool
 from typing import Type
 from pydantic import BaseModel, Field

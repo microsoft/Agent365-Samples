@@ -8,7 +8,7 @@ dependencies = [
     "crewai[tools]==1.4.1",
     "tavily-python>=0.3.0",
     "python-dotenv>=1.0.0",
-    # Microsoft Agents SDK - hosting and auth
+    # Microsoft 365 Agents SDK - hosting and auth
     "microsoft-agents-hosting-aiohttp",
     "microsoft-agents-hosting-core",
     "microsoft-agents-authentication-msal",

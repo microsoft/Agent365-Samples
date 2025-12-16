@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 #!/usr/bin/env python3
 """
 Example: Direct usage of Generic Agent Host with CrewAI wrapper.
