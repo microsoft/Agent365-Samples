@@ -54,7 +54,7 @@ class CrewAIAgent(AgentInterface):
             return None
 
     def _setup_observability(self):
-        """Configure A365 observability; CrewAI has no dedicated instrumentor yet."""
+        """Configure Agent 365 observability; CrewAI has no dedicated instrumentor yet."""
         try:
             status = configure(
                 service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "crewai-sample-agent"),
