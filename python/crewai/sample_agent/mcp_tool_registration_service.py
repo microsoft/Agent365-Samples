@@ -31,6 +31,7 @@ class McpToolRegistrationService:
         auth: Authorization,
         context: TurnContext,
         auth_token: Optional[str] = None,
+        auth_handler_name: str = "AGENTIC"
     ) -> List:
         """
         Fetch MCP server configurations the agent is allowed to use.
@@ -40,7 +41,7 @@ class McpToolRegistrationService:
         token = auth_token
         if not token:
             scopes = get_mcp_platform_authentication_scope()
-            auth_token_obj = await auth.exchange_token(context, scopes, "AGENTIC")
+            auth_token_obj = await auth.exchange_token(context, scopes, auth_handler_name)
             token = auth_token_obj.token
 
         self._logger.info("Listing MCP tool servers for agent %s", agentic_app_id)
