@@ -49,7 +49,7 @@ public class MyAgent : AgentApplication
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
         TermsAndConditionsAccepted = true;
 
-        bool useBearerToken = Environment.GetEnvironmentVariable("USE_BEARER_TOKEN") == "true";
+        var (useBearerToken, token) = Agent365Agent.UseBearerTokenForDevelopment();
         string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHandler };
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.

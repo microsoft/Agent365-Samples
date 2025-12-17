@@ -18,27 +18,27 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Semantic Kernel 1.66.0 or higher
 - Azure/OpenAI API credentials
 
-## Bearer Token Authentication (Development)
+## Launch Profiles
 
-This sample supports bearer token authentication for simplified local testing without full Azure Bot configuration.
+This sample includes two launch profiles in `Properties/launchSettings.json`:
 
-### Quick Setup
+### Sample Agent
 
-1. **Authenticate with a365 CLI** (see [a365 CLI documentation](https://github.com/microsoft/Agent365-dotnet) for installation):
+Uses standard Azure Bot authentication with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.
+
+### Sample Agent with Bearer Token Support
+
+Simplified profile for local development using bearer token authentication.
+
+**Quick setup:**
+1. Get a bearer token using the [a365 CLI](https://github.com/microsoft/Agent365-dotnet):
    ```bash
    a365 develop gettoken
    ```
+2. Select this launch profile in Visual Studio
+3. Run the agent - token is automatically read from the a365 CLI cache
 
-2. **Enable bearer token** by setting the `USE_BEARER_TOKEN` environment variable to `"true"` in `Properties/launchSettings.json`:
-   ```json
-   "environmentVariables": {
-     "USE_BEARER_TOKEN": "true"
-   }
-   ```
-
-3. **Run the agent**: The token is automatically read from `%LocalAppData%\Microsoft.Agents.A365.DevTools.Cli\mcp_bearer_token.json`
-
-**Development only**: For production, use proper Azure Bot authentication with Client Secrets or Managed Identity. Tokens expire and must be refreshed with `a365 develop gettoken`.
+> **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop gettoken`.
 
 ## Running the Agent
 
