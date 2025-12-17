@@ -23,12 +23,6 @@ dependencies = [
 ]
 
 [project.scripts]
-crew_agent = "crew_agent.main:run"
-run_crew = "crew_agent.main:run"
-train = "crew_agent.main:train"
-replay = "crew_agent.main:replay"
-test = "crew_agent.main:test"
-run_with_trigger = "crew_agent.main:run_with_trigger"
 agent_runner = "crew_agent.agent_runner:main"
 
 [build-system]

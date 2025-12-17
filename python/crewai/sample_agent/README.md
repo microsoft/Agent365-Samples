@@ -27,19 +27,14 @@ For comprehensive documentation and guidance on building agents with the Microso
 
    ## Running the Project
 
-   ### Option 1: Run CrewAI Directly
-   ```bash
-    crewai run
-   ```
-
-   ### Option 2: Run via Agent Runner
+   ### Option 1: Run via Agent Runner
    ```bash
     python -m crew_agent.agent_runner "London"
     # or
     agent_runner "San Francisco, CA"
    ```
 
-   ### Option 3: Hosted via Generic Agent Host with Agent 365 (Microsoft Agent365 SDK)
+   ### Option 2: Hosted via Generic Agent Host with Agent 365 (Microsoft Agent365 SDK)
    Mirrors the OpenAI/AgentFramework samples and adds Agent 365 observability + MCP server registration.
 
    1) Copy `.env.template` to `.env` and fill:
