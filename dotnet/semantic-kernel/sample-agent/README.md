@@ -22,6 +22,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 This sample includes two launch profiles in `Properties/launchSettings.json`:
 
+<<<<<<< HEAD
 ### Sample Agent
 
 Uses standard Azure Bot authentication with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.

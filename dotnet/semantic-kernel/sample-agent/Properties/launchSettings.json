@@ -12,6 +12,14 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:64896;http://localhost:64897"
+    },
+    "Sample Agent with MCP Platform and Bearer Token Support": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "BEARER_TOKEN": ""
       },
