@@ -35,8 +35,10 @@ Simplified profile for local development using bearer token authentication.
    ```bash
    a365 develop gettoken
    ```
-2. Select this launch profile in Visual Studio
-3. Run the agent - token is automatically read from the a365 CLI cache
+   The CLI will either automatically add the token to your `launchSettings.json` or provide it for you to copy/paste.
+
+2. Select the "Sample Agent (Bearer Token)" launch profile in Visual Studio
+3. Run the agent
 
 > **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop gettoken`.
 
