@@ -26,7 +26,7 @@ const port = 3978
 const host = isProduction ? '0.0.0.0' : '127.0.0.1';
 server.listen(port, host, async () => {
   console.log(`\nServer listening on http://${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
-}).on('error', async (err) => {
+}).on('error', async (err: unknown) => {
   console.error(err);
   process.exit(1);
 }).on('close', async () => {
