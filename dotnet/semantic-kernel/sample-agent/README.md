@@ -26,7 +26,7 @@ This sample includes two launch profiles in `Properties/launchSettings.json`:
 
 Uses standard Azure Bot authentication with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.
 
-### Sample Agent (Bearer Token)
+### Sample Agent with Bearer Token Support
 
 Simplified profile for local development using bearer token authentication.
 
@@ -37,7 +37,7 @@ Simplified profile for local development using bearer token authentication.
    ```
    The CLI will either automatically add the token to your `launchSettings.json` or provide it for you to copy/paste.
 
-2. Select the "Sample Agent (Bearer Token)" launch profile in Visual Studio
+2. Select the "Sample Agent with Bearer Token Support" launch profile in Visual Studio
 3. Run the agent
 
 > **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop gettoken`.
