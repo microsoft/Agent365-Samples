@@ -89,10 +89,12 @@ public class Agent365Agent
 
             if (useBearerToken)
             {
+                // Development mode: Use bearer token from environment variable for simplified local testing
                 await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, token);
             }
             else
             {
+                // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
                 await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
             }
         }

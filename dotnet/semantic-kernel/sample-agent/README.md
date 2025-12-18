@@ -24,7 +24,7 @@ This sample includes two launch profiles in `Properties/launchSettings.json`:
 
 ### Sample Agent
 
-Uses standard Azure Bot authentication with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.
+Uses Agentic Users with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.
 
 ### Sample Agent with Bearer Token Support
 
