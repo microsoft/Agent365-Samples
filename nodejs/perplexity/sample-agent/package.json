@@ -28,6 +28,7 @@
     "@microsoft/agents-activity": "^1.1.0-alpha.85",
     "@microsoft/agents-hosting": "^1.1.0-alpha.85",
     "@microsoft/agents-hosting-express": "^1.1.0-alpha.85",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
     "@perplexity-ai/perplexity_ai": "^0.16.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0"
