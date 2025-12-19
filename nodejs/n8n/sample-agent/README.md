@@ -33,15 +33,16 @@ This guide will walk you through creating an Agent 365 using n8n's Microsoft Age
 
 Create your agent identity in the Microsoft Teams Developer Portal:
 - Follow the [Agent Identity Blueprint guide](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#agent-identity-blueprint)
-- Or alternatively: [agent registration process](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/registration)
-- Note down your **Blueprint ID** and **Tenant ID** for later use
+
 
 #### Step 2: Publish to Microsoft Admin Center
 
 Publish your agent for administrative management:
-- Follow the [publish guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish-deploy-agent?tabs=dotnet#step-2-publish-to-microsoft-admin-center)
-- **Important**: Skip the "Deploy" step since your agent code runs in n8n, not as a separate service
-- Use the sample manifest in `./manifest/` as a starting point 
+1. Download the manifest directory from the sample agent
+2. Edit the manifest.json file (at minimum, give it a custom id and tweak the agenticUserTemplates.id value)
+3. Edit the agenticUserTemplateManifest.json so that it matches the agenticUserTemplates.id you set in step 2.
+4. Compress all files inside the manifest directory into a manifest.zip file (make sure you're not compressing the folder, but just the individual files)
+5. Go to MAC > Agents > All agents > Upload custom agent and upload the zip file and complete the wizard.
 
 #### Step 3: Add Client Secret
 
@@ -49,6 +50,29 @@ Configure authentication credentials:
 - Navigate to your app registration in the Azure Portal
 - Follow the [credentials guide](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
 - Copy the **Client Secret** value (you'll only see this once)
+OR
+Follow the [documentation](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add a client credential. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
+
+```powershell
+Connect-MgGraph -Scopes "AgentIdentityBlueprint.AddRemoveCreds.All" -TenantId <TenantID>
+
+$applicationId = "<application-id>"
+
+# Define the secret properties
+$displayName = "My Client Secret"
+
+
+# Construct the password credential
+$passwordCredential = @{
+    displayName = $displayName
+}
+
+# Add the password (client secret)
+$response = Add-MgApplicationPassword -ApplicationId $applicationId -PasswordCredential $passwordCredential
+
+# Output the generated secret (only returned once!)
+Write-Host "Secret Text: $($response.secretText)"
+```
 
 #### Step 4: Create n8n Workflow
 
@@ -71,6 +95,9 @@ Connect your agent blueprint to the n8n workflow:
 - Navigate to your Agent Blueprint → **Configuration**
 - Select **API Based** as the configuration type
 - Set the **Backend URL** to your n8n workflow's webhook URL from Step 4
+
+#### Step 6: Hire an agent as a digital worker
+- Follow the [documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard) to hire an agent as a digital worker
 
 Your agent is now ready to handle conversations through Microsoft 365!
 
