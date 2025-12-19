@@ -13,20 +13,34 @@ import {
   InferenceOperationType,
   AgentDetails,
   TenantDetails,
-  InferenceDetails
+  InferenceDetails,
+  Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
+import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
+import { tokenResolver } from './token-cache';
 
 export interface Client {
   invokeInferenceScope(prompt: string): Promise<string>;
 }
 
-const sdk = ObservabilityManager.configure(
-  (builder: Builder) =>
-    builder
-      .withService('TypeScript Sample Agent', '1.0.0')
-);
+export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
+  const exporterOptions = new Agent365ExporterOptions();
+  exporterOptions.maxQueueSize = 10;
 
-sdk.start();
+  builder
+    .withService('TypeScript Sample Agent', '1.0.0')
+    .withExporterOptions(exporterOptions);
+
+  if (process.env.Use_Custom_Resolver === 'true') {
+    builder.withTokenResolver(tokenResolver);
+  } else {
+    builder.withTokenResolver((agentId: string, tenantId: string) =>
+      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
+    );
+  }
+});
+
+a365Observability.start();
 
 const toolService = new McpToolRegistrationService();
 
@@ -160,7 +174,7 @@ class LangChainClient implements Client {
       scope.recordInputTokens(45);
       scope.recordOutputTokens(78);
       scope.recordFinishReasons(['stop']);
-      });      
+      });
     } catch (error) {
       scope.recordError(error as Error);
       throw error;

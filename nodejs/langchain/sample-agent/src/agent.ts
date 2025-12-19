@@ -5,11 +5,10 @@ import { ActivityTypes } from '@microsoft/agents-activity';
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
 // Observability Imports
-import {
-  AgentDetails,
-  TenantDetails,
-} from '@microsoft/agents-a365-observability';
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
+import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
+import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
+import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
 
 export class A365Agent extends AgentApplication<TurnState> {
@@ -36,7 +35,7 @@ export class A365Agent extends AgentApplication<TurnState> {
     });
   }
 
-    /**
+  /**
    * Handles incoming user messages and sends responses.
    */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
@@ -47,22 +46,15 @@ export class A365Agent extends AgentApplication<TurnState> {
       return;
     }
 
-    const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
-    };
-
-    const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
-    };
-    const baggageScope = new BaggageBuilder()
-      .tenantId(tenantDetails.tenantId)
-      .agentId(agentDetails.agentId)
-      .agentName(agentDetails.agentName)
-      .conversationId(agentDetails.conversationId)
+    const baggageScope = BaggageBuilderUtils.fromTurnContext(
+      new BaggageBuilder(),
+      turnContext
+    ).sessionDescription('Initial onboarding session')
       .correlationId(`corr-${Date.now()}`)
       .build();
+
+    // Preload/refresh exporter token
+    await this.preloadObservabilityToken(turnContext);
 
     try {
       await baggageScope.run(async () => {
@@ -78,6 +70,31 @@ export class A365Agent extends AgentApplication<TurnState> {
       });
     } finally {
       baggageScope.dispose();
+    }
+  }
+
+    /**
+   * Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
+   */
+  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
+    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
+    const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
+
+    if (process.env.Use_Custom_Resolver === 'true') {
+      const aauToken = await this.authorization.exchangeToken(turnContext, 'agentic', {
+        scopes: getObservabilityAuthenticationScope()
+      });
+      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId} token=${aauToken?.token?.substring(0, 10)}...`);
+      const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
+      tokenCache.set(cacheKey, aauToken?.token || '');
+    } else {
+      await AgenticTokenCacheInstance.RefreshObservabilityToken(
+        agentId,
+        tenantId,
+        turnContext,
+        this.authorization,
+        getObservabilityAuthenticationScope()
+      );
     }
   }
 
