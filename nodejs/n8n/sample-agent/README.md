@@ -51,7 +51,7 @@ Configure authentication credentials:
 - Follow the [credentials guide](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
 - Copy the **Client Secret** value (you'll only see this once)
 OR
-Follow the [documentation](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add a client credential. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
+Follow the [documentation](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add and see the client secret. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
 
 ```powershell
 Connect-MgGraph -Scopes "AgentIdentityBlueprint.AddRemoveCreds.All" -TenantId <TenantID>
