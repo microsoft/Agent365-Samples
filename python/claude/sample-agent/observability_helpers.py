@@ -7,6 +7,7 @@ Creates observability objects for tracing agent invocations, tool execution, and
 """
 
 import logging
+from contextlib import nullcontext
 from os import environ
 from typing import Optional
 
@@ -162,3 +163,107 @@ def create_tool_call_details(
         arguments=arguments,
         description=description or f"Execute {tool_name} tool",
     )
+
+
+def create_invoke_scope(context: TurnContext, message: str):
+    """
+    Create and return an InvokeAgentScope context manager.
+    
+    Args:
+        context: TurnContext from M365 SDK
+        message: User message
+        
+    Returns:
+        InvokeAgentScope context manager or nullcontext if observability not available
+    """
+    try:
+        from microsoft_agents_a365.observability.core import InvokeAgentScope, InvokeAgentDetails
+        
+        agent_details = create_agent_details(context)
+        tenant_details = create_tenant_details(context)
+        
+        # Get session ID from conversation
+        session_id = None
+        if context and context.activity and context.activity.conversation:
+            session_id = context.activity.conversation.id
+        
+        # Create invoke details
+        invoke_details = InvokeAgentDetails(
+            details=agent_details,
+            session_id=session_id,
+        )
+        request_details = create_request_details(message, session_id)
+        
+        return InvokeAgentScope.start(
+            invoke_agent_details=invoke_details,
+            tenant_details=tenant_details,
+            request=request_details,
+        )
+    except Exception as e:
+        logger.debug(f"Observability not available: {e}")
+        return nullcontext()
+
+
+def create_baggage_context(context: TurnContext):
+    """
+    Create and return a BaggageBuilder context manager.
+    
+    Args:
+        context: TurnContext from M365 SDK
+        
+    Returns:
+        Baggage context manager or nullcontext if observability not available
+    """
+    try:
+        from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+        
+        # Extract tenant_id and agent_id from context
+        tenant_id = None
+        agent_id = None
+        if context and context.activity:
+            if hasattr(context.activity, 'recipient'):
+                tenant_id = getattr(context.activity.recipient, 'tenant_id', None)
+                agent_id = getattr(context.activity.recipient, 'agentic_app_id', None)
+        
+        # Build and return baggage context
+        return BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build()
+    except Exception as e:
+        logger.debug(f"Observability not available: {e}")
+        return nullcontext()
+
+
+def create_inference_scope(context: TurnContext, model: str, message: str):
+    """
+    Create and return an InferenceScope context manager.
+    
+    Args:
+        context: TurnContext from M365 SDK
+        model: Model name
+        message: User message
+        
+    Returns:
+        InferenceScope context manager or nullcontext if observability not available
+    """
+    try:
+        from microsoft_agents_a365.observability.core import InferenceScope
+        
+        agent_details = create_agent_details(context)
+        tenant_details = create_tenant_details(context)
+        session_id = context.activity.conversation.id if context and context.activity and context.activity.conversation else None
+        
+        inference_details = create_inference_details(
+            model=model,
+            input_tokens=0,  # Will update after response
+            output_tokens=0,
+        )
+        request_details = create_request_details(message, session_id)
+        
+        return InferenceScope.start(
+            details=inference_details,
+            agent_details=agent_details,
+            tenant_details=tenant_details,
+            request=request_details,
+        )
+    except Exception as e:
+        logger.debug(f"Observability not available: {e}")
+        return nullcontext()
