@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent.telemetry;
@@ -44,8 +44,10 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers
-        private readonly string AgenticIdAuthHanlder = "agentic";
-        private readonly string MyAuthHanlder = "me";
+        // Setup reusable auto sign-in handler for agentic requests
+        private readonly string AgenticIdAuthHandler = "agentic";
+        // Setup reusable auto sign-in handler for OBO (On-Behalf-Of) authentication
+        private readonly string MyAuthHandler = "me";
         // Temp
         private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
@@ -68,8 +70,10 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Handle A365 Notification Messages. 
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false , autoSignInHandlers: new[] { MyAuthHanlder });
+            // Agentic requests require the "agentic" handler for user authorization
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
+            // Non-agentic requests use OBO authentication via the "me" handler
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: new[] { MyAuthHandler });
         }
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -98,12 +102,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <returns></returns>
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
+            // Select the appropriate auth handler based on request type
             string ObservabilityAuthHandlerName = "";
             string ToolAuthHandlerName = "";
             if (turnContext.IsAgenticRequest())
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHanlder;
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHandler;
             else
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHanlder;
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHandler;
 
 
             await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -180,29 +185,38 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
             if (toolService != null)
             {
-                string toolCacheKey = GetToolCacheKey(turnState);
-                if (_agentToolCache.ContainsKey(toolCacheKey))
+                try
                 {
-                    var cachedTools = _agentToolCache[toolCacheKey];
-                    if (cachedTools != null && cachedTools.Count > 0)
+                    string toolCacheKey = GetToolCacheKey(turnState);
+                    if (_agentToolCache.ContainsKey(toolCacheKey))
                     {
-                        toolList.AddRange(cachedTools);
+                        var cachedTools = _agentToolCache[toolCacheKey];
+                        if (cachedTools != null && cachedTools.Count > 0)
+                        {
+                            toolList.AddRange(cachedTools);
+                        }
+                    }
+                    else
+                    {
+                        // Notify the user we are loading tools
+                        await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+
+                        string agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
+                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
+
+                        // Add the A365 tools to the tool options
+                        if (a365Tools != null && a365Tools.Count > 0)
+                        {
+                            toolList.AddRange(a365Tools);
+                            _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                        }
                     }
                 }
-                else
+                catch (Exception ex)
                 {
-                    // Notify the user we are loading tools
-                    await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
-
-                    string agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
-                    var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
-
-                    // Add the A365 tools to the tool options
-                    if (a365Tools != null && a365Tools.Count > 0)
-                    {
-                        toolList.AddRange(a365Tools);
-                        _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
-                    }
+                    // Log error and rethrow - MCP tool registration is required
+                    _logger?.LogError(ex, "Failed to register MCP tool servers. Ensure MCP servers are configured correctly or use mock MCP servers for local testing.");
+                    throw;
                 }
             }
 

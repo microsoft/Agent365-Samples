@@ -1,0 +1,33 @@
+[project]
+name = "crew_agent"
+version = "0.1.0"
+description = "crew-agent using crewAI"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+requires-python = ">=3.11"
+dependencies = [
+    "crewai[tools]==1.4.1",
+    "tavily-python>=0.3.0",
+    "python-dotenv>=1.0.0",
+    # Microsoft 365 Agents SDK - hosting and auth
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+    # Core hosting deps
+    "aiohttp",
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_runtime >= 0.1.0",
+    "wrapt>=2.0.1",
+]
+
+[project.scripts]
+agent_runner = "crew_agent.agent_runner:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.crewai]
+type = "crew"
