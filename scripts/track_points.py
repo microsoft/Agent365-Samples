@@ -20,18 +20,20 @@ Points are calculated based on:
 - Review submission: 5 points
 - Detailed review (100+ chars): +5 bonus
 - PR approval: +3 bonus
-- PR comment: 2 points
 - PR merged: 5 points (for author)
-- Bug fix (labeled): +5 bonus
-- High priority: +3 bonus
-- Test coverage: +8 points
-- Documentation: +4 points
+- Bug fix (closes issue): +5 bonus
+- Security fix/vulnerability: +15 bonus
+- Documentation: +4 bonus
+- Performance improvement: +6 bonus
 - First-time contributor: +5 bonus
+- High priority issue: +3 bonus
+- Critical bug reported: +10 bonus
 """
 
 import os
 import sys
 import json
+import re
 import yaml
 import requests
 from datetime import datetime, timezone
@@ -123,7 +125,7 @@ def github_api_request(method: str, endpoint: str, data: Optional[dict] = None) 
     """Make GitHub API request."""
     url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/{endpoint}"
     headers = {
-        'Authorization': f'token {GITHUB_TOKEN}',
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
         'Accept': 'application/vnd.github.v3+json'
     }
     
@@ -137,6 +139,16 @@ def github_api_request(method: str, endpoint: str, data: Optional[dict] = None) 
         
         response.raise_for_status()
         return response.json() if response.text else {}
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            print(f"ERROR: Authentication failed - check GITHUB_TOKEN", file=sys.stderr)
+            sys.exit(1)
+        elif e.response.status_code == 403:
+            print(f"ERROR: API rate limit exceeded or access forbidden", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"ERROR: GitHub API request failed ({e.response.status_code}): {e}", file=sys.stderr)
+            return {}
     except Exception as e:
         print(f"ERROR: GitHub API request failed: {e}", file=sys.stderr)
         return {}
@@ -208,6 +220,7 @@ def calculate_pr_author_points(pr_details: dict, config: dict) -> Tuple[int, Lis
     
     # Security fix: Check if PR is linked to a security issue OR has security labels
     has_security = any('security' in label or 'vulnerability' in label for label in labels)
+    breakdown_source = 'PR labeled' if has_security else ''
     
     # Also check linked issues for security labels (only if not already found)
     if not has_security:
@@ -217,8 +230,6 @@ def calculate_pr_author_points(pr_details: dict, config: dict) -> Tuple[int, Lis
                 has_security = True
                 breakdown_source = f'closes issue #{issue["number"]}'
                 break
-    else:
-        breakdown_source = 'PR labeled'
     
     # Award security bonus only once
     if has_security:
@@ -248,9 +259,7 @@ def calculate_pr_author_points(pr_details: dict, config: dict) -> Tuple[int, Lis
         breakdown.append(f'Documentation: +{bonus} points')
     
     # Check if first-time contributor
-    author = pr_details.get('user', {}).get('login')
-    pr_number = pr_details.get('number')
-    if author and pr_number and is_first_time_contributor(author, pr_number):
+    if is_first_time_contributor(pr_details):
         bonus = config['points'].get('first_time_contributor', 5)
         points += bonus
         breakdown.append(f'First-time contributor: +{bonus} points')
@@ -261,38 +270,29 @@ def get_linked_issues(pr_details: dict) -> List[dict]:
     """Get issues linked to this PR by checking PR body for closing keywords."""
     linked_issues = []
     pr_body = pr_details.get('body', '') or ''
-    pr_number = pr_details.get('number')
     
     # Keywords that link issues: closes, fixes, resolves (case-insensitive)
-    import re
     # Pattern matches: "closes #123", "fixes #456", "resolves #789", etc.
-    pattern = r'(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)'
+    pattern = r'\b(closes?|fixe[sd]|resolved?)\b\s*:?\s*#(\d+)'
     matches = re.findall(pattern, pr_body, re.IGNORECASE)
     
-    for issue_number in matches:
+    # Extract just the issue numbers (group 2 from the matches)
+    issue_numbers = [match[1] for match in matches]
+    
+    for issue_number in issue_numbers:
         issue = github_api_request('GET', f'issues/{issue_number}')
         if issue and isinstance(issue, dict):
             linked_issues.append(issue)
     
     return linked_issues
 
-def is_first_time_contributor(username: str, current_pr_number: int) -> bool:
-    """Check if the current PR is the user's first merged PR."""
-    # Check if user has any other merged PRs (excluding current one)
-    # Limit to recent 100 PRs to avoid API rate limits and performance issues
-    try:
-        search_result = github_api_request('GET', f'pulls?state=all&creator={username}&per_page=100')
-        if isinstance(search_result, list):
-            # Get all merged PRs excluding the current one
-            other_merged_prs = [
-                pr for pr in search_result 
-                if pr.get('merged_at') and pr.get('number') != current_pr_number
-            ]
-            # First-time contributor if no other merged PRs exist
-            return len(other_merged_prs) == 0
-    except Exception as e:
-        print(f"WARNING: Error checking first-time contributor status: {e}", file=sys.stderr)
-    return False
+def is_first_time_contributor(pr_details: dict) -> bool:
+    """
+    Check if the PR author is a first-time contributor using the 'author_association' field.
+    Returns True if the author_association is 'FIRST_TIME_CONTRIBUTOR'.
+    """
+    author_association = pr_details.get('author_association', '')
+    return author_association.upper() == 'FIRST_TIME_CONTRIBUTOR'
 
 def calculate_issue_points(issue: dict, config: dict) -> Tuple[int, List[str]]:
     """Calculate points for issue creator based on priority."""
@@ -321,7 +321,7 @@ def calculate_issue_points(issue: dict, config: dict) -> Tuple[int, List[str]]:
     
     return points, breakdown
 
-def aggregate_contributor_points(reviews: List[dict], comments: List[dict], pr_details: dict, config: dict) -> Dict[str, dict]:
+def aggregate_contributor_points(reviews: List[dict], pr_details: dict, config: dict) -> Dict[str, dict]:
     """
     Aggregate points for all contributors on a PR.
     
@@ -364,7 +364,7 @@ def aggregate_contributor_points(reviews: List[dict], comments: List[dict], pr_d
     
     return contributors
 
-def format_comment_body(pr_number: int, contributors: Dict[str, dict]) -> str:
+def format_comment_body(pr_number: int, contributors: Dict[str, dict], config: dict) -> str:
     """Format the PR comment body with points tracking."""
     total_points = sum(c['total'] for c in contributors.values())
     timestamp = datetime.now(timezone.utc).strftime('%B %d, %Y at %I:%M %p UTC')
@@ -383,7 +383,13 @@ def format_comment_body(pr_number: int, contributors: Dict[str, dict]) -> str:
         
         # Group activities by type
         for activity in data['activities']:
-            timestamp_str = activity['timestamp'].split('T')[0]  # Just the date
+            # Robustly parse ISO 8601 timestamp, fallback to original string if parsing fails
+            try:
+                ts = activity['timestamp'].replace('Z', '+00:00') if activity.get('timestamp') else ''
+                dt = datetime.fromisoformat(ts)
+                timestamp_str = dt.strftime('%Y-%m-%d')
+            except Exception:
+                timestamp_str = activity.get('timestamp', 'Unknown date').split('T')[0] if activity.get('timestamp') else 'Unknown date'
             comment += f"**{activity['type'].replace('_', ' ').title()}** ({timestamp_str}):\n"
             for item in activity['breakdown']:
                 comment += f"- ✅ {item}\n"
@@ -394,17 +400,20 @@ def format_comment_body(pr_number: int, contributors: Dict[str, dict]) -> str:
     comment += "### How Points Are Calculated\n\n"
     comment += "| Action | Points |\n"
     comment += "|--------|--------|\n"
-    comment += "| Review submission | 5 |\n"
-    comment += "| Detailed review (100+ chars) | +5 bonus |\n"
-    comment += "| Performance improvement suggestion | +6 bonus |\n"
-    comment += "| PR approval | +3 bonus |\n"
-    comment += "| PR merged | 5 |\n"
-    comment += "| Bug fix (closes issue) | +5 bonus |\n"
-    comment += "| Security fix/vulnerability | +15 bonus |\n"
-    comment += "| Documentation | +4 bonus |\n"
-    comment += "| First-time contributor | +5 bonus |\n"
-    comment += "| High priority issue created | +3 bonus |\n"
-    comment += "| Critical bug reported | +10 bonus |\n\n"
+    
+    # Dynamically generate points table from config
+    points_config = config.get('points', {})
+    comment += f"| Review submission | {points_config.get('review_submission', 5)} |\n"
+    comment += f"| Detailed review (100+ chars) | +{points_config.get('detailed_review', 5)} bonus |\n"
+    comment += f"| Performance improvement suggestion | +{points_config.get('performance_improvement', 6)} bonus |\n"
+    comment += f"| PR approval | +{points_config.get('approve_pr', 3)} bonus |\n"
+    comment += f"| PR merged | {points_config.get('pr_merged', 5)} |\n"
+    comment += f"| Bug fix (closes issue) | +{points_config.get('bug_fix', 5)} bonus |\n"
+    comment += f"| Security fix/vulnerability | +{points_config.get('security_fix', 15)} bonus |\n"
+    comment += f"| Documentation | +{points_config.get('documentation', 4)} bonus |\n"
+    comment += f"| First-time contributor | +{points_config.get('first_time_contributor', 5)} bonus |\n"
+    comment += f"| High priority issue created | +{points_config.get('high_priority', 3)} bonus |\n"
+    comment += f"| Critical bug reported | +{points_config.get('critical_bug', 10)} bonus |\n\n"
     comment += f"*Last updated: {timestamp}*\n\n"
     
     # Metadata for external pipeline parsing
@@ -442,11 +451,11 @@ def update_or_create_comment(pr_number: int, body: str):
     
     if existing_comment_id:
         # Update existing comment
-        result = github_api_request('PATCH', f'issues/comments/{existing_comment_id}', {'body': body})
+        github_api_request('PATCH', f'issues/comments/{existing_comment_id}', {'body': body})
         print(f"✅ Updated tracking comment (ID: {existing_comment_id})")
     else:
         # Create new comment
-        result = github_api_request('POST', f'issues/{pr_number}/comments', {'body': body})
+        github_api_request('POST', f'issues/{pr_number}/comments', {'body': body})
         print(f"✅ Created new tracking comment")
 
 def main():
@@ -502,7 +511,7 @@ def main():
     print(f"   Found {len(reviews)} reviews and {len(comments)} comments")
     
     # Calculate points for all contributors
-    contributors = aggregate_contributor_points(reviews, comments, pr_details, config)
+    contributors = aggregate_contributor_points(reviews, pr_details, config)
     print(f"   Calculated points for {len(contributors)} contributors")
     
     if not contributors:
@@ -510,7 +519,7 @@ def main():
         sys.exit(0)
     
     # Format and update comment
-    comment_body = format_comment_body(pr_number, contributors)
+    comment_body = format_comment_body(pr_number, contributors, config)
     update_or_create_comment(pr_number, comment_body)
     
     print("✅ Points tracking complete!")
