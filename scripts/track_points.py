@@ -41,6 +41,8 @@ from typing import Dict, List, Optional, Tuple
 
 # Configuration
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'config_points.yml')
+# GITHUB_TOKEN is provided by GitHub Actions with limited repository scope
+# It expires after workflow completion and is never logged or exposed
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 GITHUB_REPOSITORY = os.getenv('GITHUB_REPOSITORY')  # Format: owner/repo
 GITHUB_EVENT_NAME = os.getenv('GITHUB_EVENT_NAME')
@@ -48,6 +50,9 @@ GITHUB_EVENT_PATH = os.getenv('GITHUB_EVENT_PATH')
 
 # Comment identifier for finding the bot's tracking comment
 COMMENT_MARKER = "<!-- CONTRIBUTOR_POINTS_TRACKER -->"
+
+# Minimum character count for detailed review bonus
+DETAILED_REVIEW_MIN_CHARS = 100
 
 # Keywords for detecting performance improvement suggestions in reviews
 PERFORMANCE_KEYWORDS = [
@@ -75,6 +80,20 @@ def load_config() -> dict:
         if missing:
             print(f"ERROR: Config missing required keys: {missing}", file=sys.stderr)
             sys.exit(1)
+        
+        # Set defaults for optional keys
+        optional_defaults = {
+            'performance_improvement': 6,
+            'bug_fix': 5,
+            'security_fix': 15,
+            'documentation': 4,
+            'first_time_contributor': 5,
+            'high_priority': 3,
+            'critical_bug': 10
+        }
+        for key, default_value in optional_defaults.items():
+            if key not in config['points']:
+                config['points'][key] = default_value
         
         return config
     except Exception as e:
@@ -175,9 +194,9 @@ def calculate_review_points(review: dict, config: dict) -> Tuple[int, List[str]]
     points = config['points']['review_submission']  # Base: 5 points
     breakdown = ['Review submission: +5 points']
     
-    # Detailed review bonus (100+ characters)
+    # Detailed review bonus (threshold defined by DETAILED_REVIEW_MIN_CHARS constant)
     body = review.get('body', '').strip()
-    if len(body) >= 100:
+    if len(body) >= DETAILED_REVIEW_MIN_CHARS:
         points += config['points']['detailed_review']  # +5 points
         breakdown.append(f'Detailed feedback ({len(body)} characters): +5 points')
     
@@ -294,8 +313,8 @@ def is_first_time_contributor(pr_details: dict) -> bool:
     author_association = pr_details.get('author_association', '')
     return author_association.upper() == 'FIRST_TIME_CONTRIBUTOR'
 
-def calculate_issue_points(issue: dict, config: dict) -> Tuple[int, List[str]]:
-    """Calculate points for issue creator based on priority."""
+def calculate_issue_creator_points(issue: dict, config: dict) -> Tuple[int, List[str]]:
+    """Calculate points awarded to the issue creator based on issue priority and labels."""
     points = 0
     breakdown = []
     
@@ -486,7 +505,7 @@ def main():
         
         # Calculate points for issue creator
         issue_creator = issue.get('user', {}).get('login')
-        points, breakdown = calculate_issue_points(issue, config)
+        points, breakdown = calculate_issue_creator_points(issue, config)
         
         if points > 0 and issue_creator:
             print(f"   Issue #{issue_number} by @{issue_creator}: {points} points")
