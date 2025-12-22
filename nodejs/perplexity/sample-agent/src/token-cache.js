@@ -19,21 +19,21 @@ class TokenCache {
   }
 
   /**
-   * Retrieve a token 
+   * Retrieve a token
    */
   get(key) {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
       console.log(`🔍 Token cache miss for key: ${key}`);
       return null;
     }
-    
+
     return entry;
   }
 
   /**
-   * Check if a token exists 
+   * Check if a token exists
    */
   has(key) {
     return this.cache.has(key);
@@ -48,6 +48,5 @@ class TokenCache {
 }
 
 // Create a singleton instance for the application
-const tokenCache = new TokenCache();
-
-export default tokenCache;
+export const agenticTokenCache = new TokenCache(); // stores agentic/observability tokens
+export const presenceStateCache = new TokenCache(); // stores presence state tokens
