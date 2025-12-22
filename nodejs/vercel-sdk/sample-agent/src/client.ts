@@ -102,13 +102,13 @@ class VercelAiClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
+      agentId: 'vercel-ai-sdk-agent',
+      agentName: 'Vercel AI SDK Agent',
       conversationId: 'conv-12345',
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+      tenantId: 'vercel-ai-sdk-sample-agent',
     };
 
     let response = '';
