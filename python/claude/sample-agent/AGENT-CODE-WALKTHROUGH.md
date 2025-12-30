@@ -29,7 +29,13 @@ The code is organized into well-defined sections with clear separators for devel
 
 ```python
 # Claude Agent SDK
-from anthropic_ai.claude_agent_sdk import query
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    TextBlock,
+    ThinkingBlock,
+)
 
 # Agent Interface
 from agent_interface import AgentInterface
@@ -38,277 +44,400 @@ from agent_interface import AgentInterface
 from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
-# Notifications
-from microsoft_agents_a365.notifications.agent_notification import (
-    AgentNotificationActivity,
-    NotificationTypes,
-)
+# Notifications (optional)
+try:
+    from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
 
-# Observability
-from microsoft_agents_a365.observability.core.config import configure
-from observability_helpers import create_agent_span, create_chat_span
+# Observability (optional)
+try:
+    from microsoft_agents_a365.observability.core import (
+        InferenceScope,
+        InvokeAgentDetails,
+        InvokeAgentScope,
+    )
+    from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+    from observability_helpers import (
+        create_agent_details,
+        create_tenant_details,
+        create_request_details,
+        create_inference_details,
+    )
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    OBSERVABILITY_AVAILABLE = False
 ```
 
 **What it does**: Brings in all the external libraries and tools the agent needs to work.
 
 **Key Imports**:
-- **Claude Agent SDK**: Tools to interact with Claude AI with extended thinking
+- **Claude Agent SDK**: Client, message types, and configuration options for Claude AI
 - **Microsoft 365 Agents**: Enterprise security and hosting features
-- **Notifications**: Handle @mentions from Outlook, Word, and Teams
-- **Observability**: Tracks what the agent is doing for monitoring and debugging
+- **Notifications**: Handle @mentions from Outlook, Word, and Teams (optional)
+- **Observability**: Tracks what the agent is doing for monitoring and debugging (optional)
 
-**Unique to Claude**: The `query` function from Claude Agent SDK provides a simple, powerful interface with built-in tools (Read, Write, WebSearch, Bash, Grep) - no additional MCP setup needed!
+**Unique to Claude**: The SDK uses an async context manager pattern with `ClaudeSDKClient` and provides structured message types (`AssistantMessage`, `TextBlock`, `ThinkingBlock`) for handling responses.
 
 ---
 
 ## Step 2: Agent Initialization
 
 ```python
-def __init__(self, anthropic_api_key: str | None = None):
-    """Initialize the Claude Agent."""
+def __init__(self):
+    """Initialize the Claude agent."""
     self.logger = logging.getLogger(self.__class__.__name__)
-    
-    # Get API key
-    self.anthropic_api_key = anthropic_api_key or os.getenv("ANTHROPIC_API_KEY")
-    if not self.anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable is required")
-    
-    # Set API key for Claude SDK
-    os.environ["ANTHROPIC_API_KEY"] = self.anthropic_api_key
-    
-    # Configure Claude model
-    self.model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
-    
-    # Setup observability
-    self._setup_observability()
-    
+
     # Initialize authentication options
     self.auth_options = LocalAuthenticationOptions.from_environment()
-    
-    self.logger.info(f"✅ Claude Agent configured with model: {self.model}")
+
+    # Create Claude client configuration
+    self._create_client()
+
+    # Claude client instance (will be set per conversation)
+    self.client: ClaudeSDKClient | None = None
 ```
 
-**What it does**: Creates the Claude agent and sets up its basic behavior.
+**What it does**: Creates the Claude agent and sets up its basic configuration.
 
 **What happens**:
-1. **Gets API Key**: Retrieves the Anthropic API key from environment
-2. **Configures Model**: Sets the Claude model (default: claude-sonnet-4-20250514)
-3. **Sets up Monitoring**: Turns on tracking so we can see what the agent does
-4. **Loads Auth Config**: Gets authentication settings from environment
+1. **Sets up Logging**: Creates a logger for the agent
+2. **Loads Auth Config**: Gets authentication settings from environment
+3. **Configures Claude**: Creates Claude client options
+4. **Prepares Client**: Sets up placeholder for per-conversation client instances
 
-**Settings**:
-- Uses Claude Sonnet 4 by default (extended thinking model)
-- API key must be set in environment or passed to constructor
-
-**Unique to Claude**: Unlike OpenAI/AgentFramework, Claude doesn't need an explicit client object - the SDK handles this automatically through the API key.
+**Key Design**: The agent creates a new client for each conversation to maintain proper isolation and state management.
 
 ---
 
-## Step 3: Observability Configuration
+## Step 3: Client Configuration
 
 ```python
-def _setup_observability(self):
-    """Configure Microsoft Agent 365 observability"""
-    try:
-        status = configure(
-            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "claude-agent"),
-            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agents.samples"),
-            token_resolver=self.token_resolver,
-        )
-        
-        if not status:
-            self.logger.warning("⚠️ Observability configuration failed")
-            return
-        
-        self.logger.info("✅ Observability configured")
-        
-    except Exception as e:
-        self.logger.error(f"❌ Error setting up observability: {e}")
+def _create_client(self):
+    """Create the Claude Agent SDK client options"""
+    # Get model from environment or use default
+    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+    
+    # Get API key
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
 
-def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-    """Token resolver for secure Agent 365 Observability exporter"""
-    try:
-        from token_cache import get_cached_agentic_token
-        cached_token = get_cached_agentic_token(tenant_id, agent_id)
-        if cached_token:
-            return cached_token
-        return None
-    except Exception as e:
-        self.logger.error(f"Token resolver error: {e}")
-        return None
+    # Configure Claude options
+    self.claude_options = ClaudeAgentOptions(
+        model=model,
+        # Enable extended thinking for detailed reasoning
+        max_thinking_tokens=1024,
+        # Allow web search and basic file operations
+        allowed_tools=["WebSearch", "Read", "Write", "WebFetch"],
+        # Auto-accept edits for smoother operation
+        permission_mode="acceptEdits",
+        continue_conversation=True
+    )
+
+    logger.info(f"✅ Claude Agent configured with model: {model}")
 ```
 
-**What it does**: Turns on detailed logging and monitoring so you can see what your agent is doing.
+**What it does**: Configures the Claude Agent SDK with model settings and capabilities.
 
-**What happens**:
-1. Sets up tracking with a service name (like giving your agent an ID badge)
-2. Configures token resolver for secure telemetry export
-3. Enables console output for development debugging
+**Configuration Options**:
+- `model`: Claude model to use (default: claude-sonnet-4-20250514)
+- `max_thinking_tokens`: Tokens allocated for extended thinking (1024)
+- `allowed_tools`: Built-in tools available to the agent
+- `permission_mode`: Auto-accept file edits for smoother operation
+- `continue_conversation`: Maintain conversation context across turns
+
+**Available Tools**:
+- **WebSearch**: Search the internet for information
+- **Read**: Read files from the filesystem
+- **Write**: Create and modify files
+- **WebFetch**: Fetch content from web URLs
 
 **Environment Variables**:
-- `OBSERVABILITY_SERVICE_NAME`: What to call your agent in logs (default: "claude-agent")
-- `OBSERVABILITY_SERVICE_NAMESPACE`: Which group it belongs to (default: "agents.samples")
-- `ENABLE_OBSERVABILITY`: Set to "true" to enable (default: true)
-
-**Note**: Claude Agent SDK doesn't yet have auto-instrumentation like OpenAI/Semantic Kernel, so we use manual telemetry with helper functions.
+- `CLAUDE_MODEL`: Model version to use
+- `ANTHROPIC_API_KEY`: Required API key for authentication
 
 ---
 
-## Step 4: Message Processing with Extended Thinking
+## Step 4: Message Processing with Observability
 
 ```python
 async def process_user_message(
     self, message: str, auth: Authorization, context: TurnContext
 ) -> str:
-    """Process user message using Claude Agent SDK"""
+    """Process user message using the Claude Agent SDK with observability tracing"""
+    
+    # Check if observability is enabled
+    enable_observability = os.getenv("ENABLE_OBSERVABILITY", "false").lower() in ("true", "1", "yes")
+    
+    # Create observability objects if available and enabled
+    invoke_scope = None
+    baggage_context = None
+    if OBSERVABILITY_AVAILABLE and enable_observability:
+        try:
+            agent_details = create_agent_details(context)
+            tenant_details = create_tenant_details(context)
+            
+            # Get session ID from conversation
+            session_id = context.activity.conversation.id if context and context.activity and context.activity.conversation else None
+            
+            # Create invoke details
+            invoke_details = InvokeAgentDetails(
+                details=agent_details,
+                session_id=session_id,
+            )
+            request_details = create_request_details(message, session_id)
+            
+            # Extract tenant_id and agent_id from context
+            tenant_id = None
+            agent_id = None
+            if context and context.activity and hasattr(context.activity, 'recipient'):
+                tenant_id = getattr(context.activity.recipient, 'tenant_id', None)
+                agent_id = getattr(context.activity.recipient, 'agentic_app_id', None)
+            
+            # Build and start baggage context
+            baggage_context = BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build()
+            baggage_context.__enter__()
+            
+            invoke_scope = InvokeAgentScope.start(
+                invoke_agent_details=invoke_details,
+                tenant_details=tenant_details,
+                request=request_details,
+            )
+            invoke_scope.__enter__()
+            
+        except Exception as e:
+            logger.warning(f"Failed to start observability scope: {e}")
+            invoke_scope = None
+            baggage_context = None
+```
+
+**What it does**: Sets up comprehensive observability tracing for the agent invocation.
+
+**What happens**:
+1. **Checks Observability**: Determines if tracing is enabled via environment variable
+2. **Creates Agent Details**: Extracts agent ID, conversation ID, and metadata
+3. **Creates Tenant Details**: Extracts tenant information for multi-tenant scenarios
+4. **Builds Baggage Context**: Sets up distributed tracing context with tenant/agent IDs
+5. **Starts Invoke Scope**: Begins tracking the agent invocation lifecycle
+
+**Key Components**:
+- `InvokeAgentScope`: Tracks the entire agent invocation
+- `BaggageBuilder`: Propagates tenant/agent IDs through distributed traces
+- `create_agent_details()`: Helper that extracts agent metadata from context
+- `create_tenant_details()`: Helper that extracts tenant metadata from context
+
+**Environment Variable**:
+- `ENABLE_OBSERVABILITY`: Set to "true", "1", or "yes" to enable tracing
+
+---
+
+## Step 5: Inference Processing with Token Tracking
+
+```python
     try:
-        self.logger.info(f"📨 Processing message: {message[:50]}...")
+        logger.info(f"📨 Processing message: {message[:100]}...")
+
+        # Track tokens for observability
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_thinking_tokens = 0
         
-        # Create observability span
-        with create_chat_span(
-            model=self.model,
-            input_message=message,
-            conversation_id=context.activity.conversation.id,
-        ):
-            # Clean environment for Claude
-            clean_env = {**os.environ}
-            delete clean_env.NODE_OPTIONS
-            delete clean_env.VSCODE_INSPECTOR_OPTIONS
+        # Create inference scope if observability enabled
+        inference_scope = None
+        if OBSERVABILITY_AVAILABLE and enable_observability:
+            try:
+                inference_details = create_inference_details(
+                    model=self.claude_options.model,
+                    input_tokens=0,  # Will update after response
+                    output_tokens=0,
+                )
+                
+                inference_scope = InferenceScope.start(
+                    details=inference_details,
+                    agent_details=agent_details,
+                    tenant_details=tenant_details,
+                    request=request_details,
+                )
+                inference_scope.__enter__()
+            except Exception as e:
+                logger.warning(f"Failed to start inference scope: {e}")
+
+        # Create a new client for this conversation
+        async with ClaudeSDKClient(self.claude_options) as client:
+            # Send the user message
+            await client.query(message)
+
+            # Collect the response
+            response_parts = []
+            thinking_parts = []
             
-            # Configure Claude options
-            claude_options = {
-                "appendSystemPrompt": self._get_system_prompt(),
-                "maxTurns": 5,
-                "allowedTools": ["Read", "Write", "WebSearch", "Bash", "Grep"],
-                "env": clean_env,
-            }
+            # Receive and process messages
+            async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        # Collect thinking (Claude's reasoning)
+                        if isinstance(block, ThinkingBlock):
+                            thinking_parts.append(f"💭 {block.thinking}")
+                            total_thinking_tokens += len(block.thinking.split())
+                            logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
+                        
+                        # Collect actual response text
+                        elif isinstance(block, TextBlock):
+                            response_parts.append(block.text)
+                            total_output_tokens += len(block.text.split())
+                            logger.info(f"💬 Claude response: {block.text[:100]}...")
+```
+
+**What it does**: Processes the message using Claude Agent SDK with async context management and token tracking.
+
+**Key Pattern - Async Context Manager**:
+```python
+async with ClaudeSDKClient(self.claude_options) as client:
+```
+This creates a new client for each conversation, ensuring proper isolation and automatic cleanup.
+
+**Message Flow**:
+1. **Send Query**: `await client.query(message)` sends the user's message to Claude
+2. **Receive Responses**: `async for msg in client.receive_response()` streams back responses
+3. **Process Blocks**: Each message contains blocks (thinking or text)
+4. **Track Tokens**: Approximates token counts for observability
+
+**Message Types**:
+- `AssistantMessage`: Container for Claude's response
+- `ThinkingBlock`: Contains Claude's extended thinking/reasoning
+- `TextBlock`: Contains the actual response text
+
+**Unique to Claude**: Extended thinking blocks show Claude's reasoning process, providing transparency into how it arrives at answers and decides to use tools.
+
+---
+
+## Step 6: Response Formatting and Cleanup
+
+```python
+            # Track input tokens (approximate)
+            total_input_tokens = len(message.split())
+
+            # Combine thinking and response
+            full_response = ""
             
-            # Query Claude with streaming
-            thinking = ""
-            response = ""
+            # Add thinking if present (for transparency)
+            if thinking_parts:
+                full_response += "**Claude's Thinking:**\n"
+                full_response += "\n".join(thinking_parts)
+                full_response += "\n\n**Response:**\n"
             
-            for message_chunk in query(prompt=message, options=claude_options):
-                if message_chunk.type == "thinking":
-                    thinking += message_chunk.thinking
-                elif message_chunk.type == "result":
-                    response = message_chunk.result
-                    break
-            
-            # Log thinking and response
-            if thinking:
-                self.logger.info(f"💭 Claude thinking: {thinking[:200]}...")
-            
-            self.logger.info(f"💬 Claude response: {response[:200]}...")
-            
-            # Format response with thinking
-            formatted_response = self._format_response(thinking, response)
-            return formatted_response
-            
+            # Add the actual response
+            if response_parts:
+                full_response += "".join(response_parts)
+            else:
+                full_response += "I couldn't process your request at this time."
+
+            # Close inference scope with token counts
+            if inference_scope:
+                try:
+                    logger.info(f"📊 Tokens - Input: {total_input_tokens}, Output: {total_output_tokens}, Thinking: {total_thinking_tokens}")
+                    inference_scope.__exit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Failed to close inference scope: {e}")
+
+            # Close invoke scope successfully
+            if invoke_scope:
+                try:
+                    invoke_scope.__exit__(None, None, None)
+                    if baggage_context is not None:
+                        baggage_context.__exit__(None, None, None)
+                except Exception as e:
+                    logger.warning(f"Failed to close invoke scope: {e}")
+
+            return full_response
+
     except Exception as e:
-        self.logger.error(f"Error processing message: {e}")
+        logger.error(f"Error processing message: {e}")
+        
+        # Record error in scopes
+        if invoke_scope:
+            try:
+                invoke_scope.record_error(e)
+                invoke_scope.__exit__(type(e), e, e.__traceback__)
+                if baggage_context is not None:
+                    baggage_context.__exit__(None, None, None)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to clean up after error: {cleanup_error}")
+        
         return f"Sorry, I encountered an error: {str(e)}"
 ```
 
-**What it does**: This is the main function that handles user conversations using Claude's extended thinking.
+**What it does**: Formats the final response and ensures proper cleanup of observability resources.
 
-**What happens**:
-1. **Creates Tracking**: Wraps the conversation in an observability span
-2. **Cleans Environment**: Removes debug variables that interfere with Claude
-3. **Configures Options**: Sets system prompt, max turns, and allowed tools
-4. **Streams Response**: Gets thinking process and final answer from Claude
-5. **Formats Output**: Combines thinking and response for visibility
+**Response Formatting**:
+1. **Combines Thinking**: If extended thinking is present, shows it first with a header
+2. **Adds Response**: Appends the actual response text
+3. **Fallback Message**: Provides friendly error message if no response generated
 
-**Claude Options**:
-- `appendSystemPrompt`: Custom instructions for the agent
-- `maxTurns`: Maximum tool calls allowed (prevents infinite loops)
-- `allowedTools`: Which built-in Claude tools to enable
-- `env`: Clean environment without debug variables
+**Observability Cleanup**:
+- Logs token counts (input, output, thinking) for metrics
+- Closes inference scope to complete tracing span
+- Closes invoke scope and baggage context
+- Records errors in traces if exceptions occur
 
-**Unique to Claude**: The extended thinking feature provides visibility into the AI's reasoning process - you can see how it decides to use tools and solve problems!
-
----
-
-## Step 5: Built-in Tools (No MCP Setup!)
-
-**What it does**: Claude Agent SDK comes with powerful built-in tools - no additional setup required!
-
-**Available Tools**:
-- **Read**: Read files from the workspace
-- **Write**: Create and modify files
-- **WebSearch**: Search the internet for information
-- **Bash**: Execute shell commands
-- **Grep**: Search file contents with patterns
-
-**How it works**: Just specify tools in `allowedTools` array:
-
-```python
-claude_options = {
-    "allowedTools": ["Read", "Write", "WebSearch", "Bash", "Grep"],
-}
-```
-
-Claude automatically:
-- Decides when to use tools based on user's request
-- Executes tool calls with proper parameters
-- Integrates results into the response
-- Shows thinking process for each tool use
-
-**Example Interaction**:
-```
-User: "Search for Python async best practices"
-Claude thinking: I need to search the web for information about Python async...
-[Uses WebSearch tool]
-Claude: Based on my search, here are the key best practices...
-```
-
-**No MCP Server Configuration Needed**: Unlike agent-framework and OpenAI samples which need MCP server setup for tools, Claude's built-in tools work immediately!
+**Error Handling**:
+- Catches all exceptions to prevent crashes
+- Records errors in observability spans for debugging
+- Ensures all scopes are properly closed even on failure
+- Returns user-friendly error messages
 
 ---
 
-## Step 6: Notification Handling
+## Step 7: Notification Handling
 
 ```python
 async def handle_agent_notification_activity(
-    self,
-    notification_activity: AgentNotificationActivity,
-    auth: Authorization,
-    context: TurnContext,
+    self, notification_activity, auth: Authorization, context: TurnContext
 ) -> str:
-    """Handle agent notifications from Outlook, Word, Teams, etc."""
+    """Handle agent notification activities (email, Word mentions, etc.)"""
+    if not NOTIFICATIONS_AVAILABLE:
+        return "Notification handling is not available in this configuration."
+    
     try:
         notification_type = notification_activity.notification_type
-        self.logger.info(f"📬 Processing notification: {notification_type}")
-        
-        # Handle email notifications
+        logger.info(f"📬 Processing notification: {notification_type}")
+
+        # Handle Email Notifications
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
-            email = notification_activity.email_reference
-            if email:
-                subject = email.subject or "No subject"
-                message = (
-                    f"You were mentioned in an email:\n"
-                    f"Subject: {subject}\n"
-                    f"From: {email.sender_display_name}\n\n"
-                    f"How can I help with this email?"
-                )
-                
-                response = await self.process_user_message(message, auth, context)
-                return response or "Email notification processed."
-        
-        # Handle Word comment notifications
+            if not hasattr(notification_activity, "email") or not notification_activity.email:
+                return "I could not find the email notification details."
+            
+            email = notification_activity.email
+            email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
+            
+            message = f"You have received the following email. Please follow any instructions in it.\n\n{email_body}"
+            logger.info(f"📧 Processing email notification")
+            
+            response = await self.process_user_message(message, auth, context)
+            return response or "Email notification processed."
+
+        # Handle Word Comment Notifications
         elif notification_type == NotificationTypes.WPX_COMMENT:
-            comment = notification_activity.wpx_comment
-            if comment:
-                message = (
-                    f"You were mentioned in a Word document comment:\n"
-                    f"Comment: {comment.comment_text}\n"
-                    f"Document: {comment.document_name}\n\n"
-                    f"How can I help with this?"
-                )
-                
-                response = await self.process_user_message(message, auth, context)
-                return response or "Word notification processed."
-        
-        # Handle generic notifications
+            if not hasattr(notification_activity, "wpx_comment") or not notification_activity.wpx_comment:
+                return "I could not find the Word notification details."
+            
+            wpx = notification_activity.wpx_comment
+            doc_id = getattr(wpx, "document_id", "")
+            comment_text = notification_activity.text or ""
+            
+            message = (
+                f"You have been mentioned in a Word document comment.\n"
+                f"Document ID: {doc_id}\n"
+                f"Comment: {comment_text}\n\n"
+                f"Please respond to this comment appropriately."
+            )
+            
+            response = await self.process_user_message(message, auth, context)
+            return response or "Word notification processed."
+
+        # Generic notification handling
         else:
             notification_message = (
                 getattr(notification_activity.activity, 'text', None) or 
@@ -320,7 +449,7 @@ async def handle_agent_notification_activity(
             return response or "Notification processed successfully."
             
     except Exception as e:
-        self.logger.error(f"Error processing notification: {e}")
+        logger.error(f"Error processing notification: {e}")
         return f"Sorry, I encountered an error processing the notification: {str(e)}"
 ```
 
@@ -332,153 +461,86 @@ async def handle_agent_notification_activity(
 - **Generic**: Other notification types (Teams messages, etc.)
 
 **What happens**:
-1. **Identifies Type**: Determines what kind of notification it is
-2. **Extracts Context**: Gets relevant information (subject, comment text, etc.)
-3. **Formats Message**: Creates a clear prompt for Claude
-4. **Processes with AI**: Uses Claude to generate intelligent response
-5. **Returns Result**: Sends response back to user
+1. **Checks Availability**: Verifies notification packages are installed
+2. **Identifies Type**: Determines what kind of notification it is
+3. **Extracts Context**: Gets relevant information (email body, comment text, etc.)
+4. **Formats Message**: Creates a clear prompt for Claude
+5. **Processes with AI**: Uses Claude to generate intelligent response
+6. **Returns Result**: Sends response back to user
 
-**Unique Feature**: The agent can intelligently respond to notifications using Claude's extended thinking to understand context and provide helpful answers.
-
----
-
-## Step 7: Dual Channel Notification Routing
-
-In `host_agent_server.py`, the agent registers handlers for both channels:
-
-```python
-# Register for 'agents' channel (production - Outlook, Teams notifications)
-@self.agent_notification.on_agent_notification(
-    channel_id=ChannelId(channel="agents", sub_channel="*"),
-    auth_handlers=handler,
-)
-async def on_notification_agents(context, state, notification_activity):
-    await handle_notification_common(context, state, notification_activity)
-
-# Register for 'msteams' channel (testing - Agents Playground)
-@self.agent_notification.on_agent_notification(
-    channel_id=ChannelId(channel="msteams", sub_channel="*"),
-    auth_handlers=handler,
-)
-async def on_notification_msteams(context, state, notification_activity):
-    await handle_notification_common(context, state, notification_activity)
-```
-
-**What it does**: Registers notification handlers for both production and testing channels.
-
-**Why Two Channels**:
-- **agents**: Production notifications from Outlook, Word, Teams
-- **msteams**: Testing notifications from Agents Playground
-
-**What happens**:
-1. Both handlers use the same processing logic
-2. Notifications route correctly based on source
-3. Testing works without production credentials
-
-**Implementation Detail**: This dual registration was necessary because the Agents Playground sends notifications with `channel="msteams"` while production uses `channel="agents"`.
+**Key Feature**: The agent intelligently responds to notifications by processing the context through Claude's extended thinking, enabling contextual and helpful responses.
 
 ---
 
-## Step 8: Response Formatting
+## Step 8: Agent Cleanup
 
 ```python
-def _format_response(self, thinking: str, response: str) -> str:
-    """Format Claude's response with thinking process"""
-    if not thinking:
-        return response
-    
-    # Show thinking for transparency
-    formatted = f"**Claude's Thinking:**\n💭 {thinking[:500]}"
-    if len(thinking) > 500:
-        formatted += "...\n\n"
-    else:
-        formatted += "\n\n"
-    
-    formatted += f"**Response:**\n{response}"
-    return formatted
-
-def _get_system_prompt(self) -> str:
-    """Get the system prompt for Claude"""
-    return """
-You are a helpful AI assistant with access to powerful tools.
-When users ask questions or request actions:
-- Use Read to examine files
-- Use Write to create or modify files  
-- Use WebSearch to find current information
-- Use Bash to execute commands
-- Use Grep to search file contents
-
-Always explain your reasoning and show your work.
-Be friendly and helpful!
-    """.strip()
-```
-
-**What it does**: Formats responses to show both Claude's thinking and the final answer.
-
-**What happens**:
-1. **Shows Thinking**: Displays first 500 chars of reasoning process
-2. **Shows Response**: Displays the final answer
-3. **Truncates Long Thinking**: Keeps messages readable
-
-**Why it's useful**: Users can see how Claude reasoned through their request, building trust and understanding!
-
-**System Prompt**: Instructs Claude on how to use its built-in tools effectively.
-
----
-
-## Step 9: Cleanup and Resource Management
-
-```python
-async def initialize(self):
-    """Initialize the agent"""
-    self.logger.info("Initializing Claude Agent...")
-    try:
-        self.logger.info("Claude Agent initialized successfully")
-    except Exception as e:
-        self.logger.error(f"Failed to initialize agent: {e}")
-        raise
-
 async def cleanup(self) -> None:
     """Clean up agent resources"""
     try:
-        self.logger.info("Cleaning up Claude agent resources...")
-        # Claude Agent SDK handles cleanup automatically
-        self.logger.info("Cleanup completed")
+        logger.info("Cleaning up agent resources...")
+        
+        # Claude SDK client cleanup is handled by context manager
+        # No additional cleanup needed
+        
+        logger.info("Agent cleanup completed")
+
     except Exception as e:
-        self.logger.error(f"Error during cleanup: {e}")
+        logger.error(f"Error during cleanup: {e}")
 ```
 
-**What it does**: Properly initializes and shuts down the agent.
+**What it does**: Properly cleans up agent resources when shutting down.
 
 **What happens**:
-- Initialize validates configuration
-- Cleanup ensures graceful shutdown
+- Logs cleanup start and completion
+- Claude SDK handles client cleanup automatically via async context manager
+- No manual resource management needed
 - Errors are logged but don't crash
 
-**Unique to Claude**: The Claude Agent SDK handles most cleanup automatically - no need to manually close MCP server connections like in other samples!
+**Unique to Claude**: The async context manager pattern (`async with ClaudeSDKClient`) handles all cleanup automatically, making resource management simple and reliable.
 
 ---
 
-## Step 10: Main Entry Point
+## Step 9: Main Entry Point for Testing
 
 ```python
 async def main():
     """Main function to run the Claude Agent"""
     try:
+        # Create and initialize the agent
         agent = ClaudeAgent()
         await agent.initialize()
-        
-        # Example interaction
-        message = "Search the web for Python async best practices"
-        auth = None  # Anonymous mode for testing
-        context = None  # Would be provided by host in production
-        
-        response = await agent.process_user_message(message, auth, context)
-        print(f"\n{response}\n")
-        
+
+        # Test the agent with a simple message
+        logger.info("\n" + "=" * 80)
+        logger.info("Testing Claude Agent")
+        logger.info("=" * 80 + "\n")
+
+        # Dummy auth and context for standalone testing
+        class DummyAuth:
+            async def exchange_token(self, context, scopes, handler_id):
+                return type('obj', (object,), {'token': 'dummy-token'})()
+
+        class DummyContext:
+            pass
+
+        response = await agent.process_user_message(
+            "What is the capital of France?",
+            DummyAuth(),
+            DummyContext()
+        )
+
+        logger.info("\n" + "=" * 80)
+        logger.info("Response:")
+        logger.info("=" * 80)
+        logger.info(response)
+        logger.info("=" * 80 + "\n")
+
     except Exception as e:
         logger.error(f"Failed to start agent: {e}")
+
     finally:
+        # Cleanup
         if "agent" in locals():
             await agent.cleanup()
 
@@ -486,48 +548,262 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**What it does**: Starting point for testing the agent directly.
+**What it does**: Provides a standalone test entry point for the agent.
 
 **What happens**:
-- Creates and initializes the agent
-- Runs a test conversation
-- Ensures cleanup happens
+1. **Creates Agent**: Instantiates the ClaudeAgent class
+2. **Initializes**: Calls the initialize method
+3. **Creates Test Fixtures**: Creates dummy auth and context objects
+4. **Tests Message**: Sends a simple test message to verify functionality
+5. **Displays Response**: Logs the response with clear formatting
+6. **Ensures Cleanup**: Always cleans up resources in finally block
 
-**Why it's useful**: Quick way to test Claude integration without starting the full server!
+**Why it's useful**: Allows quick testing of the agent without starting the full server, useful for development and debugging.
+
+---
+
+## Step 10: Observability Helper Functions
+
+The `observability_helpers.py` file provides utility functions for creating observability objects:
+
+```python
+def create_agent_details(context: Optional[TurnContext] = None) -> AgentDetails:
+    """Create agent details for observability"""
+    agent_id = environ.get("AGENT_ID", "claude-agent")
+    conversation_id = None
+    
+    if context and context.activity:
+        if hasattr(context.activity, "recipient"):
+            agent_id = context.activity.recipient.agentic_app_id or agent_id
+        if context.activity.conversation:
+            conversation_id = context.activity.conversation.id
+    
+    return AgentDetails(
+        agent_id=agent_id,
+        conversation_id=conversation_id,
+        agent_name=environ.get("OBSERVABILITY_SERVICE_NAME", "Claude Agent"),
+        agent_description="AI agent powered by Anthropic Claude Agent SDK with extended thinking",
+    )
+
+def create_inference_details(
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    thinking_tokens: int = 0,
+    finish_reasons: Optional[list[str]] = None,
+    response_id: Optional[str] = None
+) -> InferenceCallDetails:
+    """Create inference call details for observability"""
+    return InferenceCallDetails(
+        operationName=InferenceOperationType.CHAT,
+        model=model,
+        providerName="anthropic-claude",
+        inputTokens=input_tokens,
+        outputTokens=output_tokens + thinking_tokens,  # Total includes thinking
+        finishReasons=finish_reasons or ["end_turn"],
+        responseId=response_id,
+    )
+```
+
+**What it does**: Provides reusable functions for creating observability objects.
+
+**Helper Functions**:
+- `create_agent_details()`: Extracts agent metadata from context
+- `create_tenant_details()`: Extracts tenant information for multi-tenancy
+- `create_request_details()`: Creates request tracking objects
+- `create_inference_details()`: Creates inference call tracking with token counts
+- `create_tool_call_details()`: Creates tool execution tracking
+
+**Key Features**:
+- Safely extracts data with fallbacks
+- Handles missing context gracefully
+- Includes Claude-specific fields (thinking_tokens)
+- Provides sensible defaults
 
 ---
 
 ## Architecture Patterns
 
-### 1. **Separation of Concerns**
-```
-agent.py           -> AI logic and Claude integration
-host_agent_server.py -> HTTP hosting and routing
-agent_interface.py   -> Abstract contract
-```
-
-### 2. **Clean Environment Management**
+### 1. **Async Context Manager Pattern**
 ```python
-clean_env = {**os.environ}
-delete clean_env.NODE_OPTIONS  # Remove debug variables
-delete clean_env.VSCODE_INSPECTOR_OPTIONS
+async with ClaudeSDKClient(self.claude_options) as client:
+    await client.query(message)
+    async for msg in client.receive_response():
+        # Process streaming response
 ```
 
-**Why**: Claude Agent SDK spawns child processes that fail with debug variables set.
+**Why**: Ensures proper resource cleanup and connection management automatically.
 
-### 3. **Observability Integration**
+### 2. **Optional Dependencies**
 ```python
-with create_chat_span(model=self.model, input_message=message):
-    # AI processing here
+try:
+    from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
+    NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    NOTIFICATIONS_AVAILABLE = False
 ```
 
-Manual spans bridge the gap until auto-instrumentation is available.
+**Why**: Allows the agent to work without optional packages, improving flexibility and reducing dependencies.
 
-### 4. **Error Resilience**
+### 3. **Separation of Concerns**
+```
+agent.py                 -> AI logic and Claude integration
+host_agent_server.py     -> HTTP hosting and routing
+agent_interface.py       -> Abstract contract
+observability_helpers.py -> Telemetry utilities
+```
+
+**Why**: Clean architecture makes the code maintainable and testable.
+
+### 4. **Structured Observability**
+```python
+# Invoke scope for entire agent invocation
+with InvokeAgentScope.start(...):
+    # Inference scope for specific AI call
+    with InferenceScope.start(...):
+        # Process with Claude
+```
+
+**Why**: Provides hierarchical tracing with proper context propagation.
+
+### 5. **Error Resilience**
 ```python
 try:
     response = await self.process_user_message(...)
 except Exception as e:
+    # Record error in traces
+    if invoke_scope:
+        invoke_scope.record_error(e)
+    return f"Sorry, I encountered an error: {str(e)}"
+```
+
+**Why**: Always returns helpful errors to users instead of crashing, while tracking failures for debugging.
+
+---
+
+## Key Differences from Other Samples
+
+### vs. AgentFramework Sample
+- ✅ **Built-in Tools**: Claude includes WebSearch, Read, Write, WebFetch without MCP setup
+- ✅ **Extended Thinking**: See Claude's reasoning process transparently
+- ✅ **Simpler Configuration**: Just API key and model selection needed
+- ✅ **Async Context Manager**: Cleaner resource management pattern
+- ❌ **No Custom MCP Servers**: Can't add Mail, Calendar, SharePoint tools (yet)
+
+### vs. OpenAI Sample  
+- ✅ **Built-in Tools**: No tool registration or function schemas needed
+- ✅ **Extended Thinking**: Unique transparency into AI reasoning
+- ✅ **Notification Support**: Full Outlook/Word/@mention handling
+- ✅ **Streaming Responses**: Process thinking and text as it arrives
+- ❌ **No MCP Extensibility**: Can't add custom tools (yet)
+- ❌ **Manual Observability**: No auto-instrumentation yet
+
+### Unique Advantages
+1. **Simplicity**: Fewer dependencies, easier setup, no MCP server configuration
+2. **Transparency**: Extended thinking shows reasoning process
+3. **Built-in Tools**: Powerful capabilities out of the box (WebSearch, Read, Write, WebFetch)
+4. **Notifications**: Full support for Microsoft 365 integrations
+5. **Resource Safety**: Async context managers ensure proper cleanup
+
+### Current Limitations
+1. **No MCP Support**: Can't add custom tools like Mail, Calendar, SharePoint
+2. **Manual Observability**: Requires helper functions until auto-instrumentation arrives
+3. **Token Approximation**: Token counts are word-based estimates, not actual tokens
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `ANTHROPIC_API_KEY` | ✅ Yes | - | Authentication for Claude API |
+| `CLAUDE_MODEL` | No | claude-sonnet-4-20250514 | Claude model version to use |
+| `ENABLE_OBSERVABILITY` | No | false | Enable/disable observability tracing |
+| `OBSERVABILITY_SERVICE_NAME` | No | claude-agent | Service name for telemetry |
+| `OBSERVABILITY_SERVICE_NAMESPACE` | No | agent365-samples | Service namespace for telemetry |
+| `AGENT_ID` | No | claude-agent | Agent identifier for observability |
+| `TENANT_ID` | No | default-tenant | Tenant identifier for multi-tenancy |
+| `PORT` | No | 3978 | Server port |
+| `LOG_LEVEL` | No | INFO | Logging level (DEBUG, INFO, WARNING, ERROR) |
+
+---
+
+## Testing Checklist
+
+- [ ] Anthropic API key set in `.env` file
+- [ ] Dependencies installed (`uv pip install -e .` or `pip install -e .`)
+- [ ] Server starts without errors (`python start_with_generic_host.py`)
+- [ ] Can send messages and get responses
+- [ ] Extended thinking appears in responses
+- [ ] Built-in tools work (WebSearch, Read, Write, WebFetch)
+- [ ] Notifications route correctly (if enabled)
+- [ ] Observability traces appear (if enabled)
+- [ ] Error handling works gracefully
+
+---
+
+## Debugging Guide
+
+### 1. Enable Debug Logging
+```bash
+export LOG_LEVEL=DEBUG
+python start_with_generic_host.py
+```
+
+### 2. Test Agent Standalone
+```bash
+python agent.py
+```
+This runs the agent without the server to isolate issues.
+
+### 3. Check API Key
+```bash
+python -c "import os; from dotenv import load_dotenv; load_dotenv(); print('API Key:', 'SET' if os.getenv('ANTHROPIC_API_KEY') else 'MISSING')"
+```
+
+### 4. Verify Observability
+Check logs for:
+```
+✅ Observability scope started
+📊 Tokens - Input: X, Output: Y, Thinking: Z
+```
+
+### 5. Test Notifications
+Check logs for notification routing:
+```
+📬 Processing notification: EMAIL_NOTIFICATION
+📧 Processing email notification
+```
+
+### 6. Common Issues
+
+**Issue**: "Missing ANTHROPIC_API_KEY"
+- **Solution**: Add `ANTHROPIC_API_KEY=your-key-here` to `.env` file
+
+**Issue**: No extended thinking in responses
+- **Solution**: Verify `max_thinking_tokens=1024` in `claude_options`
+
+**Issue**: Tools not working
+- **Solution**: Check `allowed_tools` list in `claude_options`
+
+**Issue**: Observability not working
+- **Solution**: Set `ENABLE_OBSERVABILITY=true` and verify packages installed
+
+---
+
+This architecture provides a solid foundation for building production-ready AI agents with Claude Agent SDK, emphasizing simplicity, transparency, and proper resource management while integrating seamlessly with Microsoft 365 Agents SDK for enterprise features.
+
+3. Testing works without production credentials
+
+**Implementation Detail**: This dual registration was necessary because the Agents Playground sends notifications with `channel="msteams"` while production uses `channel="agents"`.
+
+---
+
+This architecture provides a solid foundation for building production-ready AI agents with Claude Agent SDK, emphasizing simplicity, transparency, and proper resource management while integrating seamlessly with Microsoft 365 Agents SDK for enterprise features.
+
+
+This architecture provides a solid foundation for building production-ready AI agents with Claude Agent SDK, emphasizing simplicity, transparency, and proper resource management while integrating seamlessly with Microsoft 365 Agents SDK for enterprise features.
+
     return f"Sorry, I encountered an error: {str(e)}"
 ```
 
