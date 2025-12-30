@@ -1,15 +1,16 @@
-# Claude Sample Agent - Python
+# Sample Agent - Python Claude Agent SDK
 
-This directory contains a sample agent implementation using Python and Anthropic's Claude Agent SDK with extended thinking capabilities. This sample demonstrates how to build an agent using the Agent365 framework with Python and Claude Agent SDK. It covers:
+This directory contains a sample agent implementation using Python and Anthropic's Claude Agent SDK with extended thinking capabilities.
 
-- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
-- **Notifications**: Services and models for managing user notifications
-- **Tools**: Built-in Claude tools (Read, Write, WebSearch, Bash, Grep) for building advanced agent solutions
-- **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
+## Demonstrates
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
-
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+This sample demonstrates how to build an agent using the Agent365 framework with Python and Claude Agent SDK, including:
+- Claude Agent SDK integration with extended thinking
+- Built-in Claude tools (Read, Write, WebSearch, Bash, Grep)
+- Microsoft 365 notifications (@mentions from Outlook, Word, Teams)
+- Microsoft Agent 365 observability and tracing
+- Multiple authentication modes (anonymous and agentic)
+- Microsoft 365 Agents SDK hosting patterns
 
 ## Prerequisites
 
@@ -17,7 +18,15 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Anthropic Claude API access (API key)
 - Claude CLI installed and authenticated (`npm install -g @anthropic-ai/claude-code`)
 
-## Running the Agent
+## Documentation
+
+For detailed information about this sample, please refer to:
+
+- **[AGENT-CODE-WALKTHROUGH.md](AGENT-CODE-WALKTHROUGH.md)** - Detailed code explanation and architecture walkthrough
+- **[PARITY_ANALYSIS.md](PARITY_ANALYSIS.md)** - Feature comparison with agent-framework and OpenAI samples
+- **[NOTIFICATION_IMPLEMENTATION.md](NOTIFICATION_IMPLEMENTATION.md)** - Notification support implementation details
+
+## Quick Start
 
 ### 1. Install Claude CLI
 
@@ -56,6 +65,28 @@ The agent will start on `http://localhost:3978` and can be tested with the Agent
 # In a new terminal
 agentsplayground
 ```
+
+## Key Features
+
+### Claude Agent SDK Integration
+- Uses `claude-sonnet-4-20250514` model with extended thinking
+- Built-in tools: Read, Write, WebSearch, Bash, Grep
+- Streaming responses with thinking process visibility
+
+### Notification Support
+- Handles @mentions from Outlook emails
+- Processes Word document comments
+- Responds to Teams messages
+- Dual channel support (agents + msteams for testing)
+
+### Observability
+- Microsoft Agent 365 observability integration
+- Console trace output for development
+- Agent 365 Observability exporter support for production
+
+### Authentication Modes
+- **Anonymous**: Simple testing without authentication
+- **Agentic**: Full Microsoft 365 authentication with token exchange
 
 ## Environment Variables
 
@@ -123,33 +154,54 @@ The Claude Agent SDK provides these tools out of the box:
 
 No additional MCP server configuration needed!
 
-## Support
+## Known Issues & Limitations
 
-For issues, questions, or feedback:
+1. **Package Patches Required**: The notification package has bugs requiring 3 patches:
+   - `__init__.py` - Fixed broken imports
+   - `agent_notification.py` - Fixed NoneType handling and channel routing
+   - `agent_notification_activity.py` - Fixed None activity.name crash
 
-- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+2. **MCP Support**: Currently not implemented (P0 gap from parity analysis)
+   - No Mail, Calendar, SharePoint tools
+   - Planned for future implementation
 
-## Contributing
+3. **Auto-instrumentation**: Not yet available for Claude Agent SDK
+   - Manual telemetry implementation in place
+   - Automatic instrumentation pending SDK support
 
-This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
+## Troubleshooting
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+### "Not authenticated with Claude"
+```bash
+claude login
+```
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+### Port 3978 already in use
+```bash
+# Find and kill the process
+netstat -ano | findstr :3978
+taskkill /PID <PID> /F
+```
 
-## Support
+### Notifications not routing
+- Check that both 'agents' and 'msteams' handlers are registered
+- Verify package patches are applied
+- Enable debug logging to see channel matching
+
+## 📚 Related Documentation
 
 - [Claude Agent SDK](https://anthropic.mintlify.app/en/api/agent-sdk/overview)
 - [Microsoft 365 Agents SDK](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/)
 - [Microsoft Agents A365 Python](https://github.com/microsoft/Agent365-python)
 
-## Trademarks
+## 🤝 Contributing
 
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
+1. Follow the existing code patterns and structure
+2. Add comprehensive logging and error handling
+3. Update documentation for new features
+4. Test thoroughly with different authentication methods
+5. Apply package patches when needed
 
-## License
+## 📄 License
 
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the MIT License - see the [LICENSE](LICENSE.md) file for details.
+TBD
