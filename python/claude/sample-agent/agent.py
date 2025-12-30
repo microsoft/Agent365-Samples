@@ -63,18 +63,16 @@ try:
         InferenceScope,
         InvokeAgentDetails,
         InvokeAgentScope,
+        ExecuteToolScope,
     )
     from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-    # from microsoft_agents_a365.observability.core.tool_type import ToolType
+    from microsoft_agents_a365.observability.core.tool_type import ToolType
     from observability_helpers import (
         create_agent_details,
         create_tenant_details,
         create_request_details,
         create_inference_details,
-        create_invoke_scope,
-        create_baggage_context,
-        create_inference_scope,
-        # create_tool_call_details,
+        create_tool_call_details,
     )
     OBSERVABILITY_AVAILABLE = True
 except ImportError:
@@ -121,7 +119,7 @@ class ClaudeAgent(AgentInterface):
         # Get API key
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
+         raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
 
         # Configure Claude options
         self.claude_options = ClaudeAgentOptions(
@@ -161,90 +159,171 @@ class ClaudeAgent(AgentInterface):
     ) -> str:
         """Process user message using the Claude Agent SDK with observability tracing"""
         
-        # Create observability scopes (will use nullcontext if not available)
-        if OBSERVABILITY_AVAILABLE:
-            from observability_helpers import create_invoke_scope, create_baggage_context, create_inference_scope
-            invoke_scope = create_invoke_scope(context, message)
-            baggage_ctx = create_baggage_context(context)
-            inference_scope = create_inference_scope(context, self.claude_options.model, message)
-        else:
-            from contextlib import nullcontext
-            invoke_scope = nullcontext()
-            baggage_ctx = nullcontext()
-            inference_scope = nullcontext()
+        # Check if observability is enabled
+        enable_observability = os.getenv("ENABLE_OBSERVABILITY", "false").lower() in ("true", "1", "yes")
+        
+        # Create observability objects if available and enabled
+        invoke_scope = None
+        baggage_context = None
+        if OBSERVABILITY_AVAILABLE and enable_observability:
+            try:
+                agent_details = create_agent_details(context)
+                tenant_details = create_tenant_details(context)
+                
+                # Get session ID from conversation
+                session_id = None
+                if context and context.activity and context.activity.conversation:
+                    session_id = context.activity.conversation.id
+                
+                # Create invoke details
+                invoke_details = InvokeAgentDetails(
+                    details=agent_details,
+                    session_id=session_id,
+                )
+                request_details = create_request_details(message, session_id)
+                
+                # Build baggage context
+                # Extract tenant_id and agent_id from context
+                tenant_id = None
+                agent_id = None
+                if context and context.activity:
+                    if hasattr(context.activity, 'recipient'):
+                        tenant_id = getattr(context.activity.recipient, 'tenant_id', None)
+                        agent_id = getattr(context.activity.recipient, 'agentic_app_id', None)
+                
+                # Build and start baggage context
+                baggage_context = BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build()
+                baggage_context.__enter__()
+                
+                invoke_scope = InvokeAgentScope.start(
+                    invoke_agent_details=invoke_details,
+                    tenant_details=tenant_details,
+                    request=request_details,
+                )
+                invoke_scope.__enter__()
+                
+                logger.debug("✅ Observability scope started")
+            except Exception as e:
+                logger.warning(f"Failed to start observability scope: {e}")
+                invoke_scope = None
+                baggage_context = None
         
         try:
-            with baggage_ctx:
-                with invoke_scope:
-                    logger.info(f"📨 Processing message: {message[:100]}...")
+            logger.info(f"📨 Processing message: {message[:100]}...")
 
-                    # Track tokens for observability
-                    total_input_tokens = 0
-                    total_output_tokens = 0
-                    total_thinking_tokens = 0
+            # Track tokens for observability
+            total_input_tokens = 0
+            total_output_tokens = 0
+            total_thinking_tokens = 0
+            
+            # Create inference scope if observability enabled
+            inference_scope = None
+            if OBSERVABILITY_AVAILABLE and enable_observability:
+                try:
+                    agent_details = create_agent_details(context)
+                    tenant_details = create_tenant_details(context)
+                    session_id = context.activity.conversation.id if context and context.activity and context.activity.conversation else None
                     
-                    with inference_scope:
-                        # Create a new client for this conversation
-                        # Claude SDK uses async context manager
-                        async with ClaudeSDKClient(self.claude_options) as client:
-                            # Send the user message
-                            await client.query(message)
+                    inference_details = create_inference_details(
+                        model=self.claude_options.model,
+                        input_tokens=0,  # Will update after response
+                        output_tokens=0,
+                    )
+                    request_details = create_request_details(message, session_id)
+                    
+                    # Correct API: details, agent_details, tenant_details, request
+                    inference_scope = InferenceScope.start(
+                        details=inference_details,
+                        agent_details=agent_details,
+                        tenant_details=tenant_details,
+                        request=request_details,
+                    )
+                    inference_scope.__enter__()
+                    logger.debug("✅ Inference scope started")
+                except Exception as e:
+                    logger.warning(f"Failed to start inference scope: {e}")
+                    inference_scope = None
 
-                            # Collect the response
-                            response_parts = []
-                            thinking_parts = []
+            # Create a new client for this conversation
+            # Claude SDK uses async context manager
+            async with ClaudeSDKClient(self.claude_options) as client:
+                # Send the user message
+                await client.query(message)
+
+                # Collect the response
+                response_parts = []
+                thinking_parts = []
+                
+                # Receive and process messages
+                async for msg in client.receive_response():
+                    if isinstance(msg, AssistantMessage):
+                        for block in msg.content:
+                            # Collect thinking (Claude's reasoning)
+                            if isinstance(block, ThinkingBlock):
+                                thinking_parts.append(f"💭 {block.thinking}")
+                                # Track thinking tokens
+                                total_thinking_tokens += len(block.thinking.split())
+                                logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
                             
-                            # Receive and process messages
-                            async for msg in client.receive_response():
-                                if isinstance(msg, AssistantMessage):
-                                    for block in msg.content:
-                                        # Collect thinking (Claude's reasoning)
-                                        if isinstance(block, ThinkingBlock):
-                                            thinking_parts.append(f"💭 {block.thinking}")
-                                            # Track thinking tokens
-                                            total_thinking_tokens += len(block.thinking.split())
-                                            logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
-                                        
-                                        # Collect actual response text
-                                        elif isinstance(block, TextBlock):
-                                            response_parts.append(block.text)
-                                            # Track output tokens
-                                            total_output_tokens += len(block.text.split())
-                                            logger.info(f"💬 Claude response: {block.text[:100]}...")
+                            # Collect actual response text
+                            elif isinstance(block, TextBlock):
+                                response_parts.append(block.text)
+                                # Track output tokens
+                                total_output_tokens += len(block.text.split())
+                                logger.info(f"💬 Claude response: {block.text[:100]}...")
 
-                            # Track input tokens (approximate)
-                            total_input_tokens = len(message.split())
+                # Track input tokens (approximate)
+                total_input_tokens = len(message.split())
 
-                            # Log token usage
-                            logger.info(f"📊 Tokens - Input: {total_input_tokens}, Output: {total_output_tokens}, Thinking: {total_thinking_tokens}")
+                # Combine thinking and response
+                full_response = ""
+                
+                # Add thinking if present (for transparency)
+                if thinking_parts:
+                    full_response += "**Claude's Thinking:**\n"
+                    full_response += "\n".join(thinking_parts)
+                    full_response += "\n\n**Response:**\n"
+                
+                # Add the actual response
+                if response_parts:
+                    full_response += "".join(response_parts)
+                else:
+                    full_response += "I couldn't process your request at this time."
 
-                    # Combine thinking and response
-                    full_response = ""
-                    
-                    # Add thinking if present (for transparency)
-                    if thinking_parts:
-                        full_response += "**Claude's Thinking:**\n"
-                        full_response += "\n".join(thinking_parts)
-                        full_response += "\n\n**Response:**\n"
-                    
-                    # Add the actual response
-                    if response_parts:
-                        full_response += "".join(response_parts)
-                    else:
-                        full_response += "I couldn't process your request at this time."
+                # Close inference scope with token counts
+                if inference_scope:
+                    try:
+                        # Update inference details with actual token counts
+                        # Note: These are approximate counts based on word splitting
+                        logger.info(f"📊 Tokens - Input: {total_input_tokens}, Output: {total_output_tokens}, Thinking: {total_thinking_tokens}")
+                        inference_scope.__exit__(None, None, None)
+                    except Exception as e:
+                        logger.warning(f"Failed to close inference scope: {e}")
 
-                    return full_response
+                # Close invoke scope successfully
+                if invoke_scope:
+                    try:
+                        invoke_scope.__exit__(None, None, None)
+                        if baggage_context is not None:
+                            baggage_context.__exit__(None, None, None)
+                    except Exception as e:
+                        logger.warning(f"Failed to close invoke scope: {e}")
+
+                return full_response
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             logger.exception("Full error details:")
             
-            # Record error in scope if available
-            if OBSERVABILITY_AVAILABLE and hasattr(invoke_scope, 'record_error'):
+            # Record error in scopes
+            if invoke_scope:
                 try:
                     invoke_scope.record_error(e)
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to record error in observability: {cleanup_error}")
+                    invoke_scope.__exit__(type(e), e, e.__traceback__)
+                    if baggage_context is not None:
+                        baggage_context.__exit__(None, None, None)
+                except:
+                    pass
             
             return f"Sorry, I encountered an error: {str(e)}"
 
@@ -301,7 +380,7 @@ class ClaudeAgent(AgentInterface):
                 
                 wpx = notification_activity.wpx_comment
                 doc_id = getattr(wpx, "document_id", "")
-                # comment_id = getattr(wpx, "initiating_comment_id", "")
+                comment_id = getattr(wpx, "initiating_comment_id", "")
                 comment_text = notification_activity.text or ""
                 
                 logger.info(f"📄 Processing Word comment notification for doc {doc_id}")
