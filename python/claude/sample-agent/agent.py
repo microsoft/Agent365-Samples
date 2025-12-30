@@ -63,7 +63,6 @@ try:
         InferenceScope,
         InvokeAgentDetails,
         InvokeAgentScope,
-        ExecuteToolScope,
     )
     from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
     from microsoft_agents_a365.observability.core.tool_type import ToolType
@@ -72,7 +71,6 @@ try:
         create_tenant_details,
         create_request_details,
         create_inference_details,
-        create_tool_call_details,
     )
     OBSERVABILITY_AVAILABLE = True
 except ImportError:
@@ -119,7 +117,7 @@ class ClaudeAgent(AgentInterface):
         # Get API key
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-         raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
+            raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
 
         # Configure Claude options
         self.claude_options = ClaudeAgentOptions(
@@ -322,8 +320,8 @@ class ClaudeAgent(AgentInterface):
                     invoke_scope.__exit__(type(e), e, e.__traceback__)
                     if baggage_context is not None:
                         baggage_context.__exit__(None, None, None)
-                except:
-                    pass
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to clean up invoke/baggage context after error: {cleanup_error}")
             
             return f"Sorry, I encountered an error: {str(e)}"
 
@@ -380,7 +378,6 @@ class ClaudeAgent(AgentInterface):
                 
                 wpx = notification_activity.wpx_comment
                 doc_id = getattr(wpx, "document_id", "")
-                comment_id = getattr(wpx, "initiating_comment_id", "")
                 comment_text = notification_activity.text or ""
                 
                 logger.info(f"📄 Processing Word comment notification for doc {doc_id}")
