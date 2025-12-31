@@ -16,6 +16,9 @@ on:
       - 'python/claude/sample-agent/**'
       - '.github/workflows/python-claude-sample.yml'
 
+permissions:
+  contents: read
+  
 jobs:
   build-and-validate:
     name: Build and Validate Claude Sample
