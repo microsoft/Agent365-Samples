@@ -373,7 +373,18 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         } catch (e) {
           console.error(
             "⚠️ Failed to touch presence keepalive:",
-            e?.message ?? e
+            (e as Error).message ?? e
+          );
+        }
+
+        try {
+          presenceKeepAlive.touch({
+            userId: botId ?? "",
+          });
+        } catch (e) {
+          console.error(
+            "⚠️ Failed to touch presence keepalive:",
+            (e as Error).message ?? e
           );
         }
 
