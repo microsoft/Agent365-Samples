@@ -7,11 +7,19 @@ on:
     paths:
       - 'python/agent-framework/sample-agent/**'
       - '.github/workflows/docker-container-sampleagent-python.yml'
+  pull_request:
+    branches:
+      - main
+      - users/tirthdoshi/local-playground
+    paths:
+      - 'python/agent-framework/sample-agent/**'
+      - '.github/workflows/docker-container-sampleagent-python.yml'
   workflow_dispatch:
 
 permissions:
   id-token: write  # Required for OIDC authentication
   contents: read
+  pull-requests: write  # Required to comment on PRs
 
 env:
   AZURE_RESOURCE_GROUP: agent365-samples-rg
@@ -152,6 +160,7 @@ jobs:
           fi
 
       - name: Get Container App URL
+        id: get-url
         run: |
           FQDN=$(az containerapp show \
             --name ${{ env.CONTAINER_APP_NAME }} \
@@ -162,6 +171,9 @@ jobs:
           echo "🌐 URL: https://$FQDN"
           echo "📍 Health: https://$FQDN/api/health"
           echo "📨 Messages: https://$FQDN/api/messages"
+          echo "app_url=https://$FQDN" >> $GITHUB_OUTPUT
+          echo "health_url=https://$FQDN/api/health" >> $GITHUB_OUTPUT
+          echo "messages_url=https://$FQDN/api/messages" >> $GITHUB_OUTPUT
 
       - name: View Container App Logs
         run: |
@@ -171,6 +183,52 @@ jobs:
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --tail 50 \
             --follow false
+
+      - name: Comment on PR with Deployment URL
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const appUrl = '${{ steps.get-url.outputs.app_url }}';
+            const healthUrl = '${{ steps.get-url.outputs.health_url }}';
+            const messagesUrl = '${{ steps.get-url.outputs.messages_url }}';
+            const sha = '${{ github.sha }}';
+            
+            const body = `## 🚀 Deployment Successful!
+            
+            Your Python Agent Framework has been deployed to Azure Container Apps.
+            
+            ### 🔗 Deployment Links
+            - **App URL**: ${appUrl}
+            - **Health Endpoint**: ${healthUrl}
+            - **Messages Endpoint**: ${messagesUrl}
+            
+            ### 📦 Deployment Details
+            - **Container App**: \`${{ env.CONTAINER_APP_NAME }}\`
+            - **Resource Group**: \`${{ env.AZURE_RESOURCE_GROUP }}\`
+            - **Image Tag**: \`${sha.substring(0, 7)}\`
+            - **Commit**: ${sha}
+            
+            ### 🧪 Testing
+            \`\`\`bash
+            # Check health
+            curl ${healthUrl}
+            
+            # Send a test message (requires authentication)
+            curl -X POST ${messagesUrl} \\
+              -H "Content-Type: application/json" \\
+              -d '{"type":"message","text":"Hello Agent!"}'
+            \`\`\`
+            
+            ---
+            *Deployed from commit ${sha.substring(0, 7)} by @${{ github.actor }}*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
 
             
 
