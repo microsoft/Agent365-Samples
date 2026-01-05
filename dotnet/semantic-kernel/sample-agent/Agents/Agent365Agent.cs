@@ -11,7 +11,10 @@ using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System;
+using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
@@ -51,6 +54,12 @@ public class Agent365Agent
         return _agent;
     }
 
+    public static bool TryGetBearerTokenForDevelopment(out string? bearerToken)
+    {
+        bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+        return !string.IsNullOrEmpty(bearerToken);
+    }
+
     /// <summary>
     /// 
     /// </summary>
@@ -72,7 +81,16 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            if (TryGetBearerTokenForDevelopment(out var bearerToken))
+            {
+                // Development mode: Use bearer token from environment variable for simplified local testing
+                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken);
+            }
+            else
+            {
+                // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
+                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            }
         }
         else
         {
