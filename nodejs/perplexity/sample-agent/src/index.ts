@@ -7,10 +7,10 @@ config();
 
 import { startServer } from "@microsoft/agents-hosting-express";
 import { ObservabilityManager } from "@microsoft/agents-a365-observability";
-import { app } from "./agent";
+import { app } from "./agent.js";
 
-import { presenceKeepAlive } from "./presence-runtime";
-import { discoverAgentUserIdsForBlueprint } from "./agent-registry-bootstrap";
+import { presenceKeepAlive } from "./presence-runtime.js";
+import { discoverAgentUserIdsForBlueprint } from "./agent-registry-bootstrap.js";
 
 presenceKeepAlive.start();
 

@@ -18,9 +18,13 @@ import {
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
-import { agenticTokenCache } from "./token-cache";
-import { presenceKeepAlive } from "./presence-runtime";
-import { PerplexityClient } from "./perplexityClient";
+import { agenticTokenCache } from "./token-cache.js";
+import { PerplexityClient } from "./perplexityClient.js";
+import { presenceKeepAlive } from "./presence-runtime.js";
+import {
+  fetchFileAttachments,
+  ImageAttachmentOut,
+} from "./file-attachment-helper.js";
 
 // Load environment variables from .env file FIRST
 config();
@@ -51,30 +55,31 @@ const observabilitySDK = ObservabilityManager.configure(
   (builder) =>
     builder
       .withService("Perplexity Agent", "1.0.0")
-      .withTokenResolver(async (agentId, tenantId) => {
-        // Token resolver for authentication with Agent365 observability
-        console.log(
-          "🔑 Token resolver called for agent:",
-          agentId,
-          "tenant:",
-          tenantId
-        );
+      .withTokenResolver(
+        async (agentId: string, tenantId: string): Promise<string | null> => {
+          // Token resolver for authentication with Agent365 observability
+          console.log(
+            "🔑 Token resolver called for agent:",
+            agentId,
+            "tenant:",
+            tenantId
+          );
 
-        // Retrieve the cached agentic token
-        const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
-        const cachedToken = agenticTokenCache.get(cacheKey);
+          // Retrieve the cached agentic token
+          const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
+          const cachedToken = agenticTokenCache.get(cacheKey);
 
-        if (cachedToken) {
-          console.log("🔑 Token retrieved from cache successfully");
-          // Ensure we return only string or null
-          return typeof cachedToken === "string" ? cachedToken : null;
+          if (cachedToken && typeof cachedToken === "string") {
+            console.log("🔑 Token retrieved from cache successfully");
+            return cachedToken;
+          }
+
+          console.log(
+            "⚠️ No cached token found - token should be cached during agent invocation"
+          );
+          return null;
         }
-
-        console.log(
-          "⚠️ No cached token found - token should be cached during agent invocation"
-        );
-        return null;
-      })
+      )
   // .withClusterCategory(process.env.CLUSTER_CATEGORY)
 );
 
@@ -102,7 +107,8 @@ const perplexityClient = new PerplexityClient(
 async function queryModel(
   userInput: string,
   agentDetails: AgentDetails,
-  tenantDetails: TenantDetails
+  tenantDetails: TenantDetails,
+  fileAttachments: ImageAttachmentOut[] = []
 ) {
   const inferenceDetails = {
     operationName: InferenceOperationType.CHAT,
@@ -127,7 +133,10 @@ async function queryModel(
     // Record input messages for observability
     inferenceScope.recordInputMessages([SYSTEM_PROMPT, userInput]);
 
-    const finalResult = await perplexityClient.invokeAgent(userInput);
+    const finalResult = await perplexityClient.invokeAgent(
+      userInput,
+      fileAttachments
+    );
 
     // Record output and update token counts
     if (finalResult) {
@@ -166,6 +175,29 @@ function normalizeBotId(rawBotId: string): string {
   return lastColon >= 0 ? rawBotId.substring(lastColon + 1) : rawBotId;
 }
 
+/**
+ * Prepares the input for Perplexity by appending extracted text from documents
+ * @param {string} userMessage - The original user message
+ * @param {Array} textContents - Array of {fileName, text} objects from documents
+ * @returns {string} The prepared input with appended document contents
+ */
+function preparePerplexityInput(
+  userMessage: string,
+  textContents: any[]
+): string {
+  if (!textContents || textContents.length === 0) {
+    return userMessage;
+  }
+
+  const textParts = textContents.map(
+    (file) => `\n\n--- Content from ${file.fileName} ---\n${file.text}`
+  );
+
+  console.log(`📎 Included ${textContents.length} text file(s) in prompt`);
+
+  return `${userMessage}${textParts.join("\n\n")}`;
+}
+
 // Handle incoming messages with observability
 app.onActivity(ActivityTypes.Message, async (context) => {
   console.log("📩 Received message activity");
@@ -196,6 +228,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     activity.channelData?.tenant?.id ||
     activity.conversation?.tenantId ||
     "default-tenant";
+
   const agentId =
     activity.recipient?.agenticAppId ||
     activity.recipient?.id ||
@@ -334,6 +367,8 @@ app.onActivity(ActivityTypes.Message, async (context) => {
       );
 
       try {
+        // Fetch file attachments if present
+        const fileAttachments = await fetchFileAttachments(context);
         console.log("\n" + "=".repeat(60));
         console.log("📨 User:", userName);
         console.log("💬 Message:", userMessage);
@@ -374,29 +409,31 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         } catch (e) {
           console.error(
             "⚠️ Failed to touch presence keepalive:",
-            (e as Error).message ?? e
-          );
-        }
-
-        try {
-          presenceKeepAlive.touch({
-            userId: botId ?? "",
-          });
-        } catch (e) {
-          console.error(
-            "⚠️ Failed to touch presence keepalive:",
-            (e as Error).message ?? e
+            (e as Error).message
           );
         }
 
         // Record input messages for observability
         agentScope.recordInputMessages([userMessage]);
 
+        // Prepare input for Perplexity - include file contents if available
+        const { textContents, imageAttachments } = fileAttachments;
+        const perplexityInput = preparePerplexityInput(
+          userMessage,
+          textContents
+        );
+
+        console.log(
+          `📝 Perplexity input length: ${perplexityInput.length} chars`
+        );
+        console.log(`�️ Image attachments: ${imageAttachments.length}`);
+
         // Query Perplexity model with observability
         let modelResponse = await queryModel(
-          userMessage,
+          perplexityInput,
           agentDetails,
-          tenantDetails
+          tenantDetails,
+          imageAttachments
         );
 
         // Send response back to user
