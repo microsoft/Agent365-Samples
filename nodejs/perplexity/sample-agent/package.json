@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --exec ts-node src/index.js",
     "build": "tsc",
     "test-tool": "agentsplayground",
     "clean": "rimraf dist",
