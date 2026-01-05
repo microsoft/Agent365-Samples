@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Options, query } from '@anthropic-ai/claude-agent-sdk';
+// import { Options, query } from '@anthropic-ai/claude-agent-sdk'; // REMOVED: ES Module import
+import type { Options } from '@anthropic-ai/claude-agent-sdk'; // Type-only import
 import { TurnContext, Authorization } from '@microsoft/agents-hosting';
 
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-claude';
@@ -70,7 +71,10 @@ delete agentConfig.env!.NODE_OPTIONS; // Remove NODE_OPTIONS to prevent issues
 delete agentConfig.env!.VSCODE_INSPECTOR_OPTIONS; // Remove VSCODE_INSPECTOR_OPTIONS to prevent issues
 
 export async function getClient(authorization: Authorization, authHandlerName: string, turnContext: TurnContext): Promise<Client> {
+  console.log('🔧 DEBUG: getClient called');
+  
   try {
+    console.log('🔧 DEBUG: About to register MCP tool servers');
     await toolService.addToolServersToAgent(
       agentConfig,
       authorization,
@@ -78,10 +82,12 @@ export async function getClient(authorization: Authorization, authHandlerName: s
       turnContext,
       process.env.BEARER_TOKEN || "",
     );
+    console.log('✅ DEBUG: MCP tool servers registered successfully');
   } catch (error) {
-    console.warn('Failed to register MCP tool servers:', error);
+    console.warn('❌ DEBUG: Failed to register MCP tool servers:', error);
   }
 
+  console.log('🔧 DEBUG: Creating ClaudeClient');
   return new ClaudeClient(agentConfig);
 }
 
@@ -91,9 +97,20 @@ export async function getClient(authorization: Authorization, authHandlerName: s
  */
 class ClaudeClient implements Client {
   config: Options;
+  private claudeSDK: any = null;
 
   constructor(config: Options) {
     this.config = config;
+  }
+
+  private async loadClaudeSDK() {
+    if (!this.claudeSDK) {
+      console.log('🚨 LOADING CLAUDE SDK - Dynamic Import');
+      const importFn = new Function('specifier', 'return import(specifier)');
+      this.claudeSDK = await importFn('@anthropic-ai/claude-agent-sdk');
+      console.log('🚨 CLAUDE SDK LOADED SUCCESSFULLY');
+    }
+    return this.claudeSDK;
   }
 
   /**
@@ -105,6 +122,15 @@ class ClaudeClient implements Client {
    */
   async invokeAgent(prompt: string): Promise<string> {
     try {
+      console.log('🔧 DEBUG: About to call Claude SDK query');
+      console.log('🔧 DEBUG: API Key present:', !!process.env.ANTHROPIC_API_KEY);
+      console.log('🔧 DEBUG: API Key starts with:', process.env.ANTHROPIC_API_KEY?.substring(0, 20));
+      
+      const claudeSDK = await this.loadClaudeSDK();
+      const { query } = claudeSDK;
+      
+      console.log('🔧 DEBUG: Config being passed to Claude:', JSON.stringify(this.config, null, 2));
+      
       const result = query({
         prompt,
         options: this.config,

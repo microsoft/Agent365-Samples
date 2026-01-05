@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "debug": "nodemon --watch src --exec \"node --inspect=0.0.0.0:9229 --require ts-node/register src/index.ts\"",
     "test-tool": "agentsplayground",
     "install:clean": "npm run clean && npm install",
     "clean": "rimraf dist node_modules package-lock.json",

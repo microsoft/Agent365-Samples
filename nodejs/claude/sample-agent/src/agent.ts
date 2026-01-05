@@ -58,7 +58,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       .build();
 
     // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
+   //  await this.preloadObservabilityToken(turnContext);
 
     try {
       await baggageScope.run(async () => {
