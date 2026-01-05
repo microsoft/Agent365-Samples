@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "types": ["node"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "sourceMap": true,
+    "noEmitOnError": true,
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "useDefineForClassFields": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "useUnknownInCatchVariables": true,
+    "noPropertyAccessFromIndexSignature": true
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

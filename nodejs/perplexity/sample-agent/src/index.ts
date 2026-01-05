@@ -3,7 +3,7 @@
 
 import { startServer } from "@microsoft/agents-hosting-express";
 import { ObservabilityManager } from "@microsoft/agents-a365-observability";
-import { app } from "./agent.js";
+import { app } from "./agent";
 
 console.log("🚀 Starting Perplexity Agent");
 console.log("   Activity Protocol Mode with Observability");

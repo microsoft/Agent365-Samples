@@ -14,10 +14,12 @@ import {
   BaggageBuilder,
   ExecutionType,
   InferenceOperationType,
+  AgentDetails,
+  TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
-import tokenCache from "./token-cache.js";
-import { PerplexityClient } from "./perplexityClient.ts";
+import tokenCache from "./token-cache";
+import { PerplexityClient } from "./perplexityClient";
 
 // Load environment variables from .env file FIRST
 config();
@@ -25,7 +27,7 @@ config();
 /**
  * Create a cache key for the agentic token
  */
-function createAgenticTokenCacheKey(agentId, tenantId) {
+function createAgenticTokenCacheKey(agentId: string, tenantId: string): string {
   return tenantId
     ? `agentic-token-${agentId}-${tenantId}`
     : `agentic-token-${agentId}`;
@@ -79,26 +81,30 @@ observabilitySDK.start();
 
 console.log("🔭 Observability SDK initialized");
 console.log("🔭 Environment variables:");
-console.log("  - ENABLE_OBSERVABILITY:", process.env.ENABLE_OBSERVABILITY);
+console.log("  - ENABLE_OBSERVABILITY:", process.env["ENABLE_OBSERVABILITY"]);
 console.log(
   "  - ENABLE_A365_OBSERVABILITY:",
-  process.env.ENABLE_A365_OBSERVABILITY
+  process.env["ENABLE_A365_OBSERVABILITY"]
 );
-console.log("  - CLUSTER_CATEGORY:", process.env.CLUSTER_CATEGORY);
+console.log("  - CLUSTER_CATEGORY:", process.env["CLUSTER_CATEGORY"]);
 
 const perplexityClient = new PerplexityClient(
-  process.env.PERPLEXITY_API_KEY || "",
-  process.env.PERPLEXITY_MODEL || "sonar",
+  process.env["PERPLEXITY_API_KEY"] || "",
+  process.env["PERPLEXITY_MODEL"] || "sonar",
   SYSTEM_PROMPT
 );
 
 /**
  * Query the Perplexity model with observability tracking
  */
-async function queryModel(userInput, agentDetails, tenantDetails) {
+async function queryModel(
+  userInput: string,
+  agentDetails: AgentDetails,
+  tenantDetails: TenantDetails
+) {
   const inferenceDetails = {
     operationName: InferenceOperationType.CHAT,
-    model: process.env.PERPLEXITY_MODEL || "sonar",
+    model: process.env["PERPLEXITY_MODEL"] || "sonar",
     providerName: "perplexity",
     inputTokens: Math.ceil(userInput.length / 4), // Rough estimate
     outputTokens: 0, // Will be updated after response
@@ -130,7 +136,7 @@ async function queryModel(userInput, agentDetails, tenantDetails) {
 
     return finalResult;
   } catch (error) {
-    inferenceScope.recordError(error);
+    inferenceScope.recordError(error as Error);
     console.error("Error querying model:", error);
     return null;
   } finally {
@@ -272,7 +278,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     channelId: channelId,
     endpoint: {
       host: serviceUrl ? new URL(serviceUrl).hostname : "localhost",
-      port: serviceUrl ? new URL(serviceUrl).port || 443 : 3978,
+      port: serviceUrl ? parseInt(new URL(serviceUrl).port) || 443 : 3978,
       protocol: serviceUrl
         ? new URL(serviceUrl).protocol.replace(":", "")
         : "http",
@@ -306,7 +312,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
       const agentScope = InvokeAgentScope.start(
         invokeDetails,
         tenantDetails,
-        null, // No caller agent (human-to-agent interaction)
+        undefined, // No caller agent (human-to-agent interaction)
         callerDetails
       );
 
@@ -340,7 +346,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         } catch (tokenError) {
           console.error(
             "⚠️ Failed to exchange/cache agentic token:",
-            tokenError.message
+            (tokenError as Error).message
           );
           // Continue execution - observability may still work with fallback
         }
@@ -375,7 +381,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         console.error("🔭 Observability: Recording error");
 
         // Record error for observability
-        agentScope.recordError(error);
+        agentScope.recordError(error as Error);
 
         const errorMessage = "Sorry, something went wrong.";
         agentScope.recordOutputMessages([errorMessage]);

@@ -2,10 +2,9 @@
   "name": "perplexity-agent-sample",
   "version": "1.0.0",
   "description": "Perplexity AI Agent with Microsoft Agent 365 SDK",
-  "main": "src/index.js",
-  "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "start:playground": "ts-node src/index.playground.ts",
     "dev": "nodemon --watch src --exec ts-node src/index.js",
     "build": "tsc",
     "test-tool": "agentsplayground",
@@ -33,6 +32,7 @@
     "express": "^5.1.0"
   },
   "devDependencies": {
-    "@microsoft/m365agentsplayground": "^0.2.20"
+    "@microsoft/m365agentsplayground": "^0.2.20",
+    "ts-node": "^10.9.2"
   }
 }
