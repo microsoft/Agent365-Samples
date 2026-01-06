@@ -36,6 +36,7 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
 )
 from microsoft_agents_a365.notifications import EmailResponse
+
 from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
     BaggageBuilder,
