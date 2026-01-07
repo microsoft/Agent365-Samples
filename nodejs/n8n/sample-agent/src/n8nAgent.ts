@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { AgentNotificationActivity, NotificationType, createAgentNotificationActivity } from '@microsoft/agents-a365-notifications';
+import { AgentNotificationActivity, NotificationType, createAgentNotificationActivity, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 import { AgentApplication, TurnContext, TurnState } from '@microsoft/agents-hosting';
 import { N8nClient } from './n8nClient';
 import { McpToolRegistrationService, McpServer } from './mcpToolRegistrationService';
@@ -140,7 +140,8 @@ export class N8nAgent {
       `You have received the following email. Please follow any instructions in it. ${emailContent}`
     );
 
-    await turnContext.sendActivity(response);
+    const emailResponseActivity = createEmailResponseActivity(response);
+    await turnContext.sendActivity(emailResponseActivity);
   }
 
   async getN8nClient(turnContext: TurnContext): Promise<N8nClient> {
