@@ -211,12 +211,8 @@ class GenericAgentHost:
                     )
 
                     if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
-                        responseActivity = Activity(type=ActivityTypes.message)
-                        if responseActivity.entities is None:
-                            responseActivity.entities = []
-                        responseActivity.entities.append(EmailResponse(response))
-
-                        await context.send_activity(responseActivity)
+                        response_activity = EmailResponse.create_email_response_activity(response)
+                        await context.send_activity(response_activity)
                         return
 
                     await context.send_activity(response)

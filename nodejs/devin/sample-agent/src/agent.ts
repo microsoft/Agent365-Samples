@@ -20,12 +20,12 @@ import {
   TurnContext,
   TurnState,
 } from "@microsoft/agents-hosting";
+import '@microsoft/agents-a365-notifications';
 import {
   AgentNotificationActivity,
   NotificationType,
   createEmailResponseActivity,
 } from "@microsoft/agents-a365-notifications";
-import '@microsoft/agents-a365-notifications';
 import { Stream } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";

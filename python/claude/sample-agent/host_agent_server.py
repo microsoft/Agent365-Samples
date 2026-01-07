@@ -52,7 +52,6 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
 )
 from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
-from microsoft_agents.activity import Activity, ActivityTypes
 
 # Observability imports (optional)
 try:
@@ -254,11 +253,8 @@ class GenericAgentHost:
         
         # For email notifications, wrap response in EmailResponse entity
         if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
-            responseActivity = Activity(type=ActivityTypes.message)
-            if responseActivity.entities is None:
-                responseActivity.entities = []
-            responseActivity.entities.append(EmailResponse(response))
-            await context.send_activity(responseActivity)
+            response_activity = EmailResponse.create_email_response_activity(response)
+            await context.send_activity(response_activity)
             return
         
         # Send the response for other notification types
