@@ -1,60 +1,51 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// It is important to load environment variables before importing other modules
-import { configDotenv } from "dotenv";
+import { startServer } from "@microsoft/agents-hosting-express";
+import { ObservabilityManager } from "@microsoft/agents-a365-observability";
+import { app } from "./agent";
 
-configDotenv();
+console.log("🚀 Starting Perplexity Agent");
+console.log("   Activity Protocol Mode with Observability");
+console.log("");
 
-import {
-  AuthConfiguration,
-  authorizeJWT,
-  CloudAdapter,
-  loadAuthConfigFromEnv,
-  Request,
-} from "@microsoft/agents-hosting";
-import express, { Response } from "express";
-import { agentApplication } from "./agent.js";
-import { a365Observability } from "./telemetry.js";
+/**
+ * Start the M365 agent server
+ */
+try {
+  startServer(app);
+  console.log("✅ Agent server is running and ready to accept connections");
+  console.log("🔭 Observability SDK is active and tracking agent interactions");
+  console.log("   Use M365 Agents Playground to test: npm run test-tool");
+  console.log("");
+} catch (err) {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+}
 
-const authConfig: AuthConfiguration = loadAuthConfigFromEnv();
-const adapter = new CloudAdapter(authConfig);
-
-const app = express();
-app.use(express.json());
-app.use(authorizeJWT(authConfig));
-
-a365Observability.start();
-
-app.post("/api/messages", async (req: Request, res: Response) => {
-  await adapter.process(req, res, async (context) => {
-    const app = agentApplication;
-    await app.run(context);
-  });
+/**
+ * Graceful shutdown handling for observability
+ */
+process.on("SIGINT", async () => {
+  console.log("\n🛑 Shutting down agent...");
+  try {
+    await ObservabilityManager.shutdown();
+    console.log("🔭 Observability SDK shut down gracefully");
+    process.exit(0);
+  } catch (err) {
+    console.error("Error during shutdown:", err);
+    process.exit(1);
+  }
 });
 
-const port = process.env.PORT || 3978;
-const server = app
-  .listen(port, () => {
-    console.log(`\n🚀 Perplexity Agent listening on port ${port}`);
-    console.log(`   App ID: ${authConfig.clientId}`);
-    console.log(`   Debug: ${process.env.DEBUG || "false"}`);
-    console.log(`\n✅ Agent ready to receive messages!`);
-  })
-  .on("error", async (err) => {
-    console.error("Server error:", err);
-    await a365Observability.shutdown();
-    process.exit(1);
-  })
-  .on("close", async () => {
-    console.log("A365 Observability is shutting down...");
-    await a365Observability.shutdown();
-  });
-
-process.on("SIGINT", () => {
-  console.log("Received SIGINT. Shutting down gracefully...");
-  server.close(() => {
-    console.log("Server closed.");
+process.on("SIGTERM", async () => {
+  console.log("\n🛑 Shutting down agent...");
+  try {
+    await ObservabilityManager.shutdown();
+    console.log("🔭 Observability SDK shut down gracefully");
     process.exit(0);
-  });
+  } catch (err) {
+    console.error("Error during shutdown:", err);
+    process.exit(1);
+  }
 });
