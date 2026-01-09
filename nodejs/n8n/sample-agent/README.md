@@ -50,7 +50,9 @@ Configure authentication credentials:
 - Navigate to your app registration in the Azure Portal
 - Follow the [credentials guide](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
 - Copy the **Client Secret** value (you'll only see this once)
+
 OR
+
 Follow the [documentation](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add and see the client secret. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
 
 ```powershell
@@ -74,7 +76,59 @@ $response = Add-MgApplicationPassword -ApplicationId $applicationId -PasswordCre
 Write-Host "Secret Text: $($response.secretText)"
 ```
 
-#### Step 4: Create n8n Workflow
+#### Step 4: Grant Permissions for Agent
+
+Grant your Agent Blueprint access to Microsoft 365 by following the [agent access guide](https://learn.microsoft.com/en-us/entra/agent-id/identity-professional/grant-agent-access-microsoft-365). You must also [enable inheritable permissions](https://learn.microsoft.com/en-us/entra/agent-id/identity-professional/configure-inheritable-permissions-blueprints) to allow the agent to act on behalf of users.
+
+Consent for the required scopes can be given as shown below, just replace your tenant id, and blueprint id in the specified places:
+
+- Graph Scope:
+
+```
+https://login.microsoftonline.com/<tenant-id>/v2.0/adminconsent?client_id=<blueprint-id>&scope=User.ReadBasic.All Mail.Send Mail.Read Chat.Read Chat.ReadWrite&redirect_uri= https://entra.microsoft.com/TokenAuthorize&state=xyz123
+```
+
+
+- Agent 365 Tools Scope:
+
+```
+https://login.microsoftonline.com/<tenant-id>/v2.0/adminconsent?client_id=<blueprint-id>&scope=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Calendar.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Excel.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Files.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Mail.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Me.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.OneDriveSharepoint.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.PowerPoint.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.SharepointLists.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Teams.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServers.Word.All ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/McpServersMetadata.Read.All&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123
+```
+
+- Power Platform API
+
+```
+https://login.microsoftonline.com/<tenant>/v2.0/adminconsent?client_id=<blueprint-id>&scope=8578e004-a5c6-46e7-913e-12f58912df43/Connectivity.Connections.Read&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123
+```
+
+**Note**: If for any reason Power Platform API SP is not provisioned in your tenant, you can simply add it to your tenant with the API call below:
+
+```
+POST - https://graph.microsoft.com/v1.0/servicePrincipals
+
+{ 
+  "appId": "8578e004-a5c6-46e7-913e-12f58912df43" 
+}
+```
+
+- APX/Messaging Bot API Application Scope
+
+You can grant consent to the Messaging Bot API service principal by calling this via graph explorer:
+
+```
+POST - https://graph.microsoft.com/v1.0/oauth2PermissionGrants
+{
+  "clientId": "<blueprint-id>",
+  "consentType": "AllPrincipals",
+  "resourceId": "a6c6ce43-d3ed-40ae-a6d2-4f9c028e0355",
+  "scope": "user_impersonation Authorization.ReadWrite"
+}
+
+a6c6ce43-d3ed-40ae-a6d2-4f9c028e0355 -- Object ID of the SP for Messaging Bot API Application
+```
+
+
+#### Step 5: Create n8n Workflow
 
 Build your agent logic in n8n:
 - Create a new workflow in your n8n instance
@@ -88,7 +142,7 @@ Build your agent logic in n8n:
 
 For n8n workflow creation guidance, see the [n8n documentation](https://docs.n8n.io/).
 
-#### Step 5: Configure Backend URL
+#### Step 6: Configure Backend URL
 
 Connect your agent blueprint to the n8n workflow:
 - Return to the [Microsoft Teams Developer Portal](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#configure-the-agent-identity-blueprint)
@@ -96,7 +150,7 @@ Connect your agent blueprint to the n8n workflow:
 - Select **API Based** as the configuration type
 - Set the **Backend URL** to your n8n workflow's webhook URL from Step 4
 
-#### Step 6: Hire an agent as a digital worker
+#### Step 7: Hire an agent as a digital worker
 - Follow the [documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard) to hire an agent as a digital worker
 
 Your agent is now ready to handle conversations through Microsoft 365!
