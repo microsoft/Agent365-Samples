@@ -20,6 +20,12 @@ import {
   TurnContext,
   TurnState,
 } from "@microsoft/agents-hosting";
+import '@microsoft/agents-a365-notifications';
+import {
+  AgentNotificationActivity,
+  NotificationType,
+  createEmailResponseActivity,
+} from "@microsoft/agents-a365-notifications";
 import { Stream } from "stream";
 import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
@@ -119,6 +125,22 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
       }
     );
 
+    // Handle agent notifications
+    this.onAgentNotification(
+      "agents:*",
+      async (
+        context: TurnContext,
+        state: ApplicationTurnState,
+        agentNotificationActivity: AgentNotificationActivity
+      ) => {
+        await this.handleAgentNotificationActivity(
+          context,
+          state,
+          agentNotificationActivity
+        );
+      }
+    );
+
     // Handle installation activities
     this.onActivity(
       ActivityTypes.InstallationUpdate,
@@ -195,6 +217,72 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
       await turnContext.sendActivity(
         "There was an error processing your request"
       );
+    }
+  }
+
+  /**
+   * Handles agent notification activities.
+   */
+  async handleAgentNotificationActivity(
+    context: TurnContext,
+    state: ApplicationTurnState,
+    agentNotificationActivity: AgentNotificationActivity
+  ): Promise<void> {
+    switch (agentNotificationActivity.notificationType) {
+      case NotificationType.EmailNotification:
+        await this.handleEmailNotification(context, agentNotificationActivity);
+        break;
+      default:
+        await context.sendActivity(
+          `Received notification of type: ${agentNotificationActivity.notificationType}`
+        );
+    }
+  }
+
+  /**
+   * Handles email notification activities with proper EmailResponse.
+   */
+  private async handleEmailNotification(
+    context: TurnContext,
+    activity: AgentNotificationActivity
+  ): Promise<void> {
+    const emailNotification = activity.emailNotification;
+
+    if (!emailNotification) {
+      const errorResponse = createEmailResponseActivity(
+        "I could not find the email notification details."
+      );
+      await context.sendActivity(errorResponse);
+      return;
+    }
+
+    try {
+      // Collect the response from Devin using a stream
+      let responseContent = "";
+      const responseStream = new Stream()
+        .on("data", (chunk) => {
+          responseContent += chunk as string;
+        })
+        .on("error", (error) => {
+          console.error("Stream error:", error);
+        });
+
+      // Process the email notification with Devin
+      const prompt = `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
+        `ConversationId '${emailNotification.conversationId}'. Please process this email and provide a helpful response.`;
+
+      await devinClient.invokeAgent(prompt, responseStream);
+
+      const emailResponseActivity = createEmailResponseActivity(
+        responseContent || "I have processed your email but do not have a response at this time."
+      );
+      await context.sendActivity(emailResponseActivity);
+    } catch (error) {
+      console.error("Email notification error:", error);
+      const errorResponse = createEmailResponseActivity(
+        "Unable to process your email at this time."
+      );
+      await context.sendActivity(errorResponse);
     }
   }
 

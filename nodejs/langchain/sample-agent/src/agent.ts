@@ -3,7 +3,7 @@ import { ActivityTypes } from '@microsoft/agents-activity';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
-import { AgentNotificationActivity } from '@microsoft/agents-a365-notifications';
+import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 // Observability Imports
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
@@ -99,8 +99,45 @@ export class A365Agent extends AgentApplication<TurnState> {
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
-    context.sendActivity("Recieved an AgentNotification!");
-    /* your logic here... */
+    switch (agentNotificationActivity.notificationType) {
+      case NotificationType.EmailNotification:
+        await this.handleEmailNotification(context, state, agentNotificationActivity);
+        break;
+      default:
+        await context.sendActivity(`Received notification of type: ${agentNotificationActivity.notificationType}`);
+    }
+  }
+
+  private async handleEmailNotification(context: TurnContext, state: TurnState, activity: AgentNotificationActivity): Promise<void> {
+    const emailNotification = activity.emailNotification;
+
+    if (!emailNotification) {
+      const errorResponse = createEmailResponseActivity('I could not find the email notification details.');
+      await context.sendActivity(errorResponse);
+      return;
+    }
+
+    try {
+      const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, context);
+
+      // First, retrieve the email content
+      const emailContent = await client.invokeInferenceScope(
+        `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
+        `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`
+      );
+
+      // Then process the email
+      const response = await client.invokeInferenceScope(
+        `You have received the following email. Please follow any instructions in it. ${emailContent}`
+      );
+
+      const emailResponseActivity = createEmailResponseActivity(response || 'I have processed your email but do not have a response at this time.');
+      await context.sendActivity(emailResponseActivity);
+    } catch (error) {
+      console.error('Email notification error:', error);
+      const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
+      await context.sendActivity(errorResponse);
+    }
   }
 }
 

@@ -51,6 +51,7 @@ from microsoft_agents_a365.notifications.agent_notification import (
     AgentNotificationActivity,
     ChannelId,
 )
+from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
 
 # Observability imports (optional)
 try:
@@ -250,7 +251,13 @@ class GenericAgentHost:
             notification_activity, self.agent_app.auth, context
         )
         
-        # Send the response
+        # For email notifications, wrap response in EmailResponse entity
+        if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+            response_activity = EmailResponse.create_email_response_activity(response)
+            await context.send_activity(response_activity)
+            return
+        
+        # Send the response for other notification types
         await context.send_activity(response)
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
