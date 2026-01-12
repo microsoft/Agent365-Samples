@@ -52,6 +52,17 @@ from token_cache import get_cached_agentic_token
 
 # Observability Components
 from microsoft_agents_a365.observability.core.config import configure
+from microsoft_agents_a365.observability.core import (
+    InvokeAgentScope,
+    InvokeAgentDetails,
+    InferenceScope,
+    InferenceCallDetails,
+    InferenceOperationType,
+    AgentDetails,
+    TenantDetails,
+    Request,
+    ExecutionType,
+)
 
 # MCP Tooling (optional - Claude Agent SDK has built-in tools)
 try:
@@ -242,8 +253,63 @@ class ClaudeAgent(AgentInterface):
     ) -> str:
         """Process user message using the Claude Agent SDK with observability tracing"""
         
+        # Extract context details for observability
+        tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
+        agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
+        conversation_id = context.activity.conversation.id if context.activity.conversation else None
+        
+        # Create observability scopes
+        invoke_scope = None
+        inference_scope = None
+        
         try:
             logger.info(f"📨 Processing message: {message[:100]}...")
+            
+            # Create InvokeAgentScope for tracking agent invocation
+            agent_details = AgentDetails(
+                agent_id=agent_id or os.getenv("AGENT_ID", "claude-agent"),
+                conversation_id=conversation_id,
+                agent_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "Claude Agent"),
+                agent_description="AI agent powered by Anthropic Claude Agent SDK",
+            )
+            
+            tenant_details = TenantDetails(tenant_id=tenant_id or "default-tenant")
+            
+            request = Request(
+                content=message,
+                execution_type=ExecutionType.HUMAN_TO_AGENT,
+                session_id=conversation_id,
+            )
+            
+            invoke_details = InvokeAgentDetails(
+                details=agent_details,
+                session_id=conversation_id,
+            )
+            
+            invoke_scope = InvokeAgentScope.start(
+                invoke_agent_details=invoke_details,
+                tenant_details=tenant_details,
+                request=request,
+            )
+            
+            # Record input message
+            if hasattr(invoke_scope, 'record_input_messages'):
+                invoke_scope.record_input_messages([message])
+            
+            # Create InferenceScope for tracking LLM call
+            inference_details = InferenceCallDetails(
+                operationName=InferenceOperationType.CHAT,
+                model=self.claude_options.model,
+                providerName="anthropic-claude",
+                finishReasons=["end_turn"],
+            )
+            
+            inference_scope = InferenceScope.start(
+                details=inference_details,
+                agent_details=agent_details,
+                tenant_details=tenant_details,
+                request=request,
+            )
 
             # Create a new client for this conversation
             # Claude SDK uses async context manager
@@ -284,11 +350,46 @@ class ClaudeAgent(AgentInterface):
                 else:
                     full_response += "I couldn't process your request at this time."
 
+                # Record output message
+                if invoke_scope and hasattr(invoke_scope, 'record_output_messages'):
+                    invoke_scope.record_output_messages([full_response])
+                
+                # Record finish reason
+                if inference_scope and hasattr(inference_scope, 'record_finish_reasons'):
+                    inference_scope.record_finish_reasons(["end_turn"])
+                
+                # Close scopes successfully
+                if inference_scope:
+                    inference_scope.__exit__(None, None, None)
+                if invoke_scope:
+                    invoke_scope.__exit__(None, None, None)
+                
+                logger.info("✅ Observability scopes closed successfully")
+
                 return full_response
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             logger.exception("Full error details:")
+            
+            # Record error in scopes
+            if invoke_scope and hasattr(invoke_scope, 'record_error'):
+                invoke_scope.record_error(e)
+            if inference_scope and hasattr(inference_scope, 'record_error'):
+                inference_scope.record_error(e)
+            
+            # Close scopes with error
+            if inference_scope:
+                try:
+                    inference_scope.__exit__(type(e), e, e.__traceback__)
+                except Exception:
+                    pass
+            if invoke_scope:
+                try:
+                    invoke_scope.__exit__(type(e), e, e.__traceback__)
+                except Exception:
+                    pass
+            
             return f"Sorry, I encountered an error: {str(e)}"
 
 
