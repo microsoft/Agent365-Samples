@@ -39,9 +39,11 @@ function Read-ConfigFile {
     }
     
     # Install powershell-yaml if needed for YAML parsing
+    # Version pinned to 0.4.12 from PSGallery for supply-chain security
+    # This prevents automatic installation of potentially compromised future versions
     if (-not (Get-Module -ListAvailable -Name powershell-yaml)) {
-        Write-Host "Installing powershell-yaml module..." -ForegroundColor Yellow
-        Install-Module -Name powershell-yaml -Scope CurrentUser -Force
+        Write-Host "Installing powershell-yaml module (v0.4.12)..." -ForegroundColor Yellow
+        Install-Module -Name powershell-yaml -RequiredVersion 0.4.12 -Repository PSGallery -Scope CurrentUser -Force
     }
     
     Import-Module powershell-yaml
