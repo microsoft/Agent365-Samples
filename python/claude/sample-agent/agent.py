@@ -214,9 +214,9 @@ class ClaudeAgent(AgentInterface):
             self.config_service = McpToolServerConfigurationService()
             logger.info("✅ MCP tool configuration service initialized")
             
-            # Note: Claude Agent SDK doesn't support dynamic tool registration like OpenAI
-            # MCP tools would need to be called separately if needed
-            logger.info("ℹ️ Claude uses built-in tools - MCP available for future extension")
+            print("MCP AVAILABLE:", MCP_AVAILABLE)
+            print("Configured MCP services:", getattr(self, "config_service", None))
+
             
         except Exception as e:
             logger.warning(f"⚠️ Failed to initialize MCP services: {e}")
@@ -290,22 +290,6 @@ class ClaudeAgent(AgentInterface):
             logger.error(f"Error processing message: {e}")
             logger.exception("Full error details:")
             return f"Sorry, I encountered an error: {str(e)}"
-                async for msg in client.receive_response():
-                    if isinstance(msg, AssistantMessage):
-                        for block in msg.content:
-                            # Collect thinking (Claude's reasoning)
-                            if isinstance(block, ThinkingBlock):
-                                thinking_parts.append(f"💭 {block.thinking}")
-                                # Track thinking tokens
-                                total_thinking_tokens += len(block.thinking.split())
-                                logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
-                            
-                            # Collect actual response text
-                            elif isinstance(block, TextBlock):
-                                response_parts.append(block.text)
-                                # Track output tokens
-                                total_output_tokens += len(block.text.split())
-                                logger.info(f"💬 Claude response: {block.text[:100]}...")
 
 
 
