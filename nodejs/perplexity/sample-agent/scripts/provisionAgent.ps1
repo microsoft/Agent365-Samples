@@ -49,7 +49,7 @@ function Read-ConfigFile {
 function Connect-AzureAndGraph {
     <#
     .SYNOPSIS
-        Establishes connections to Azure and Microsoft Graph (reuses existing sessions)
+        Establishes fresh connection to Azure and connects to Microsoft Graph (reusing existing Graph session when appropriate)
     #>
     param(
         [string]$TenantId
