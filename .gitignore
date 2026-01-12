@@ -104,3 +104,6 @@ coverage/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Perplexity automation script
+nodejs/perplexity/sample-agent/scripts/config.yml
