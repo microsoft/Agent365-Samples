@@ -66,20 +66,21 @@ agents_sdk_config = load_configuration_from_env(environ)
 class GenericAgentHost:
     """Generic host that can host any agent implementing the AgentInterface"""
 
-    def __init__(self, agent_class: type[AgentInterface], *agent_args, **agent_kwargs):
+    def __init__(self, agent_class: type[AgentInterface], *agent_args, auth_handler_name: str | None = None, **agent_kwargs):
         """
         Initialize the generic host with an agent class and its initialization parameters.
 
         Args:
             agent_class: The agent class to instantiate (must implement AgentInterface)
             *agent_args: Positional arguments to pass to the agent constructor
+            auth_handler_name: Name of the auth handler to use (defaults to AGENT_AUTH_HANDLER_NAME env var or "AGENTIC")
             **agent_kwargs: Keyword arguments to pass to the agent constructor
         """
         # Check that the agent inherits from AgentInterface
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        self.auth_handler_name = "AGENTIC"
+        self.auth_handler_name = auth_handler_name or os.getenv("AGENT_AUTH_HANDLER_NAME", "AGENTIC")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -469,13 +470,14 @@ class GenericAgentHost:
                 logger.error(f"Error during agent cleanup: {e}")
 
 
-def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs):
+def create_and_run_host(agent_class: type[AgentInterface], *agent_args, auth_handler_name: str | None = None, **agent_kwargs):
     """
     Convenience function to create and run a generic agent host.
 
     Args:
         agent_class: The agent class to host (must implement AgentInterface)
         *agent_args: Positional arguments to pass to the agent constructor
+        auth_handler_name: Name of the auth handler to use (defaults to AGENT_AUTH_HANDLER_NAME env var or "AGENTIC")
         **agent_kwargs: Keyword arguments to pass to the agent constructor
     """
     try:
@@ -487,7 +489,7 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
         # Note: Actual observability configuration is done in agent.py _setup_observability()
 
         # Create the host
-        host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
+        host = GenericAgentHost(agent_class, *agent_args, auth_handler_name=auth_handler_name, **agent_kwargs)
 
         # Create authentication configuration
         auth_config = host.create_auth_configuration()

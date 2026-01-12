@@ -23,10 +23,10 @@ dependencies = [
     "typing-extensions>=4.0.0",
 
     # Microsoft Agent 365 SDK packages
-    "microsoft_agents_a365_tooling >= 0.1.0",
-    "microsoft_agents_a365_observability_core >= 0.1.0",
-    "microsoft_agents_a365_notifications >= 0.1.0",
-    "microsoft_agents_a365_runtime >= 0.1.0",
+    "microsoft_agents_a365_tooling>=0.1.0",
+    "microsoft_agents_a365_observability_core>=0.1.0",
+    "microsoft_agents_a365_notifications>=0.1.0",
+    "microsoft_agents_a365_runtime>=0.1.0",
     "wrapt>=2.0.1"
 ]
 requires-python = ">=3.11"
