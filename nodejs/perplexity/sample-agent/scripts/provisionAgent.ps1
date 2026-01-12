@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 #Requires -Modules Az.Accounts, Az.Resources, Microsoft.Graph.Authentication
 
 <#
