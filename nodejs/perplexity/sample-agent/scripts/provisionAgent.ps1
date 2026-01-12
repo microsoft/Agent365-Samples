@@ -111,6 +111,26 @@ function New-AzureResourceGroup {
     return $rg
 }
 
+function Get-CurrentUserObjectId {
+    <#
+    .SYNOPSIS
+        Gets the current user's object ID from Microsoft Graph
+    #>
+    
+    Write-Host "Getting current user object ID..." -ForegroundColor Cyan
+    
+    try {
+        $currentUser = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/me"
+        Write-Host "✓ Current user: $($currentUser.displayName) ($($currentUser.userPrincipalName))" -ForegroundColor Green
+        Write-Host "  Object ID: $($currentUser.id)" -ForegroundColor Cyan
+        return $currentUser.id  # Returns user object ID
+    }
+    catch {
+        Write-Error "Failed to get current user ID: $_"
+        throw
+    }
+}
+
 function New-AgentBlueprint {
     <#
     .SYNOPSIS
@@ -185,12 +205,15 @@ try {
     # 2. Authenticate (only prompts once per session)
     Connect-AzureAndGraph -TenantId $config.tenant_id
     
-    # 3. Create resource group (auto-generate name from agent name)
+    # 3. Get current user object ID (dynamically)
+    $currentUserId = Get-CurrentUserObjectId
+    
+    # 4. Create resource group (auto-generate name from agent name)
     $resourceGroupName = "rg-$($config.agent_name)"
     $resourceGroup = New-AzureResourceGroup -Name $resourceGroupName -Location $config.region
     
-    # 4. Create agent blueprint
-    $blueprint = New-AgentBlueprint -AgentName $config.agent_name -SponsorUserId $config.sponsor_user_id
+    # 5. Create agent blueprint (auto-generate display name from agent name)
+    $blueprint = New-AgentBlueprint -AgentName $config.agent_name -SponsorUserId $currentUserId
     
     # 5. Save state for next steps
     $state = @{
