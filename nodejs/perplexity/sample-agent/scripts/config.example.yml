@@ -1,0 +1,5 @@
+tenant_id: "<your-tenant-id>"
+agent_name: "<your-agent-name>"
+perplexity_api_key: "<your-perplexity-api-key>"
+perplexity_model: "<your-perplexity-model>"
+region: "<your-azure-region>"
