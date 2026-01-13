@@ -92,7 +92,7 @@ function Read-ConfigFile {
 function Connect-AzureAndGraph {
     <#
     .SYNOPSIS
-        Establishes fresh connection to Azure and connects to Microsoft Graph (reusing existing Graph session when appropriate)
+        Establishes fresh connection to Azure and connects to Microsoft Graph (single prompt per run)
     #>
     param(
         [string]$TenantId
@@ -100,7 +100,9 @@ function Connect-AzureAndGraph {
 
     Write-Step "Authenticating to Azure + Microsoft Graph"
 
-    # Azure
+    # -----------------------
+    # Azure (fresh login)
+    # -----------------------
     try {
         Write-Info "Disconnecting existing Azure context (if any)..."
         $null = Disconnect-AzAccount -ErrorAction SilentlyContinue
@@ -119,7 +121,9 @@ function Connect-AzureAndGraph {
         throw "Failed to connect to Azure. $msg"
     }
 
-     # Connect to Microsoft Graph (only prompts if not already connected with required scopes)
+    # -----------------------
+    # Microsoft Graph (single prompt per run)
+    # -----------------------
     $requiredScopes = @(
         "AgentIdentityBlueprint.Create",
         "AgentIdentityBlueprint.ReadWrite.All",
@@ -130,29 +134,24 @@ function Connect-AzureAndGraph {
     )
 
     try {
-        $mgContext = Get-MgContext
+        # IMPORTANT: Start fresh each run to avoid the "prompt now + prompt again on first request" behavior.
+        Write-Info "Resetting Microsoft Graph session (prevents double prompts)..."
+        Disconnect-MgGraph -ErrorAction SilentlyContinue
 
-        $needsConnect = $true
-        if ($mgContext -and $mgContext.TenantId -eq $TenantId) {
-            # If we’re already connected, ensure scopes are sufficient
-            $missing = @()
-            if ($mgContext.Scopes) {
-                $missing = $requiredScopes | Where-Object { $mgContext.Scopes -notcontains $_ }
-            }
+        Write-Info "Connecting to Microsoft Graph tenant: $TenantId"
+        Connect-MgGraph `
+            -TenantId $TenantId `
+            -Scopes $requiredScopes `
+            -NoWelcome `
+            -ContextScope Process `
+            -ErrorAction Stop | Out-Null
 
-            if ($missing.Count -eq 0) {
-                $needsConnect = $false
-                Write-Ok "Already connected to Microsoft Graph with required scopes"
-            } else {
-                Write-Warn "Graph session missing scopes: $($missing -join ', ')"
-            }
-        }
+        # Force token acquisition immediately so later Invoke-MgGraphRequest won't trigger another prompt.
+        # /me is fine here since you later call it anyway.
+        Write-Info "Validating Graph session (acquiring token)..."
+        $null = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/me" -ErrorAction Stop
 
-        if ($needsConnect) {
-            Write-Info "Connecting to Microsoft Graph tenant: $TenantId"
-            Connect-MgGraph -Scopes $requiredScopes -TenantId $TenantId -NoWelcome -ErrorAction Stop | Out-Null
-            Write-Ok "Connected to Microsoft Graph"
-        }
+        Write-Ok "Connected to Microsoft Graph"
     }
     catch {
         $msg = $_ | Get-FriendlyErrorMessage
