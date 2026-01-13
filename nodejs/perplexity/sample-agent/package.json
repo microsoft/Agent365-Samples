@@ -3,9 +3,8 @@
   "version": "1.0.0",
   "description": "Perplexity AI Agent with Microsoft Agent 365 SDK",
   "scripts": {
-    "start": "node src/index.js",
-    "start:playground": "ts-node src/index.playground.ts",
-    "dev": "nodemon --watch src --exec ts-node src/index.js",
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
     "build": "tsc",
     "test-tool": "agentsplayground",
     "clean": "rimraf dist",
