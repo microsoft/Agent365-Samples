@@ -17,7 +17,6 @@ Features:
 
 import logging
 import os
-import json
 import uuid
 
 from dotenv import load_dotenv
@@ -49,12 +48,8 @@ from agent_interface import AgentInterface
 # Microsoft Agents SDK
 from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
-from token_cache import get_cached_agentic_token
 
 # Observability Components
-from opentelemetry import trace
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core import (
     InvokeAgentScope,
     InvokeAgentDetails,
@@ -65,11 +60,12 @@ from microsoft_agents_a365.observability.core import (
     TenantDetails,
     Request,
     ExecutionType,
-    ToolCallDetails,
 )
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-from microsoft_agents_a365.observability.core.execute_tool_scope import ExecuteToolScope
+
+# Observability configuration (must be imported early)
+from observability_config import is_observability_configured
 
 # MCP Tooling - not yet implemented for Claude SDK
 # Claude has built-in tools: WebSearch, Read, Write, WebFetch
@@ -79,71 +75,6 @@ MCP_AVAILABLE = False
 from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
 
 # </DependencyImports>
-
-# =============================================================================
-# OBSERVABILITY INITIALIZATION (Module-level, runs once)
-# =============================================================================
-# <ObservabilityInit>
-
-# Flag to track if observability has been configured
-_observability_configured = False
-
-def _initialize_observability_once():
-    """Initialize observability SDK once at module level before any agent instances are created"""
-    global _observability_configured
-    
-    if _observability_configured:
-        logger.debug("Observability already configured, skipping")
-        return True
-    
-    def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-        """Token resolver for Agent 365 Observability exporter"""
-        try:
-            logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-            cached_token = get_cached_agentic_token(tenant_id, agent_id)
-            if cached_token:
-                logger.info("Using cached agentic token from agent authentication")
-                return cached_token
-            else:
-                logger.warning(f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}")
-                return None
-        except Exception as e:
-            logger.error(f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}")
-            return None
-    
-    try:
-        status = configure(
-            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "claude-sample-agent"),
-            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-            token_resolver=token_resolver,
-        )
-        
-        if not status:
-            logger.warning("⚠️ Agent 365 Observability configuration failed")
-            return False
-        
-        # Add console exporter for debugging
-        try:
-            tracer_provider = trace.get_tracer_provider()
-            console_exporter = ConsoleSpanExporter()
-            console_processor = BatchSpanProcessor(console_exporter)
-            tracer_provider.add_span_processor(console_processor)
-            logger.info("✅ Console span exporter added for debugging")
-        except Exception as e:
-            logger.debug(f"Could not add console exporter: {e}")
-        
-        _observability_configured = True
-        logger.info("✅ Agent 365 Observability configured successfully")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Error setting up observability: {e}")
-        return False
-
-# Initialize observability immediately at module load time
-_initialize_observability_once()
-
-# </ObservabilityInit>
 
 
 class ClaudeAgent(AgentInterface):
@@ -222,21 +153,22 @@ class ClaudeAgent(AgentInterface):
         
         # Extract context details for observability
         activity = context.activity
-        tenant_id = activity.recipient.tenant_id if activity.recipient else None
-        agent_id = activity.recipient.agentic_app_id if activity.recipient else None
+        recipient = activity.recipient if activity.recipient else None
+        tenant_id = recipient.tenant_id if recipient else None
+        agent_id = recipient.agentic_app_id if recipient else None
+        agent_upn = getattr(recipient, "user_principal_name", None) or getattr(recipient, "upn", None) if recipient else None
         conversation_id = activity.conversation.id if activity.conversation else None
         
         # Extract caller information
         caller_id = activity.from_property.id if activity.from_property else None
         caller_name = activity.from_property.name if activity.from_property else None
         caller_aad_object_id = activity.from_property.aad_object_id if activity.from_property else None
-        channel_id = activity.channel_id or "unknown"
         
         try:
             logger.info(f"📨 Processing message: {message[:100]}...")
             
             # Verify observability is configured before using BaggageBuilder
-            if not _observability_configured:
+            if not is_observability_configured():
                 logger.warning("⚠️ Observability not configured, spans may not be exported")
             
             # Use BaggageBuilder to set contextual information that flows through all spans
@@ -254,7 +186,7 @@ class ClaudeAgent(AgentInterface):
                     agent_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "Claude Agent"),
                     agent_description="AI agent powered by Anthropic Claude Agent SDK",
                     tenant_id=tenant_id or "default-tenant",
-                    agent_upn=os.getenv("AGENT_UPN"),
+                    agent_upn=agent_upn,  # Get from turn context recipient
                     agent_blueprint_id=os.getenv("CLIENT_ID") or os.getenv("AGENT_BLUEPRINT_ID"),
                     agent_auid=os.getenv("AGENT_AUID"),
                 )

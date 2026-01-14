@@ -109,6 +109,37 @@ class GenericAgentHost:
         # Setup message handlers
         self._setup_handlers()
 
+    
+    def _extract_conversation_item_link(self, activity):
+        # 1) Outlook / Word / Loop / SharePoint notifications
+        try:
+            link = activity.value.get("resource", {}).get("webUrl")
+            if link:
+                return link
+        except Exception:
+            pass
+
+        # 2) Teams-based interactions
+        try:
+            for entity in activity.entities or []:
+                link = (
+                    entity.get("conversationItemLink") or
+                    entity.get("link")
+                )
+                if link:
+                    return link
+        except Exception:
+            pass
+
+        # 3) Teams channelData
+        try:
+            return activity.channel_data.get("clientInfo", {}).get("conversationItemLink")
+        except Exception:
+            pass
+
+        return None
+
+
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers"""
 
@@ -135,11 +166,16 @@ class GenericAgentHost:
                 tenant_id = context.activity.recipient.tenant_id
                 agent_id = context.activity.recipient.agentic_app_id
                 
+                # Get agent identity from recipient
+                recipient = context.activity.recipient
+                agent_upn = getattr(recipient, "user_principal_name", None) or getattr(recipient, "upn", None)
+                
                 caller = getattr(context.activity, "from_property", None) or getattr(context.activity, "from", None)
                 caller_id = getattr(caller, "id", None)
                 caller_name = getattr(caller, "name", None)
                 caller_upn = getattr(caller, "userPrincipalName", None) or getattr(caller, "upn", None)
 
+                conversation_item_link = self._extract_conversation_item_link(context.activity)
                 conversation_id = context.activity.conversation.id if context.activity.conversation else None
                 correlation_id = str(uuid.uuid4())
 
@@ -149,12 +185,12 @@ class GenericAgentHost:
                         .agent_id(agent_id)
                         .agent_name(self.agent_class.__name__)
                         .agent_description("An AI agent powered by Anthropic Claude")
-                        .agent_upn(os.getenv("AGENT_UPN"))  # optional if you have one
+                        .agent_upn(agent_upn)  # Get from turn context recipient
                         .caller_id(caller_id)
                         .caller_name(caller_name)
                         .caller_upn(caller_upn)
                         .conversation_id(conversation_id)
-                        .conversation_item_link(os.getenv("CONVERSATION_ITEM_LINK"))  # optional
+                        .conversation_item_link(conversation_item_link)  # optional
                         .correlation_id(correlation_id)
                         .build()
                 ):
