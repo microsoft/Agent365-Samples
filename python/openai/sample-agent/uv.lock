@@ -879,22 +879,23 @@ wheels = [
 
 [[package]]
 name = "microsoft-agents-a365-notifications"
-version = "2025.10.20+preview.165820"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-hosting-core" },
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/85/1b/bf993b20f6bb68a38b5770c3a034ea6003295def06d8d3945a623dcf6ad0/microsoft_agents_a365_notifications-0.1.0.tar.gz", hash = "sha256:80d9833ee1cadfd1b27c50477794cd190d7c687b4826ceae15d83453920a8e68", size = 7621, upload-time = "2025-11-18T19:59:17.477Z" }
 wheels = [
-    { path = "microsoft_agents_a365_notifications-2025.10.20+preview.165820-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/13/c2/634d93f3f01b706f51aaea38a204ab9d34a47718df64ee166607e6c78cb1/microsoft_agents_a365_notifications-0.1.0-py3-none-any.whl", hash = "sha256:f8cd30ec378bee63c82d45dc8e03de30cfcaa5b29bec739f99a4bb6b213b911b", size = 8815, upload-time = "2025-11-18T19:59:30.883Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-observability-core"
-version = "2025.10.20+preview.165820"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "microsoft-agents-a365-runtime" },
     { name = "opentelemetry-api" },
@@ -903,14 +904,15 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/50/33/f455ddfa500fa3b4d28e15b72f7129c975897cba1eaa511f9cc49a228509/microsoft_agents_a365_observability_core-0.1.0.tar.gz", hash = "sha256:c59eff33359175e1031d17a0218aed7ff2ec23f2df63d3da25eee6e842d7b282", size = 25429, upload-time = "2025-11-18T19:59:18.543Z" }
 wheels = [
-    { path = "microsoft_agents_a365_observability_core-2025.10.20+preview.165820-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/fc/ab/6898ab81ceb84976a932d2e09a0fd19d9e3a27721cc3e6eec95da3c378f9/microsoft_agents_a365_observability_core-0.1.0-py3-none-any.whl", hash = "sha256:5dc96eabc4222064b4bfba19b3ef3092c6687f1a13f0a1ef47ff1b0e54f7cf0d", size = 34143, upload-time = "2025-11-18T19:59:32.008Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-observability-extensions-openai"
-version = "2025.10.20+preview.165820"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "microsoft-agents-a365-observability-core" },
     { name = "openai-agents" },
@@ -918,41 +920,48 @@ dependencies = [
     { name = "opentelemetry-instrumentation" },
     { name = "opentelemetry-sdk" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/a7/609fea8f4857562b2ed38e709ba10e30aa6c7e02471ee5bcd1165e7b8183/microsoft_agents_a365_observability_extensions_openai-0.1.0.tar.gz", hash = "sha256:16f30dafad1560f37415dac86a216c5dc3173b81154b38d850216c38ef239f07", size = 11150, upload-time = "2025-11-18T19:59:21.249Z" }
 wheels = [
-    { path = "microsoft_agents_a365_observability_extensions_openai-2025.10.20+preview.165820-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/36/e5/19f3b4c9ae054dd3d821b5fc212fa03d8867ebe2662d8730b9c5622b0195/microsoft_agents_a365_observability_extensions_openai-0.1.0-py3-none-any.whl", hash = "sha256:a5d4db0dc9e927dac4f5c66fe41b5040ae7086bd1fe16cee3d11d47690dcef7c", size = 11283, upload-time = "2025-11-18T19:59:34.7Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-runtime"
-version = "2025.10.20+preview.165820"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/e2/c02f268cf60ed11f031bb6f65d1cee8ea722651b465f04ed456d3f529e89/microsoft_agents_a365_runtime-0.1.0.tar.gz", hash = "sha256:644f52703548005f5cad7511445a87ba71660c2a08ef457ea1a23830f51060a2", size = 6129, upload-time = "2025-11-18T19:59:23.438Z" }
 wheels = [
-    { path = "microsoft_agents_a365_runtime-2025.10.20+preview.165820-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/6a/66/a201d51aa81c743298c5b1e974ebd7c4136f7cd2f0337188ee54cfcacf51/microsoft_agents_a365_runtime-0.1.0-py3-none-any.whl", hash = "sha256:c35b7268617e85e292c55ce3773dcf75515ff39cf9631fdd7fc1b049f048b030", size = 6958, upload-time = "2025-11-18T19:59:36.526Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-tooling"
-version = "2025.10.20+preview.165820"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/31/d3/5944f81cea7df1274ee9549a132c3aaeea0adcff3cced5612a354c12e157/microsoft_agents_a365_tooling-0.1.0.tar.gz", hash = "sha256:d43a4762fc01fb7c23d4960347e051980caa4bbe2c36eb436dd8f42121a1cabd", size = 9866, upload-time = "2025-11-18T19:59:24.158Z" }
 wheels = [
-    { path = "microsoft_agents_a365_tooling-2025.10.20+preview.165820-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/fc/56/8aeeaf1107e92283b805a1b05bf9e48ecc4bcde11c480a6b7e9c2aecd96b/microsoft_agents_a365_tooling-0.1.0-py3-none-any.whl", hash = "sha256:ddc49704b74d39372570ba98ba782e41558835799bd76c6ee324300a201c77cb", size = 10651, upload-time = "2025-11-18T19:59:37.586Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-a365-tooling-extensions-openai"
-version = "2025.10.20+preview.165819"
-source = { registry = "../../dist" }
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "asyncio-throttle" },
     { name = "microsoft-agents-a365-tooling" },
     { name = "openai-agents" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/69/36/a26b2a6fe10727ca3695d989ab2d14bcafd7fdadd646760fc68db4bac1d8/microsoft_agents_a365_tooling_extensions_openai-0.1.0.tar.gz", hash = "sha256:9d961e80089abf9c7c4989a3cf32b93c5e6c0f395019efadd959991f718ac8cc", size = 5911, upload-time = "2025-11-18T19:59:27.428Z" }
 wheels = [
-    { path = "microsoft_agents_a365_tooling_extensions_openai-2025.10.20+preview.165819-py3-none-any.whl" },
+    { url = "https://files.pythonhosted.org/packages/3c/33/f515e4cbdcf0b671fd4615df2bdc6d75524dcd5100b6e230bdf9f4a6afcf/microsoft_agents_a365_tooling_extensions_openai-0.1.0-py3-none-any.whl", hash = "sha256:c47d878bbaa288f5c752da94bdf397c9aa212edda34986d7fb53de2dcb401bd9", size = 5765, upload-time = "2025-11-18T19:59:40.38Z" },
 ]
 
 [[package]]
@@ -1886,11 +1895,11 @@ requires-dist = [
     { name = "aiohttp" },
     { name = "fastapi", specifier = ">=0.100.0" },
     { name = "httpx", specifier = ">=0.24.0" },
-    { name = "microsoft-agents-a365-notifications", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-observability-core", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-observability-extensions-openai", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-tooling", specifier = ">=2025.10.20" },
-    { name = "microsoft-agents-a365-tooling-extensions-openai", specifier = ">=2025.10.20" },
+    { name = "microsoft-agents-a365-notifications", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-observability-core", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-observability-extensions-openai", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-tooling", specifier = ">=0.1.0" },
+    { name = "microsoft-agents-a365-tooling-extensions-openai", specifier = ">=0.1.0" },
     { name = "microsoft-agents-activity" },
     { name = "microsoft-agents-authentication-msal" },
     { name = "microsoft-agents-hosting-aiohttp" },
@@ -1986,11 +1995,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.5.0"
+version = "2.6.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/15/22/9ee70a2574a4f4599c47dd506532914ce044817c7752a79b6a51286319bc/urllib3-2.5.0.tar.gz", hash = "sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760", size = 393185, upload-time = "2025-06-18T14:07:41.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/c2/fe1e52489ae3122415c51f387e221dd0773709bad6c6cdaa599e8a2c5185/urllib3-2.5.0-py3-none-any.whl", hash = "sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc", size = 129795, upload-time = "2025-06-18T14:07:40.39Z" },
+    { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
 ]
 
 [[package]]
