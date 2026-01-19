@@ -155,7 +155,7 @@ class CrewAIAgent(AgentInterface):
     # </McpSetup>
 
     # =========================================================================
-    # INITIALIZATION AND MESSAGE PROCESSING
+    # MESSAGE PROCESSING
     # =========================================================================
     # <MessageProcessing>
 
@@ -178,14 +178,6 @@ class CrewAIAgent(AgentInterface):
         agent_id = recipient.agentic_app_id if recipient else None
         agent_upn = getattr(recipient, "user_principal_name", None) or getattr(recipient, "upn", None) if recipient else None
         conversation_id = activity.conversation.id if activity.conversation else None
-
-        # Extract caller information
-        caller_id = activity.from_property.id if activity.from_property else None
-        caller_name = activity.from_property.name if activity.from_property else None
-        caller_aad_object_id = activity.from_property.aad_object_id if activity.from_property else None
-
-        invoke_scope = None
-        inference_scope = None
 
         try:
             logger.info(f"Processing message: {message[:100]}...")
@@ -218,6 +210,7 @@ class CrewAIAgent(AgentInterface):
                 caller = activity.from_property if activity and activity.from_property else None
                 caller_id = getattr(caller, "id", None)
                 caller_name = getattr(caller, "name", None)
+                caller_aad_object_id = getattr(caller, "aad_object_id", None)
                 caller_upn = (
                     getattr(caller, "user_principal_name", None)
                     or getattr(caller, "upn", None)
@@ -305,13 +298,7 @@ class CrewAIAgent(AgentInterface):
         except Exception as e:
             logger.error("Error processing message: %s", e)
             logger.exception("Full error details:")
-
-            # Record error in scopes if they exist
-            if invoke_scope and hasattr(invoke_scope, 'record_error'):
-                invoke_scope.record_error(e)
-            if inference_scope and hasattr(inference_scope, 'record_error'):
-                inference_scope.record_error(e)
-
+            # Note: Context managers handle scope closure automatically, including error recording
             return f"Sorry, I encountered an error: {str(e)}"
 
     # </MessageProcessing>
