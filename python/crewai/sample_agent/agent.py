@@ -12,7 +12,6 @@ This keeps the CrewAI logic inside src/crew_agent and wraps it with:
 import asyncio
 import logging
 import os
-import uuid
 
 from dotenv import load_dotenv
 
@@ -39,23 +38,24 @@ from microsoft_agents.hosting.core import Authorization, TurnContext
 # Observability Components
 from microsoft_agents_a365.observability.core import (
     InvokeAgentScope,
-    InvokeAgentDetails,
     InferenceScope,
     InferenceCallDetails,
     InferenceOperationType,
-    AgentDetails,
-    TenantDetails,
-    Request,
-    ExecutionType,
 )
-from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-
-# Observability configuration (must be imported early)
-from observability_config import is_observability_configured
 
 # MCP Tooling
 from microsoft_agents_a365.tooling.utils.utility import get_mcp_platform_authentication_scope
+
+# Shared turn context utilities
+from turn_context_utils import (
+    extract_turn_context_details,
+    create_agent_details,
+    create_invoke_agent_details,
+    create_caller_details,
+    create_tenant_details,
+    create_request,
+)
 
 # </DependencyImports>
 
@@ -171,71 +171,26 @@ class CrewAIAgent(AgentInterface):
 
         The message is treated as the location/prompt input to the crew.
         """
-        # Extract context details for observability
-        activity = context.activity
-        recipient = activity.recipient if activity.recipient else None
-        tenant_id = recipient.tenant_id if recipient else None
-        agent_id = recipient.agentic_app_id if recipient else None
-        agent_upn = getattr(recipient, "user_principal_name", None) or getattr(recipient, "upn", None) if recipient else None
-        conversation_id = activity.conversation.id if activity.conversation else None
+        # Extract context details using shared utility
+        ctx_details = extract_turn_context_details(context)
 
         try:
             logger.info(f"Processing message: {message[:100]}...")
 
-            # Verify observability is configured before using BaggageBuilder
-            if not is_observability_configured():
-                logger.warning("Observability not configured, spans may not be exported")
-
             # Use BaggageBuilder to set contextual information that flows through all spans
             with (
                 BaggageBuilder()
-                .tenant_id(tenant_id or "default-tenant")
-                .agent_id(agent_id or os.getenv("AGENT_ID", "crewai-agent"))
-                .correlation_id(conversation_id or str(uuid.uuid4()))
+                .tenant_id(ctx_details.tenant_id)
+                .agent_id(ctx_details.agent_id)
+                .correlation_id(ctx_details.correlation_id)
                 .build()
             ):
-                # Create AgentDetails with valid parameters only
-                agent_details = AgentDetails(
-                    agent_id=agent_id or os.getenv("AGENT_ID", "crewai-agent"),
-                    conversation_id=conversation_id,
-                    agent_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "CrewAI Agent"),
-                    agent_description="AI agent powered by CrewAI framework",
-                    tenant_id=tenant_id or "default-tenant",
-                    agent_upn=agent_upn,
-                    agent_blueprint_id=os.getenv("CLIENT_ID") or os.getenv("AGENT_BLUEPRINT_ID"),
-                    agent_auid=os.getenv("AGENT_AUID"),
-                )
-
-                # Extract caller information
-                caller = activity.from_property if activity and activity.from_property else None
-                caller_id = getattr(caller, "id", None)
-                caller_name = getattr(caller, "name", None)
-                caller_aad_object_id = getattr(caller, "aad_object_id", None)
-                caller_upn = (
-                    getattr(caller, "user_principal_name", None)
-                    or getattr(caller, "upn", None)
-                )
-
-                # Create CallerDetails
-                caller_details = CallerDetails(
-                    caller_id=caller_id or "unknown-caller",
-                    caller_upn=caller_upn or caller_name or "unknown-user",
-                    caller_user_id=caller_aad_object_id or caller_id or "unknown-user-id",
-                )
-
-                tenant_details = TenantDetails(tenant_id=tenant_id or "default-tenant")
-
-                # Create Request
-                request = Request(
-                    content=message,
-                    execution_type=ExecutionType.HUMAN_TO_AGENT,
-                    session_id=conversation_id,
-                )
-
-                invoke_details = InvokeAgentDetails(
-                    details=agent_details,
-                    session_id=conversation_id,
-                )
+                # Create observability details using shared utility
+                agent_details = create_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                caller_details = create_caller_details(ctx_details)
+                tenant_details = create_tenant_details(ctx_details)
+                request = create_request(ctx_details, message)
+                invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
 
                 # Use context manager pattern per documentation
                 with InvokeAgentScope.start(
