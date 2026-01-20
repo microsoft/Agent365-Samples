@@ -68,7 +68,9 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        self.auth_handler_name = "AGENTIC"
+        # Only use auth handler when agentic auth is enabled
+        use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
+        self.auth_handler_name = "AGENTIC" if use_agentic_auth else None
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -110,8 +112,9 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
-        handler = [self.auth_handler_name]
-        @self.agent_app.activity("message", auth_handlers=handler)
+        # Only require auth handlers if agentic auth is enabled
+        handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
+        @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
             try:
@@ -125,18 +128,20 @@ class GenericAgentHost:
                         await context.send_activity(error_msg)
                         return
 
-                    exaau_token = await self.agent_app.auth.exchange_token(
-                        context,
-                        scopes=get_observability_authentication_scope(),
-                        auth_handler_id=self.auth_handler_name,
-                    )
+                    # Only exchange token if agentic auth is enabled
+                    if self.auth_handler_name:
+                        exaau_token = await self.agent_app.auth.exchange_token(
+                            context,
+                            scopes=get_observability_authentication_scope(),
+                            auth_handler_id=self.auth_handler_name,
+                        )
 
-                    # Cache the agentic token for Agent 365 Observability exporter use
-                    cache_agentic_token(
-                        tenant_id,
-                        agent_id,
-                        exaau_token.token,
-                    )
+                        # Cache the agentic token for Agent 365 Observability exporter use
+                        cache_agentic_token(
+                            tenant_id,
+                            agent_id,
+                            exaau_token.token,
+                        )
 
                     user_message = context.activity.text or ""
                     logger.info(f"📨 Processing message: '{user_message}'")

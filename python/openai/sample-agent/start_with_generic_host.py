@@ -27,7 +27,7 @@ def main():
         create_and_run_host(OpenAIAgentWithMCP)
 
     except Exception as e:
-        print(f"❌ Failed to start server: {e}")
+        print(f"ERROR: Failed to start server: {e}")
         import traceback
 
         traceback.print_exc()
