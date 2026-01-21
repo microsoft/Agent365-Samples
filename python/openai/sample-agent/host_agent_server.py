@@ -68,15 +68,13 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        # Auth handler name can be configured via environment or defaults to AGENTIC
-        # Set AUTH_HANDLER_NAME to empty string to disable auth handlers
-        default_auth_handler = "AGENTIC"
-        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", default_auth_handler)
-        if self.auth_handler_name == "":
-            self.auth_handler_name = None
-            logger.info("🔓 Auth handler disabled (AUTH_HANDLER_NAME is empty)")
-        else:
+        # Auth handler name can be configured via environment
+        # Defaults to empty (no auth handler) - set AUTH_HANDLER_NAME=AGENTIC for production agentic auth
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
             logger.info(f"🔐 Using auth handler: {self.auth_handler_name}")
+        else:
+            logger.info("🔓 No auth handler configured (AUTH_HANDLER_NAME not set)")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
