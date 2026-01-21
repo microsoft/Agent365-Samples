@@ -68,9 +68,15 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        # Only use auth handler when agentic auth is enabled
-        use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
-        self.auth_handler_name = "AGENTIC" if use_agentic_auth else None
+        # Auth handler name can be configured via environment or defaults to AGENTIC
+        # Set AUTH_HANDLER_NAME to empty string to disable auth handlers
+        default_auth_handler = "AGENTIC"
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", default_auth_handler)
+        if self.auth_handler_name == "":
+            self.auth_handler_name = None
+            logger.info("🔓 Auth handler disabled (AUTH_HANDLER_NAME is empty)")
+        else:
+            logger.info(f"🔐 Using auth handler: {self.auth_handler_name}")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -112,7 +118,7 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
-        # Only require auth handlers if agentic auth is enabled
+        # Configure auth handlers - required for token exchange when auth_handler_name is set
         handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
@@ -128,7 +134,7 @@ class GenericAgentHost:
                         await context.send_activity(error_msg)
                         return
 
-                    # Only exchange token if agentic auth is enabled
+                    # Exchange token for observability if auth handler is configured
                     if self.auth_handler_name:
                         exaau_token = await self.agent_app.auth.exchange_token(
                             context,
@@ -213,7 +219,7 @@ class GenericAgentHost:
 
         if environ.get("BEARER_TOKEN"):
             logger.info(
-                "🔑 BEARER_TOKEN present but incomplete app registration; continuing in anonymous dev mode"
+                "🔑 BEARER_TOKEN present - will use for MCP server authentication"
             )
         else:
             logger.warning("⚠️ No authentication env vars found; running anonymous")
