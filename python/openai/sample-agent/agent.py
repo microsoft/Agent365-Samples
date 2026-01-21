@@ -84,11 +84,15 @@ class OpenAIAgentWithMCP(AgentInterface):
                 api_key=api_key,
                 api_version="2025-01-01-preview",
             )
+            # Use Azure deployment name for Azure OpenAI
+            model_name = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
         else:
             self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
+            # Use model name for OpenAI
+            model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
         self.model = OpenAIChatCompletionsModel(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"), openai_client=self.openai_client
+            model=model_name, openai_client=self.openai_client
         )
 
         # Configure model settings (optional parameters)
