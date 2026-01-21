@@ -81,15 +81,26 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            if (TryGetBearerTokenForDevelopment(out var bearerToken))
+            try
             {
-                // Development mode: Use bearer token from environment variable for simplified local testing
-                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken);
+                if (TryGetBearerTokenForDevelopment(out var bearerToken))
+                {
+                    // Development mode: Use bearer token from environment variable for simplified local testing
+                    await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken);
+                }
+                else
+                {
+                    // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
+                    await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
-                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+                // Graceful fallback: Log the error but continue without MCP tools
+                // This allows the agent to still respond to basic queries using only the LLM
+                System.Diagnostics.Debug.WriteLine($"Warning: Failed to load MCP tools: {ex.Message}");
+                Console.WriteLine($"Warning: MCP tools unavailable - running in bare LLM mode. Error: {ex.Message}");
+                await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Note: Some tools are not available. Running in basic mode.");
             }
         }
         else
