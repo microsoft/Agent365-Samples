@@ -57,6 +57,24 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             return !string.IsNullOrEmpty(bearerToken);
         }
 
+        /// <summary>
+        /// Checks if graceful fallback to bare LLM mode is enabled when MCP tools fail to load.
+        /// This is only allowed in Development environment AND when SKIP_TOOLING_ON_ERRORS is explicitly set to "true".
+        /// </summary>
+        private static bool ShouldSkipToolingOnErrors()
+        {
+            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? 
+                              Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? 
+                              "Production";
+            
+            var skipToolingOnErrors = Environment.GetEnvironmentVariable("SKIP_TOOLING_ON_ERRORS");
+            
+            // Only allow skipping tooling errors in Development mode AND when explicitly enabled
+            return environment.Equals("Development", StringComparison.OrdinalIgnoreCase) && 
+                   !string.IsNullOrEmpty(skipToolingOnErrors) && 
+                   skipToolingOnErrors.Equals("true", StringComparison.OrdinalIgnoreCase);
+        }
+
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
@@ -251,8 +269,18 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
                 catch (Exception ex)
                 {
-                    // Log error but continue without MCP tools - graceful fallback to bare LLM mode
-                    _logger?.LogError(ex, "Failed to register MCP tool servers. Continuing without MCP tools.");
+                    // Only allow graceful fallback in Development mode when SKIP_TOOLING_ON_ERRORS is explicitly enabled
+                    if (ShouldSkipToolingOnErrors())
+                    {
+                        // Graceful fallback: Log the error but continue without MCP tools
+                        _logger?.LogWarning(ex, "Failed to register MCP tool servers. Continuing without MCP tools (SKIP_TOOLING_ON_ERRORS=true).");
+                    }
+                    else
+                    {
+                        // In production or when SKIP_TOOLING_ON_ERRORS is not enabled, fail fast
+                        _logger?.LogError(ex, "Failed to register MCP tool servers.");
+                        throw;
+                    }
                 }
             }
 
