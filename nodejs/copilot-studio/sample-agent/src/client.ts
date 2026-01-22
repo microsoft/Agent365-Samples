@@ -188,7 +188,7 @@ export async function getClient(
   // Load Copilot Studio connection settings from environment
   const settings = loadCopilotStudioConnectionSettingsFromEnv();
 
-  // Acquire OBO token for Copilot Studio API
+  // Acquire token for Copilot Studio API
   const tokenResult = await authorization.exchangeToken(turnContext, authHandlerName, {
     scopes: ['https://api.powerplatform.com/.default']
   });

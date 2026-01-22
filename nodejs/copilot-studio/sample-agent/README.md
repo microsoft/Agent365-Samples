@@ -41,6 +41,55 @@ Before running this sample, you need a Copilot Studio agent:
 
    Or copy the **Direct Connect URL** from the agent's channel settings.
 
+## Required Setup Steps
+
+This sample requires additional configuration beyond the standard Agent 365 setup:
+
+### 1. Add CopilotStudio.Copilots.Invoke API Permission
+
+The `CopilotStudio.Copilots.Invoke` scope must be added to your Microsoft Entra ID app registration and blueprint:
+
+1. Go to [Azure Portal](https://portal.azure.com) → **Microsoft Entra ID** → **App registrations**
+2. Select your agent's app registration
+3. Go to **API permissions** → **Add a permission**
+4. Select **APIs my organization uses** → search for **Power Platform API** or **Dataverse**
+5. Add the `CopilotStudio.Copilots.Invoke` delegated permission
+6. Grant admin consent for the permission
+7. Update your blueprint to include this scope in the allowed permissions
+
+### 2. Grant User Access to the Copilot Studio Agent
+
+Users must have access to chat with your Copilot Studio agent:
+
+- **Option A: Organization-wide access** (used in this sample)
+  1. Open your agent in Copilot Studio
+  2. Click **… (three dots)** → **Share**
+  3. Select the option to share with everyone in your organization
+
+- **Option B: Security group access**
+  1. Create a security group in Microsoft Entra ID
+  2. Add users who need access to the group
+  3. Share the agent with that security group in Copilot Studio
+
+> **Note:** Individual users cannot be granted access directly—you must use security groups or organization-wide sharing. Authentication must be configured with **Microsoft Entra ID** and **"Require users to sign in"** enabled.
+
+For more details, see [Share agents with other users](https://learn.microsoft.com/en-us/microsoft-copilot-studio/admin-share-bots).
+
+### 3. Microsoft 365 Copilot License Requirement
+
+A **Microsoft 365 Copilot license** is required to publish agents in Copilot Studio. Ensure your tenant has the appropriate licensing before attempting to publish your agent.
+
+### 4. Agentic Authentication with Power Platform Audience
+
+This sample uses the agentic authentication flow to request a token with the **Power Platform audience** (`https://api.powerplatform.com/.default`). This token is required to access and invoke Copilot Studio agents.
+
+```js
+// Acquire token for Copilot Studio API
+const tokenResult = await authorization.exchangeToken(turnContext, authHandlerName, {
+   scopes: ['https://api.powerplatform.com/.default']
+});
+```
+
 ## Configuration
 
 Copy `.env.example` to `.env` and configure:
@@ -101,41 +150,6 @@ npm run test-tool
 ```
 
 This launches the Microsoft 365 Agents Playground for local testing.
-
-### Testing with Dev Tunnels
-
-For testing with external services or Teams:
-
-1. Install [VS Code Dev Tunnels extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.remote-server)
-2. Create a tunnel: `devtunnel create --allow-anonymous`
-3. Start the tunnel: `devtunnel port create -p 3978`
-4. Update your bot messaging endpoint with the tunnel URL
-
-For complete testing instructions, see [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs).
-
-## Troubleshooting
-
-### Common Issues
-
-**"Failed to acquire token for Copilot Studio"**
-- Ensure your service connection is properly configured
-- Verify the user has signed in and granted consent
-- Check that the Copilot Studio agent allows external client integration
-
-**"No response from Copilot Studio agent"**
-- Verify your Copilot Studio agent is **published** (not just saved)
-- Check that the Environment ID and Schema Name are correct
-- Ensure the agent's Web channel is enabled
-
-**"Connection refused" or network errors**
-- Verify the `directConnectUrl` or `environmentId`/`agentIdentifier` are correct
-- Check network connectivity to `api.powerplatform.com`
-- Ensure your firewall allows outbound HTTPS connections
-
-**Authentication errors (401/403)**
-- Verify your tenant ID matches the Copilot Studio agent's tenant
-- Check that the app registration has `CopilotStudio.Copilots.Invoke` permission
-- Ensure the service connection credentials are correct
 
 ## Extending this sample
 
