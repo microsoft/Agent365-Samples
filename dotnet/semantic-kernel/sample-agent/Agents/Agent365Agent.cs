@@ -61,6 +61,24 @@ public class Agent365Agent
     }
 
     /// <summary>
+    /// Checks if graceful fallback to bare LLM mode is enabled when MCP tools fail to load.
+    /// This is only allowed in Development environment AND when SKIP_TOOLING_ON_ERRORS is explicitly set to "true".
+    /// </summary>
+    private static bool ShouldSkipToolingOnErrors()
+    {
+        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? 
+                          Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? 
+                          "Production";
+        
+        var skipToolingOnErrors = Environment.GetEnvironmentVariable("SKIP_TOOLING_ON_ERRORS");
+        
+        // Only allow skipping tooling errors in Development mode AND when explicitly enabled
+        return environment.Equals("Development", StringComparison.OrdinalIgnoreCase) && 
+               !string.IsNullOrEmpty(skipToolingOnErrors) && 
+               skipToolingOnErrors.Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// 
     /// </summary>
     public Agent365Agent(){}
@@ -96,11 +114,20 @@ public class Agent365Agent
             }
             catch (Exception ex)
             {
-                // Graceful fallback: Log the error but continue without MCP tools
-                // This allows the agent to still respond to basic queries using only the LLM
-                System.Diagnostics.Debug.WriteLine($"Warning: Failed to load MCP tools: {ex.Message}");
-                Console.WriteLine($"Warning: MCP tools unavailable - running in bare LLM mode. Error: {ex.Message}");
-                await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Note: Some tools are not available. Running in basic mode.");
+                // Only allow graceful fallback in Development mode when SKIP_TOOLING_ON_ERRORS is explicitly enabled
+                if (ShouldSkipToolingOnErrors())
+                {
+                    // Graceful fallback: Log the error but continue without MCP tools
+                    // This allows the agent to still respond to basic queries using only the LLM
+                    System.Diagnostics.Debug.WriteLine($"Warning: Failed to load MCP tools: {ex.Message}");
+                    Console.WriteLine($"Warning: MCP tools unavailable - running in bare LLM mode. Error: {ex.Message}");
+                    await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Note: Some tools are not available. Running in basic mode.");
+                }
+                else
+                {
+                    // In production or when SKIP_TOOLING_ON_ERRORS is not enabled, fail fast
+                    throw;
+                }
             }
         }
         else
