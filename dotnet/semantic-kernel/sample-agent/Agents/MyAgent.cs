@@ -46,7 +46,7 @@ public class MyAgent : AgentApplication
         _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location.
+        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
         TermsAndConditionsAccepted = true;
 
         bool useBearerToken = Agent365Agent.TryGetBearerTokenForDevelopment(out var bearerToken);
@@ -100,7 +100,7 @@ public class MyAgent : AgentApplication
                             new ServiceDescriptor(typeof(Kernel), _kernel),
              ];
 
-             // Disabled for development purposes.
+             // Disabled for development purposes. 
              //if (!IsApplicationInstalled)
              //{
              //    await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);
@@ -310,7 +310,7 @@ public class MyAgent : AgentApplication
     protected async Task TeamsMessageActivityAsync(Agent365Agent agent365Agent, ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
 
-        // Start a Streaming Process
+        // Start a Streaming Process 
         await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
         try
         {
@@ -334,7 +334,7 @@ public class MyAgent : AgentApplication
         }
 
         // Create a response message based on the response content type from the Agent365Agent
-        // Send the response message back to the user.
+        // Send the response message back to the user. 
         switch (response.ContentType)
         {
             case Agent365AgentResponseContentType.Text:
@@ -346,7 +346,7 @@ public class MyAgent : AgentApplication
     }
 
     /// <summary>
-    /// Sets up an in context instance of the Agent365Agent..
+    /// Sets up an in context instance of the Agent365Agent.. 
     /// </summary>
     /// <param name="serviceCollection"></param>
     /// <param name="turnContext"></param>
