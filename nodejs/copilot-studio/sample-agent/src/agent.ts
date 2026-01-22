@@ -25,14 +25,14 @@ import { Client, getClient } from './client';
  * - Integrate with Agent 365 observability
  */
 export class MyAgent extends AgentApplication<TurnState> {
-  static authHandlerName: string = 'mcs';
+  static authHandlerName: string = 'agentic';
 
   constructor() {
     super({
       startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
-        mcs: { text: 'mcs', title: 'MCS Login'}
+        agentic: { type: 'agentic'}
       }
     });
 
@@ -44,7 +44,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // Handle direct messages
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
-    }, [MyAgent.authHandlerName]);
+    });
   }
 
   /**
