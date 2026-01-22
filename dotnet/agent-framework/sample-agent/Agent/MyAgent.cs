@@ -43,13 +43,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
-        // Setup reusable auto sign-in handlers
-        // Setup reusable auto sign-in handler for agentic requests
+        // Setup reusable auto sign-in handler for user authorization
         private readonly string AgenticIdAuthHandler = "agentic";
-        // Setup reusable auto sign-in handler for OBO (On-Behalf-Of) authentication
-        private readonly string MyAuthHandler = "me";
         // Temp
         private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
+
+        /// <summary>
+        /// Check if a bearer token is available in the environment for development/testing.
+        /// </summary>
+        public static bool TryGetBearerTokenForDevelopment(out string? bearerToken)
+        {
+            bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
+            return !string.IsNullOrEmpty(bearerToken);
+        }
 
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
@@ -72,8 +78,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
             // Agentic requests require the "agentic" handler for user authorization
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
-            // Non-agentic requests use OBO authentication via the "me" handler
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: new[] { MyAuthHandler });
+            // Non-agentic requests (Playground, WebChat) - no auto sign-in handlers, uses bearer token from config if available
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: Array.Empty<string>());
         }
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -103,12 +109,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
             // Select the appropriate auth handler based on request type
-            string ObservabilityAuthHandlerName = "";
-            string ToolAuthHandlerName = "";
+            // For agentic requests, use the agentic auth handler
+            // For non-agentic requests, we'll use bearer token if available (no auth handler needed)
+            string? ObservabilityAuthHandlerName;
+            string? ToolAuthHandlerName;
             if (turnContext.IsAgenticRequest())
+            {
                 ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHandler;
+            }
             else
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = MyAuthHandler;
+            {
+                // Non-agentic: no auth handler, will use bearer token in GetClientAgent
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = null;
+            }
 
 
             await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -117,7 +130,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 turnState,
                 _agentTokenCache,
                 UserAuthorization,
-                ObservabilityAuthHandlerName,
+                ObservabilityAuthHandlerName ?? string.Empty,
                 _logger,
                 async () =>
             {
@@ -166,7 +179,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string authHandlerName)
+        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName)
         {
             AssertionHelpers.ThrowIfNull(_configuration!, nameof(_configuration));
             AssertionHelpers.ThrowIfNull(context, nameof(context));
@@ -201,22 +214,45 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         // Notify the user we are loading tools
                         await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-                        string agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
-                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
-
-                        // Add the A365 tools to the tool options
-                        if (a365Tools != null && a365Tools.Count > 0)
+                        // Check if we have a valid auth handler or bearer token for MCP
+                        if (!string.IsNullOrEmpty(authHandlerName))
                         {
-                            toolList.AddRange(a365Tools);
-                            _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                            // Use auth handler (agentic flow)
+                            string agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
+                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
+
+                            if (a365Tools != null && a365Tools.Count > 0)
+                            {
+                                toolList.AddRange(a365Tools);
+                                _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                            }
+                        }
+                        else if (TryGetBearerTokenForDevelopment(out var bearerToken))
+                        {
+                            // Use bearer token from environment (non-agentic/development flow)
+                            _logger?.LogInformation("Using bearer token from environment for MCP tools.");
+                            _logger?.LogInformation("Bearer token length: {Length}", bearerToken?.Length ?? 0);
+                            string agentId = Utility.ResolveAgentIdentity(context, bearerToken!);
+                            _logger?.LogInformation("Resolved agentId: '{AgentId}'", agentId ?? "(null)");
+                            // Pass bearer token as the last parameter (accessToken override)
+                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, AgenticIdAuthHandler, context, bearerToken).ConfigureAwait(false);
+
+                            if (a365Tools != null && a365Tools.Count > 0)
+                            {
+                                toolList.AddRange(a365Tools);
+                                _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                            }
+                        }
+                        else
+                        {
+                            _logger?.LogWarning("No auth handler or bearer token available. MCP tools will not be loaded.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    // Log error and rethrow - MCP tool registration is required
-                    _logger?.LogError(ex, "Failed to register MCP tool servers. Ensure MCP servers are configured correctly or use mock MCP servers for local testing.");
-                    throw;
+                    // Log error but continue without MCP tools - graceful fallback to bare LLM mode
+                    _logger?.LogError(ex, "Failed to register MCP tool servers. Continuing without MCP tools.");
                 }
             }
 
