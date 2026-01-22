@@ -18,6 +18,36 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Semantic Kernel 1.66.0 or higher
 - Azure/OpenAI API credentials
 
+## Launch Profiles
+
+This sample includes two launch profiles in `Properties/launchSettings.json`:
+
+### Sample Agent
+
+Uses Agentic Users with Client Credentials or Managed Identity. Use this for production or when testing with full Azure Bot Service configuration.
+
+### Sample Agent with Bearer Token Support
+
+Simplified profile for early local development using bearer token authentication.
+
+**Quick setup:**
+1. Add required permissions using the a365 CLI:
+   ```bash
+   a365 develop add-permissions
+   ```
+   This grants the necessary scopes for MCP tool access.
+
+2. Get a bearer token:
+   ```bash
+   a365 develop get-token
+   ```
+   The CLI will either automatically add the token to your `launchSettings.json` or provide it for you to copy/paste.
+
+3. Select the "Sample Agent with Bearer Token Support" launch profile in Visual Studio
+4. Run the agent
+
+> **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop get-token`.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

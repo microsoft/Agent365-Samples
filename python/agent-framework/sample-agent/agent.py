@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 # AgentFramework SDK
 from agent_framework import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework.observability import setup_observability
 
 # Agent Interface
 from agent_interface import AgentInterface

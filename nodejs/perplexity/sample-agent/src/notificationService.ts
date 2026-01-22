@@ -5,6 +5,7 @@ import { TurnContext, TurnState } from "@microsoft/agents-hosting";
 import {
   AgentNotificationActivity,
   NotificationType,
+  createEmailResponseActivity,
 } from "@microsoft/agents-a365-notifications";
 import type { InvokeAgentScope } from "@microsoft/agents-a365-observability";
 
@@ -207,7 +208,9 @@ export class NotificationService {
       "EmailNotification_Success",
     ]);
 
-    await stream.sendFinal(response);
+    // Send email response with proper EmailResponse entity
+    const emailResponseActivity = createEmailResponseActivity(response);
+    await turnContext.sendActivity(emailResponseActivity);
   }
 
   /* ------------------------------------------------------------------
