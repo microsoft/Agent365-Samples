@@ -38,7 +38,7 @@ public static class AspNetExtensions
     /// "TokenValidation": {
     ///    "Enabled": boolean,
     ///    "Audiences": [
-    ///      "{{ClientId}}" // this is the Client ID used for the Azure Bot
+    ///      "{{ClientId}}" // this is the Client ID used for the Agent Blueprint
     ///    ],
     ///    "TenantId": "{{TenantId}}"
     /// }
@@ -229,7 +229,7 @@ public static class AspNetExtensions
         public IList<string>? Audiences { get; set; }
 
         /// <summary>
-        /// TenantId of the Azure Bot.  Optional but recommended. 
+        /// TenantId of the Agent Blueprint.  Optional but recommended. 
         /// </summary>
         public string? TenantId { get; set; }
 
