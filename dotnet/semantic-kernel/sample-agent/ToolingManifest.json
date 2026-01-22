@@ -1,22 +1,22 @@
 {
-	"mcpServers": [
-		{
-			"mcpServerName": "mcp_MailTools"
-		},
-		{
-			"mcpServerName": "mcp_CalendarTools"
-		},
-		{
-			"mcpServerName": "OneDriveMCPServer"
-		},
-		{
-			"mcpServerName": "mcp_NLWeb"
-		},
-		{
-			"mcpServerName": "mcp_KnowledgeTools"
-		},
-		{
-			"mcpServerName": "mcp_MeServer"
-		}
-	]
+  "mcpServers": [
+    {
+      "mcpServerName": "mcp_MailTools"
+    },
+    {
+      "mcpServerName": "mcp_CalendarTools"
+    },
+    {
+      "mcpServerName": "mcp_ODSPRemoteServer"
+    },
+    {
+      "mcpServerName": "mcp_KnowledgeTools"
+    },
+    {
+      "mcpServerName": "mcp_MeServer"
+    },
+    {
+      "mcpServerName": "mcp_WordServer"
+    }
+  ]
 }
