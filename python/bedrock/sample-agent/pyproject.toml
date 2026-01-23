@@ -1,0 +1,57 @@
+[project]
+name = "sample-bedrock-agent"
+version = "0.1.0"
+description = "Sample Amazon Bedrock Agent using Microsoft Agent 365 SDK"
+authors = [
+    { name = "Microsoft", email = "support@microsoft.com" }
+]
+dependencies = [
+    # AWS SDK for Bedrock Runtime
+    "boto3>=1.34.0",
+
+    # Microsoft Agents SDK - Official packages for hosting and integration
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+
+    # HTTP server support
+    "uvicorn[standard]>=0.20.0",
+    "fastapi>=0.100.0",
+
+    # HTTP client
+    "httpx>=0.24.0",
+
+    # Data validation
+    "pydantic>=2.0.0",
+
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
+]
+requires-python = ">=3.11"
+
+# Package index configuration
+# PyPI is the default/primary source
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[project.optional-dependencies]
+dev = [
+    # For development and testing
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
