@@ -36,10 +36,7 @@ async def handle_messages(request: Request) -> Response:
     """
     adapter = agent_application.adapter
 
-    async def process_activity(context):
-        await agent_application.run(context)
-
-    return await adapter.process(request, process_activity)
+    return await adapter.process(request, agent_application)
 
 
 async def health_check(request: Request) -> Response:

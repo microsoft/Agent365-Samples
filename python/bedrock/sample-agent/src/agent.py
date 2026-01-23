@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 agents_sdk_config = load_configuration_from_env(os.environ)
 
 
-class BedrockAgent:
+class BedrockAgent(AgentApplication):
     """
     Agent implementation using Amazon Bedrock as the LLM backend.
 
@@ -86,18 +86,18 @@ class BedrockAgent:
     def __init__(self):
         """Initialize the Bedrock Agent with Microsoft Agents SDK components."""
         # Initialize storage and connection management
-        self.storage = MemoryStorage()
-        self.connection_manager = MsalConnectionManager(**agents_sdk_config)
-        self.adapter = CloudAdapter(connection_manager=self.connection_manager)
-        self.authorization = Authorization(
-            self.storage, self.connection_manager, **agents_sdk_config
+        storage = MemoryStorage()
+        connection_manager = MsalConnectionManager(**agents_sdk_config)
+        adapter = CloudAdapter(connection_manager=connection_manager)
+        authorization = Authorization(
+            storage, connection_manager, **agents_sdk_config
         )
 
-        # Create the AgentApplication
-        self.app = AgentApplication[TurnState](
-            storage=self.storage,
-            adapter=self.adapter,
-            authorization=self.authorization,
+        # Initialize the parent AgentApplication
+        super().__init__(
+            storage=storage,
+            adapter=adapter,
+            authorization=authorization,
             start_typing_timer=True,
             **agents_sdk_config,
         )
@@ -114,7 +114,7 @@ class BedrockAgent:
         """Configure message and notification handlers."""
         # Handler for agent notifications (if available)
         if NOTIFICATIONS_AVAILABLE:
-            @self.app.agent_notification("agents:*")
+            @self.agent_notification("agents:*")
             async def on_agent_notification(
                 context: TurnContext,
                 state: TurnState,
@@ -125,12 +125,12 @@ class BedrockAgent:
         # Handler for regular messages
         handler = [self.AUTH_HANDLER_NAME]
 
-        @self.app.activity("message", auth_handlers=handler)
+        @self.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, state: TurnState):
             await self._handle_message(context, state)
 
         # Welcome handler for new conversations
-        @self.app.conversation_update("membersAdded")
+        @self.conversation_update("membersAdded")
         async def on_members_added(context: TurnContext, state: TurnState):
             await context.send_activity(
                 "👋 Hello! I'm the Bedrock Sample Agent powered by Claude on Amazon Bedrock. "
@@ -167,7 +167,7 @@ class BedrockAgent:
                 baggage_builder.agent_id(agent_id)
                 baggage_scope = baggage_builder.build()
 
-                async with baggage_scope:
+                with baggage_scope:
                     response = await self._invoke_bedrock(
                         user_message, agent_id, tenant_id, conversation_id
                     )
@@ -225,7 +225,7 @@ class BedrockAgent:
 
             if use_custom_resolver:
                 # Exchange token and cache it for the custom resolver
-                token_result = await self.app.auth.exchange_token(
+                token_result = await self.auth.exchange_token(
                     context,
                     scopes=get_observability_authentication_scope(),
                     auth_handler_id=self.AUTH_HANDLER_NAME,
@@ -316,16 +316,6 @@ class BedrockAgent:
                 "Unable to process your email at this time."
             )
             await context.send_activity(error_response)
-
-    async def run(self, context: TurnContext) -> None:
-        """
-        Run the agent for the given turn context.
-
-        Args:
-            context: The turn context to process
-        """
-        await self.app.run(context)
-
 
 # =============================================================================
 # SINGLETON INSTANCE
