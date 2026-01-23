@@ -4,16 +4,8 @@
 name: CI - Build Node.js LangChain Sample Agent
 
 on:
-  workflow_call:  # Allow this workflow to be called from orchestrator
-  workflow_dispatch:  # Allow manual trigger
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'nodejs/langchain/sample-agent/**/*'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'nodejs/langchain/sample-agent/**/*'
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
 jobs:
   nodejs-langchain-sampleagent:
     name: Node.js LangChain Sample Agent

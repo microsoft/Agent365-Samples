@@ -6,18 +6,8 @@ permissions:
   contents: read
 
 on:
-  workflow_call:  # Allow this workflow to be called from orchestrator
-  workflow_dispatch:  # Allow manual trigger
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'python/google-adk/sample-agent/**/*'
-      - '.github/workflows/ci-python-googleadk-sampleagent.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'python/google-adk/sample-agent/**/*'
-      - '.github/workflows/ci-python-googleadk-sampleagent.yml'
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   validate-sample:
