@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// IMPORTANT: Load environment variables FIRST before any other imports
+// This ensures NODE_ENV and other config is available when AgentApplication initializes
+import { configDotenv } from 'dotenv';
+configDotenv();
+
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { ActivityTypes } from '@microsoft/agents-activity';
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
