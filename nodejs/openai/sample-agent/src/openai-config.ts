@@ -16,19 +16,28 @@ import { setDefaultOpenAIClient, setOpenAIAPI } from '@openai/agents';
 
 /**
  * Determines if Azure OpenAI should be used based on environment variables.
+ * All three variables (API_KEY, ENDPOINT, DEPLOYMENT) must be set.
  */
 export function isAzureOpenAI(): boolean {
-  return Boolean(process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT);
+  return Boolean(
+    process.env.AZURE_OPENAI_API_KEY &&
+    process.env.AZURE_OPENAI_ENDPOINT &&
+    process.env.AZURE_OPENAI_DEPLOYMENT
+  );
 }
 
 /**
  * Gets the model/deployment name to use.
- * For Azure OpenAI, this is the deployment name.
+ * For Azure OpenAI, this is the deployment name (required).
  * For standard OpenAI, this is the model name.
  */
 export function getModelName(): string {
   if (isAzureOpenAI()) {
-    return process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+    const deployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+    if (!deployment) {
+      throw new Error('AZURE_OPENAI_DEPLOYMENT is required when using Azure OpenAI');
+    }
+    return deployment;
   }
   return process.env.OPENAI_MODEL || 'gpt-4o';
 }

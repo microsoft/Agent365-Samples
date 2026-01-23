@@ -22,8 +22,7 @@ server.use(express.json())
 server.get('/api/health', (req, res: Response) => {
   res.status(200).json({
     status: 'healthy',
-    timestamp: new Date().toISOString(),
-    appId: authConfig.clientId || 'not-configured'
+    timestamp: new Date().toISOString()
   });
 });
 
