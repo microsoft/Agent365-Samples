@@ -2,21 +2,6 @@
 	"mcpServers": [
 		{
 			"mcpServerName": "mcp_MailTools"
-		},
-		{
-			"mcpServerName": "mcp_CalendarTools"
-		},
-		{
-			"mcpServerName": "OneDriveMCPServer"
-		},
-		{
-			"mcpServerName": "mcp_NLWeb"
-		},
-		{
-			"mcpServerName": "mcp_KnowledgeTools"
-		},
-		{
-			"mcpServerName": "mcp_MeServer"
 		}
 	]
 }

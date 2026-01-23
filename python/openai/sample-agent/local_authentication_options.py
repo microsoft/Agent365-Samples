@@ -58,11 +58,18 @@ class LocalAuthenticationOptions:
             LocalAuthenticationOptions instance with values from environment.
         """
         # Load .env file (automatically searches current and parent directories)
-        load_dotenv()
+        load_dotenv(override=True)  # Force reload to pick up changes
 
         bearer_token = os.getenv(token_var, "")
 
         print(f"🔧 Bearer Token: {'***' if bearer_token else 'NOT SET'}")
+        
+        # DEBUG: Print token details
+        if bearer_token:
+            print(f"🔍 DEBUG: Token loaded from env, length: {len(bearer_token)}")
+            print(f"🔍 DEBUG: Token first 50 chars: {bearer_token[:50]}...")
+        else:
+            print(f"⚠️ DEBUG: No BEARER_TOKEN found in environment!")
 
         return cls(bearer_token=bearer_token)
 
