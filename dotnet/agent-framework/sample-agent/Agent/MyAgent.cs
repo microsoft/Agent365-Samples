@@ -243,13 +243,20 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         if (!string.IsNullOrEmpty(authHandlerName))
                         {
                             // Use auth handler (agentic flow)
-                            string agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
-                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
-
-                            if (a365Tools != null && a365Tools.Count > 0)
+                            string? agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
+                            if (!string.IsNullOrEmpty(agentId))
                             {
-                                toolList.AddRange(a365Tools);
-                                _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                                var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
+
+                                if (a365Tools != null && a365Tools.Count > 0)
+                                {
+                                    toolList.AddRange(a365Tools);
+                                    _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                                }
+                            }
+                            else
+                            {
+                                _logger?.LogWarning("Could not resolve agent identity from auth handler token.");
                             }
                         }
                         else if (TryGetBearerTokenForDevelopment(out var bearerToken))
@@ -257,17 +264,24 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                             // Use bearer token from environment (non-agentic/development flow)
                             _logger?.LogInformation("Using bearer token from environment for MCP tools.");
                             _logger?.LogInformation("Bearer token length: {Length}", bearerToken?.Length ?? 0);
-                            string agentId = Utility.ResolveAgentIdentity(context, bearerToken!);
+                            string? agentId = Utility.ResolveAgentIdentity(context, bearerToken!);
                             _logger?.LogInformation("Resolved agentId: '{AgentId}'", agentId ?? "(null)");
-                            // Pass bearer token as the last parameter (accessToken override)
-                            // Use OboAuthHandlerName for non-agentic requests, fall back to AgenticAuthHandlerName if not set
-                            var handlerForBearerToken = OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForBearerToken, context, bearerToken).ConfigureAwait(false);
-
-                            if (a365Tools != null && a365Tools.Count > 0)
+                            if (!string.IsNullOrEmpty(agentId))
                             {
-                                toolList.AddRange(a365Tools);
-                                _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                                // Pass bearer token as the last parameter (accessToken override)
+                                // Use OboAuthHandlerName for non-agentic requests, fall back to AgenticAuthHandlerName if not set
+                                var handlerForBearerToken = OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
+                                var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForBearerToken, context, bearerToken).ConfigureAwait(false);
+
+                                if (a365Tools != null && a365Tools.Count > 0)
+                                {
+                                    toolList.AddRange(a365Tools);
+                                    _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
+                                }
+                            }
+                            else
+                            {
+                                _logger?.LogWarning("Could not resolve agent identity from bearer token.");
                             }
                         }
                         else
