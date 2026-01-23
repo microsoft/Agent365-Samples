@@ -48,16 +48,11 @@ export const a365Observability = ObservabilityManager.configure((builder: Builde
     .withService('Copilot Studio Sample Agent', '1.0.0')
     .withExporterOptions(exporterOptions);
 
-  if (process.env.Use_Custom_Resolver === 'true') {
-    // Custom token resolver would be configured here if needed
-    builder.withTokenResolver((agentId: string, tenantId: string) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
-  } else {
-    builder.withTokenResolver((agentId: string, tenantId: string) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
-  }
+  // Configure the token resolver for observability.
+  // If a custom resolver is needed in the future, it can be wired in here.
+  builder.withTokenResolver((agentId: string, tenantId: string) =>
+    AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
+  );
 });
 
 // Start observability collection
