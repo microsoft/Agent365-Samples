@@ -1,20 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 name: Python Claude Sample - Build Validation
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'python/claude/sample-agent/**'
-      - '.github/workflows/python-claude-sample.yml'
-  pull_request:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'python/claude/sample-agent/**'
-      - '.github/workflows/python-claude-sample.yml'
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
 
 permissions:
   contents: read
