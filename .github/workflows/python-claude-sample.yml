@@ -1,6 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 name: Python Claude Sample - Build Validation
 
 on:
+  workflow_call:  # Allow this workflow to be called from orchestrator
+  workflow_dispatch:  # Allow manual trigger
   push:
     branches:
       - main

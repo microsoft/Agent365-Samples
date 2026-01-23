@@ -1,0 +1,158 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI Orchestrator
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  # Detect which folders have changes
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      dotnet-agentframework: ${{ steps.changes.outputs.dotnet-agentframework }}
+      dotnet-semantickernel: ${{ steps.changes.outputs.dotnet-semantickernel }}
+      nodejs-claude: ${{ steps.changes.outputs.nodejs-claude }}
+      nodejs-langchain: ${{ steps.changes.outputs.nodejs-langchain }}
+      nodejs-openai: ${{ steps.changes.outputs.nodejs-openai }}
+      nodejs-vercelsdk: ${{ steps.changes.outputs.nodejs-vercelsdk }}
+      python-agentframework: ${{ steps.changes.outputs.python-agentframework }}
+      python-googleadk: ${{ steps.changes.outputs.python-googleadk }}
+      python-openai: ${{ steps.changes.outputs.python-openai }}
+      python-claude: ${{ steps.changes.outputs.python-claude }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            dotnet-agentframework:
+              - 'dotnet/agent-framework/**'
+            dotnet-semantickernel:
+              - 'dotnet/semantic-kernel/**'
+            nodejs-claude:
+              - 'nodejs/claude/**'
+            nodejs-langchain:
+              - 'nodejs/langchain/**'
+            nodejs-openai:
+              - 'nodejs/openai/**'
+            nodejs-vercelsdk:
+              - 'nodejs/vercel-sdk/**'
+            python-agentframework:
+              - 'python/agent-framework/**'
+            python-googleadk:
+              - 'python/google-adk/**'
+            python-openai:
+              - 'python/openai/**'
+            python-claude:
+              - 'python/claude/**'
+
+  # .NET Jobs - Call existing workflows
+  dotnet-agentframework:
+    name: .NET Agent Framework
+    needs: detect-changes
+    if: needs.detect-changes.outputs.dotnet-agentframework == 'true'
+    uses: ./.github/workflows/ci-dotnet-agentframework-sampleagent.yml
+
+  dotnet-semantickernel:
+    name: .NET Semantic Kernel
+    needs: detect-changes
+    if: needs.detect-changes.outputs.dotnet-semantickernel == 'true'
+    uses: ./.github/workflows/ci-dotnet-semantickernel-sampleagent.yml
+
+  # Node.js Jobs - Call existing workflows
+  nodejs-claude:
+    name: Node.js Claude
+    needs: detect-changes
+    if: needs.detect-changes.outputs.nodejs-claude == 'true'
+    uses: ./.github/workflows/ci-nodejs-claude-sampleagent.yml
+
+  nodejs-langchain:
+    name: Node.js LangChain
+    needs: detect-changes
+    if: needs.detect-changes.outputs.nodejs-langchain == 'true'
+    uses: ./.github/workflows/ci-nodejs-langchain-sampleagent.yml
+
+  nodejs-openai:
+    name: Node.js OpenAI
+    needs: detect-changes
+    if: needs.detect-changes.outputs.nodejs-openai == 'true'
+    uses: ./.github/workflows/ci-nodejs-openai-sampleagent.yml
+
+  nodejs-vercelsdk:
+    name: Node.js Vercel SDK
+    needs: detect-changes
+    if: needs.detect-changes.outputs.nodejs-vercelsdk == 'true'
+    uses: ./.github/workflows/ci-nodejs-vercelsdk-sampleagent.yml
+
+  # Python Jobs - Call existing workflows
+  python-agentframework:
+    name: Python Agent Framework
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-agentframework == 'true'
+    uses: ./.github/workflows/ci-python-agentframework-sampleagent.yml
+
+  python-googleadk:
+    name: Python Google ADK
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-googleadk == 'true'
+    uses: ./.github/workflows/ci-python-googleadk-sampleagent.yml
+
+  python-openai:
+    name: Python OpenAI
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-openai == 'true'
+    uses: ./.github/workflows/ci-python-openai-sampleagent.yml
+
+  python-claude:
+    name: Python Claude
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python-claude == 'true'
+    uses: ./.github/workflows/python-claude-sample.yml
+
+  # Final status check - ALWAYS runs and reports success
+  # This is the ONLY check you need to mark as "Required" in branch protection
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs:
+      - detect-changes
+      - dotnet-agentframework
+      - dotnet-semantickernel
+      - nodejs-claude
+      - nodejs-langchain
+      - nodejs-openai
+      - nodejs-vercelsdk
+      - python-agentframework
+      - python-googleadk
+      - python-openai
+      - python-claude
+    if: always()
+    steps:
+      - name: Check CI Status
+        run: |
+          echo "Checking CI job results..."
+          
+          # Get all job results (skipped jobs are fine, failed jobs are not)
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
+          
+          echo "Job results: $results"
+          
+          # Check if any job failed
+          if echo "$results" | grep -q "failure"; then
+            echo "❌ One or more CI jobs failed"
+            exit 1
+          fi
+          
+          echo "✅ All CI jobs passed (or were skipped because no relevant changes)"
