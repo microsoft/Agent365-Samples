@@ -46,7 +46,14 @@ const toolService = new McpToolRegistrationService();
 
 const agentName = "LangChainA365Agent";
 const agent = createAgent({
-  model: new ChatOpenAI({ temperature: 0 }),
+  model: new ChatOpenAI({
+    temperature: 0,
+    modelName: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME || "gpt-4.1",
+    configuration: {
+      baseURL: `${process.env.AZURE_OPENAI_ENDPOINT}openai/v1`,
+      apiKey: process.env.AZURE_OPENAI_API_KEY,
+    },
+  }),
   name: agentName,
   systemPrompt: `You are a helpful assistant with access to tools.
 
@@ -95,7 +102,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
     console.error('Error adding MCP tool servers:', error);
   }
 
-  return new LangChainClient(agentWithMcpTools || agent);
+  return new LangChainClient(agentWithMcpTools || agent, turnContext);
 }
 
 /**
@@ -104,9 +111,11 @@ export async function getClient(authorization: Authorization, authHandlerName: s
  */
 class LangChainClient implements Client {
   private agent: ReactAgent;
+  private turnContext: TurnContext;
 
-  constructor(agent: ReactAgent) {
+  constructor(agent: ReactAgent, turnContext: TurnContext) {
     this.agent = agent;
+    this.turnContext = turnContext;
   }
 
   /**
@@ -149,17 +158,17 @@ class LangChainClient implements Client {
   async invokeInferenceScope(prompt: string) {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
-      model: "gpt-4o-mini",
+      model: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME || "gpt-4o-mini",
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId ||'',
+      agentName: agentName,
+      conversationId: this.turnContext?.activity?.conversation?.id,
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+      tenantId: this.turnContext?.activity?.recipient?.tenantId || '',
     };
 
     let response = '';
