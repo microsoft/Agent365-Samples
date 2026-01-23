@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { createAgent, ReactAgent } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 
@@ -46,14 +49,7 @@ const toolService = new McpToolRegistrationService();
 
 const agentName = "LangChainA365Agent";
 const agent = createAgent({
-  model: new ChatOpenAI({
-    temperature: 0,
-    modelName: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME || "gpt-4.1",
-    configuration: {
-      baseURL: `${process.env.AZURE_OPENAI_ENDPOINT}openai/v1`,
-      apiKey: process.env.AZURE_OPENAI_API_KEY,
-    },
-  }),
+  model: new ChatOpenAI({ temperature: 0 }),
   name: agentName,
   systemPrompt: `You are a helpful assistant with access to tools.
 
@@ -158,17 +154,17 @@ class LangChainClient implements Client {
   async invokeInferenceScope(prompt: string) {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
-      model: process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME || "gpt-4o-mini",
+      model: "gpt-4o-mini",
     };
 
     const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId ||'',
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
       agentName: agentName,
-      conversationId: this.turnContext?.activity?.conversation?.id,
+      conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: this.turnContext?.activity?.recipient?.tenantId || '',
+      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
     };
 
     let response = '';
