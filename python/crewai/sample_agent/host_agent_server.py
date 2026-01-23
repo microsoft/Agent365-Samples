@@ -7,10 +7,11 @@ Generic Agent Host Server for CrewAI wrapper.
 
 import logging
 import socket
+import os
 from os import environ
 
 from agent_interface import AgentInterface, check_agent_inheritance
-from aiohttp.web import Application, Request, Response, json_response, run_app
+from aiohttp.web import Application, Request as AiohttpRequest, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
@@ -31,10 +32,18 @@ from microsoft_agents.hosting.core import (
     TurnState,
 )
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+from microsoft_agents_a365.observability.core import InvokeAgentScope
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
 from token_cache import cache_agentic_token
+from turn_context_utils import (
+    extract_turn_context_details,
+    create_invoke_agent_details,
+    create_caller_details,
+    create_tenant_details,
+    create_request,
+)
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -55,12 +64,15 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        self.auth_handler_name = "AGENTIC"
+        self.auth_handler_name = os.getenv("AGENT_AUTH_HANDLER_NAME", "AGENTIC")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
         self.agent_kwargs = agent_kwargs
         self.agent_instance = None
+
+        # Determine auth mode early (check if credentials are configured)
+        self.auth_configured = self._is_auth_configured()
 
         # Microsoft Agents SDK components
         self.storage = MemoryStorage()
@@ -79,6 +91,36 @@ class GenericAgentHost:
         # Setup message handlers
         self._setup_handlers()
 
+    def _extract_conversation_item_link(self, activity):
+        """Extract conversation item link from various activity sources."""
+        # 1) Outlook / Word / Loop / SharePoint notifications
+        try:
+            link = activity.value.get("resource", {}).get("webUrl")
+            if link:
+                return link
+        except Exception:
+            pass
+
+        # 2) Teams-based interactions
+        try:
+            for entity in activity.entities or []:
+                link = (
+                    entity.get("conversationItemLink") or
+                    entity.get("link")
+                )
+                if link:
+                    return link
+        except Exception:
+            pass
+
+        # 3) Teams channelData
+        try:
+            return activity.channel_data.get("clientInfo", {}).get("conversationItemLink")
+        except Exception:
+            pass
+
+        return None
+
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers."""
 
@@ -96,33 +138,38 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
-        handler = [self.auth_handler_name]
+        # Only use auth handlers when authentication is configured
+        handler = [self.auth_handler_name] if self.auth_configured else None
 
         @self.agent_app.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent."""
             try:
-                tenant_id = context.activity.recipient.tenant_id
-                agent_id = context.activity.recipient.agentic_app_id
+                # Extract context from turn using shared utility
+                ctx_details = extract_turn_context_details(context)
 
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).correlation_id(ctx_details.correlation_id).build():
                     if not self.agent_instance:
                         error_msg = "ERROR Sorry, the agent is not available."
                         logger.error(error_msg)
                         await context.send_activity(error_msg)
                         return
 
-                    exaau_token = await self.agent_app.auth.exchange_token(
-                        context,
-                        scopes=get_observability_authentication_scope(),
-                        auth_handler_id=self.auth_handler_name,
-                    )
+                    # Only perform token exchange when authentication is configured
+                    if self.auth_configured:
+                        exaau_token = await self.agent_app.auth.exchange_token(
+                            context,
+                            scopes=get_observability_authentication_scope(),
+                            auth_handler_id=self.auth_handler_name,
+                        )
 
-                    cache_agentic_token(
-                        tenant_id,
-                        agent_id,
-                        exaau_token.token,
-                    )
+                        cache_agentic_token(
+                            ctx_details.tenant_id,
+                            ctx_details.agent_id,
+                            exaau_token.token,
+                        )
+                    else:
+                        logger.debug("Skipping token exchange in anonymous mode")
 
                     user_message = context.activity.text or ""
                     logger.info("Processing message: '%s'", user_message)
@@ -130,9 +177,28 @@ class GenericAgentHost:
                     if not user_message.strip() or user_message.strip() == "/help":
                         return
 
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
+                    # Create observability details using shared utility
+                    invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                    caller_details = create_caller_details(ctx_details)
+                    tenant_details = create_tenant_details(ctx_details)
+                    request = create_request(ctx_details, user_message)
+
+                    # Wrap the agent invocation with InvokeAgentScope
+                    with InvokeAgentScope.start(
+                        invoke_agent_details=invoke_details,
+                        tenant_details=tenant_details,
+                        request=request,
+                        caller_details=caller_details,
+                    ) as invoke_scope:
+                        if hasattr(invoke_scope, 'record_input_messages'):
+                            invoke_scope.record_input_messages([user_message])
+
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+
+                        if hasattr(invoke_scope, 'record_output_messages'):
+                            invoke_scope.record_output_messages([response])
 
                     logger.info("Sending response: '%s'", response[:100] if len(response) > 100 else response)
                     await context.send_activity(response)
@@ -186,7 +252,7 @@ class GenericAgentHost:
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         """Start the server using Microsoft Agents SDK."""
 
-        async def entry_point(req: Request) -> Response:
+        async def entry_point(req: AiohttpRequest) -> Response:
             agent: AgentApplication = req.app["agent_app"]
             adapter: CloudAdapter = req.app["adapter"]
             return await start_agent_process(req, agent, adapter)
@@ -194,7 +260,7 @@ class GenericAgentHost:
         async def init_app(app):
             await self.initialize_agent()
 
-        async def health(_req: Request) -> Response:
+        async def health(_req: AiohttpRequest) -> Response:
             status = {
                 "status": "ok",
                 "agent_type": self.agent_class.__name__,
@@ -279,11 +345,22 @@ class GenericAgentHost:
             except Exception as e:
                 logger.error("Error during agent cleanup: %s", e)
 
+    def _is_auth_configured(self) -> bool:
+        """Check if authentication environment variables are configured."""
+        client_id = environ.get("CLIENT_ID")
+        tenant_id = environ.get("TENANT_ID")
+        client_secret = environ.get("CLIENT_SECRET")
+        return bool(client_id and tenant_id and client_secret)
+
 
 def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs):
     """Convenience function to create and run a generic agent host."""
     if not check_agent_inheritance(agent_class):
         raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
+
+    # Initialize observability before starting the host
+    from observability_config import initialize_observability
+    initialize_observability()
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
     auth_config = host.create_auth_configuration()

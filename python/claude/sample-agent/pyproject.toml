@@ -1,7 +1,10 @@
 [project]
 name = "sample-claude-agent"
 version = "0.1.0"
-description = "Sample Claude Agent using Microsoft Agent 365 SDK"
+description = "Sample Claude Agent using Microsoft Agent 365 SDK with MCP tooling support"
+authors = [
+    { name = "Microsoft", email = "support@microsoft.com" }
+]
 dependencies = [
     # Claude Agent SDK
     "claude-agent-sdk>=0.1.0",
@@ -12,12 +15,6 @@ dependencies = [
     "microsoft-agents-authentication-msal",
     "microsoft-agents-activity",
     
-    # Agent 365 Observability
-    "microsoft-agents-a365-observability-core>=0.1.0",
-    
-    # Agent 365 Notifications (Email, Word @mentions, etc.)
-    "microsoft_agents_a365_notifications >= 0.1.0",
-    
     # Core dependencies
     "python-dotenv",
     "aiohttp",
@@ -25,9 +22,12 @@ dependencies = [
     # Additional utilities
     "typing-extensions>=4.0.0",
 
-    # Local packages from local index
-    # - Update package versions to match your built wheels
-    "microsoft_agents_a365_runtime >= 0.1.0",
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_tooling>=0.1.0",
+    "microsoft_agents_a365_observability_core>=0.1.0",
+    "microsoft_agents_a365_notifications>=0.1.0",
+    "microsoft_agents_a365_runtime>=0.1.0",
+    "wrapt>=2.0.1"
 ]
 requires-python = ">=3.11"
 
