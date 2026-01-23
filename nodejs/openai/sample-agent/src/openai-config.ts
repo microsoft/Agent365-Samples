@@ -11,7 +11,9 @@
  * Azure OpenAI takes precedence if AZURE_OPENAI_API_KEY is set.
  */
 
-import { AzureOpenAI, OpenAI } from 'openai';
+// Note: We import AzureOpenAI from 'openai' which is a transitive dependency of @openai/agents
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { AzureOpenAI } = require('openai');
 import { setDefaultOpenAIClient, setOpenAIAPI } from '@openai/agents';
 
 /**
@@ -60,7 +62,9 @@ export function configureOpenAIClient(): void {
     });
     
     // Set the Azure client as the default for @openai/agents
-    setDefaultOpenAIClient(azureClient as unknown as OpenAI);
+    // Using 'any' to bypass type version mismatch between openai package versions
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    setDefaultOpenAIClient(azureClient as any);
     
     // Azure OpenAI requires Chat Completions API (not Responses API)
     setOpenAIAPI('chat_completions');

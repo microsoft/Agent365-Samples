@@ -26,7 +26,6 @@
     "@microsoft/agents-a365-observability-extensions-openai": "^0.1.0-preview.30",
     "@openai/agents": "0.1.11",
     "dotenv": "^17.2.2",
-    "openai": "^4.77.0",
     "express": "^5.1.0"
   },
   "devDependencies": {
