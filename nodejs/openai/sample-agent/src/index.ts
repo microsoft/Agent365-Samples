@@ -7,9 +7,13 @@ import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, R
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
 
-// Use request validation middleware only if hosting publicly
-const isProduction = Boolean(process.env.WEBSITE_SITE_NAME) || process.env.NODE_ENV === 'production';
+// Development mode explicitly overrides production detection
+// NODE_ENV=development takes priority over WEBSITE_SITE_NAME
+const isDevelopment = process.env.NODE_ENV === 'development';
+const isProduction = !isDevelopment && (Boolean(process.env.WEBSITE_SITE_NAME) || process.env.NODE_ENV === 'production');
 const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {};
+
+console.log(`Environment: NODE_ENV=${process.env.NODE_ENV}, isProduction=${isProduction}, isDevelopment=${isDevelopment}`);
 
 const server = express()
 server.use(express.json())
