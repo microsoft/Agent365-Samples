@@ -144,14 +144,14 @@ jobs:
         run: |
           echo "Checking CI job results..."
           
-          # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
+          # Get all job results (including detect-changes; skipped jobs are fine, failed jobs are not)
+          results="${{ needs.detect-changes.result }} ${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
           
           echo "Job results: $results"
           
-          # Check if any job failed
-          if echo "$results" | grep -q "failure"; then
-            echo "❌ One or more CI jobs failed"
+          # Check if any job failed or was cancelled
+          if echo "$results" | grep -qE "failure|cancelled"; then
+            echo "❌ One or more CI jobs failed or were cancelled"
             exit 1
           fi
           
