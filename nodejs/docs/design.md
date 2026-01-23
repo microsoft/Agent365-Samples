@@ -207,7 +207,7 @@ class OpenAIClient implements Client {
   async invokeAgentWithScope(prompt: string): Promise<string> {
     const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
     try {
-      await scope.withActiveSpanAsync(async () => {
+      return await scope.withActiveSpanAsync(async () => {
         const result = await run(this.agent, prompt);
         scope.recordOutputMessages([result.finalOutput]);
         return result.finalOutput;
