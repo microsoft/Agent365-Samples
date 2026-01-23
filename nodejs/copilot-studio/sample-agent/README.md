@@ -11,7 +11,9 @@ This sample demonstrates how to integrate a **Microsoft Copilot Studio** agent w
 | Built-in connectors | OpenTelemetry observability | Full compliance and monitoring |
 | Quick prototyping | Secure Graph access (MCP) | Production-ready deployment |
 
-This sample covers:
+## Demonstrates
+
+This sample demonstrates:
 
 - **Copilot Studio Integration**: Forward messages to your low-code Copilot Studio agent
 - **Notifications**: Handle email notifications from Agent 365 and return responses
@@ -150,6 +152,74 @@ npm run test-tool
 ```
 
 This launches the Microsoft 365 Agents Playground for local testing.
+
+## Troubleshooting
+
+### Missing API keys or environment variables
+
+**Error:** `Error: Missing required environment variable: COPILOT_STUDIO_SCHEMA_NAME`
+
+**Solution:** Ensure you've copied `.env.template` to `.env` and filled in all required values:
+```bash
+cp .env.template .env
+# Edit .env and add your Copilot Studio agent details
+```
+
+### Authentication errors
+
+**Error:** `401 Unauthorized` when connecting to Copilot Studio
+
+**Solution:** 
+- Verify that `CopilotStudio.Copilots.Invoke` permission is added to your Entra ID app registration
+- Ensure the permission is granted admin consent
+- Check that your agent ID and environment ID are correct
+- Verify your Microsoft 365 credentials have access to the Copilot Studio agent
+
+### Connection failures to Copilot Studio
+
+**Error:** `ECONNREFUSED` or timeout errors when sending messages
+
+**Solution:**
+- Verify your Copilot Studio agent is published
+- Check that the Web channel is enabled in Copilot Studio
+- Ensure your `COPILOT_STUDIO_ENVIRONMENT_ID` and `COPILOT_STUDIO_SCHEMA_NAME` are correct
+- Try copying the Direct Connect URL from Copilot Studio settings and using it to configure your environment variables
+
+### TypeScript compilation errors
+
+**Error:** `Cannot find module '@microsoft/agents-copilotstudio-client'`
+
+**Solution:**
+```bash
+# Clean install dependencies
+rm -rf node_modules package-lock.json
+npm install
+npm run build
+```
+
+### Port already in use
+
+**Error:** `EADDRINUSE: address already in use :::3978`
+
+**Solution:**
+```bash
+# Find and kill the process using port 3978
+lsof -ti:3978 | xargs kill -9
+# Or change the port in your .env file
+PORT=3979
+```
+
+### Module not found errors at runtime
+
+**Error:** `Cannot find module` errors when running the agent
+
+**Solution:**
+```bash
+# Ensure TypeScript is compiled
+npm run build
+# Then start the agent
+npm start
+```
 
 ## Extending this sample
 
