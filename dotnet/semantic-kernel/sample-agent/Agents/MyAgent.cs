@@ -122,6 +122,12 @@ public class MyAgent : AgentApplication
              {
                  await TeamsMessageActivityAsync(agent365Agent, turnContext, turnState, cancellationToken);
              }
+             else if (turnContext.Activity.ChannelId.Channel == Channels.Emulator || 
+                      turnContext.Activity.ChannelId.Channel == Channels.Test)
+             {
+                 var response = await agent365Agent.InvokeAgentAsync(turnContext.Activity.Text, new ChatHistory(), turnContext);
+                 await OutputResponseAsync(turnContext, turnState, response, cancellationToken);
+             }
              else
              {
                  await turnContext.SendActivityAsync(MessageFactory.Text($"Sorry, I do not know how to respond to messages from channel '{turnContext.Activity.ChannelId}'."), cancellationToken);
