@@ -310,7 +310,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Create Chat Options with tools:
             var toolOptions = new ChatOptions
             {
-                Temperature = (float?)0.2,
+                // Note: Some models (e.g., o1, o3, gpt-5.2-chat) require Temperature = 1(default) because they do not support other values.
+                // Standard GPT models (GPT-3.5, GPT-4) typically support temperature range 0.0 to 2.0.
+                Temperature = (float?)1,
                 Tools = toolList
             };
 

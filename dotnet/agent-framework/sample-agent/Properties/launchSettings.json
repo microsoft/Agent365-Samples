@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "AgentFrameworkSampleAgent": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "BEARER_TOKEN": "---"
+      },
+      "applicationUrl": "https://localhost:62738;http://localhost:62739"
+    }
+  }
+}
