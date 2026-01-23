@@ -2,19 +2,18 @@
 // Licensed under the MIT License.
 
 using Agent365SemanticKernelSampleAgent.Plugins;
+using Agent365SemanticKernelSampleAgent.Services;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
@@ -54,12 +53,6 @@ public class Agent365Agent
         return _agent;
     }
 
-    public static bool TryGetBearerTokenForDevelopment(out string? bearerToken)
-    {
-        bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
-        return !string.IsNullOrEmpty(bearerToken);
-    }
-
     /// <summary>
     /// 
     /// </summary>
@@ -81,16 +74,8 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            if (TryGetBearerTokenForDevelopment(out var bearerToken))
-            {
-                // Development mode: Use bearer token from environment variable for simplified local testing
-                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken);
-            }
-            else
-            {
-                // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
-                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
-            }
+            // Add MCP servers (email, calendar, local file system, etc.) via ATG
+            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
         }
         else
         {
@@ -109,7 +94,7 @@ public class Agent365Agent
                 Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()
                 {
 #pragma warning disable SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-                    FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new() { RetainArgumentTypes = true }),
+                    FunctionChoiceBehavior = FunctionChoiceBehavior.Required(options: new() { RetainArgumentTypes = true }),
 #pragma warning restore SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
                     ResponseFormat = turnContext.StreamingResponse.IsStreamingChannel ? "text" : "json_object", 
                 }),
@@ -150,9 +135,9 @@ public class Agent365Agent
             {
                 if (!string.IsNullOrEmpty(response.Content))
                 {
-                    var jsonNode = JsonNode.Parse(response.Content);
-                    context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
-                }
+                        var jsonNode = JsonNode.Parse(response.Content);
+                            context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
+                        }
 
                 chatHistory.Add(response);
                 sb.Append(response.Content);

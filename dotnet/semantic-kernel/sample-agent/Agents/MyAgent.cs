@@ -5,7 +5,7 @@ using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
 using AgentNotification;
 using Microsoft.Agents.A365.Notifications.Models;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
@@ -30,33 +30,34 @@ public class MyAgent : AgentApplication
     private readonly IExporterTokenCache<AgenticTokenStruct> _agentTokenCache;
     private readonly ILogger<MyAgent> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IServiceProvider _serviceProvider;
     // Setup reusable auto sign-in handlers
-    private readonly string AgenticIdAuthHandler = "agentic";
-    private readonly string MyAuthHandler = "me";
+    private readonly string AgenticIdAuthHanlder = "agentic";
+    private readonly string MyAuthHanlder = "me";
 
 
     internal static bool IsApplicationInstalled { get; set; } = false;
-    internal static bool TermsAndConditionsAccepted { get; set; } = false;
+    internal static bool TermsAndConditionsAccepted { get; set; } = true;
 
-    public MyAgent(AgentApplicationOptions options, IConfiguration configuration, Kernel kernel, IMcpToolRegistrationService toolService, IExporterTokenCache<AgenticTokenStruct> agentTokenCache, ILogger<MyAgent> logger) : base(options)
+    public MyAgent(AgentApplicationOptions options, IConfiguration configuration, Kernel kernel, IMcpToolRegistrationService toolService, IExporterTokenCache<AgenticTokenStruct> agentTokenCache, ILogger<MyAgent> logger, IServiceProvider serviceProvider) : base(options)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
         _toolsService = toolService ?? throw new ArgumentNullException(nameof(toolService));
         _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+
 
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
         TermsAndConditionsAccepted = true;
 
-        bool useBearerToken = Agent365Agent.TryGetBearerTokenForDevelopment(out var bearerToken);
-        string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHandler };
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
-        this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHandler });
-        OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
-        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
-        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: false, autoSignInHandlers: autoSignInHandlersForNotAgenticAuth);
+        this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+        OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHanlder });
+        OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: false, autoSignInHandlers: new[] { MyAuthHanlder });
     }
 
     /// <summary>
@@ -72,13 +73,13 @@ public class MyAgent : AgentApplication
         string ToolAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
-            ToolAuthHandlerName = AgenticIdAuthHandler;
+            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
+            ToolAuthHandlerName = AgenticIdAuthHanlder;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHandler;
-            ToolAuthHandlerName = MyAuthHandler;
+            ObservabilityAuthHandlerName = MyAuthHanlder;
+            ToolAuthHandlerName = MyAuthHanlder;
         }
         // Init the activity for observability
 
@@ -144,13 +145,13 @@ public class MyAgent : AgentApplication
         string ToolAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
-            ToolAuthHandlerName = AgenticIdAuthHandler;
+            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
+            ToolAuthHandlerName = AgenticIdAuthHanlder;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHandler;
-            ToolAuthHandlerName = MyAuthHandler;
+            ObservabilityAuthHandlerName = MyAuthHanlder;
+            ToolAuthHandlerName = MyAuthHanlder;
         }
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -259,11 +260,11 @@ public class MyAgent : AgentApplication
         string ObservabilityAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())
         {
-            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
+            ObservabilityAuthHandlerName = AgenticIdAuthHanlder;
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHandler;
+            ObservabilityAuthHandlerName = MyAuthHanlder;
         }
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -354,6 +355,8 @@ public class MyAgent : AgentApplication
     /// <returns></returns>
     private async Task<Agent365Agent> GetAgent365Agent(ServiceCollection serviceCollection, ITurnContext turnContext, string authHandlerName)
     {
-        return await Agent365Agent.CreateA365AgentWrapper(_kernel, serviceCollection.BuildServiceProvider(), _toolsService, authHandlerName, UserAuthorization, turnContext, _configuration).ConfigureAwait(false);
+        // Use the root service provider from DI instead of building a new isolated one
+        // This ensures singletons like WnsService and LocalMcpProxyService are accessible
+        return await Agent365Agent.CreateA365AgentWrapper(_kernel, _serviceProvider, _toolsService, authHandlerName, UserAuthorization, turnContext, _configuration).ConfigureAwait(false);
     }
 }

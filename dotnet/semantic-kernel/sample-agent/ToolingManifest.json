@@ -7,16 +7,19 @@
 			"mcpServerName": "mcp_CalendarTools"
 		},
 		{
-			"mcpServerName": "OneDriveMCPServer"
-		},
-		{
-			"mcpServerName": "mcp_NLWeb"
-		},
-		{
-			"mcpServerName": "mcp_KnowledgeTools"
-		},
-		{
-			"mcpServerName": "mcp_MeServer"
+			"mcpServerName": "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server",
+			"id": "file-mcp-server",
+			"url": "",
+			"scope": "local",
+			"audience": "local",
+			"publisher": "Microsoft",
+			"transportType": "Wns",
+			"wnsConfig": {
+				"clientName": "Lavanya",
+				"proxyBaseUrl": "https://lavanya01085-webapp.azurewebsites.net",
+				"connectionTimeoutSeconds": 30,
+				"localServerId": "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server"
+			}
 		}
 	]
 }
