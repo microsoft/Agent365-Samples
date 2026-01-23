@@ -64,7 +64,10 @@ export const a365Observability = ObservabilityManager.configure((builder: Builde
 a365Observability.start();
 
 /**
- * Wrapper class for CopilotStudioClient that adds observability spans.
+ * Microsoft Copilot Studio (MCS) client wrapper for {@link CopilotStudioClient} that adds observability spans.
+ *
+ * The "Mcs" prefix stands for "Microsoft Copilot Studio" and indicates that this client is specific
+ * to Copilot Studio agents, extending the base CopilotStudioClient with observability instrumentation.
  */
 class McsClient implements Client {
   private client: CopilotStudioClient;
