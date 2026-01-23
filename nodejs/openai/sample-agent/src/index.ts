@@ -37,8 +37,7 @@ server.post('/api/messages', (req: Request, res: Response) => {
 })
 
 const port = Number(process.env.PORT) || 3978
-// Always bind to 0.0.0.0 to allow external connections (needed for E2E tests and Azure)
-const host = '0.0.0.0';
+const host = process.env.HOST ?? (isProduction ? '0.0.0.0' : 'localhost');
 server.listen(port, host, async () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
 }).on('error', async (err: unknown) => {
