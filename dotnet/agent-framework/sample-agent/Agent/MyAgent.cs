@@ -43,8 +43,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
-        // Setup reusable auto sign-in handler for user authorization
-        private readonly string AgenticIdAuthHandler = "agentic";
+        // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
+        private readonly string? AgenticAuthHandlerName;
+        private readonly string? OboAuthHandlerName;
         // Temp
         private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
@@ -88,16 +89,22 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             _logger = logger;
             _toolService = toolService;
 
+            // Read auth handler names from configuration (can be empty/null to disable)
+            AgenticAuthHandlerName = _configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
+            OboAuthHandlerName = _configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
+
             // Greet when members are added to the conversation
             OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
             // Handle A365 Notification Messages. 
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
-            // Agentic requests require the "agentic" handler for user authorization
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
-            // Non-agentic requests (Playground, WebChat) - no auto sign-in handlers, uses bearer token from config if available
-            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: Array.Empty<string>());
+            // Agentic requests use the agentic auth handler (if configured)
+            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
+            // Non-agentic requests (Playground, WebChat) use OBO auth handler (if configured)
+            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? new[] { OboAuthHandlerName } : Array.Empty<string>();
+            OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
         }
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -128,17 +135,17 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         {
             // Select the appropriate auth handler based on request type
             // For agentic requests, use the agentic auth handler
-            // For non-agentic requests, we'll use bearer token if available (no auth handler needed)
+            // For non-agentic requests, use OBO auth handler (supports bearer token or configured auth)
             string? ObservabilityAuthHandlerName;
             string? ToolAuthHandlerName;
             if (turnContext.IsAgenticRequest())
             {
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticIdAuthHandler;
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticAuthHandlerName;
             }
             else
             {
-                // Non-agentic: no auth handler, will use bearer token in GetClientAgent
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = null;
+                // Non-agentic: use OBO auth handler if configured
+                ObservabilityAuthHandlerName = ToolAuthHandlerName = OboAuthHandlerName;
             }
 
 
@@ -253,7 +260,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                             string agentId = Utility.ResolveAgentIdentity(context, bearerToken!);
                             _logger?.LogInformation("Resolved agentId: '{AgentId}'", agentId ?? "(null)");
                             // Pass bearer token as the last parameter (accessToken override)
-                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, AgenticIdAuthHandler, context, bearerToken).ConfigureAwait(false);
+                            // Use OboAuthHandlerName for non-agentic requests, fall back to AgenticAuthHandlerName if not set
+                            var handlerForBearerToken = OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
+                            var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForBearerToken, context, bearerToken).ConfigureAwait(false);
 
                             if (a365Tools != null && a365Tools.Count > 0)
                             {
