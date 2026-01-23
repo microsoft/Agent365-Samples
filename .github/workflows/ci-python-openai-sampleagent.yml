@@ -1,18 +1,13 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 name: CI - Build Python OpenAI Sample Agent
 permissions:
   contents: read
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'python/openai/sample-agent/**/*'
-      - '.github/workflows/ci-python-openai-sampleagent.yml'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'python/openai/sample-agent/**/*'
-      - '.github/workflows/ci-python-openai-sampleagent.yml'
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   validate-sample:
