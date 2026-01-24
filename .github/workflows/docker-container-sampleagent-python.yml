@@ -1,0 +1,277 @@
+name: Deploy Python Agent Framework to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - users/tirthdoshi/local-playground
+    paths:
+      - 'python/agent-framework/sample-agent/**'
+      - '.github/workflows/docker-container-sampleagent-python.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'python/agent-framework/sample-agent/**'
+      - '.github/workflows/docker-container-sampleagent-python.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # Required for OIDC authentication
+  contents: read
+  pull-requests: write  # Required to comment on PRs
+
+env:
+  AZURE_RESOURCE_GROUP: agent365-samples-rg
+  ACR_NAME: agent365samplesacr
+  CONTAINER_APP_NAME: agent-framework-python
+  CONTAINER_APP_ENV: agent365-env
+  IMAGE_NAME: agent-framework-python
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login with Service Principal
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create Resource Group if needed
+        run: |
+          if ! az group exists --name ${{ env.AZURE_RESOURCE_GROUP }} --output tsv | grep -q true; then
+            echo "Creating Resource Group..."
+            az group create --name ${{ env.AZURE_RESOURCE_GROUP }} --location eastus
+          fi
+
+      - name: Create ACR if needed
+        run: |
+          if ! az acr show --name ${{ env.ACR_NAME }} &> /dev/null; then
+            echo "Creating ACR..."
+            az acr create \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --name ${{ env.ACR_NAME }} \
+              --sku Basic \
+              --admin-enabled true
+          fi
+
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+            -f python/agent-framework/sample-agent/Dockerfile \
+            python/agent-framework/sample-agent
+
+      - name: Push Docker Image to ACR
+        run: |
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+
+      - name: Create Container App Environment if needed
+        run: |
+          if ! az containerapp env show --name ${{ env.CONTAINER_APP_ENV }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} &> /dev/null; then
+            echo "Creating Container App Environment..."
+            az containerapp env create \
+              --name ${{ env.CONTAINER_APP_ENV }} \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --location eastus
+          fi
+
+      - name: Deploy to Azure Container App
+        run: |
+          if az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.AZURE_RESOURCE_GROUP }} &> /dev/null; then
+            echo "Updating existing Container App..."
+            az containerapp update \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --set-env-vars \
+                PORT=3978 \
+                AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }} \
+                AZURE_OPENAI_DEPLOYMENT=${{ secrets.AZURE_OPENAI_DEPLOYMENT }} \
+                AZURE_OPENAI_API_VERSION=${{ secrets.AZURE_OPENAI_API_VERSION }} \
+                AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }} \
+                USE_AGENTIC_AUTH=true \
+                ENABLE_OBSERVABILITY=true \
+                ENABLE_OTEL=true \
+                ENABLE_SENSITIVE_DATA=true \
+                PYTHON_ENVIRONMENT=production \
+                ENABLE_APPLICATION_INSIGHTS=${{ secrets.ENABLE_APPLICATION_INSIGHTS || 'false' }} \
+                APPLICATIONINSIGHTS_CONNECTION_STRING=${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING || '' }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=${{ secrets.SERVICE_CONNECTION_CLIENT_ID }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=${{ secrets.SERVICE_CONNECTION_CLIENT_SECRET }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=${{ secrets.SERVICE_CONNECTION_TENANT_ID }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES=${{ secrets.SERVICE_CONNECTION_SCOPES || 'https://graph.microsoft.com/.default' }} \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__TYPE=AgenticUserAuthorization \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES=${{ secrets.AGENTIC_SCOPES || 'https://graph.microsoft.com/.default' }} \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__ALTERNATEBLUEPRINTCONNECTIONNAME=${{ secrets.AGENTIC_CONNECTION_NAME || 'https://graph.microsoft.com/.default' }} \
+                CONNECTIONSMAP_0_SERVICEURL='*' \
+                CONNECTIONSMAP_0_CONNECTION=SERVICE_CONNECTION
+          else
+            echo "Creating new Container App..."
+            az containerapp create \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --environment ${{ env.CONTAINER_APP_ENV }} \
+              --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+              --registry-server ${{ env.ACR_NAME }}.azurecr.io \
+              --target-port 3978 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --env-vars \
+                PORT=3978 \
+                AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }} \
+                AZURE_OPENAI_DEPLOYMENT=${{ secrets.AZURE_OPENAI_DEPLOYMENT }} \
+                AZURE_OPENAI_API_VERSION=${{ secrets.AZURE_OPENAI_API_VERSION }} \
+                AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }} \
+                USE_AGENTIC_AUTH=true \
+                ENABLE_OBSERVABILITY=true \
+                ENABLE_OTEL=true \
+                ENABLE_SENSITIVE_DATA=true \
+                PYTHON_ENVIRONMENT=production \
+                ENABLE_APPLICATION_INSIGHTS=${{ secrets.ENABLE_APPLICATION_INSIGHTS || 'false' }} \
+                APPLICATIONINSIGHTS_CONNECTION_STRING=${{ secrets.APPLICATIONINSIGHTS_CONNECTION_STRING || '' }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID=${{ secrets.SERVICE_CONNECTION_CLIENT_ID }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET=${{ secrets.SERVICE_CONNECTION_CLIENT_SECRET }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID=${{ secrets.SERVICE_CONNECTION_TENANT_ID }} \
+                CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES=${{ secrets.SERVICE_CONNECTION_SCOPES || 'https://graph.microsoft.com/.default' }} \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__TYPE=AgenticUserAuthorization \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES=${{ secrets.AGENTIC_SCOPES || 'https://graph.microsoft.com/.default' }} \
+                AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__ALTERNATEBLUEPRINTCONNECTIONNAME=${{ secrets.AGENTIC_CONNECTION_NAME || 'https://graph.microsoft.com/.default' }} \
+                CONNECTIONSMAP_0_SERVICEURL='*' \
+                CONNECTIONSMAP_0_CONNECTION=SERVICE_CONNECTION
+          fi
+
+      - name: Get Container App URL
+        id: get-url
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+          echo "🚀 Container App deployed successfully!"
+          echo "🌐 URL: https://$FQDN"
+          echo "📍 Health: https://$FQDN/api/health"
+          echo "📨 Messages: https://$FQDN/api/messages"
+          echo "app_url=https://$FQDN" >> $GITHUB_OUTPUT
+          echo "health_url=https://$FQDN/api/health" >> $GITHUB_OUTPUT
+          echo "messages_url=https://$FQDN/api/messages" >> $GITHUB_OUTPUT
+
+      - name: View Container App Logs
+        run: |
+          echo "📋 Fetching recent logs..."
+          az containerapp logs show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --tail 50 \
+            --follow false
+
+      - name: Comment on PR with Deployment URL
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const appUrl = '${{ steps.get-url.outputs.app_url }}';
+            const healthUrl = '${{ steps.get-url.outputs.health_url }}';
+            const messagesUrl = '${{ steps.get-url.outputs.messages_url }}';
+            const sha = '${{ github.sha }}';
+            
+            const body = `## 🚀 Deployment Successful!
+            
+            Your Python Agent Framework has been deployed to Azure Container Apps.
+            
+            ### 🔗 Deployment Links
+            - **App URL**: ${appUrl}
+            - **Health Endpoint**: ${healthUrl}
+            - **Messages Endpoint**: ${messagesUrl}
+            
+            ### 📦 Deployment Details
+            - **Container App**: \`${{ env.CONTAINER_APP_NAME }}\`
+            - **Resource Group**: \`${{ env.AZURE_RESOURCE_GROUP }}\`
+            - **Image Tag**: \`${sha.substring(0, 7)}\`
+            - **Commit**: ${sha}
+            
+            ### 🧪 Testing with Agents Playground
+            
+            #### Option 1: Direct Testing (Simple)
+            \`\`\`bash
+            # Check health
+            curl ${healthUrl}
+            
+            # Send a test message (requires authentication)
+            curl -X POST ${messagesUrl} \\
+              -H "Content-Type: application/json" \\
+              -d '{"type":"message","text":"Hello Agent!"}'
+            \`\`\`
+            
+            #### Option 2: Test with Agents Playground (Interactive)
+            
+            1. **Install and authenticate ngrok:**
+               \`\`\`bash
+               # Download ngrok from https://ngrok.com/download
+               # Authenticate with your token
+               ngrok authtoken YOUR_NGROK_TOKEN
+               \`\`\`
+            
+            2. **Start ngrok tunnel:**
+               \`\`\`bash
+               ngrok http 2000
+               \`\`\`
+               Copy the HTTPS forwarding URL (e.g., \`https://abc123.ngrok.io\`)
+            
+            3. **Launch Agents Playground:**
+               \`\`\`bash
+               agentsplayground -p 2000 -e ${messagesUrl} --su 'YOUR_NGROK_URL/_connector'
+               \`\`\`
+               
+               Replace \`YOUR_NGROK_URL\` with the ngrok URL from step 2.
+            
+            4. **Test your agent** in the playground UI at http://localhost:2000
+            
+            ---
+            *Deployed from commit ${sha.substring(0, 7)} by @${{ github.actor }}*`;
+            
+            // Find existing comment from this bot
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🚀 Deployment Successful!')
+            );
+            
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+              console.log('Updated existing comment');
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+              console.log('Created new comment');
+            }
+
