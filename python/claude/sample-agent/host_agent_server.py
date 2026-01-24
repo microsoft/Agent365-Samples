@@ -434,6 +434,10 @@ class GenericAgentHost:
                 )
                 port = desired_port + 1
 
+        # Detect production environment (Azure App Service sets WEBSITE_SITE_NAME)
+        is_production = os.getenv("WEBSITE_SITE_NAME") is not None
+        host = "0.0.0.0" if is_production else "localhost"
+
         print("=" * 80)
         print(f"🏢 Generic Agent Host - {self.agent_class.__name__}")
         print("=" * 80)
@@ -442,13 +446,13 @@ class GenericAgentHost:
         print("🎯 Compatible with Agents Playground")
         if port != desired_port:
             print(f"⚠️ Requested port {desired_port} busy; using fallback {port}")
-        print(f"\n🚀 Starting server on localhost:{port}")
+        print(f"\n🚀 Starting server on {host}:{port}")
         print(f"📚 Bot Framework endpoint: http://localhost:{port}/api/messages")
         print(f"❤️ Health: http://localhost:{port}/api/health")
         print("🎯 Ready for testing!\n")
 
         try:
-            run_app(app, host="localhost", port=port)
+            run_app(app, host=host, port=port)
         except KeyboardInterrupt:
             print("\n👋 Server stopped")
         except Exception as error:
