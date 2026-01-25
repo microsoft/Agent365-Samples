@@ -1,0 +1,70 @@
+[project]
+name = "a365-help-assistant"
+version = "0.1.0"
+description = "A365 Help Assistant - Helpdesk Agent for Microsoft Agent 365 using OpenAI SDK"
+authors = [
+    { name = "Microsoft", email = "support@microsoft.com" }
+]
+dependencies = [
+    # OpenAI Agents SDK - The official package
+    "openai-agents",
+
+    # Microsoft Agents SDK - Official packages for hosting and integration
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+
+    # HTTP server support for MCP servers
+    "uvicorn[standard]>=0.20.0",
+    "fastapi>=0.100.0",
+
+    # HTTP client
+    "httpx>=0.24.0",
+
+    # Data validation
+    "pydantic>=2.0.0",
+
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_tooling_extensions_openai >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_observability_extensions_openai >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
+]
+requires-python = ">=3.11"
+
+# Package index configuration
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.hatch.build.targets.sdist]
+include = ["*.py", "resources/**"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
