@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { createAgent, ReactAgent } from "langchain";
 import { ChatOpenAI } from "@langchain/openai";
 
@@ -95,7 +98,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
     console.error('Error adding MCP tool servers:', error);
   }
 
-  return new LangChainClient(agentWithMcpTools || agent);
+  return new LangChainClient(agentWithMcpTools || agent, turnContext);
 }
 
 /**
@@ -104,9 +107,11 @@ export async function getClient(authorization: Authorization, authHandlerName: s
  */
 class LangChainClient implements Client {
   private agent: ReactAgent;
+  private turnContext: TurnContext;
 
-  constructor(agent: ReactAgent) {
+  constructor(agent: ReactAgent, turnContext: TurnContext) {
     this.agent = agent;
+    this.turnContext = turnContext;
   }
 
   /**
@@ -153,13 +158,13 @@ class LangChainClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
+      agentName: agentName,
+      conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
     };
 
     let response = '';
