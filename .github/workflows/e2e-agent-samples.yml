@@ -38,6 +38,9 @@ on:
         required: false
         default: 'false'
 
+permissions:
+  contents: read
+
 env:
   # MCP Authentication - Required for all samples
   MCP_CLIENT_ID: ${{ secrets.MCP_CLIENT_ID }}
@@ -492,3 +495,4 @@ jobs:
           echo "| Node.js OpenAI | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Semantic Kernel | ${{ needs.dotnet-semantic-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Agent Framework | ${{ needs.dotnet-agent-framework.result }} |" >> $GITHUB_STEP_SUMMARY
+
