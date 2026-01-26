@@ -5,10 +5,10 @@
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon --watch src --exec ts-node src/index.ts",
-    "build": "tsc",
     "test-tool": "agentsplayground",
-    "clean": "rimraf dist",
-    "install:clean": "npm run clean && npm install"
+    "install:clean": "npm run clean && npm install",
+    "clean": "rimraf dist node_modules package-lock.json",
+    "build": "tsc"
   },
   "keywords": [
     "perplexity",
@@ -17,20 +17,25 @@
     "agent365",
     "observability"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Microsoft",
+  "license": "MIT",
   "dependencies": {
+    "@microsoft/agents-hosting": "^1.2.2",
+    "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
-    "@microsoft/agents-activity": "^1.1.0-alpha.85",
-    "@microsoft/agents-hosting": "^1.1.0-alpha.85",
-    "@microsoft/agents-hosting-express": "^1.1.0-alpha.85",
     "@perplexity-ai/perplexity_ai": "^0.16.0",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0"
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@microsoft/m365agentsplayground": "^0.2.20",
-    "ts-node": "^10.9.2"
+    "@microsoft/m365agentsplayground": "^0.2.18",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
   }
 }
