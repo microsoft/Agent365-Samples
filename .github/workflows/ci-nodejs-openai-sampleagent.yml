@@ -4,14 +4,8 @@
 name: CI - Build Node.js OpenAI Sample Agent
 
 on:
-  push:
-    branches: [ main, master ]
-    paths:
-      - 'nodejs/openai/sample-agent/**/*'
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'nodejs/openai/sample-agent/**/*'
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   nodejs-openai-sampleagent:

@@ -1,21 +1,30 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// It is important to load environment variables before importing other modules
-import { configDotenv } from 'dotenv';
-
-configDotenv();
+// Note: dotenv is loaded in agent.ts before AgentApplication is instantiated
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
 
-// Use request validation middleware only if hosting publicly
-const isProduction = Boolean(process.env.WEBSITE_SITE_NAME) || process.env.NODE_ENV === 'production';
-const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {};
+// Only NODE_ENV=development explicitly disables authentication
+// All other cases (production, test, unset, etc.) require authentication
+const isDevelopment = process.env.NODE_ENV === 'development';
+const authConfig: AuthConfiguration = isDevelopment ? {} : loadAuthConfigFromEnv();
+
+console.log(`Environment: NODE_ENV=${process.env.NODE_ENV}, isDevelopment=${isDevelopment}`);
 
 const server = express()
 server.use(express.json())
+
+// Health endpoint - placed BEFORE auth middleware so it doesn't require authentication
+server.get('/api/health', (req, res: Response) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 server.use(authorizeJWT(authConfig))
 
 server.post('/api/messages', (req: Request, res: Response) => {
@@ -26,7 +35,8 @@ server.post('/api/messages', (req: Request, res: Response) => {
 })
 
 const port = Number(process.env.PORT) || 3978
-const host = isProduction ? '0.0.0.0' : '127.0.0.1';
+// Host is configurable; default to localhost for development, 0.0.0.0 for everything else
+const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
 server.listen(port, host, async () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
 }).on('error', async (err: unknown) => {
