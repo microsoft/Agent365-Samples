@@ -28,11 +28,19 @@ if (isProduction) {
   console.log("   Activity Protocol Mode with Observability");
   console.log("");
 
+  // Add health endpoint
+  agentApp.get("/health", (req, res) => {
+    res.status(200).json({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   try {
     startServer(agentApp);
     console.log("✅ Agent server is running and ready to accept connections");
     console.log(
-      "🔭 Observability SDK is active and tracking agent interactions"
+      "🔭 Observability SDK is active and tracking agent interactions",
     );
     console.log("");
   } catch (err) {
@@ -85,12 +93,20 @@ if (isProduction) {
     });
   });
 
+  // Add health endpoint
+  server.get("/health", (req, res) => {
+    res.status(200).json({
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   const port = Number(process.env["PORT"]) || 3978;
   const host = "127.0.0.1";
   const httpServer = server
     .listen(port, host, async () => {
       console.log(
-        `\n🚀 Perplexity Agent listening on ${host}:${port} (local dev)`
+        `\n🚀 Perplexity Agent listening on ${host}:${port} (local dev)`,
       );
       console.log("✅ Agent ready to receive messages!");
       console.log("   Test with: npm run test-tool");
