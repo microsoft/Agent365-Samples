@@ -140,8 +140,10 @@ $wrapperScript = Join-Path $AgentPath "run-agent.ps1"
 $escapedToken = $BearerToken -replace "'", "''"
 
 # Build wrapper script with error handling and diagnostics
+# The command should be a long-running server - if it exits, capture why
 $scriptLines = @(
     "`$ErrorActionPreference = 'Continue'"
+    ""
     "Write-Host '=== Agent Wrapper Script Started ==='"
     "Write-Host 'Working Directory:' (Get-Location)"
     "Write-Host 'PowerShell Version:' `$PSVersionTable.PSVersion"
@@ -151,6 +153,7 @@ $scriptLines = @(
     "`$env:ASPNETCORE_URLS = 'http://localhost:$Port'"
     "`$env:BEARER_TOKEN = '$escapedToken'"
     "`$env:PYTHONIOENCODING = 'utf-8'"
+    "`$env:PYTHONUNBUFFERED = '1'"
     "`$env:ENVIRONMENT = '$Environment'"
     "`$env:NODE_ENV = 'development'"
     ""
@@ -158,22 +161,59 @@ $scriptLines = @(
     "Write-Host '  PORT=' `$env:PORT"
     "Write-Host '  BEARER_TOKEN length:' `$env:BEARER_TOKEN.Length"
     "Write-Host '  ENVIRONMENT:' `$env:ENVIRONMENT"
-    "Write-Host '  NODE_ENV:' `$env:NODE_ENV"
     ""
-    "Write-Host 'Directory contents:'"
-    "Get-ChildItem -Name | ForEach-Object { Write-Host `"  `$_`" }"
+    "Write-Host '=== Pre-flight Checks ==='"
+)
+
+# Add runtime-specific pre-flight checks
+if ($Runtime -eq "python") {
+    $scriptLines += @(
+        "Write-Host 'Checking Python environment...'"
+        "uv run python --version"
+        "Write-Host 'Python packages:'"
+        "uv run pip list | Select-Object -First 20"
+        "Write-Host ''"
+        "Write-Host 'Testing Python can import main script...'"
+        "uv run python -c `"import start_with_generic_host; print('Import OK')`""
+        "if (`$LASTEXITCODE -ne 0) {"
+        "    Write-Host 'ERROR: Failed to import start_with_generic_host.py' -ForegroundColor Red"
+        "    exit 1"
+        "}"
+    )
+}
+elseif ($Runtime -eq "nodejs") {
+    $scriptLines += @(
+        "Write-Host 'Checking Node.js environment...'"
+        "node --version"
+        "Write-Host 'Checking if entry point exists...'"
+        "if (Test-Path 'dist/index.js') { Write-Host 'dist/index.js exists' } else { Write-Host 'ERROR: dist/index.js not found!' -ForegroundColor Red; exit 1 }"
+    )
+}
+elseif ($Runtime -eq "dotnet") {
+    $scriptLines += @(
+        "Write-Host 'Checking .NET environment...'"
+        "dotnet --version"
+    )
+}
+
+$scriptLines += @(
     ""
     "Write-Host '=== Starting Agent Command ==='"
     "Write-Host 'Command: $StartCommand'"
+    "Write-Host ''"
     ""
-    "try {"
-    "    $StartCommand"
-    "} catch {"
-    "    Write-Host 'ERROR: Agent command failed!' -ForegroundColor Red"
-    "    Write-Host `$_.Exception.Message"
-    "    Write-Host `$_.ScriptStackTrace"
-    "    exit 1"
+    "# Run the command - this should be a long-running server process"
+    "$StartCommand"
+    ""
+    "# If we get here, the server exited"
+    "`$exitCode = `$LASTEXITCODE"
+    "Write-Host ''"
+    "Write-Host '=== Agent Process Exited ===' -ForegroundColor Yellow"
+    "Write-Host 'Exit code:' `$exitCode"
+    "if (`$exitCode -ne 0) {"
+    "    Write-Host 'ERROR: Server exited with non-zero code' -ForegroundColor Red"
     "}"
+    "exit `$exitCode"
 )
 $scriptContent = $scriptLines -join "`r`n"
 [System.IO.File]::WriteAllText($wrapperScript, $scriptContent)
