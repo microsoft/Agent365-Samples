@@ -91,7 +91,13 @@ class GenericAgentHost:
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
 
-        self.auth_handler_name = "AGENTIC"
+        # Auth handler name can be configured via environment
+        # Defaults to empty (no auth handler) - set AUTH_HANDLER_NAME=AGENTIC for production agentic auth
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
+            logger.info(f"🔐 Using auth handler: {self.auth_handler_name}")
+        else:
+            logger.info("🔓 No auth handler configured (AUTH_HANDLER_NAME not set)")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -118,19 +124,28 @@ class GenericAgentHost:
     async def _setup_observability_token(
         self, context: TurnContext, tenant_id: str, agent_id: str
     ):
+        # Only attempt token exchange when auth handler is configured
+        if not self.auth_handler_name:
+            logger.debug("Skipping observability token exchange (no auth handler)")
+            return
+            
         try:
+            logger.info(f"🔐 Attempting token exchange for observability...")
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
                 auth_handler_id=self.auth_handler_name,
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+            logger.info(f"✅ Token exchange successful")
         except Exception as e:
             logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
+        logger.info(f"🔍 Validating agent and setting up context...")
         tenant_id = context.activity.recipient.tenant_id
         agent_id = context.activity.recipient.agentic_app_id
+        logger.info(f"🔍 tenant_id={tenant_id}, agent_id={agent_id}")
 
         if not self.agent_instance:
             logger.error("Agent not available")
@@ -143,7 +158,8 @@ class GenericAgentHost:
     # --- Handlers (Messages & Notifications) ---
     def _setup_handlers(self):
         """Setup message and notification handlers"""
-        handler = [self.auth_handler_name]
+        # Configure auth handlers - only required when auth_handler_name is set
+        handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
 
         async def help_handler(context: TurnContext, _: TurnState):
             await context.send_activity(
@@ -151,10 +167,10 @@ class GenericAgentHost:
                 "How can I help you today?"
             )
 
-        self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
-        self.agent_app.message("/help", auth_handlers=handler)(help_handler)
+        self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
+        self.agent_app.message("/help", **handler_config)(help_handler)
 
-        @self.agent_app.activity("message", auth_handlers=handler)
+        @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             try:
                 result = await self._validate_agent_and_setup_context(context)
@@ -179,7 +195,7 @@ class GenericAgentHost:
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
-            auth_handlers=handler,
+            **handler_config,
         )
         async def on_notification(
             context: TurnContext,
