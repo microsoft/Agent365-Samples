@@ -135,18 +135,18 @@ if ([string]::IsNullOrEmpty($BearerToken)) {
 }
 Write-Host "  BEARER_TOKEN length: $($BearerToken.Length)" -ForegroundColor Green
 
-# Create PowerShell wrapper script that handles its own logging
-$wrapperScript = Join-Path $AgentPath "run-agent.ps1"
-$escapedToken = $BearerToken -replace "'", "''"
+# Create PowerShell wrapper script in temp directory (not in repo working directory)
+# This prevents plaintext secrets from leaking if workspace is reused or artifacts are collected
+$tempDir = [System.IO.Path]::GetTempPath()
+$wrapperScript = Join-Path $tempDir "run-agent-$([Guid]::NewGuid().ToString('N').Substring(0,8)).ps1"
 
 # Build wrapper script with error handling and diagnostics
 # Key change: The wrapper script handles its own logging via Start-Transcript
-# This avoids issues with Start-Process -RedirectStandardOutput
 $scriptLines = @(
     "`$ErrorActionPreference = 'Continue'"
     ""
-    "# Set up logging via transcript"
-    "`$logPath = Join-Path (Get-Location) 'agent.log'"
+    "# Set up logging via transcript (writes to agent directory)"
+    "`$logPath = Join-Path '$AgentPath' 'agent.log'"
     "Start-Transcript -Path `$logPath -Force"
     ""
     "Write-Host '=== Agent Wrapper Script Started ==='"
@@ -154,10 +154,9 @@ $scriptLines = @(
     "Write-Host 'PowerShell Version:' `$PSVersionTable.PSVersion"
     "Write-Host 'Log file:' `$logPath"
     ""
-    "# Set environment variables"
+    "# Set environment variables (token passed via env var, not in script)"
     "`$env:PORT = '$Port'"
     "`$env:ASPNETCORE_URLS = 'http://localhost:$Port'"
-    "`$env:BEARER_TOKEN = '$escapedToken'"
     "`$env:PYTHONIOENCODING = 'utf-8'"
     "`$env:PYTHONUNBUFFERED = '1'"
     "`$env:ENVIRONMENT = '$Environment'"
@@ -233,20 +232,29 @@ $scriptContent = $scriptLines -join "`r`n"
 Write-Host "PowerShell wrapper script created at: $wrapperScript" -ForegroundColor Gray
 
 # Start the agent process
-# The wrapper script handles its own logging, so we don't redirect stdout/stderr
-# This avoids file handle issues that can cause the process to exit unexpectedly
+# Set BEARER_TOKEN in current process environment so child inherits it
+# This avoids writing the token to the script file on disk
+$env:BEARER_TOKEN = $BearerToken
 Push-Location $AgentPath
 try {
     # Start the wrapper script directly without output redirection
     # The wrapper uses Start-Transcript and Tee-Object for logging
+    # BEARER_TOKEN is inherited from parent process environment
     $process = Start-Process -FilePath "pwsh" `
         -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $wrapperScript `
         -WorkingDirectory $AgentPath -PassThru -WindowStyle Hidden
     
     Write-Host "Agent process started (PID: $($process.Id))" -ForegroundColor Green
     
+    # Delete the wrapper script now that process has started (token not in file anyway)
+    Start-Sleep -Seconds 1
+    if (Test-Path $wrapperScript) {
+        Remove-Item $wrapperScript -Force -ErrorAction SilentlyContinue
+        Write-Host "Wrapper script cleaned up" -ForegroundColor Gray
+    }
+    
     # Give the process a moment to start and initialize transcript
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 2
     
     # Wait for agent to be ready
     $elapsed = 2

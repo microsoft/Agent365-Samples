@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 # =============================================================================
 # E2E Tests: Agent Samples
 # =============================================================================
@@ -52,7 +55,6 @@ env:
   MCP_ENVIRONMENT: 'Development'
   
   # Common settings
-  TEST_TIMEOUT: 120
   SCRIPTS_PATH: scripts/e2e
   
   # E2E Integration Tests - located in this repository
