@@ -91,6 +91,7 @@ class GenericAgentHost:
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
 
+        self.use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
         self.auth_handler_name = "AGENTIC"
 
         self.agent_class = agent_class
@@ -129,21 +130,31 @@ class GenericAgentHost:
             logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
-        tenant_id = context.activity.recipient.tenant_id
-        agent_id = context.activity.recipient.agentic_app_id
+        try:
+            tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
+            agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
+            logger.info(f"🔍 Validating context - tenant_id: {tenant_id}, agent_id: {agent_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not extract tenant/agent IDs: {e}")
+            tenant_id = "unknown"
+            agent_id = "unknown"
 
         if not self.agent_instance:
             logger.error("Agent not available")
             await context.send_activity("❌ Sorry, the agent is not available.")
             return None
 
-        await self._setup_observability_token(context, tenant_id, agent_id)
-        return tenant_id, agent_id
+        # Setup observability token in agentic auth mode
+        if self.use_agentic_auth and tenant_id and agent_id:
+            await self._setup_observability_token(context, tenant_id, agent_id)
+
+        return tenant_id or "unknown", agent_id or "unknown"
 
     # --- Handlers (Messages & Notifications) ---
     def _setup_handlers(self):
         """Setup message and notification handlers"""
-        handler = [self.auth_handler_name]
+        # Use auth_handlers only in agentic auth mode
+        handler = [self.auth_handler_name] if self.use_agentic_auth else None
 
         async def help_handler(context: TurnContext, _: TurnState):
             await context.send_activity(
@@ -151,36 +162,65 @@ class GenericAgentHost:
                 "How can I help you today?"
             )
 
-        self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
-        self.agent_app.message("/help", auth_handlers=handler)(help_handler)
+        if self.use_agentic_auth:
+            self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
+            self.agent_app.message("/help", auth_handlers=handler)(help_handler)
+        else:
+            self.agent_app.conversation_update("membersAdded")(help_handler)
+            self.agent_app.message("/help")(help_handler)
 
-        @self.agent_app.activity("message", auth_handlers=handler)
+        # Message handler - MUST use auth_handlers in agentic auth mode to trigger sign-in flow
+        # The sign-in flow caches the initial token, which is then used by exchange_token()
         async def on_message(context: TurnContext, _: TurnState):
             try:
+                logger.info("📥 on_message handler called")
                 result = await self._validate_agent_and_setup_context(context)
                 if result is None:
+                    logger.warning("⚠️ Validation returned None")
                     return
                 tenant_id, agent_id = result
+                logger.info(f"✅ Validated - tenant: {tenant_id}, agent: {agent_id}")
 
                 with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
                     user_message = context.activity.text or ""
+                    logger.info(f"📝 User message text: '{user_message}'")
                     if not user_message.strip() or user_message.strip() == "/help":
+                        logger.info("⏭️ Skipping empty or help message")
                         return
 
                     logger.info(f"📨 {user_message}")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
-                    await context.send_activity(response)
+                    try:
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+                        logger.info(f"📤 Response: {response[:200] if response else 'None'}...")
+                        await context.send_activity(response)
+                        logger.info("✅ Response sent successfully")
+                    except Exception as process_error:
+                        logger.error(f"❌ Process error: {process_error}", exc_info=True)
+                        await context.send_activity(f"Sorry, processing error: {str(process_error)}")
 
             except Exception as e:
-                logger.error(f"❌ Error: {e}")
-                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
+                logger.error(f"❌ Error in on_message: {e}", exc_info=True)
+                try:
+                    await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
+                except Exception as send_error:
+                    logger.error(f"❌ Failed to send error message: {send_error}")
 
-        @self.agent_notification.on_agent_notification(
-            channel_id=ChannelId(channel="agents", sub_channel="*"),
-            auth_handlers=handler,
-        )
+        # Register message handler with auth_handlers in agentic mode (triggers sign-in flow)
+        if self.use_agentic_auth:
+            self.agent_app.activity("message", auth_handlers=handler)(on_message)
+        else:
+            self.agent_app.activity("message")(on_message)
+
+        # Notification handler - use auth_handlers only in agentic auth mode
+        notification_decorator_kwargs = {
+            "channel_id": ChannelId(channel="agents", sub_channel="*"),
+        }
+        if self.use_agentic_auth:
+            notification_decorator_kwargs["auth_handlers"] = handler
+
+        @self.agent_notification.on_agent_notification(**notification_decorator_kwargs)
         async def on_notification(
             context: TurnContext,
             state: TurnState,
@@ -245,8 +285,10 @@ class GenericAgentHost:
                 scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
             )
 
-        if environ.get("BEARER_TOKEN"):
-            logger.info("🔑 Anonymous dev mode")
+        if self.use_agentic_auth:
+            logger.info("🔐 Agentic Auth mode enabled")
+        elif environ.get("BEARER_TOKEN"):
+            logger.info("🔑 Anonymous dev mode (API key auth)")
         else:
             logger.warning("⚠️ No auth env vars; running anonymous")
         return None
@@ -306,10 +348,11 @@ class GenericAgentHost:
             if s.connect_ex(("127.0.0.1", desired_port)) == 0:
                 port = desired_port + 1
 
+        auth_mode = "Agentic Auth" if self.use_agentic_auth else ("API Key" if environ.get("AZURE_OPENAI_API_KEY") else "Anonymous")
         print("=" * 80)
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
-        print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
+        print(f"🔒 Auth: {auth_mode}")
         print(f"🚀 Server: localhost:{port}")
         print(f"📚 Endpoint: http://localhost:{port}/api/messages")
         print(f"❤️  Health: http://localhost:{port}/api/health\n")
