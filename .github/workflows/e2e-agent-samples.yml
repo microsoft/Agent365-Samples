@@ -140,6 +140,24 @@ jobs:
       - name: Run E2E Tests
         shell: pwsh
         run: |
+          # Verify agent process is still running
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              # Show logs
+              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
+              if (Test-Path $logFile) {
+                Write-Host "Agent logs:" -ForegroundColor Yellow
+                Get-Content $logFile
+              }
+              throw "Agent process has stopped"
+            }
+          }
+          
           $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
           Write-Host "Testing agent at $agentUrl..."
           
@@ -260,6 +278,20 @@ jobs:
       - name: Run E2E Tests
         shell: pwsh
         run: |
+          # Verify agent process is still running
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
+              if (Test-Path $logFile) { Get-Content $logFile }
+              throw "Agent process has stopped"
+            }
+          }
+          
           $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
           $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing
           Write-Host "Health check: $($healthResponse.StatusCode)"
@@ -360,6 +392,20 @@ jobs:
       - name: Run E2E Tests
         shell: pwsh
         run: |
+          # Verify agent process is still running
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
+              if (Test-Path $logFile) { Get-Content $logFile }
+              throw "Agent process has stopped"
+            }
+          }
+          
           $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing
           Write-Host "Health: $($response.StatusCode) - E2E tests passed!"
 
@@ -458,6 +504,20 @@ jobs:
       - name: Run E2E Tests
         shell: pwsh
         run: |
+          # Verify agent process is still running
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
+              if (Test-Path $logFile) { Get-Content $logFile }
+              throw "Agent process has stopped"
+            }
+          }
+          
           $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing
           Write-Host "Health: $($response.StatusCode) - E2E tests passed!"
 
