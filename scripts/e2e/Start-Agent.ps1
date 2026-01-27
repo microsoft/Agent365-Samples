@@ -124,9 +124,9 @@ else {
     }
 }
 
-# Create log files
-$logFile = Join-Path $AgentPath "agent.log"
-$errorLogFile = Join-Path $AgentPath "agent-error.log"
+# Log file paths - the wrapper script creates these via Start-Transcript and Tee-Object
+$logFile = Join-Path $AgentPath "agent.log"           # PowerShell transcript
+$outputLogFile = Join-Path $AgentPath "agent-output.log"  # Command output
 
 # Validate bearer token
 if ([string]::IsNullOrEmpty($BearerToken)) {
@@ -135,18 +135,24 @@ if ([string]::IsNullOrEmpty($BearerToken)) {
 }
 Write-Host "  BEARER_TOKEN length: $($BearerToken.Length)" -ForegroundColor Green
 
-# Create PowerShell wrapper script
+# Create PowerShell wrapper script that handles its own logging
 $wrapperScript = Join-Path $AgentPath "run-agent.ps1"
 $escapedToken = $BearerToken -replace "'", "''"
 
 # Build wrapper script with error handling and diagnostics
-# The command should be a long-running server - if it exits, capture why
+# Key change: The wrapper script handles its own logging via Start-Transcript
+# This avoids issues with Start-Process -RedirectStandardOutput
 $scriptLines = @(
     "`$ErrorActionPreference = 'Continue'"
+    ""
+    "# Set up logging via transcript"
+    "`$logPath = Join-Path (Get-Location) 'agent.log'"
+    "Start-Transcript -Path `$logPath -Force"
     ""
     "Write-Host '=== Agent Wrapper Script Started ==='"
     "Write-Host 'Working Directory:' (Get-Location)"
     "Write-Host 'PowerShell Version:' `$PSVersionTable.PSVersion"
+    "Write-Host 'Log file:' `$logPath"
     ""
     "# Set environment variables"
     "`$env:PORT = '$Port'"
@@ -203,7 +209,12 @@ $scriptLines += @(
     "Write-Host ''"
     ""
     "# Run the command - this should be a long-running server process"
-    "$StartCommand"
+    "# Pipe both stdout and stderr to Tee-Object to capture in log"
+    "try {"
+    "    $StartCommand *>&1 | Tee-Object -FilePath (Join-Path (Get-Location) 'agent-output.log')"
+    "} catch {"
+    "    Write-Host 'Exception running command:' `$_.Exception.Message -ForegroundColor Red"
+    "}"
     ""
     "# If we get here, the server exited"
     "`$exitCode = `$LASTEXITCODE"
@@ -213,6 +224,7 @@ $scriptLines += @(
     "if (`$exitCode -ne 0) {"
     "    Write-Host 'ERROR: Server exited with non-zero code' -ForegroundColor Red"
     "}"
+    "Stop-Transcript -ErrorAction SilentlyContinue"
     "exit `$exitCode"
 )
 $scriptContent = $scriptLines -join "`r`n"
@@ -221,16 +233,20 @@ $scriptContent = $scriptLines -join "`r`n"
 Write-Host "PowerShell wrapper script created at: $wrapperScript" -ForegroundColor Gray
 
 # Start the agent process
+# The wrapper script handles its own logging, so we don't redirect stdout/stderr
+# This avoids file handle issues that can cause the process to exit unexpectedly
 Push-Location $AgentPath
 try {
-    $process = Start-Process -FilePath "pwsh" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $wrapperScript `
-        -WorkingDirectory $AgentPath -PassThru -WindowStyle Hidden `
-        -RedirectStandardOutput $logFile -RedirectStandardError $errorLogFile
+    # Start the wrapper script directly without output redirection
+    # The wrapper uses Start-Transcript and Tee-Object for logging
+    $process = Start-Process -FilePath "pwsh" `
+        -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $wrapperScript `
+        -WorkingDirectory $AgentPath -PassThru -WindowStyle Hidden
     
     Write-Host "Agent process started (PID: $($process.Id))" -ForegroundColor Green
     
-    # Give the process a moment to start and write initial output
-    Start-Sleep -Seconds 2
+    # Give the process a moment to start and initialize transcript
+    Start-Sleep -Seconds 3
     
     # Wait for agent to be ready
     $elapsed = 2
@@ -253,23 +269,25 @@ try {
             # Wait a moment for file handles to be released
             Start-Sleep -Milliseconds 500
             
+            # Show transcript log
             if (Test-Path $logFile) {
                 $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
                 if ($logContent) {
-                    Write-Host "Agent logs:" -ForegroundColor Yellow
+                    Write-Host "Agent transcript log:" -ForegroundColor Yellow
                     Write-Host $logContent
                 } else {
-                    Write-Host "Agent log file exists but is empty" -ForegroundColor Yellow
+                    Write-Host "Agent transcript file exists but is empty" -ForegroundColor Yellow
                 }
             } else {
-                Write-Host "No agent log file found at: $logFile" -ForegroundColor Yellow
+                Write-Host "No agent transcript file found at: $logFile" -ForegroundColor Yellow
             }
             
-            if (Test-Path $errorLogFile) {
-                $errorContent = Get-Content $errorLogFile -Raw -ErrorAction SilentlyContinue
-                if ($errorContent) {
-                    Write-Host "Agent error logs:" -ForegroundColor Red
-                    Write-Host $errorContent
+            # Show command output log
+            if (Test-Path $outputLogFile) {
+                $outputContent = Get-Content $outputLogFile -Raw -ErrorAction SilentlyContinue
+                if ($outputContent) {
+                    Write-Host "Agent command output:" -ForegroundColor Yellow
+                    Write-Host $outputContent
                 }
             }
             
@@ -347,18 +365,40 @@ try {
     }
     
     # Verify process is still running before returning
-    Start-Sleep -Seconds 1
-    if ($process.HasExited) {
-        Write-Host "WARNING: Agent process exited after becoming ready!" -ForegroundColor Red
-        Write-Host "Exit code: $($process.ExitCode)" -ForegroundColor Red
-        if (Test-Path $logFile) {
-            Write-Host "Agent logs:" -ForegroundColor Yellow
-            Get-Content $logFile
+    # Wait a bit longer to ensure the agent is stable
+    Write-Host "Verifying agent stability..." -ForegroundColor Gray
+    for ($i = 1; $i -le 5; $i++) {
+        Start-Sleep -Seconds 1
+        if ($process.HasExited) {
+            Write-Host "WARNING: Agent process exited during stability check (iteration $i)!" -ForegroundColor Red
+            Write-Host "Exit code: $($process.ExitCode)" -ForegroundColor Red
+            
+            Start-Sleep -Milliseconds 500
+            if (Test-Path $logFile) {
+                Write-Host "Agent transcript log:" -ForegroundColor Yellow
+                Get-Content $logFile
+            }
+            if (Test-Path $outputLogFile) {
+                $outContent = Get-Content $outputLogFile -Raw
+                if ($outContent) {
+                    Write-Host "Agent command output:" -ForegroundColor Yellow
+                    Write-Host $outContent
+                }
+            }
+            throw "Agent process exited unexpectedly after health check passed"
         }
-        throw "Agent process exited unexpectedly after health check passed"
+        
+        # Also verify health endpoint still works
+        try {
+            $check = Invoke-WebRequest -Uri $healthUrl -Method GET -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+            Write-Host "  Stability check $i/5: OK (health: $($check.StatusCode))" -ForegroundColor Gray
+        }
+        catch {
+            Write-Host "  Stability check $i/5: Health check failed - $($_.Exception.Message)" -ForegroundColor Yellow
+        }
     }
     
-    Write-Host "Agent process (PID: $($process.Id)) is running and healthy" -ForegroundColor Green
+    Write-Host "Agent process (PID: $($process.Id)) is running and stable" -ForegroundColor Green
     
     # Return the process ID
     return $process.Id
