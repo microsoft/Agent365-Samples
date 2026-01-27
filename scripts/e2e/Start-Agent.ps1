@@ -69,6 +69,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$AgentPath = Resolve-Path $AgentPath | Select-Object -ExpandProperty Path
+
 # Handle empty Environment parameter - default to Development for local ToolingManifest.json
 if ([string]::IsNullOrEmpty($Environment)) {
     Write-Host "Environment not set, defaulting to: Development" -ForegroundColor Yellow
@@ -263,3 +265,4 @@ try {
 finally {
     Pop-Location
 }
+
