@@ -119,7 +119,7 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
 });
 
 // Health check endpoint for CI/CD pipelines and monitoring
-app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
+app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp = System.DateTime.UtcNow }));
 
 if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
