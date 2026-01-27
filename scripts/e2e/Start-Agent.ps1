@@ -306,6 +306,20 @@ try {
         throw "Agent did not become ready within $TimeoutSeconds seconds"
     }
     
+    # Verify process is still running before returning
+    Start-Sleep -Seconds 1
+    if ($process.HasExited) {
+        Write-Host "WARNING: Agent process exited after becoming ready!" -ForegroundColor Red
+        Write-Host "Exit code: $($process.ExitCode)" -ForegroundColor Red
+        if (Test-Path $logFile) {
+            Write-Host "Agent logs:" -ForegroundColor Yellow
+            Get-Content $logFile
+        }
+        throw "Agent process exited unexpectedly after health check passed"
+    }
+    
+    Write-Host "Agent process (PID: $($process.Id)) is running and healthy" -ForegroundColor Green
+    
     # Return the process ID
     return $process.Id
 }
