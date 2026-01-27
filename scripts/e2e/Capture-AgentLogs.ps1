@@ -21,31 +21,31 @@ param(
 )
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "AGENT LOGS (stdout)" -ForegroundColor Cyan
+Write-Host "AGENT LOGS (transcript)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 $logFile = Join-Path $AgentPath "agent.log"
 if (Test-Path $logFile) {
-    Write-Host "Agent log file found at: $logFile" -ForegroundColor Green
+    Write-Host "Agent transcript file found at: $logFile" -ForegroundColor Green
     Write-Host "----------------------------------------"
     Get-Content $logFile
     Write-Host "----------------------------------------"
-    Write-Host "End of agent logs" -ForegroundColor Green
+    Write-Host "End of agent transcript" -ForegroundColor Green
 }
 else {
     Write-Host "No agent.log file found at: $logFile" -ForegroundColor Yellow
 }
 
-# Check error log
-$errorLogFile = Join-Path $AgentPath "agent-error.log"
-if (Test-Path $errorLogFile) {
-    $errorContent = Get-Content $errorLogFile -Raw
-    if (-not [string]::IsNullOrWhiteSpace($errorContent)) {
+# Check command output log
+$outputLogFile = Join-Path $AgentPath "agent-output.log"
+if (Test-Path $outputLogFile) {
+    $outputContent = Get-Content $outputLogFile -Raw
+    if (-not [string]::IsNullOrWhiteSpace($outputContent)) {
         Write-Host ""
-        Write-Host "========================================" -ForegroundColor Red
-        Write-Host "AGENT ERRORS (stderr)" -ForegroundColor Red
-        Write-Host "========================================" -ForegroundColor Red
-        Write-Host $errorContent
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "AGENT COMMAND OUTPUT" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host $outputContent
     }
 }
 
