@@ -26,11 +26,18 @@ MCP servers require **delegated (user) permissions**, not application permission
 
 | Secret | Description |
 |--------|-------------|
+| `GH_PAT` | GitHub Personal Access Token with repo access to checkout E2E tests repository |
 | `MCP_CLIENT_ID` | App registration client ID with MCP permissions (`0de5c94a-9929-45e1-a436-ffe5b3415df3`) |
 | `MCP_TENANT_ID` | Azure AD tenant ID |
 | `MCP_TEST_USERNAME` | Test service account UPN |
 | `MCP_TEST_PASSWORD` | Test service account password |
 | `TENANT_ID` | Common tenant ID for agent connections |
+
+### Repository Variables (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `E2E_TESTS_REPO` | Override the E2E tests repository (default: `microsoft/Agent365-E2EIntegration`) |
 
 ### Per-Sample Secrets
 

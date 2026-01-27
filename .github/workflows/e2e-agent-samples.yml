@@ -16,6 +16,7 @@ on:
       - 'python/**'
       - 'nodejs/**'
       - 'dotnet/**'
+      - 'tests/e2e/**'
       - '.github/workflows/e2e-agent-samples.yml'
       - 'scripts/e2e/**'
   pull_request:
@@ -25,6 +26,7 @@ on:
       - 'python/**'
       - 'nodejs/**'
       - 'dotnet/**'
+      - 'tests/e2e/**'
       - '.github/workflows/e2e-agent-samples.yml'
       - 'scripts/e2e/**'
   workflow_dispatch:
@@ -52,6 +54,9 @@ env:
   # Common settings
   TEST_TIMEOUT: 120
   SCRIPTS_PATH: scripts/e2e
+  
+  # E2E Integration Tests - located in this repository
+  E2E_TESTS_PATH: 'tests/e2e'
 
 jobs:
   # ===========================================================================
@@ -69,6 +74,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -137,21 +147,14 @@ jobs:
             -Runtime "python"
           echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
-      - name: Run E2E Tests
+      - name: Verify Agent Running
         shell: pwsh
         run: |
-          Write-Host "=== E2E Test Step Started ===" -ForegroundColor Cyan
-          Write-Host "Time since workflow start: checking agent status..." -ForegroundColor Gray
-          
-          # Show all running PowerShell and Python processes for debugging
-          Write-Host "Running pwsh processes:" -ForegroundColor Gray
-          Get-Process -Name pwsh -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime -AutoSize
-          Write-Host "Running python processes:" -ForegroundColor Gray
-          Get-Process -Name python* -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime -AutoSize
+          Write-Host "=== Verifying Agent ===" -ForegroundColor Cyan
           
           # Verify agent process is still running
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
-          Write-Host "Looking for agent process with PID: $agentPid" -ForegroundColor Gray
+          Write-Host "Checking agent process (PID: $agentPid)..." -ForegroundColor Gray
           
           if ($agentPid) {
             try {
@@ -160,51 +163,56 @@ jobs:
             } catch {
               Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
               
-              # Check if anything is listening on the port
-              Write-Host "Checking port ${{ env.AGENT_PORT }}..." -ForegroundColor Yellow
-              $portCheck = netstat -ano | Select-String ":${{ env.AGENT_PORT }}"
-              if ($portCheck) {
-                Write-Host "Port listeners:" -ForegroundColor Yellow
-                $portCheck | ForEach-Object { Write-Host "  $_" }
-              } else {
-                Write-Host "No process listening on port ${{ env.AGENT_PORT }}" -ForegroundColor Red
-              }
-              
               # Show logs
               $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
               if (Test-Path $logFile) {
-                Write-Host "Agent transcript log:" -ForegroundColor Yellow
+                Write-Host "Agent logs:" -ForegroundColor Yellow
                 Get-Content $logFile
               }
-              
-              $outputLog = "${{ env.SAMPLE_PATH }}/agent-output.log"
-              if (Test-Path $outputLog) {
-                $outContent = Get-Content $outputLog -Raw
-                if ($outContent) {
-                  Write-Host "Agent command output:" -ForegroundColor Yellow
-                  Write-Host $outContent
-                }
-              }
-              
               throw "Agent process has stopped"
             }
           }
           
+          # Quick health check before running tests
           $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
-          Write-Host "Testing agent at $agentUrl..."
-          
-          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing
-          Write-Host "Health check: $($healthResponse.StatusCode)"
-          
-          try {
-            Invoke-WebRequest -Uri "$agentUrl/api/messages" -Method GET -UseBasicParsing -ErrorAction Stop
-          } catch {
-            if ($_.Exception.Response.StatusCode -eq 405) {
-              Write-Host "Messages endpoint active (405 Method Not Allowed - expected for GET)"
-            } else { throw }
-          }
-          
-          Write-Host "E2E tests passed!"
+          Write-Host "Verifying agent at $agentUrl..." -ForegroundColor Gray
+          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health check: $($healthResponse.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        shell: pwsh
+        run: |
+          dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python-openai
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
+
+      - name: Upload Test Conversations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-conversations-python-openai
+          path: ${{ runner.temp }}/TestConversations/
+          retention-days: 30
+        continue-on-error: true
 
       - name: Capture Agent Logs
         if: always()
@@ -235,6 +243,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -307,27 +320,46 @@ jobs:
             -Runtime "nodejs"
           echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
-      - name: Run E2E Tests
+      - name: Verify Agent Running
         shell: pwsh
         run: |
-          # Verify agent process is still running
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
           if ($agentPid) {
             try {
               $proc = Get-Process -Id $agentPid -ErrorAction Stop
-              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
             } catch {
               Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
-              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
-              if (Test-Path $logFile) { Get-Content $logFile }
               throw "Agent process has stopped"
             }
           }
-          
           $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
-          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing
-          Write-Host "Health check: $($healthResponse.StatusCode)"
-          Write-Host "E2E tests passed!"
+          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health check: $($healthResponse.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-nodejs-openai
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
 
       - name: Capture Agent Logs
         if: always()
@@ -421,25 +453,45 @@ jobs:
             -Runtime "dotnet"
           echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
-      - name: Run E2E Tests
+      - name: Verify Agent Running
         shell: pwsh
         run: |
-          # Verify agent process is still running
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
           if ($agentPid) {
             try {
               $proc = Get-Process -Id $agentPid -ErrorAction Stop
-              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
             } catch {
               Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
-              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
-              if (Test-Path $logFile) { Get-Content $logFile }
               throw "Agent process has stopped"
             }
           }
-          
-          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing
-          Write-Host "Health: $($response.StatusCode) - E2E tests passed!"
+          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-dotnet-sk
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
 
       - name: Capture Logs
         if: always()
@@ -533,25 +585,45 @@ jobs:
             -Runtime "dotnet"
           echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
-      - name: Run E2E Tests
+      - name: Verify Agent Running
         shell: pwsh
         run: |
-          # Verify agent process is still running
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
           if ($agentPid) {
             try {
               $proc = Get-Process -Id $agentPid -ErrorAction Stop
-              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
             } catch {
               Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
-              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
-              if (Test-Path $logFile) { Get-Content $logFile }
               throw "Agent process has stopped"
             }
           }
-          
-          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing
-          Write-Host "Health: $($response.StatusCode) - E2E tests passed!"
+          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-dotnet-af
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
 
       - name: Capture Logs
         if: always()
