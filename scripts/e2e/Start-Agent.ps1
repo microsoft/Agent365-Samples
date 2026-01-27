@@ -313,7 +313,8 @@ try {
                 $response = Invoke-WebRequest -Uri $messagesUrl -Method GET -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
             }
             catch {
-                if ($_.Exception.Response.StatusCode.value__ -eq 405) {
+                $exResponse = $_.Exception.Response
+                if ($exResponse -and $exResponse.StatusCode -eq 405) {
                     $ready = $true
                     Write-Host "Agent is ready! (messages endpoint returned 405)" -ForegroundColor Green
                     break
