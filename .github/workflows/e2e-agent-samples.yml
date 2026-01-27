@@ -128,14 +128,14 @@ jobs:
         id: start-agent
         shell: pwsh
         run: |
-          $pid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
             -AgentPath "${{ env.SAMPLE_PATH }}" `
             -StartCommand "uv run python start_with_generic_host.py" `
             -Port ${{ env.AGENT_PORT }} `
             -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
             -Environment "Development" `
             -Runtime "python"
-          echo "AGENT_PID=$pid" >> $env:GITHUB_OUTPUT
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
       - name: Run E2E Tests
         shell: pwsh
@@ -248,14 +248,14 @@ jobs:
         id: start-agent
         shell: pwsh
         run: |
-          $pid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
             -AgentPath "${{ env.SAMPLE_PATH }}" `
             -StartCommand "node dist/index.js" `
             -Port ${{ env.AGENT_PORT }} `
             -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
             -Environment "Development" `
             -Runtime "nodejs"
-          echo "AGENT_PID=$pid" >> $env:GITHUB_OUTPUT
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
       - name: Run E2E Tests
         shell: pwsh
@@ -348,14 +348,14 @@ jobs:
         id: start-agent
         shell: pwsh
         run: |
-          $pid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
             -AgentPath "${{ env.SAMPLE_PATH }}" `
             -StartCommand "dotnet run --no-build" `
             -Port ${{ env.AGENT_PORT }} `
             -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
             -Environment "Development" `
             -Runtime "dotnet"
-          echo "AGENT_PID=$pid" >> $env:GITHUB_OUTPUT
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
       - name: Run E2E Tests
         shell: pwsh
@@ -446,14 +446,14 @@ jobs:
         id: start-agent
         shell: pwsh
         run: |
-          $pid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
             -AgentPath "${{ env.SAMPLE_PATH }}" `
             -StartCommand "dotnet run --no-build" `
             -Port ${{ env.AGENT_PORT }} `
             -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
             -Environment "Development" `
             -Runtime "dotnet"
-          echo "AGENT_PID=$pid" >> $env:GITHUB_OUTPUT
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
       - name: Run E2E Tests
         shell: pwsh
@@ -495,4 +495,3 @@ jobs:
           echo "| Node.js OpenAI | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Semantic Kernel | ${{ needs.dotnet-semantic-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Agent Framework | ${{ needs.dotnet-agent-framework.result }} |" >> $GITHUB_STEP_SUMMARY
-
