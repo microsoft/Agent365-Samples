@@ -1,0 +1,666 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# =============================================================================
+# E2E Tests: Agent Samples
+# =============================================================================
+# Runs E2E integration tests for all agent samples
+# Uses external PowerShell scripts for maintainability
+# =============================================================================
+
+name: E2E Agent Samples
+
+on:
+  # Run nightly at 6 AM UTC
+  schedule:
+    - cron: '0 6 * * *'
+  push:
+    branches:
+      - main
+      - 'feature/*'
+    paths:
+      - 'python/**'
+      - 'nodejs/**'
+      - 'dotnet/**'
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e-agent-samples.yml'
+      - 'scripts/e2e/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'python/**'
+      - 'nodejs/**'
+      - 'dotnet/**'
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e-agent-samples.yml'
+      - 'scripts/e2e/**'
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: 'Specific sample to test (leave empty for all)'
+        required: false
+        default: ''
+      debug:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+
+env:
+  # MCP Authentication - Required for all samples
+  MCP_CLIENT_ID: ${{ secrets.MCP_CLIENT_ID }}
+  MCP_TENANT_ID: ${{ secrets.MCP_TENANT_ID }}
+  MCP_TEST_USERNAME: ${{ secrets.MCP_TEST_USERNAME }}
+  MCP_TEST_PASSWORD: ${{ secrets.MCP_TEST_PASSWORD }}
+  MCP_ENVIRONMENT: 'Development'
+  
+  # Common settings
+  SCRIPTS_PATH: scripts/e2e
+  
+  # E2E Integration Tests - located in this repository
+  E2E_TESTS_PATH: 'tests/e2e'
+
+jobs:
+  # ===========================================================================
+  # Python OpenAI Sample
+  # ===========================================================================
+  python-openai:
+    name: Python OpenAI Agent
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-openai' }}
+    
+    env:
+      SAMPLE_PATH: python/openai/sample-agent
+      AGENT_PORT: 3979
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv package manager
+        run: pip install uv
+
+      - name: Install dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: uv sync
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Copy ToolingManifest.json
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Copy-ToolingManifest.ps1" -TargetPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Generate .env configuration
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "AZURE_OPENAI_API_KEY" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_API_KEY }}"
+            "AZURE_OPENAI_ENDPOINT" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_ENDPOINT }}"
+            "AZURE_OPENAI_DEPLOYMENT" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_DEPLOYMENT }}"
+            "AZURE_OPENAI_API_VERSION" = "2024-12-01-preview"
+            "USE_AGENTIC_AUTH" = "false"
+            "MCP_PLATFORM_ENDPOINT" = "https://agent365.svc.cloud.microsoft"
+            "AGENT_ID" = "${{ secrets.PYTHON_OPENAI_AGENT_ID }}"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE" = "ClientSecret"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID" = "${{ secrets.PYTHON_OPENAI_AGENT_ID }}"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET" = "${{ secrets.PYTHON_OPENAI_CLIENT_SECRET }}"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID" = "${{ secrets.TENANT_ID }}"
+            "CONNECTIONSMAP__0__SERVICEURL" = "*"
+            "CONNECTIONSMAP__0__CONNECTION" = "SERVICE_CONNECTION"
+            "ENABLE_OBSERVABILITY" = "true"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-EnvConfig.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/.env" `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Port ${{ env.AGENT_PORT }} `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "uv run python start_with_generic_host.py" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "python"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          Write-Host "=== Verifying Agent ===" -ForegroundColor Cyan
+          
+          # Verify agent process is still running
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          Write-Host "Checking agent process (PID: $agentPid)..." -ForegroundColor Gray
+          
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              
+              # Show logs
+              $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
+              if (Test-Path $logFile) {
+                Write-Host "Agent logs:" -ForegroundColor Yellow
+                Get-Content $logFile
+              }
+              throw "Agent process has stopped"
+            }
+          }
+          
+          # Quick health check before running tests
+          $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
+          Write-Host "Verifying agent at $agentUrl..." -ForegroundColor Gray
+          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health check: $($healthResponse.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        shell: pwsh
+        run: |
+          dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-python-openai
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
+
+      - name: Upload Test Conversations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-conversations-python-openai
+          path: ${{ runner.temp }}/TestConversations/
+          retention-days: 30
+        continue-on-error: true
+
+      - name: Capture Agent Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Cleanup Agent Process
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" `
+            -AgentPID "${{ steps.start-agent.outputs.AGENT_PID }}" `
+            -Port ${{ env.AGENT_PORT }}
+
+  # ===========================================================================
+  # Node.js OpenAI Sample
+  # ===========================================================================
+  nodejs-openai:
+    name: Node.js OpenAI Agent
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-openai' }}
+    
+    env:
+      SAMPLE_PATH: nodejs/openai/sample-agent
+      AGENT_PORT: 3979
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: |
+          if (Test-Path "package-lock.json") {
+            npm ci
+          } else {
+            npm install
+          }
+          if (Test-Path "tsconfig.json") {
+            npm run build
+          }
+        shell: pwsh
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Copy ToolingManifest.json
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Copy-ToolingManifest.ps1" -TargetPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Generate .env configuration
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "NODE_ENV" = "development"
+            "AZURE_OPENAI_API_KEY" = "${{ secrets.NODEJS_OPENAI_AZURE_OPENAI_API_KEY }}"
+            "AZURE_OPENAI_ENDPOINT" = "${{ secrets.NODEJS_OPENAI_AZURE_OPENAI_ENDPOINT }}"
+            "AZURE_OPENAI_DEPLOYMENT" = "${{ secrets.NODEJS_OPENAI_AZURE_OPENAI_DEPLOYMENT }}"
+            "AZURE_OPENAI_API_VERSION" = "2024-12-01-preview"
+            "connections__service_connection__settings__authType" = "ClientSecret"
+            "connections__service_connection__settings__clientId" = "${{ secrets.NODEJS_OPENAI_AGENT_ID }}"
+            "connections__service_connection__settings__clientSecret" = "${{ secrets.NODEJS_OPENAI_CLIENT_SECRET }}"
+            "connections__service_connection__settings__tenantId" = "${{ secrets.TENANT_ID }}"
+            "connectionsMap__0__serviceUrl" = "*"
+            "connectionsMap__0__connection" = "service_connection"
+            "agentic_scopes" = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-EnvConfig.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/.env" `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Port ${{ env.AGENT_PORT }} `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "node dist/index.js" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "nodejs"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              throw "Agent process has stopped"
+            }
+          }
+          $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
+          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health check: $($healthResponse.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-nodejs-openai
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
+
+      - name: Capture Agent Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" `
+            -AgentPID "${{ steps.start-agent.outputs.AGENT_PID }}" `
+            -Port ${{ env.AGENT_PORT }}
+
+  # ===========================================================================
+  # .NET Semantic Kernel Sample
+  # ===========================================================================
+  dotnet-semantic-kernel:
+    name: .NET Semantic Kernel Agent
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'dotnet-semantic-kernel' }}
+    
+    env:
+      SAMPLE_PATH: dotnet/semantic-kernel/sample-agent
+      AGENT_PORT: 3978
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet restore
+
+      - name: Build
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet build --no-restore
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Copy ToolingManifest.json
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Copy-ToolingManifest.ps1" -TargetPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Generate appsettings.json
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "AIServices:UseAzureOpenAI" = "true"
+            "AIServices:AzureOpenAI:Endpoint" = "${{ secrets.DOTNET_SK_AZURE_OPENAI_ENDPOINT }}"
+            "AIServices:AzureOpenAI:ApiKey" = "${{ secrets.DOTNET_SK_AZURE_OPENAI_API_KEY }}"
+            "AIServices:AzureOpenAI:DeploymentName" = "${{ secrets.DOTNET_SK_AZURE_OPENAI_DEPLOYMENT }}"
+            "TokenValidation:Enabled" = "false"
+            "TokenValidation:TenantId" = "${{ secrets.TENANT_ID }}"
+            "Connections:ServiceConnection:Settings:AuthType" = "ClientSecret"
+            "Connections:ServiceConnection:Settings:ClientId" = "${{ secrets.DOTNET_SK_CLIENT_ID }}"
+            "Connections:ServiceConnection:Settings:ClientSecret" = "${{ secrets.DOTNET_SK_CLIENT_SECRET }}"
+            "Connections:ServiceConnection:Settings:TenantId" = "${{ secrets.TENANT_ID }}"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-AppSettings.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/appsettings.json" `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "dotnet run --no-build" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "dotnet"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              throw "Agent process has stopped"
+            }
+          }
+          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-dotnet-sk
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
+
+      - name: Capture Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" `
+            -AgentPID "${{ steps.start-agent.outputs.AGENT_PID }}" `
+            -Port ${{ env.AGENT_PORT }}
+
+  # ===========================================================================
+  # .NET Agent Framework Sample
+  # ===========================================================================
+  dotnet-agent-framework:
+    name: .NET Agent Framework Agent
+    runs-on: windows-latest
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'dotnet-agent-framework' }}
+    
+    env:
+      SAMPLE_PATH: dotnet/agent-framework/sample-agent
+      AGENT_PORT: 3978
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet restore
+
+      - name: Build
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet build --no-restore
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Copy ToolingManifest.json
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Copy-ToolingManifest.ps1" -TargetPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Generate appsettings.json
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "AIServices:AzureOpenAI:Endpoint" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_ENDPOINT }}"
+            "AIServices:AzureOpenAI:ApiKey" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_API_KEY }}"
+            "AIServices:AzureOpenAI:DeploymentName" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_DEPLOYMENT }}"
+            "TokenValidation:Enabled" = "false"
+            "Connections:ServiceConnection:Settings:AuthType" = "ClientSecret"
+            "Connections:ServiceConnection:Settings:ClientId" = "${{ secrets.DOTNET_AF_CLIENT_ID }}"
+            "Connections:ServiceConnection:Settings:ClientSecret" = "${{ secrets.DOTNET_AF_CLIENT_SECRET }}"
+            "Connections:ServiceConnection:Settings:TenantId" = "${{ secrets.TENANT_ID }}"
+            "Connections:ServiceConnection:Settings:AuthorityEndpoint" = "https://login.microsoftonline.com/${{ secrets.TENANT_ID }}"
+            "Connections:ServiceConnection:Settings:Scopes:0" = "5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-AppSettings.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/appsettings.json" `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "dotnet run --no-build" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "dotnet"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              throw "Agent process has stopped"
+            }
+          }
+          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --filter "Category=HTTP" `
+            --logger "trx;LogFileName=test-results.trx" `
+            --results-directory "${{ runner.temp }}/TestResults"
+        env:
+          AGENT_PORT: ${{ env.AGENT_PORT }}
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-dotnet-af
+          path: ${{ runner.temp }}/TestResults/
+          retention-days: 30
+
+      - name: Capture Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Cleanup
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" `
+            -AgentPID "${{ steps.start-agent.outputs.AGENT_PID }}" `
+            -Port ${{ env.AGENT_PORT }}
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [python-openai, nodejs-openai, dotnet-semantic-kernel, dotnet-agent-framework]
+    if: always()
+    
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Sample | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Python OpenAI | ${{ needs.python-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js OpenAI | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| .NET Semantic Kernel | ${{ needs.dotnet-semantic-kernel.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| .NET Agent Framework | ${{ needs.dotnet-agent-framework.result }} |" >> $GITHUB_STEP_SUMMARY
