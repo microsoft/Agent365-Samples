@@ -69,6 +69,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Resolve to absolute path
 $AgentPath = Resolve-Path $AgentPath | Select-Object -ExpandProperty Path
 
 # Handle empty Environment parameter - default to Development for local ToolingManifest.json
@@ -138,18 +139,41 @@ Write-Host "  BEARER_TOKEN length: $($BearerToken.Length)" -ForegroundColor Gree
 $wrapperScript = Join-Path $AgentPath "run-agent.ps1"
 $escapedToken = $BearerToken -replace "'", "''"
 
+# Build wrapper script with error handling and diagnostics
 $scriptLines = @(
+    "`$ErrorActionPreference = 'Continue'"
+    "Write-Host '=== Agent Wrapper Script Started ==='"
+    "Write-Host 'Working Directory:' (Get-Location)"
+    "Write-Host 'PowerShell Version:' `$PSVersionTable.PSVersion"
+    ""
+    "# Set environment variables"
     "`$env:PORT = '$Port'"
     "`$env:ASPNETCORE_URLS = 'http://localhost:$Port'"
     "`$env:BEARER_TOKEN = '$escapedToken'"
     "`$env:PYTHONIOENCODING = 'utf-8'"
     "`$env:ENVIRONMENT = '$Environment'"
     "`$env:NODE_ENV = 'development'"
-    "Write-Host 'Starting agent with PORT=' `$env:PORT"
-    "Write-Host 'BEARER_TOKEN length:' `$env:BEARER_TOKEN.Length"
-    "Write-Host 'ENVIRONMENT:' `$env:ENVIRONMENT"
-    "Write-Host 'NODE_ENV:' `$env:NODE_ENV"
-    $StartCommand
+    ""
+    "Write-Host 'Environment configured:'"
+    "Write-Host '  PORT=' `$env:PORT"
+    "Write-Host '  BEARER_TOKEN length:' `$env:BEARER_TOKEN.Length"
+    "Write-Host '  ENVIRONMENT:' `$env:ENVIRONMENT"
+    "Write-Host '  NODE_ENV:' `$env:NODE_ENV"
+    ""
+    "Write-Host 'Directory contents:'"
+    "Get-ChildItem -Name | ForEach-Object { Write-Host `"  `$_`" }"
+    ""
+    "Write-Host '=== Starting Agent Command ==='"
+    "Write-Host 'Command: $StartCommand'"
+    ""
+    "try {"
+    "    $StartCommand"
+    "} catch {"
+    "    Write-Host 'ERROR: Agent command failed!' -ForegroundColor Red"
+    "    Write-Host `$_.Exception.Message"
+    "    Write-Host `$_.ScriptStackTrace"
+    "    exit 1"
+    "}"
 )
 $scriptContent = $scriptLines -join "`r`n"
 [System.IO.File]::WriteAllText($wrapperScript, $scriptContent)
@@ -165,8 +189,11 @@ try {
     
     Write-Host "Agent process started (PID: $($process.Id))" -ForegroundColor Green
     
+    # Give the process a moment to start and write initial output
+    Start-Sleep -Seconds 2
+    
     # Wait for agent to be ready
-    $elapsed = 0
+    $elapsed = 2
     $ready = $false
     
     $healthUrl = "http://localhost:$Port$HealthEndpoint"
@@ -182,10 +209,30 @@ try {
         if ($process.HasExited) {
             Write-Host "Agent process exited prematurely!" -ForegroundColor Red
             Write-Host "Exit code: $($process.ExitCode)" -ForegroundColor Red
+            
+            # Wait a moment for file handles to be released
+            Start-Sleep -Milliseconds 500
+            
             if (Test-Path $logFile) {
-                Write-Host "Agent logs:" -ForegroundColor Yellow
-                Get-Content $logFile -Tail 50
+                $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+                if ($logContent) {
+                    Write-Host "Agent logs:" -ForegroundColor Yellow
+                    Write-Host $logContent
+                } else {
+                    Write-Host "Agent log file exists but is empty" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "No agent log file found at: $logFile" -ForegroundColor Yellow
             }
+            
+            if (Test-Path $errorLogFile) {
+                $errorContent = Get-Content $errorLogFile -Raw -ErrorAction SilentlyContinue
+                if ($errorContent) {
+                    Write-Host "Agent error logs:" -ForegroundColor Red
+                    Write-Host $errorContent
+                }
+            }
+            
             throw "Agent process exited with code $($process.ExitCode)"
         }
         
@@ -265,4 +312,3 @@ try {
 finally {
     Pop-Location
 }
-
