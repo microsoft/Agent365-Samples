@@ -140,20 +140,52 @@ jobs:
       - name: Run E2E Tests
         shell: pwsh
         run: |
+          Write-Host "=== E2E Test Step Started ===" -ForegroundColor Cyan
+          Write-Host "Time since workflow start: checking agent status..." -ForegroundColor Gray
+          
+          # Show all running PowerShell and Python processes for debugging
+          Write-Host "Running pwsh processes:" -ForegroundColor Gray
+          Get-Process -Name pwsh -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime -AutoSize
+          Write-Host "Running python processes:" -ForegroundColor Gray
+          Get-Process -Name python* -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime -AutoSize
+          
           # Verify agent process is still running
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          Write-Host "Looking for agent process with PID: $agentPid" -ForegroundColor Gray
+          
           if ($agentPid) {
             try {
               $proc = Get-Process -Id $agentPid -ErrorAction Stop
-              Write-Host "Agent process (PID: $agentPid) is running" -ForegroundColor Green
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
             } catch {
               Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              
+              # Check if anything is listening on the port
+              Write-Host "Checking port ${{ env.AGENT_PORT }}..." -ForegroundColor Yellow
+              $portCheck = netstat -ano | Select-String ":${{ env.AGENT_PORT }}"
+              if ($portCheck) {
+                Write-Host "Port listeners:" -ForegroundColor Yellow
+                $portCheck | ForEach-Object { Write-Host "  $_" }
+              } else {
+                Write-Host "No process listening on port ${{ env.AGENT_PORT }}" -ForegroundColor Red
+              }
+              
               # Show logs
               $logFile = "${{ env.SAMPLE_PATH }}/agent.log"
               if (Test-Path $logFile) {
-                Write-Host "Agent logs:" -ForegroundColor Yellow
+                Write-Host "Agent transcript log:" -ForegroundColor Yellow
                 Get-Content $logFile
               }
+              
+              $outputLog = "${{ env.SAMPLE_PATH }}/agent-output.log"
+              if (Test-Path $outputLog) {
+                $outContent = Get-Content $outputLog -Raw
+                if ($outContent) {
+                  Write-Host "Agent command output:" -ForegroundColor Yellow
+                  Write-Host $outContent
+                }
+              }
+              
               throw "Agent process has stopped"
             }
           }
