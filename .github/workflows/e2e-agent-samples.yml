@@ -11,9 +11,9 @@
 name: E2E Agent Samples
 
 on:
-  # Run nightly at 10 PM UTC
+  # Run nightly at 6 AM UTC
   schedule:
-    - cron: '0 22 * * *'
+    - cron: '0 6 * * *'
   push:
     branches:
       - main
