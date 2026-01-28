@@ -105,6 +105,9 @@ var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, Htt
     }).ConfigureAwait(false);
 });
 
+// Health check endpoint for CI/CD pipelines and monitoring
+app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp = System.DateTime.UtcNow }));
+
 if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
     app.MapGet("/", () => "Agent 365 Semantic Kernel Example Agent");
