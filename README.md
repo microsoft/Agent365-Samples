@@ -1,6 +1,6 @@
 # Microsoft Agent 365 SDK Samples and Prompts
 
-[![E2E Tests](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml)
+[![E2E Tests](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-agent-samples.yml?branch=main&label=E2E%20Agent%20Samples)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml)
 
 This repository contains sample agents and prompts for building with the Microsoft Agent 365 SDK. The Microsoft Agent 365 SDK extends the Microsoft 365 Agents SDK with enterprise-grade capabilities for building sophisticated agents. It provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
@@ -11,10 +11,10 @@ This repository contains sample agents and prompts for building with the Microso
 
 | Sample | Status |
 |--------|--------|
-| Python OpenAI | [![Python OpenAI](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=python-openai)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| Node.js OpenAI | [![Node.js OpenAI](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=nodejs-openai)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| .NET Semantic Kernel | [![.NET SK](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=dotnet-semantic-kernel)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| .NET Agent Framework | [![.NET AF](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=dotnet-agent-framework)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
+| Python OpenAI | [![Python OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-agent-samples.yml?branch=main&label=E2E&job=Python%20OpenAI%20Agent)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
+| Node.js OpenAI | [![Node.js OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-agent-samples.yml?branch=main&label=E2E&job=Node.js%20OpenAI%20Agent)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
+| .NET Semantic Kernel | [![.NET SK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-agent-samples.yml?branch=main&label=E2E&job=.NET%20Semantic%20Kernel%20Agent)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
+| .NET Agent Framework | [![.NET AF](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-agent-samples.yml?branch=main&label=E2E&job=.NET%20Agent%20Framework%20Agent)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
 
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
