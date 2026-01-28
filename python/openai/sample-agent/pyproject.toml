@@ -48,6 +48,19 @@ name = "pypi"
 url = "https://pypi.org/simple"
 default = true
 
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv.sources]
+microsoft_agents_a365_tooling = { index = "pypi" }
+microsoft_agents_a365_tooling_extensions_openai = { index = "pypi" }
+microsoft_agents_a365_observability_core = { index = "pypi" }
+microsoft_agents_a365_observability_extensions_openai = { index = "pypi" }
+microsoft_agents_a365_notifications = { index = "pypi" }
+microsoft_agents_a365_runtime = { index = "pypi" }
+
+[tool.uv]
+prerelease = "allow"
+
 [project.optional-dependencies]
 dev = [
     # For development and testing
