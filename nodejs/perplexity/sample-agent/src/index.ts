@@ -119,7 +119,7 @@ server
     console.error(err);
     process.exit(1);
   })
-  .on("close", async () => {
+  .on("close", () => {
     console.log("Server closed - cleaning up timers");
     clearInterval(resyncTimer);
     presenceKeepAlive.stop();
