@@ -5,7 +5,7 @@ using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
 using AgentNotification;
 using Microsoft.Agents.A365.Notifications.Models;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
@@ -47,7 +47,7 @@ public class MyAgent : AgentApplication
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
-        TermsAndConditionsAccepted = true;
+        // TermsAndConditionsAccepted = true;
 
         bool useBearerToken = Agent365Agent.TryGetBearerTokenForDevelopment(out var bearerToken);
         string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHandler };

@@ -4,7 +4,9 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "A365_OBSERVABILITY_DOMAIN_OVERRIDE": "il-6e8b84faae414a009ad1934b73e5d73.c.tenant.api.preprod.powerplatform.com",
+        "A365_OBSERVABILITY_SCOPE_OVERRIDE": "https://api.preprod.powerplatform.com/.default"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     },
@@ -13,7 +15,9 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "BEARER_TOKEN": ""
+        "BEARER_TOKEN": "",
+        "A365_OBSERVABILITY_DOMAIN_OVERRIDE": "il-6e8b84faae414a009ad1934b73e5d73.c.tenant.api.preprod.powerplatform.com",
+        "A365_OBSERVABILITY_SCOPE_OVERRIDE": "https://api.preprod.powerplatform.com/.default"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }

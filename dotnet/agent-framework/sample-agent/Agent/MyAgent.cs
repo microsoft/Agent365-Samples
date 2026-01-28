@@ -3,7 +3,7 @@
 
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;

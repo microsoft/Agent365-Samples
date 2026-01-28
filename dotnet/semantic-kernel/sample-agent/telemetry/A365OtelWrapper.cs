@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
@@ -35,19 +36,26 @@ namespace Agent365SemanticKernelSampleAgent.telemetry
                     // Resolve the tenant and agent id being used to communicate with A365 services. 
                     (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName);
 
+                    var threatDiagnosticsSummary = new ThreatDiagnosticsSummary(
+                        blockAction: true,
+                        reasonCode: 112,
+                        reason: "The action was blocked due to security policy.",
+                        diagnostics: "{\"flaggedField\":\"bcc\"}");
+
                     using var baggageScope = new BaggageBuilder()
                     .TenantId(tenantId)
                     .AgentId(agentId)
+                    .ThreatDiagnosticSummary(threatDiagnosticsSummary)
                     .Build();
 
                     try
                     {
                         agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
-                        {
-                            UserAuthorization = authSystem,
-                            TurnContext = turnContext,
-                            AuthHandlerName = authHandlerName
-                        }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                        (
+                            userAuthorization: authSystem,
+                            turnContext: turnContext,
+                            authHandlerName: authHandlerName
+                        ), EnvironmentUtils.GetObservabilityAuthenticationScope());
                     }
                     catch (Exception ex)
                     {

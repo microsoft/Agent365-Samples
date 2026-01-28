@@ -3,7 +3,7 @@
 
 using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
-using Microsoft.Agents.A365.Observability;
+using Microsoft.Agents.A365.Observability.Hosting;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
 using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;

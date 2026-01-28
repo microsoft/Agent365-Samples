@@ -128,7 +128,7 @@ public class Agent365Agent
         ChatMessageContent message = new(AuthorRole.User, input);
         chatHistory.Add(message);
 
-        if (context!.StreamingResponse.IsStreamingChannel)
+        if (context?.StreamingResponse.IsStreamingChannel == true)
         {
             await foreach (var response in _agent!.InvokeStreamingAsync(chatHistory, thread: thread))
             {

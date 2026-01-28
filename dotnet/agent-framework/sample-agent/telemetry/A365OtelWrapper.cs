@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Extensions;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
@@ -32,6 +33,8 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                     // Resolve the tenant and agent id being used to communicate with A365 services. 
                     (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName);
 
+                    using var baggageTest = new BaggageBuilder().FromTurnContext(turnContext).Build();
+
                     using var baggageScope = new BaggageBuilder()
                     .TenantId(tenantId)
                     .AgentId(agentId)
@@ -40,11 +43,11 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                     try
                     {
                         agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
-                        {
-                            UserAuthorization = authSystem,
-                            TurnContext = turnContext,
-                            AuthHandlerName = authHandlerName
-                        }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                        (
+                            userAuthorization : authSystem,
+                            turnContext : turnContext,
+                            authHandlerName : authHandlerName
+                        ), EnvironmentUtils.GetObservabilityAuthenticationScope());
                     }
                     catch (Exception ex)
                     {

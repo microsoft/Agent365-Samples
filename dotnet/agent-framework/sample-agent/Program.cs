@@ -6,7 +6,7 @@ using Agent365AgentFrameworkSampleAgent.Agent;
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Agents.A365.Observability;
+using Microsoft.Agents.A365.Observability.Hosting;
 using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
 using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
@@ -39,7 +39,7 @@ builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
 // Add A365 tracing with Agent Framework integration
 builder.AddA365Tracing(config =>
 {
-    config.WithAgentFramework();
+    config.WithAgentFramework(additionalSources: AgentMetrics.SourceName);
 });
 
 // Add A365 Tooling Server integration

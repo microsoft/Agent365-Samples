@@ -14,8 +14,9 @@
 	<ItemGroup>
 		<!-- A365 SDK Packages  -->
 		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="*-beta.*" />
+		<PackageReference Include="Microsoft.Agents.A365.Observability.Hosting" Version="0.2.113-beta-g821de54391" />
 		<PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.AgentFramework" Version="*-beta.*" />
-		<PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.AgentFramework" Version="*-beta.*" />
+		<PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.AgentFramework" Version="0.2.113-beta-g821de54391" />
 		
 
 		<!-- Agent Framework Packages -->
