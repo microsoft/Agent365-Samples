@@ -31,3 +31,8 @@ build-backend = "hatchling.build"
 
 [tool.crewai]
 type = "crew"
+
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv]
+prerelease = "allow"
