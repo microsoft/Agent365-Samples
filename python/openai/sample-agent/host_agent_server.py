@@ -34,6 +34,14 @@ from microsoft_agents.hosting.core import (
     TurnContext,
     TurnState,
 )
+from microsoft_agents_a365.notifications.agent_notification import (
+    AgentNotification,
+    NotificationTypes,
+    AgentNotificationActivity,
+    ChannelId,
+)
+from microsoft_agents_a365.notifications import EmailResponse
+from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
@@ -94,9 +102,11 @@ class GenericAgentHost:
             authorization=self.authorization,
             **agents_sdk_config,
         )
+        self.agent_notification = AgentNotification(self.agent_app)
 
         # Setup message handlers
         self._setup_handlers()
+        logger.info("✅ Notification handlers registered successfully")
 
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers"""
@@ -176,6 +186,62 @@ class GenericAgentHost:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"
                 logger.error(f"❌ Error processing message: {e}")
                 await context.send_activity(error_msg)
+
+        # Configure auth handlers for notifications
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+            auth_handlers=[self.auth_handler_name] if self.auth_handler_name else [],
+        )
+        async def on_notification(
+            context: TurnContext,
+            state: TurnState,
+            notification_activity: AgentNotificationActivity,
+        ):
+            try:
+                tenant_id = context.activity.recipient.tenant_id
+                agent_id = context.activity.recipient.agentic_app_id
+
+                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                    # Ensure the agent is available
+                    if not self.agent_instance:
+                        logger.error("Agent not available")
+                        await context.send_activity("❌ Sorry, the agent is not available.")
+                        return
+
+                    # Exchange token for observability if auth handler is configured
+                    if self.auth_handler_name:
+                        exaau_token = await self.agent_app.auth.exchange_token(
+                            context,
+                            scopes=get_observability_authentication_scope(),
+                            auth_handler_id=self.auth_handler_name,
+                        )
+                        cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+
+                    logger.info(f"📬 Processing notification: {notification_activity.notification_type}")
+
+                    if not hasattr(self.agent_instance, "handle_agent_notification_activity"):
+                        logger.warning("⚠️ Agent doesn't support notifications")
+                        await context.send_activity(
+                            "This agent doesn't support notification handling yet."
+                        )
+                        return
+
+                    response = await self.agent_instance.handle_agent_notification_activity(
+                        notification_activity, self.agent_app.auth, self.auth_handler_name, context
+                    )
+
+                    if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+                        response_activity = EmailResponse.create_email_response_activity(response)
+                        await context.send_activity(response_activity)
+                        return
+
+                    await context.send_activity(response)
+
+            except Exception as e:
+                logger.error(f"❌ Notification error: {e}")
+                await context.send_activity(
+                    f"Sorry, I encountered an error processing the notification: {str(e)}"
+                )
 
     async def initialize_agent(self):
         """Initialize the hosted agent instance"""
@@ -342,6 +408,11 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
         # Check that the agent inherits from AgentInterface
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
+
+        configure(
+            service_name="OpenAIAgentTracingWithAzureOpenAI",
+            service_namespace="OpenAIAgentTesting",
+        )
 
         # Create the host
         host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
