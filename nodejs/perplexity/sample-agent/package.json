@@ -20,6 +20,7 @@
   "author": "Microsoft",
   "license": "MIT",
   "dependencies": {
+    "@azure/identity": "^4.13.0",
     "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
     "@microsoft/agents-activity": "^1.2.2",
