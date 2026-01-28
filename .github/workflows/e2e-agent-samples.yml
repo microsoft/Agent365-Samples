@@ -1202,14 +1202,14 @@ jobs:
             OVERALL_STATUS="⚠️ Some Tests Failed"
           fi
           
-          # Generate status icons
-          PYTHON_OPENAI_ICON=$([[ "${{ needs.python-openai.result }}" == "success" ]] && echo "✅" || echo "❌")
-          NODEJS_OPENAI_ICON=$([[ "${{ needs.nodejs-openai.result }}" == "success" ]] && echo "✅" || echo "❌")
-          DOTNET_SK_ICON=$([[ "${{ needs.dotnet-semantic-kernel.result }}" == "success" ]] && echo "✅" || echo "❌")
-          DOTNET_AF_ICON=$([[ "${{ needs.dotnet-agent-framework.result }}" == "success" ]] && echo "✅" || echo "❌")
-          NODEJS_CLAUDE_ICON=$([[ "${{ needs.nodejs-claude.result }}" == "success" ]] && echo "✅" || echo "❌")
-          NODEJS_LANGCHAIN_ICON=$([[ "${{ needs.nodejs-langchain.result }}" == "success" ]] && echo "✅" || echo "❌")
-          PYTHON_CLAUDE_ICON=$([[ "${{ needs.python-claude.result }}" == "success" ]] && echo "✅" || echo "❌")
+          # Generate status icons using if-else for reliability
+          if [[ "${{ needs.python-openai.result }}" == "success" ]]; then PYTHON_OPENAI_ICON="✅"; else PYTHON_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-openai.result }}" == "success" ]]; then NODEJS_OPENAI_ICON="✅"; else NODEJS_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.dotnet-semantic-kernel.result }}" == "success" ]]; then DOTNET_SK_ICON="✅"; else DOTNET_SK_ICON="❌"; fi
+          if [[ "${{ needs.dotnet-agent-framework.result }}" == "success" ]]; then DOTNET_AF_ICON="✅"; else DOTNET_AF_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-claude.result }}" == "success" ]]; then NODEJS_CLAUDE_ICON="✅"; else NODEJS_CLAUDE_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-langchain.result }}" == "success" ]]; then NODEJS_LANGCHAIN_ICON="✅"; else NODEJS_LANGCHAIN_ICON="❌"; fi
+          if [[ "${{ needs.python-claude.result }}" == "success" ]]; then PYTHON_CLAUDE_ICON="✅"; else PYTHON_CLAUDE_ICON="❌"; fi
           
           echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

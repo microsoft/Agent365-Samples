@@ -48,15 +48,17 @@ switch ($Runtime) {
             $pipList = uv pip list --format=json 2>$null | ConvertFrom-Json
             
             if ($pipList) {
-                # Microsoft Agents SDK packages
-                $agentsSdkPackages = $pipList | Where-Object { 
-                    $_.name -like 'microsoft-agents-*' 
-                }
-                
-                # Agent 365 SDK packages
+                # Agent 365 SDK packages (check first for exclusion from Agents SDK list)
                 $a365Packages = $pipList | Where-Object { 
                     $_.name -like 'microsoft-agents-a365-*' -or 
                     $_.name -like 'microsoft_agents_a365_*'
+                }
+                
+                # Microsoft Agents SDK packages (excluding A365 packages)
+                $agentsSdkPackages = $pipList | Where-Object { 
+                    $_.name -like 'microsoft-agents-*' -and 
+                    $_.name -notlike 'microsoft-agents-a365-*' -and
+                    $_.name -notlike 'microsoft_agents_a365_*'
                 }
                 
                 Write-Host ""
@@ -122,7 +124,13 @@ switch ($Runtime) {
             Write-Host ""
             Write-Host "Microsoft Agents SDK Packages:" -ForegroundColor Green
             foreach ($pkg in $agentsPackages) {
-                $pkgPath = Join-Path $nodeModulesPath ($pkg -replace '/', '\') "package.json"
+                # Handle scoped packages (e.g., @microsoft/agents-sdk)
+                $pkgPathParts = $pkg -split '/'
+                $pkgPath = $nodeModulesPath
+                foreach ($part in $pkgPathParts) {
+                    $pkgPath = Join-Path $pkgPath $part
+                }
+                $pkgPath = Join-Path $pkgPath "package.json"
                 if (Test-Path $pkgPath) {
                     $pkgJson = Get-Content $pkgPath -Raw | ConvertFrom-Json
                     Write-Host "  $($pkg): $($pkgJson.version)"
@@ -137,7 +145,13 @@ switch ($Runtime) {
             Write-Host ""
             Write-Host "Microsoft Agent 365 SDK Packages:" -ForegroundColor Green
             foreach ($pkg in $a365Packages) {
-                $pkgPath = Join-Path $nodeModulesPath ($pkg -replace '/', '\') "package.json"
+                # Handle scoped packages (e.g., @microsoft/agents-a365-runtime)
+                $pkgPathParts = $pkg -split '/'
+                $pkgPath = $nodeModulesPath
+                foreach ($part in $pkgPathParts) {
+                    $pkgPath = Join-Path $pkgPath $part
+                }
+                $pkgPath = Join-Path $pkgPath "package.json"
                 if (Test-Path $pkgPath) {
                     $pkgJson = Get-Content $pkgPath -Raw | ConvertFrom-Json
                     Write-Host "  $($pkg): $($pkgJson.version)"

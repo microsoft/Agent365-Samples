@@ -115,13 +115,13 @@ if ($env:GITHUB_STEP_SUMMARY) {
         
         foreach ($turn in $conv.Turns) {
             # Escape pipe characters and limit length for markdown table
-            $promptDisplay = $turn.UserMessage -replace '\|', '\|' -replace '\n', ' '
+            $promptDisplay = $turn.UserMessage -replace '\|', '\\|' -replace '\n', ' '
             if ($promptDisplay.Length -gt 50) {
                 $promptDisplay = $promptDisplay.Substring(0, 47) + "..."
             }
             
             $responseDisplay = if ($turn.AgentResponse) {
-                $resp = $turn.AgentResponse -replace '\|', '\|' -replace '\n', ' '
+                $resp = $turn.AgentResponse -replace '\|', '\\|' -replace '\n', ' '
                 if ($resp.Length -gt 60) {
                     $resp.Substring(0, 57) + "..."
                 } else {
@@ -139,7 +139,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
             }
             
             $errorDisplay = if ($conv.ErrorMessage) {
-                $err = $conv.ErrorMessage -replace '\|', '\|' -replace '\n', ' '
+                $err = $conv.ErrorMessage -replace '\|', '\\|' -replace '\n', ' '
                 if ($err.Length -gt 40) {
                     $err.Substring(0, 37) + "..."
                 } else {
