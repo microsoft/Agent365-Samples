@@ -91,8 +91,13 @@ class GenericAgentHost:
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
 
-        self.use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
-        self.auth_handler_name = "AGENTIC"
+        # Auth handler name can be configured via environment
+        # Defaults to empty (no auth handler) - set AUTH_HANDLER_NAME=AGENTIC for production agentic auth
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
+            logger.info(f"🔐 Using auth handler: {self.auth_handler_name}")
+        else:
+            logger.info("🔓 No auth handler configured (AUTH_HANDLER_NAME not set)")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -119,33 +124,47 @@ class GenericAgentHost:
     async def _setup_observability_token(
         self, context: TurnContext, tenant_id: str, agent_id: str
     ):
+        # Only attempt token exchange when auth handler is configured
+        if not self.auth_handler_name:
+            logger.debug("Skipping observability token exchange (no auth handler)")
+            return
+            
         try:
+            logger.info(
+                f"🔐 Attempting token exchange for observability... "
+                f"(tenant_id={tenant_id}, agent_id={agent_id})"
+            )
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
                 auth_handler_id=self.auth_handler_name,
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+            logger.info(
+                f"✅ Token exchange successful "
+                f"(tenant_id={tenant_id}, agent_id={agent_id})"
+            )
         except Exception as e:
             logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
+        logger.info("🔍 Validating agent and setting up context...")
         try:
             tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
             agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
-            logger.info(f"🔍 Validating context - tenant_id: {tenant_id}, agent_id: {agent_id}")
         except Exception as e:
             logger.warning(f"⚠️ Could not extract tenant/agent IDs: {e}")
-            tenant_id = "unknown"
-            agent_id = "unknown"
+            tenant_id = None
+            agent_id = None
+        logger.info(f"🔍 tenant_id={tenant_id}, agent_id={agent_id}")
 
         if not self.agent_instance:
             logger.error("Agent not available")
             await context.send_activity("❌ Sorry, the agent is not available.")
             return None
 
-        # Setup observability token in agentic auth mode
-        if self.use_agentic_auth and tenant_id and agent_id:
+        # Setup observability token when auth handler is configured
+        if self.auth_handler_name and tenant_id and agent_id:
             await self._setup_observability_token(context, tenant_id, agent_id)
 
         return tenant_id or "unknown", agent_id or "unknown"
@@ -153,24 +172,20 @@ class GenericAgentHost:
     # --- Handlers (Messages & Notifications) ---
     def _setup_handlers(self):
         """Setup message and notification handlers"""
-        # Use auth_handlers only in agentic auth mode
-        handler = [self.auth_handler_name] if self.use_agentic_auth else None
+        # Configure auth handlers - only required when auth_handler_name is set
+        handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
 
         async def help_handler(context: TurnContext, _: TurnState):
             await context.send_activity(
                 f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
                 "How can I help you today?"
             )
-
         if self.use_agentic_auth:
             self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
-            self.agent_app.message("/help", auth_handlers=handler)(help_handler)
-        else:
-            self.agent_app.conversation_update("membersAdded")(help_handler)
-            self.agent_app.message("/help")(help_handler)
+        self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
+        self.agent_app.message("/help", **handler_config)(help_handler)
 
-        # Message handler - MUST use auth_handlers in agentic auth mode to trigger sign-in flow
-        # The sign-in flow caches the initial token, which is then used by exchange_token()
+        @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             try:
                 logger.info("📥 on_message handler called")
@@ -207,20 +222,10 @@ class GenericAgentHost:
                 except Exception as send_error:
                     logger.error(f"❌ Failed to send error message: {send_error}")
 
-        # Register message handler with auth_handlers in agentic mode (triggers sign-in flow)
-        if self.use_agentic_auth:
-            self.agent_app.activity("message", auth_handlers=handler)(on_message)
-        else:
-            self.agent_app.activity("message")(on_message)
-
-        # Notification handler - use auth_handlers only in agentic auth mode
-        notification_decorator_kwargs = {
-            "channel_id": ChannelId(channel="agents", sub_channel="*"),
-        }
-        if self.use_agentic_auth:
-            notification_decorator_kwargs["auth_handlers"] = handler
-
-        @self.agent_notification.on_agent_notification(**notification_decorator_kwargs)
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+            **handler_config,
+        )
         async def on_notification(
             context: TurnContext,
             state: TurnState,
