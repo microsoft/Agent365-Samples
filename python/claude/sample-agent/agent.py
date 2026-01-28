@@ -18,6 +18,8 @@ Features:
 import logging
 import os
 import uuid
+import json
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -54,20 +56,26 @@ from microsoft_agents.hosting.core import Authorization, TurnContext
 # Observability Components
 from microsoft_agents_a365.observability.core import (
     InvokeAgentScope,
-    InvokeAgentDetails,
     InferenceScope,
     InferenceCallDetails,
     InferenceOperationType,
-    AgentDetails,
-    TenantDetails,
-    Request,
-    ExecutionType,
+    ExecuteToolScope,
+    ToolCallDetails,
 )
-from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 
 # Observability configuration (must be imported early)
 from observability_config import is_observability_configured
+
+# Shared turn context utilities (similar to CrewAI pattern)
+from turn_context_utils import (
+    extract_turn_context_details,
+    create_agent_details,
+    create_invoke_agent_details,
+    create_caller_details,
+    create_tenant_details,
+    create_request,
+)
 
 # MCP Tooling Services
 from mcp_tool_registration_service import McpToolRegistrationService, MCPToolDefinition
@@ -148,7 +156,8 @@ class ClaudeAgent(AgentInterface):
         Initialize MCP services for tool discovery.
         
         Uses McpToolRegistrationService to:
-        - Discover MCP servers from ToolingManifest.json (dev) or Gateway (prod)
+        - Discover MCP servers via McpToolServerConfigurationService (production)
+        - Fallback to ToolingManifest.json (development)
         - Connect to MCP servers and fetch available tools
         - Provide tool execution capabilities
         """
@@ -164,7 +173,7 @@ class ClaudeAgent(AgentInterface):
         
         This method uses the McpToolRegistrationService to:
         1. Authenticate with the MCP platform
-        2. Discover available MCP servers
+        2. Discover available MCP servers via SDK or ToolingManifest.json fallback
         3. Connect to each server
         4. Fetch and index all available tools
         
@@ -174,19 +183,34 @@ class ClaudeAgent(AgentInterface):
             context: Turn context from M365 SDK
         """
         try:
-            # Get auth token based on configuration
-            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
+            # Get agentic_app_id from context or environment
+            agentic_app_id = None
+            if context.activity and context.activity.recipient:
+                agentic_app_id = context.activity.recipient.agentic_app_id
+            if not agentic_app_id:
+                agentic_app_id = os.getenv("AGENT_ID", "claude-agent")
+            
+            # Get auth token - prefer token exchange for proper MCP authentication
+            # When USE_AGENTIC_AUTH=true, the service will exchange token with proper scopes
+            # Otherwise, we fall back to the static bearer token (for local dev)
+            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
             auth_token = None
             
             if not use_agentic_auth:
+                # Use static bearer token for local development
                 auth_token = self.auth_options.bearer_token
+                logger.info("ℹ️ Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
+            else:
+                # Let the MCP service exchange the token with proper scopes
+                logger.info("ℹ️ MCP will use token exchange for authentication")
             
             # Discover and connect to MCP servers
             self.mcp_tools = await self.mcp_service.discover_and_connect_servers(
+                agentic_app_id=agentic_app_id,
                 auth=auth,
                 auth_handler_name=auth_handler_name,
                 context=context,
-                auth_token=auth_token,
+                auth_token=auth_token,  # None = service will exchange token
             )
             
             if self.mcp_tools:
@@ -231,6 +255,24 @@ class ClaudeAgent(AgentInterface):
         """
         return self.mcp_service.get_tools_for_claude()
 
+    def get_mcp_servers_for_claude(self) -> dict:
+        """
+        Get MCP servers in Claude SDK's McpHttpServerConfig format.
+        
+        Returns:
+            Dict mapping server names to server configs
+        """
+        return self.mcp_service.get_mcp_servers_for_claude()
+
+    def get_allowed_mcp_tool_names(self) -> list[str]:
+        """
+        Get MCP tool names in Claude's mcp__<server>__<tool> format.
+        
+        Returns:
+            List of prefixed tool names for allowed_tools
+        """
+        return self.mcp_service.get_allowed_tool_names_for_claude()
+
     # </McpTooling>
 
     # =========================================================================
@@ -251,18 +293,8 @@ class ClaudeAgent(AgentInterface):
     ) -> str:
         """Process user message using the Claude Agent SDK with observability tracing"""
         
-        # Extract context details for observability
-        activity = context.activity
-        recipient = activity.recipient if activity.recipient else None
-        tenant_id = recipient.tenant_id if recipient else None
-        agent_id = recipient.agentic_app_id if recipient else None
-        agent_upn = getattr(recipient, "user_principal_name", None) or getattr(recipient, "upn", None) if recipient else None
-        conversation_id = activity.conversation.id if activity.conversation else None
-        
-        # Extract caller information
-        caller_id = activity.from_property.id if activity.from_property else None
-        caller_name = activity.from_property.name if activity.from_property else None
-        caller_aad_object_id = activity.from_property.aad_object_id if activity.from_property else None
+        # Extract context details using shared utility (similar to CrewAI pattern)
+        ctx_details = extract_turn_context_details(context)
         
         try:
             logger.info(f"📨 Processing message: {message[:100]}...")
@@ -277,57 +309,17 @@ class ClaudeAgent(AgentInterface):
             # Use BaggageBuilder to set contextual information that flows through all spans
             with (
                 BaggageBuilder()
-                .tenant_id(tenant_id or "default-tenant")
-                .agent_id(agent_id or os.getenv("AGENT_ID", "claude-agent"))
-                .correlation_id(conversation_id or str(uuid.uuid4()))
+                .tenant_id(ctx_details.tenant_id)
+                .agent_id(ctx_details.agent_id)
+                .correlation_id(ctx_details.correlation_id)
                 .build()
             ):
-                # Create AgentDetails with valid parameters only
-                agent_details = AgentDetails(
-                    agent_id=agent_id or os.getenv("AGENT_ID", "claude-agent"),
-                    conversation_id=conversation_id,
-                    agent_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "Claude Agent"),
-                    agent_description="AI agent powered by Anthropic Claude Agent SDK",
-                    tenant_id=tenant_id or "default-tenant",
-                    agent_upn=agent_upn,  # Get from turn context recipient
-                    agent_blueprint_id=os.getenv("CLIENT_ID") or os.getenv("AGENT_BLUEPRINT_ID"),
-                    agent_auid=os.getenv("AGENT_AUID"),
-                )
-
-                
-                # Extract caller information (add UPN and IP if available)
-                caller = activity.from_property if activity and activity.from_property else None
-                caller_id = getattr(caller, "id", None)
-                caller_name = getattr(caller, "name", None)
-                caller_upn = (
-                    getattr(caller, "user_principal_name", None)
-                    or getattr(caller, "upn", None)
-                )
-                # Client IP may be set by hosting middleware. If you can’t read it directly,
-                # carry it via source_metadata so exporter can reflect it in attributes.
-                client_ip = getattr(activity, "caller_client_ip", None)
-
-                
-                # Create CallerDetails (don't include tenant_id per schema)
-                caller_details = CallerDetails(
-                    caller_id=caller_id or "unknown-caller",
-                    caller_upn=caller_upn or caller_name or "unknown-user",
-                    caller_user_id=caller_aad_object_id or caller_id or "unknown-user-id",
-                )
-                
-                tenant_details = TenantDetails(tenant_id=tenant_id or "default-tenant")
-                
-                # Create Request without source_metadata (causes incorrect attributes)
-                request = Request(
-                    content=message,
-                    execution_type=ExecutionType.HUMAN_TO_AGENT,
-                    session_id=conversation_id,
-                )
-                
-                invoke_details = InvokeAgentDetails(
-                    details=agent_details,
-                    session_id=conversation_id,
-                )
+                # Create observability details using shared utilities (CrewAI pattern)
+                agent_details = create_agent_details(ctx_details)
+                caller_details = create_caller_details(ctx_details)
+                tenant_details = create_tenant_details(ctx_details)
+                request = create_request(ctx_details, message)
+                invoke_details = create_invoke_agent_details(ctx_details)
                 
                 # Use context manager pattern per documentation
                 with InvokeAgentScope.start(
@@ -353,24 +345,36 @@ class ClaudeAgent(AgentInterface):
                         tenant_details=tenant_details,
                         request=request,
                     ) as inference_scope:
-                        # Get MCP tools in Claude format to pass to the client
-                        mcp_tools_for_claude = self.get_mcp_tools_for_claude()
+                        # Get MCP servers in Claude SDK format
+                        mcp_servers = self.get_mcp_servers_for_claude()
+                        mcp_allowed_tools = self.get_allowed_mcp_tool_names()
                         
-                        # Create client options with MCP tools included
-                        if mcp_tools_for_claude:
-                            logger.info(f"📋 Registering {len(mcp_tools_for_claude)} MCP tool(s) with Claude")
+                        # Debug: Log MCP server configuration being passed to Claude
+                        if mcp_servers:
+                            for server_name, config in mcp_servers.items():
+                                headers = config.get("headers", {})
+                                has_auth = "Authorization" in headers or "authorization" in headers
+                                logger.info(f"🔐 MCP Server '{server_name}': URL={config.get('url')}, HasAuth={has_auth}")
+                        
+                        # Combine base allowed_tools with MCP tool names
+                        all_allowed_tools = list(self.claude_options.allowed_tools) + mcp_allowed_tools
+                        
+                        # Create client options with MCP servers included
+                        if mcp_servers:
+                            logger.info(f"📋 Registering {len(mcp_servers)} MCP server(s) with Claude")
+                            logger.info(f"📋 MCP tools available: {mcp_allowed_tools}")
                             client_options = ClaudeAgentOptions(
                                 model=self.claude_options.model,
                                 max_thinking_tokens=self.claude_options.max_thinking_tokens,
-                                allowed_tools=self.claude_options.allowed_tools,
-                                custom_tools=mcp_tools_for_claude,  # Add MCP tools here
+                                allowed_tools=all_allowed_tools,
+                                mcp_servers=mcp_servers,  # MCP servers in Claude SDK format
                                 permission_mode=self.claude_options.permission_mode,
                                 continue_conversation=self.claude_options.continue_conversation,
                             )
                         else:
                             client_options = self.claude_options
                         
-                        # Create a new client for this conversation with MCP tools
+                        # Create a new client for this conversation with MCP servers
                         async with ClaudeSDKClient(client_options) as client:
                             # Send the user message
                             await client.query(message)
@@ -379,90 +383,146 @@ class ClaudeAgent(AgentInterface):
                             response_parts = []
                             thinking_parts = []
                             
-                            # Get available MCP tool names for routing
-                            mcp_tool_names = self.get_mcp_tool_names()
+                            # Track active tool scopes for recording results
+                            active_tool_scopes: dict = {}
                             
-                            # Tool execution loop - continues until Claude provides final response
-                            max_tool_iterations = 10  # Prevent infinite loops
-                            iteration = 0
+                            # Claude SDK handles MCP tool execution automatically
+                            # when mcp_servers is configured. We just process the response.
                             
-                            while iteration < max_tool_iterations:
-                                iteration += 1
-                                pending_tool_calls = []
-                                has_final_response = False
-                                
-                                # Receive and process messages
-                                async for msg in client.receive_response():
-                                    if isinstance(msg, AssistantMessage):
-                                        for block in msg.content:
-                                            if isinstance(block, ThinkingBlock):
-                                                thinking_parts.append(f"💭 {block.thinking}")
-                                                logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
-                                            
-                                            elif isinstance(block, TextBlock):
-                                                response_parts.append(block.text)
-                                                logger.info(f"💬 Claude response: {block.text[:100]}...")
-                                                has_final_response = True
-                                            
-                                            elif isinstance(block, ToolUseBlock):
-                                                # Claude wants to use a tool
-                                                tool_name = block.name
-                                                tool_input = block.input
-                                                tool_use_id = block.id
-                                                
-                                                logger.info(f"🔧 Claude requesting tool: {tool_name}")
-                                                logger.info(f"   Input: {str(tool_input)[:200]}...")
-                                                
-                                                pending_tool_calls.append({
-                                                    "id": tool_use_id,
-                                                    "name": tool_name,
-                                                    "input": tool_input,
-                                                })
-                                
-                                # If no pending tool calls, we're done
-                                if not pending_tool_calls:
-                                    break
-                                
-                                # Execute pending tool calls
-                                tool_results = []
-                                for tool_call in pending_tool_calls:
-                                    tool_name = tool_call["name"]
-                                    tool_input = tool_call["input"]
-                                    tool_use_id = tool_call["id"]
-                                    
-                                    try:
-                                        # Check if this is an MCP tool
-                                        if tool_name in mcp_tool_names:
-                                            logger.info(f"🔄 Executing MCP tool: {tool_name}")
-                                            result = await self.call_mcp_tool(tool_name, tool_input)
-                                            logger.info(f"✅ MCP tool result: {str(result)[:200]}...")
-                                        else:
-                                            # Built-in tool or unknown - let Claude handle it
-                                            logger.info(f"ℹ️ Tool '{tool_name}' is not an MCP tool, skipping...")
-                                            result = f"Tool '{tool_name}' is a built-in tool handled by Claude Agent SDK."
+                            # Receive and process messages
+                            async for msg in client.receive_response():
+                                if isinstance(msg, AssistantMessage):
+                                    for block in msg.content:
+                                        if isinstance(block, ThinkingBlock):
+                                            thinking_parts.append(f"💭 {block.thinking}")
+                                            logger.info(f"💭 Claude thinking: {block.thinking[:100]}...")
                                         
-                                        tool_results.append({
-                                            "tool_use_id": tool_use_id,
-                                            "content": result,
-                                            "is_error": False,
-                                        })
+                                        elif isinstance(block, TextBlock):
+                                            response_parts.append(block.text)
+                                            logger.info(f"💬 Claude response: {block.text[:100]}...")
                                         
-                                    except Exception as tool_error:
-                                        logger.error(f"❌ Tool execution error: {tool_error}")
-                                        tool_results.append({
-                                            "tool_use_id": tool_use_id,
-                                            "content": f"Error executing tool: {str(tool_error)}",
-                                            "is_error": True,
-                                        })
-                                
-                                # Send tool results back to Claude
-                                if tool_results:
-                                    logger.info(f"📤 Sending {len(tool_results)} tool result(s) to Claude")
-                                    await client.send_tool_results(tool_results)
-                            
-                            # Warn if max iterations reached
-                            if iteration >= max_tool_iterations:
-                                logger.warning(f"⚠️ Max tool iterations ({max_tool_iterations}) reached")
+                                        elif isinstance(block, ToolUseBlock):
+                                            # Log tool usage with ExecuteToolScope
+                                            tool_name = block.name
+                                            tool_input = block.input
+                                            tool_call_id = getattr(block, 'id', str(uuid.uuid4()))
+                                            
+                                            logger.info(f"🔧 Claude using tool: {tool_name}")
+                                            logger.info(f"   Input: {str(tool_input)[:200]}...")
+                                            
+                                            # Determine tool type and endpoint
+                                            if tool_name.startswith("mcp__"):
+                                                tool_type = "mcp_extension"
+                                                # Extract server name from mcp__<server>__<tool>
+                                                parts = tool_name.split("__")
+                                                server_name = parts[1] if len(parts) >= 2 else "unknown"
+                                                endpoint_url = mcp_servers.get(server_name, {}).get("url", "")
+                                                # Parse the URL - ToolCallDetails expects a parsed URL object
+                                                endpoint = urlparse(endpoint_url) if endpoint_url else None
+                                            else:
+                                                tool_type = "function"
+                                                endpoint = None  # Built-in tools don't have external endpoints
+                                            
+                                            # Create ToolCallDetails for observability
+                                            # Use json.dumps for proper serialization of arguments
+                                            try:
+                                                args_str = json.dumps(tool_input) if tool_input else ""
+                                            except (TypeError, ValueError):
+                                                args_str = str(tool_input) if tool_input else ""
+                                            
+                                            tool_call_details = ToolCallDetails(
+                                                tool_name=tool_name,
+                                                arguments=args_str,
+                                                tool_call_id=tool_call_id,
+                                                description=f"Executing {tool_name} tool",
+                                                tool_type=tool_type,
+                                                endpoint=endpoint,
+                                            )
+                                            
+                                            # Start ExecuteToolScope and track it
+                                            tool_scope = ExecuteToolScope.start(
+                                                details=tool_call_details,
+                                                agent_details=agent_details,
+                                                tenant_details=tenant_details,
+                                            )
+                                            active_tool_scopes[tool_call_id] = {
+                                                "scope": tool_scope,
+                                                "name": tool_name,
+                                            }
+                                            logger.info(f"📊 ExecuteToolScope started for: {tool_name} (id: {tool_call_id})")
+                                            
+                                            # Check if this is an MCP tool - we need to execute it manually
+                                            # because Claude SDK doesn't properly support SSE-based MCP servers
+                                            if tool_name.startswith("mcp__"):
+                                                # Parse the MCP tool name: mcp__<server>__<tool>
+                                                parts = tool_name.split("__")
+                                                if len(parts) >= 3:
+                                                    actual_tool_name = "__".join(parts[2:])  # Handle tool names with __
+                                                    logger.info(f"📡 Manually executing MCP tool: {actual_tool_name}")
+                                                    
+                                                    try:
+                                                        # Execute MCP tool manually using our service
+                                                        result = await self.call_mcp_tool(actual_tool_name, tool_input)
+                                                        logger.info(f"✅ MCP tool result: {str(result)[:500]}...")
+                                                        
+                                                        # Record the response in the tool scope
+                                                        if tool_scope and hasattr(tool_scope, 'record_response'):
+                                                            tool_scope.record_response(str(result) if result else "")
+                                                        
+                                                        # Close the tool scope
+                                                        if tool_scope:
+                                                            tool_scope.__exit__(None, None, None)
+                                                            logger.info(f"📊 ExecuteToolScope closed for: {tool_name}")
+                                                        
+                                                        # Remove from active scopes since we handled it
+                                                        if tool_call_id in active_tool_scopes:
+                                                            del active_tool_scopes[tool_call_id]
+                                                        
+                                                        # Note: Don't add to response_parts - Claude will use the result
+                                                        # and generate its own response text
+                                                        
+                                                    except Exception as e:
+                                                        error_msg = f"MCP tool error: {str(e)}"
+                                                        logger.error(f"❌ {error_msg}")
+                                                        
+                                                        # Close scope with error
+                                                        if tool_scope:
+                                                            tool_scope.__exit__(type(e), e, e.__traceback__)
+                                                        if tool_call_id in active_tool_scopes:
+                                                            del active_tool_scopes[tool_call_id]
+                                                        
+                                                        response_parts.append(f"\n\n**Tool Error ({actual_tool_name}):**\n{error_msg}")
+                                        
+                                        elif isinstance(block, ToolResultBlock):
+                                            # Log tool results and close the scope
+                                            result_tool_use_id = getattr(block, 'tool_use_id', None)
+                                            result_content = getattr(block, 'content', None)
+                                            
+                                            logger.info(f"✅ Tool result received (id: {result_tool_use_id})")
+                                            if result_content:
+                                                logger.info(f"   Result: {str(result_content)[:200]}...")
+                                            
+                                            # Find and close the corresponding tool scope
+                                            if result_tool_use_id and result_tool_use_id in active_tool_scopes:
+                                                tool_info = active_tool_scopes.pop(result_tool_use_id)
+                                                tool_scope = tool_info["scope"]
+                                                
+                                                # Record the response if available
+                                                if tool_scope and hasattr(tool_scope, 'record_response'):
+                                                    tool_scope.record_response(str(result_content) if result_content else "")
+                                                
+                                                # Close the scope
+                                                if tool_scope:
+                                                    tool_scope.__exit__(None, None, None)
+                                                    logger.info(f"📊 ExecuteToolScope closed for: {tool_info['name']}")
+
+                            # Clean up any remaining open tool scopes (shouldn't happen normally)
+                            for tool_id, tool_info in active_tool_scopes.items():
+                                tool_scope = tool_info.get("scope")
+                                if tool_scope:
+                                    logger.warning(f"⚠️ Closing orphaned ExecuteToolScope for: {tool_info['name']}")
+                                    tool_scope.__exit__(None, None, None)
+                            active_tool_scopes.clear()
 
                             # Combine thinking and response
                             full_response = ""
@@ -500,15 +560,8 @@ class ClaudeAgent(AgentInterface):
                         if hasattr(invoke_scope, 'record_output_messages'):
                             invoke_scope.record_output_messages([full_response])
                 
-                # Record finish reason
-                if inference_scope and hasattr(inference_scope, 'record_finish_reasons'):
-                    inference_scope.record_finish_reasons(["end_turn"])
-                
-                # Close scopes successfully
-                if inference_scope:
-                    inference_scope.__exit__(None, None, None)
-                if invoke_scope:
-                    invoke_scope.__exit__(None, None, None)
+                # Note: Scopes are automatically closed by the 'with' context managers
+                # Do NOT manually call __exit__ - that causes "Token already used" errors
                 
                 logger.info("✅ Observability scopes closed successfully")
 
@@ -518,23 +571,9 @@ class ClaudeAgent(AgentInterface):
             logger.error(f"Error processing message: {e}")
             logger.exception("Full error details:")
             
-            # Record error in scopes
-            if invoke_scope and hasattr(invoke_scope, 'record_error'):
-                invoke_scope.record_error(e)
-            if inference_scope and hasattr(inference_scope, 'record_error'):
-                inference_scope.record_error(e)
-            
-            # Close scopes with error
-            if inference_scope:
-                try:
-                    inference_scope.__exit__(type(e), e, e.__traceback__)
-                except Exception:
-                    pass
-            if invoke_scope:
-                try:
-                    invoke_scope.__exit__(type(e), e, e.__traceback__)
-                except Exception:
-                    pass
+            # Note: Scopes are automatically closed by 'with' context managers on exception
+            # The exception info is passed to __exit__ automatically
+            # Do NOT manually call __exit__ - that causes "Token already used" errors
 
             return f"Sorry, I encountered an error: {str(e)}"
 
