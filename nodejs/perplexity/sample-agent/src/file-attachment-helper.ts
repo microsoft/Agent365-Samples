@@ -167,10 +167,19 @@ export async function fetchFileAttachments(
   // Get Graph token using PRESENCE app credentials (has Files.Read.All Application permission)
   let graphToken: string | null = null;
   try {
+    const clientId = process.env["PRESENCE_CLIENTID"];
+    const clientSecret = process.env["PRESENCE_CLIENTSECRET"];
+
+    if (!clientId || !clientSecret) {
+      throw new Error(
+        "Environment variables PRESENCE_CLIENTID and PRESENCE_CLIENTSECRET must be set to acquire a Graph token."
+      );
+    }
+
     const credential = new ClientSecretCredential(
       tenantId,
-      process.env["PRESENCE_CLIENTID"] || "unknown-bot",
-      process.env["PRESENCE_CLIENTSECRET"] || "unknown-secret"
+      clientId,
+      clientSecret
     );
 
     const tokenResponse = await credential.getToken([
