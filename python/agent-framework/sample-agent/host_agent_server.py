@@ -130,19 +130,25 @@ class GenericAgentHost:
             return
             
         try:
-            logger.info(f"🔐 Attempting token exchange for observability...")
+            logger.info(
+                f"🔐 Attempting token exchange for observability... "
+                f"(tenant_id={tenant_id}, agent_id={agent_id})"
+            )
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
                 auth_handler_id=self.auth_handler_name,
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-            logger.info(f"✅ Token exchange successful")
+            logger.info(
+                f"✅ Token exchange successful "
+                f"(tenant_id={tenant_id}, agent_id={agent_id})"
+            )
         except Exception as e:
             logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
-        logger.info(f"🔍 Validating agent and setting up context...")
+        logger.info("🔍 Validating agent and setting up context...")
         tenant_id = context.activity.recipient.tenant_id
         agent_id = context.activity.recipient.agentic_app_id
         logger.info(f"🔍 tenant_id={tenant_id}, agent_id={agent_id}")
