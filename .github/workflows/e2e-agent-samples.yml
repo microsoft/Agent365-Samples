@@ -761,6 +761,7 @@ jobs:
           $configMappings = @{
             "NODE_ENV" = "development"
             "ANTHROPIC_API_KEY" = "${{ secrets.ANTHROPIC_API_KEY }}"
+            "agentic_scopes" = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default"
             "connections__service_connection__settings__authType" = "ClientSecret"
             "connections__service_connection__settings__clientId" = "${{ secrets.NODEJS_CLAUDE_AGENT_ID }}"
             "connections__service_connection__settings__clientSecret" = "${{ secrets.NODEJS_CLAUDE_CLIENT_SECRET }}"
@@ -921,6 +922,7 @@ jobs:
             "AZURE_OPENAI_ENDPOINT" = "${{ secrets.NODEJS_LANGCHAIN_AZURE_OPENAI_ENDPOINT }}"
             "AZURE_OPENAI_DEPLOYMENT" = "${{ secrets.NODEJS_LANGCHAIN_AZURE_OPENAI_DEPLOYMENT }}"
             "AZURE_OPENAI_API_VERSION" = "2024-12-01-preview"
+            "agentic_scopes" = "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default"
             "connections__service_connection__settings__authType" = "ClientSecret"
             "connections__service_connection__settings__clientId" = "${{ secrets.NODEJS_LANGCHAIN_AGENT_ID }}"
             "connections__service_connection__settings__clientSecret" = "${{ secrets.NODEJS_LANGCHAIN_CLIENT_SECRET }}"
