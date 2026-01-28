@@ -177,7 +177,7 @@ if ($env:GITHUB_STEP_SUMMARY) {
         $turnNum = 1
         foreach ($turn in $conv.Turns) {
             $summary += @"
-**Turn $turnNum:**
+**Turn ${turnNum}:**
 - **Prompt:** ``$($turn.UserMessage)``
 - **Response:** 
 ``````
