@@ -328,16 +328,20 @@ class GenericAgentHost:
             if s.connect_ex(("127.0.0.1", desired_port)) == 0:
                 port = desired_port + 1
 
+        # Detect production environment (Azure App Service sets WEBSITE_SITE_NAME)
+        is_production = os.getenv("WEBSITE_SITE_NAME") is not None
+        host = "0.0.0.0" if is_production else "localhost"
+
         print("=" * 80)
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
         print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
-        print(f"🚀 Server: localhost:{port}")
+        print(f"🚀 Server: {host}:{port}")
         print(f"📚 Endpoint: http://localhost:{port}/api/messages")
         print(f"❤️  Health: http://localhost:{port}/api/health\n")
 
         try:
-            run_app(app, host="localhost", port=port, handle_signals=True)
+            run_app(app, host=host, port=port, handle_signals=True)
         except KeyboardInterrupt:
             print("\n👋 Server stopped")
 
