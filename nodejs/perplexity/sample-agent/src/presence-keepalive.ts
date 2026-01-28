@@ -81,10 +81,8 @@ export class PresenceKeepAliveManager {
       tenantId: this.tenantId,
       userId: args.userId,
       sessionId: this.sessionId,
-      lastSeenAt: existing?.lastSeenAt ?? now,
+      lastSeenAt: now,
     });
-
-    this.targets.get(k)!.lastSeenAt = now;
   }
 
   /**
