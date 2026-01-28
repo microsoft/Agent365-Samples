@@ -148,7 +148,6 @@ class GenericAgentHost:
             logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
-        logger.info("🔍 Validating agent and setting up context...")
         try:
             tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
             agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
@@ -156,7 +155,6 @@ class GenericAgentHost:
             logger.warning(f"⚠️ Could not extract tenant/agent IDs: {e}")
             tenant_id = None
             agent_id = None
-        logger.info(f"🔍 tenant_id={tenant_id}, agent_id={agent_id}")
 
         if not self.agent_instance:
             logger.error("Agent not available")
@@ -180,27 +178,21 @@ class GenericAgentHost:
                 f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
                 "How can I help you today?"
             )
-        if self.use_agentic_auth:
-            self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
+
         self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
         self.agent_app.message("/help", **handler_config)(help_handler)
 
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             try:
-                logger.info("📥 on_message handler called")
                 result = await self._validate_agent_and_setup_context(context)
                 if result is None:
-                    logger.warning("⚠️ Validation returned None")
                     return
                 tenant_id, agent_id = result
-                logger.info(f"✅ Validated - tenant: {tenant_id}, agent: {agent_id}")
 
                 with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
                     user_message = context.activity.text or ""
-                    logger.info(f"📝 User message text: '{user_message}'")
                     if not user_message.strip() or user_message.strip() == "/help":
-                        logger.info("⏭️ Skipping empty or help message")
                         return
 
                     logger.info(f"📨 {user_message}")
@@ -208,9 +200,7 @@ class GenericAgentHost:
                         response = await self.agent_instance.process_user_message(
                             user_message, self.agent_app.auth, self.auth_handler_name, context
                         )
-                        logger.info(f"📤 Response: {response[:200] if response else 'None'}...")
                         await context.send_activity(response)
-                        logger.info("✅ Response sent successfully")
                     except Exception as process_error:
                         logger.error(f"❌ Process error: {process_error}", exc_info=True)
                         await context.send_activity(f"Sorry, processing error: {str(process_error)}")
@@ -290,12 +280,8 @@ class GenericAgentHost:
                 scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
             )
 
-        if self.use_agentic_auth:
-            logger.info("🔐 Agentic Auth mode enabled")
-        elif environ.get("BEARER_TOKEN"):
-            logger.info("🔑 Anonymous dev mode (API key auth)")
-        else:
-            logger.warning("⚠️ No auth env vars; running anonymous")
+        if environ.get("BEARER_TOKEN"):
+            logger.info("🔑 Anonymous dev mode")
         return None
 
     # --- Server ---
@@ -353,7 +339,7 @@ class GenericAgentHost:
             if s.connect_ex(("127.0.0.1", desired_port)) == 0:
                 port = desired_port + 1
 
-        auth_mode = "Agentic Auth" if self.use_agentic_auth else ("API Key" if environ.get("AZURE_OPENAI_API_KEY") else "Anonymous")
+        auth_mode = "Agentic Auth" if self.auth_handler_name else ("API Key" if environ.get("AZURE_OPENAI_API_KEY") else "Anonymous")
         print("=" * 80)
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
