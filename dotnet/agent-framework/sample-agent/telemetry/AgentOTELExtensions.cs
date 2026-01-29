@@ -85,6 +85,7 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                     tracing.AddSource(builder.Environment.ApplicationName)
                         .AddSource(
                             "A365.AgentFramework",
+                            "A365.ObservabilityMiddleware",  // Add middleware source for turn/send activities spans
                             "Microsoft.Agents.Builder",
                             "Microsoft.Agents.Hosting",
                             "A365.AgentFramework.MyAgent",

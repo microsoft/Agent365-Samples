@@ -39,7 +39,7 @@ builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
 // Add A365 tracing with Agent Framework integration
 builder.AddA365Tracing(config =>
 {
-    config.WithAgentFramework(additionalSources: AgentMetrics.SourceName);
+    //config.WithAgentFramework(additionalSources: AgentMetrics.SourceName);
 });
 
 // Add A365 Tooling Server integration
@@ -94,8 +94,22 @@ builder.Services.AddSingleton<IChatClient>(sp => {
         .Build(); 
 });
 
-// Uncomment to add transcript logging middleware to log all conversations to files
-builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
+// Add Bot Framework adapter for proactive messaging
+builder.Services.AddSingleton<IAgentHttpAdapter, CloudAdapter>();
+
+// Register the A365 Scope Middleware
+// This middleware uses InvokeAgentScope and OutputScope for observability
+builder.Services.AddSingleton<A365OutputScopeMiddleware>();
+
+// Register middleware array with scope and transcript logging middleware
+builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(sp =>
+{
+    var scopeMiddleware = sp.GetRequiredService<A365OutputScopeMiddleware>();
+    return [
+        scopeMiddleware,  // Scope middleware runs first
+        new TranscriptLoggerMiddleware(new FileTranscriptLogger())  // Transcript logging
+    ];
+});
 
 var app = builder.Build();
 

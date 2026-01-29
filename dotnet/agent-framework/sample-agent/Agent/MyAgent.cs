@@ -13,12 +13,33 @@ using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Core.Serialization;
+using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
 using System.Text.Json;
 
+// Resolve namespace conflicts between Microsoft.Agents and Microsoft.Bot
+using ITurnContext = Microsoft.Agents.Builder.ITurnContext;
+using ActivityTypes = Microsoft.Agents.Core.Models.ActivityTypes;
+using ChannelAccount = Microsoft.Agents.Core.Models.ChannelAccount;
+using ConversationReference = Microsoft.Agents.Core.Models.ConversationReference;
+
 namespace Agent365AgentFrameworkSampleAgent.Agent
 {
+    /// <summary>
+    /// Data model for storing async work items (e.g., reminders).
+    /// In production, this would be persisted to a database.
+    /// </summary>
+    public class AsyncWorkItem
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public ConversationReference ConversationReference { get; set; } = null!;
+        public string? OriginalSpanId { get; set; }
+        public string? OriginalTraceId { get; set; }
+        public DateTime ScheduledFor { get; set; }
+        public string? Payload { get; set; }
+    }
+
     public class MyAgent : AgentApplication
     {
         private readonly string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access";
@@ -51,11 +72,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         // Temp
         private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
+        // Storage for async work items (in-memory for demo; use persistent storage in production)
+        private static readonly ConcurrentDictionary<string, AsyncWorkItem> _asyncWorkItems = new();
+
+        // Bot adapter for proactive messaging
+        private readonly IAgentHttpAdapter _botAdapter;
+        private readonly string _appId;
+
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
             IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
+            IAgentHttpAdapter botAdapter,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
@@ -63,6 +92,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
+            _botAdapter = botAdapter;
+            _appId = configuration["MicrosoftAppId"] ?? string.Empty;
 
             // Greet when members are added to the conversation
             OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
@@ -126,6 +157,17 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+
+                    // ???????????????????????????????????????????????????????????????????????????????
+                    // ? ASYNC REMINDER DEMO: Check if user wants to be reminded later               ?
+                    // ? This demonstrates how to persist span ID for proactive messages             ?
+                    // ???????????????????????????????????????????????????????????????????????????????
+                    if (userText.Contains("remind me", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await HandleReminderRequestAsync(turnContext, cancellationToken);
+                        return;
+                    }
+
                     var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
                     // Read or Create the conversation thread for this conversation.
@@ -278,6 +320,144 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 return userToolCacheKey;
             }
             return userToolCacheKey;
+        }
+
+        /// <summary>
+        /// Handles a "remind me" request by persisting the span ID and scheduling a proactive message.
+        /// This demonstrates the async observability pattern where:
+        /// 1. The original span ID is persisted with the work item
+        /// 2. When the proactive message is sent, the persisted span ID is restored
+        /// 3. The OutputScope uses the original span as its parent for trace correlation
+        /// </summary>
+        private async Task HandleReminderRequestAsync(ITurnContext turnContext, CancellationToken cancellationToken)
+        {
+            // Get the span ID from middleware (stored in turnContext.Services by A365OutputScopeMiddleware)
+            var spanId = turnContext.GetInvokeAgentSpanId();
+            var traceId = turnContext.GetInvokeAgentTraceId();
+
+            _logger?.LogInformation(
+                "Scheduling reminder with SpanId={SpanId}, TraceId={TraceId}",
+                spanId,
+                traceId);
+
+            // Create ConversationReference for proactive messaging using the Activity's built-in method
+            var conversationReference = turnContext.Activity.GetConversationReference();
+
+            // Create work item with observability context
+            var workItem = new AsyncWorkItem
+            {
+                ConversationReference = conversationReference,
+                OriginalSpanId = spanId,
+                OriginalTraceId = traceId,
+                ScheduledFor = DateTime.UtcNow.AddMinutes(2),
+                Payload = "This is your scheduled reminder!"
+            };
+
+            // Store work item (in-memory for demo; use persistent storage in production)
+            _asyncWorkItems.TryAdd(workItem.Id, workItem);
+
+            // Acknowledge the request
+            turnContext.StreamingResponse.QueueTextChunk(
+                $"? Got it! I'll remind you in 2 minutes.\n\n" +
+                $"?? **Observability Context Persisted:**\n" +
+                $"- Span ID: `{spanId}`\n" +
+                $"- Trace ID: `{traceId}`\n" +
+                $"- Work Item ID: `{workItem.Id}`\n\n" +
+                $"When I send the reminder, the OutputScope will use the original span as its parent.");
+
+            // Start background task to send the reminder
+            // Note: In production, use a proper background service or message queue
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _logger?.LogInformation(
+                        "Waiting 2 minutes before sending reminder for WorkItem={WorkItemId}",
+                        workItem.Id);
+
+                    await Task.Delay(TimeSpan.FromMinutes(2), CancellationToken.None);
+
+                    await SendProactiveReminderAsync(workItem);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogError(ex, "Failed to send proactive reminder for WorkItem={WorkItemId}", workItem.Id);
+                }
+            });
+        }
+
+        /// <summary>
+        /// Sends a proactive reminder message and restores the original span ID for trace correlation.
+        /// This demonstrates the async observability pattern:
+        /// 1. Retrieve the persisted span ID from storage
+        /// 2. Set it on the new turn context using SetPersistedParentSpanId()
+        /// 3. The OutputScope middleware will use this as the parent for trace correlation
+        /// </summary>
+        private async Task SendProactiveReminderAsync(AsyncWorkItem workItem)
+        {
+            _logger?.LogInformation(
+                "?? Sending proactive reminder for WorkItem={WorkItemId} with OriginalSpanId={SpanId}",
+                workItem.Id,
+                workItem.OriginalSpanId);
+
+            try
+            {
+                // Use adapter to send proactive message
+                await ((CloudAdapter)_botAdapter).ContinueConversationAsync(
+                    claimsIdentity: new System.Security.Claims.ClaimsIdentity(),
+                    reference: workItem.ConversationReference,
+                    callback: async (turnContext, ct) =>
+                    {
+                        // ???????????????????????????????????????????????????????????????????????????????
+                        // ? KEY: Set the persisted span ID BEFORE sending any activity                  ?
+                        // ? This tells the middleware's OutputScope to use this as parent               ?
+                        // ? instead of the current turn's InvokeAgentScope                              ?
+                        // ???????????????????????????????????????????????????????????????????????????????
+                        if (!string.IsNullOrEmpty(workItem.OriginalSpanId))
+                        {
+                            // Note: For proactive messages through the adapter,
+                            // we need to use the ITurnContext extension method
+                            // This requires casting to the Microsoft.Agents.Builder.ITurnContext
+                            if (turnContext is Microsoft.Agents.Builder.ITurnContext agentsTurnContext)
+                            {
+                                agentsTurnContext.SetPersistedParentSpanId(workItem.OriginalSpanId);
+                            }
+
+                            _logger?.LogInformation(
+                                "Restored persisted span ID: {SpanId} for proactive message",
+                                workItem.OriginalSpanId);
+                        }
+
+                        // Now when this sends, the OutputScope will use OriginalSpanId as parent
+                        await turnContext.SendActivityAsync(
+                            $"? **Reminder!**\n\n" +
+                            $"{workItem.Payload}\n\n" +
+                            $"?? **Observability Context:**\n" +
+                            $"- Original Span ID (parent): `{workItem.OriginalSpanId}`\n" +
+                            $"- Original Trace ID: `{workItem.OriginalTraceId}`\n" +
+                            $"- Work Item ID: `{workItem.Id}`\n\n" +
+                            $"The OutputScope for this message should show the original span as its parent.",
+                            cancellationToken: ct);
+
+                        _logger?.LogInformation(
+                            "? Proactive reminder sent successfully for WorkItem={WorkItemId}",
+                            workItem.Id);
+                    },
+                    cancellationToken: CancellationToken.None);
+
+                // Clean up
+                _asyncWorkItems.TryRemove(workItem.Id, out _);
+
+                _logger?.LogInformation(
+                    "? Work item {WorkItemId} completed and removed from storage",
+                    workItem.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex,
+                    "? Failed to send proactive message for WorkItem={WorkItemId}",
+                    workItem.Id);
+            }
         }
     }
 }
