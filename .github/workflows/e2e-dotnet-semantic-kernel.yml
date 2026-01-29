@@ -132,9 +132,7 @@ jobs:
         shell: pwsh
         run: |
           & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" `
-            -AgentPath "${{ env.SAMPLE_PATH }}" `
-            -OutputPath "${{ env.E2E_TESTS_PATH }}/TestResults" `
-            -TestName "dotnet-sk"
+            -AgentPath "${{ env.SAMPLE_PATH }}"
 
       - name: Stop Agent Process
         if: always()
@@ -142,7 +140,7 @@ jobs:
         run: |
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
           if ($agentPid) {
-            & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" -ProcessId $agentPid
+            & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" -AgentPID $agentPid
           }
 
       - name: Upload Test Results
