@@ -4,6 +4,8 @@
 name: E2E - .NET Agent Framework
 
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -15,7 +17,6 @@ on:
     paths:
       - 'dotnet/agent-framework/**'
       - 'scripts/e2e/**'
-  workflow_dispatch:
 
 permissions:
   contents: read

@@ -4,6 +4,8 @@
 name: E2E - Node.js OpenAI
 
 on:
+  workflow_call:  # Allow orchestrator to call this workflow
+  workflow_dispatch:  # Allow manual triggering
   push:
     branches: [main]
     paths:
@@ -15,7 +17,6 @@ on:
     paths:
       - 'nodejs/openai/**'
       - 'scripts/e2e/**'
-  workflow_dispatch:
 
 permissions:
   contents: read

@@ -4,6 +4,8 @@
 name: E2E - .NET Semantic Kernel
 
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -15,7 +17,6 @@ on:
     paths:
       - 'dotnet/semantic-kernel/**'
       - 'scripts/e2e/**'
-  workflow_dispatch:
 
 permissions:
   contents: read

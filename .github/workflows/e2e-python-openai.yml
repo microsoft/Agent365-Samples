@@ -4,6 +4,8 @@
 name: E2E - Python OpenAI
 
 on:
+  workflow_call:  # Allow orchestrator to call this workflow
+  workflow_dispatch:  # Allow manual triggering
   push:
     branches: [main]
     paths:
@@ -15,10 +17,6 @@ on:
     paths:
       - 'python/openai/**'
       - 'scripts/e2e/**'
-  workflow_dispatch:
-  # Allow orchestrator to trigger this
-  repository_dispatch:
-    types: [e2e-python-openai]
 
 permissions:
   contents: read
