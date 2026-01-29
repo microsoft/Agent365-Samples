@@ -22,7 +22,9 @@ from microsoft_agents_a365.observability.core import (
     ExecutionType,
     InvokeAgentDetails,
 )
+from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
+from microsoft_agents_a365.observability.hosting.scope_helpers.populate_baggage import populate
 
 
 @dataclass
@@ -183,3 +185,21 @@ def create_invoke_agent_details(details: TurnContextDetails, description: str = 
         details=agent_details,
         session_id=details.conversation_id,
     )
+
+
+def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = None) -> BaggageBuilder:
+    """
+    Build a BaggageBuilder populated from TurnContext activity.
+
+    Args:
+        context: The TurnContext from the Microsoft Agents SDK
+        correlation_id: Optional correlation id to add to baggage
+
+    Returns:
+        Populated BaggageBuilder instance
+    """
+    builder = BaggageBuilder()
+    populate(builder, context)
+    if correlation_id:
+        builder.correlation_id(correlation_id)
+    return builder

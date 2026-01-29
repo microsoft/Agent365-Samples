@@ -203,33 +203,43 @@ class McpToolRegistrationService:
         Returns:
             List of all available tool definitions from connected servers.
         """
-        # Get authentication token if not provided
-        if not auth_token:
-            try:
+        # Determine authentication mode (mutually exclusive, no fallbacks)
+        if auth_token:
+            self._auth_token = auth_token
+            self._logger.info("Using provided auth token for MCP authentication")
+        else:
+            environment = os.getenv("ENVIRONMENT", "Production").strip().lower()
+            bearer_token = (os.getenv("BEARER_TOKEN") or "").strip()
+
+            if bearer_token:
+                # Bearer token mode (development only)
+                if environment != "development":
+                    raise ValueError(
+                        "BEARER_TOKEN is set but ENVIRONMENT is not 'development'. "
+                        "Bearer tokens are only supported in development environments."
+                    )
+                self._auth_token = bearer_token
+                self._logger.info("Using BEARER_TOKEN authentication (development mode)")
+            elif auth_handler_name:
+                # Auth handler mode (production)
                 scopes = get_mcp_platform_authentication_scope()
                 self._logger.info(f"🔑 Attempting token exchange with scopes: {scopes}")
                 auth_result = await auth.exchange_token(context, scopes, auth_handler_name)
-                if auth_result and auth_result.token:
-                    auth_token = auth_result.token
-                    self._logger.info("✅ Token exchange successful for MCP authentication")
-                else:
-                    self._logger.warning("⚠️ Token exchange returned no token")
-            except Exception as e:
-                self._logger.warning(f"⚠️ Token exchange failed: {type(e).__name__}: {e}")
-        
-        # Fallback to static BEARER_TOKEN from environment
-        if not auth_token:
-            bearer_token = os.getenv("BEARER_TOKEN")
-            if bearer_token and bearer_token not in ["your_bearer_token_here", ""]:
-                auth_token = bearer_token
-                self._logger.info("ℹ️ Using BEARER_TOKEN from environment for MCP authentication")
-        
-        # For local development, allow connections without auth token
-        if not auth_token:
-            self._logger.info("ℹ️ No auth token - will attempt connections (localhost may work)")
-            auth_token = ""
-        
-        self._auth_token = auth_token
+                if not auth_result or not auth_result.token:
+                    raise RuntimeError(
+                        f"Auth handler '{auth_handler_name}' is configured but failed to provide a token. "
+                        "Not falling back to unauthenticated mode."
+                    )
+                self._auth_token = auth_result.token
+                self._logger.info(f"Using auth handler: {auth_handler_name}")
+            else:
+                # No authentication configured
+                self._auth_token = None
+                self._logger.warning(
+                    "No authentication configured - MCP servers requiring auth will be skipped"
+                )
+
+        auth_token = self._auth_token
         
         # Get the MCP platform base URL for reference
         platform_endpoint = get_mcp_platform_endpoint()

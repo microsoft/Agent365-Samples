@@ -75,6 +75,7 @@ from turn_context_utils import (
     create_caller_details,
     create_tenant_details,
     create_request,
+    build_baggage_builder,
 )
 
 # MCP Tooling Services
@@ -289,7 +290,11 @@ class ClaudeAgent(AgentInterface):
 
 
     async def process_user_message(
-        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
+        self,
+        message: str,
+        auth: Authorization,
+        context: TurnContext,
+        auth_handler_name: str | None = None,
     ) -> str:
         """Process user message using the Claude Agent SDK with observability tracing"""
         
@@ -307,13 +312,7 @@ class ClaudeAgent(AgentInterface):
                 logger.warning("⚠️ Observability not configured, spans may not be exported")
             
             # Use BaggageBuilder to set contextual information that flows through all spans
-            with (
-                BaggageBuilder()
-                .tenant_id(ctx_details.tenant_id)
-                .agent_id(ctx_details.agent_id)
-                .correlation_id(ctx_details.correlation_id)
-                .build()
-            ):
+            with build_baggage_builder(context, ctx_details.correlation_id).build():
                 # Create observability details using shared utilities (CrewAI pattern)
                 agent_details = create_agent_details(ctx_details)
                 caller_details = create_caller_details(ctx_details)
@@ -408,7 +407,7 @@ class ClaudeAgent(AgentInterface):
                                             tool_call_id = getattr(block, 'id', str(uuid.uuid4()))
                                             
                                             logger.info(f"🔧 Claude using tool: {tool_name}")
-                                            logger.info(f"   Input: {str(tool_input)[:200]}...")
+                                            logger.debug(f"   Input: {str(tool_input)[:200]}...")
                                             
                                             # Determine tool type and endpoint
                                             if tool_name.startswith("mcp__"):
@@ -585,7 +584,11 @@ class ClaudeAgent(AgentInterface):
     # <NotificationHandling>
 
     async def handle_agent_notification_activity(
-        self, notification_activity, auth: Authorization, auth_handler_name: str, context: TurnContext
+        self,
+        notification_activity,
+        auth: Authorization,
+        context: TurnContext,
+        auth_handler_name: str | None = None,
     ) -> str:
         """
         Handle agent notification activities (email, Word mentions, etc.)
@@ -594,6 +597,7 @@ class ClaudeAgent(AgentInterface):
             notification_activity: The notification activity from Agent365
             auth: Authorization for token exchange
             context: Turn context from M365 SDK
+            auth_handler_name: Optional auth handler name for token exchange
             
         Returns:
             Response string to send back
@@ -613,7 +617,7 @@ class ClaudeAgent(AgentInterface):
                 message = f"You have received the following email. Please follow any instructions in it.\n\n{email_body}"
                 logger.info(f"📧 Processing email notification")
                 
-                response = await self.process_user_message(message, auth, auth_handler_name, context)
+                response = await self.process_user_message(message, auth, context, auth_handler_name)
                 return response or "Email notification processed."
 
             # Handle Word Comment Notifications
@@ -634,7 +638,7 @@ class ClaudeAgent(AgentInterface):
                     f"Please respond to this comment appropriately."
                 )
                 
-                response = await self.process_user_message(message, auth, auth_handler_name, context)
+                response = await self.process_user_message(message, auth, context, auth_handler_name)
                 return response or "Word notification processed."
 
             # Generic notification handling
@@ -654,7 +658,7 @@ class ClaudeAgent(AgentInterface):
                 )
                 logger.info(f"📨 Processing generic notification: {notification_type}")
                 
-                response = await self.process_user_message(notification_message, auth, auth_handler_name, context)
+                response = await self.process_user_message(notification_message, auth, context, auth_handler_name)
                 return response or "Notification processed successfully."
 
         except Exception as e:

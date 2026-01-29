@@ -92,18 +92,21 @@ MCP servers are configured in `ToolingManifest.json`:
 Add these to your `.env` file:
 
 ```
-# Set to Development to load MCP servers from local ToolingManifest.json
+# Optional environment label used by local tooling
 ENVIRONMENT=Development
 
 # Set to true to use proper token exchange for MCP authentication (required for cloud MCP servers)
 USE_AGENTIC_AUTH=true
 ```
 
+Notes:
+- MCP server discovery first attempts SDK-based discovery. If no servers are returned, the agent falls back to `ToolingManifest.json` regardless of `ENVIRONMENT`.
+
 ### MCP Authentication
 
 MCP tools require proper Azure authentication:
 
-- **Development**: Set `ENVIRONMENT=Development` and `USE_AGENTIC_AUTH=false` with a valid `BEARER_TOKEN`
+- **Development**: Set `USE_AGENTIC_AUTH=false` with a valid `BEARER_TOKEN` for local testing
 - **Production**: Uses token exchange with proper scopes via the Microsoft 365 Agents SDK
 
 ## Support
