@@ -124,8 +124,7 @@ jobs:
             --no-restore `
             --verbosity normal `
             --logger "console;verbosity=detailed" `
-            --logger "trx;LogFileName=test-results-dotnet-sk.trx" `
-            --filter "FullyQualifiedName~BasicConversation|FullyQualifiedName~Notification"
+            --logger "trx;LogFileName=test-results-dotnet-sk.trx"
 
       - name: Capture Agent Logs
         if: always()
