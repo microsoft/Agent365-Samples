@@ -2,49 +2,27 @@
 # Licensed under the MIT License.
 
 # =============================================================================
-# E2E Tests: Agent Samples
+# E2E Tests: Agent Samples (DEPRECATED - Use e2e-orchestrator.yml instead)
 # =============================================================================
-# Runs E2E integration tests for all agent samples
-# Uses external PowerShell scripts for maintainability
+# This workflow has been replaced by individual E2E workflows:
+# - e2e-python-openai.yml
+# - e2e-nodejs-openai.yml
+# - e2e-dotnet-semantic-kernel.yml
+# - e2e-dotnet-agent-framework.yml
+# - e2e-orchestrator.yml (triggers all of the above)
+# 
+# This file is kept for reference but will not run.
 # =============================================================================
 
-name: E2E Agent Samples
+name: E2E Agent Samples (Deprecated)
 
 on:
-  # Run nightly at 6 AM UTC
-  schedule:
-    - cron: '0 6 * * *'
-  push:
-    branches:
-      - main
-      - 'feature/*'
-    paths:
-      - 'python/**'
-      - 'nodejs/**'
-      - 'dotnet/**'
-      - 'tests/e2e/**'
-      - '.github/workflows/e2e-agent-samples.yml'
-      - 'scripts/e2e/**'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'python/**'
-      - 'nodejs/**'
-      - 'dotnet/**'
-      - 'tests/e2e/**'
-      - '.github/workflows/e2e-agent-samples.yml'
-      - 'scripts/e2e/**'
   workflow_dispatch:
     inputs:
       sample:
-        description: 'Specific sample to test (leave empty for all)'
+        description: 'This workflow is deprecated. Use e2e-orchestrator.yml instead'
         required: false
         default: ''
-      debug:
-        description: 'Enable debug logging'
-        required: false
-        default: 'false'
 
 permissions:
   contents: read
