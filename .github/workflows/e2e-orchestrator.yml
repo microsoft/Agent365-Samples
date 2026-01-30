@@ -137,18 +137,19 @@ jobs:
             
             const overallStatus = allPassed ? '✅ All E2E Tests Passed' : '⚠️ Some E2E Tests Failed';
             
-            const body = `## ${overallStatus}
-            
-| Sample | Status | Result |
-|--------|--------|--------|
-| Python OpenAI | ${pythonOpenaiIcon} | ${{ needs.python-openai.result }} |
-| Node.js OpenAI | ${nodejsOpenaiIcon} | ${{ needs.nodejs-openai.result }} |
-| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |
-| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |
-| .NET Agent Framework | ${dotnetAfIcon} | ${{ needs.dotnet-af.result }} |
-
-[View full test details](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})
-`;
+            const body = [
+              `## ${overallStatus}`,
+              '',
+              '| Sample | Status | Result |',
+              '|--------|--------|--------|',
+              `| Python OpenAI | ${pythonOpenaiIcon} | ${{ needs.python-openai.result }} |`,
+              `| Node.js OpenAI | ${nodejsOpenaiIcon} | ${{ needs.nodejs-openai.result }} |`,
+              `| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |`,
+              `| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |`,
+              `| .NET Agent Framework | ${dotnetAfIcon} | ${{ needs.dotnet-af.result }} |`,
+              '',
+              `[View full test details](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})`
+            ].join('\n');
             
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
