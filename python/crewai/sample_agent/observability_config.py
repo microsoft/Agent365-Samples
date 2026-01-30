@@ -4,7 +4,9 @@
 """
 Observability Configuration Module
 
-Provides observability initialization for Agent 365 SDK.
+Handles one-time initialization of Agent 365 Observability SDK.
+This module should be imported early in the application lifecycle to ensure
+observability is configured before any agents are instantiated.
 """
 
 import logging
@@ -15,51 +17,57 @@ from token_cache import get_cached_agentic_token
 
 logger = logging.getLogger(__name__)
 
+# Flag to track if observability has been configured
+_observability_configured = False
 
-def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-    """Token resolver for Agent 365 Observability exporter."""
-    try:
-        logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-        cached_token = get_cached_agentic_token(tenant_id, agent_id)
-        if cached_token:
-            logger.info("Using cached agentic token from agent authentication")
-            return cached_token
-        else:
-            logger.warning(f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}")
+
+def _initialize_observability_once():
+    """Initialize observability SDK once at module level before any agent instances are created"""
+    global _observability_configured
+    
+    if _observability_configured:
+        logger.debug("Observability already configured, skipping")
+        return True
+    
+    def token_resolver(agent_id: str, tenant_id: str) -> str | None:
+        """Token resolver for Agent 365 Observability exporter"""
+        try:
+            logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
+            cached_token = get_cached_agentic_token(tenant_id, agent_id)
+            if cached_token:
+                logger.info("Using cached agentic token from agent authentication")
+                return cached_token
+            else:
+                logger.warning(f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}")
+                return None
+        except Exception as e:
+            logger.error(f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}")
             return None
-    except Exception as e:
-        logger.error(f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}")
-        return None
-
-
-def initialize_observability(
-    service_name: str = None,
-    service_namespace: str = None,
-) -> bool:
-    """
-    Initialize Agent 365 Observability SDK.
-
-    Args:
-        service_name: Name of the service (defaults to OBSERVABILITY_SERVICE_NAME env var)
-        service_namespace: Namespace of the service (defaults to OBSERVABILITY_SERVICE_NAMESPACE env var)
-
-    Returns:
-        True if configuration succeeded, False otherwise
-    """
+    
     try:
         status = configure(
-            service_name=service_name or os.getenv("OBSERVABILITY_SERVICE_NAME", "crewai-sample-agent"),
-            service_namespace=service_namespace or os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
+            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "crewai-sample-agent"),
+            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
             token_resolver=token_resolver,
         )
-
+        
         if not status:
-            logger.warning("Agent 365 Observability configuration failed")
+            logger.warning("⚠️ Agent 365 Observability configuration failed")
             return False
-
-        logger.info("Agent 365 Observability configured successfully")
+        
+        _observability_configured = True
+        logger.info("✅ Agent 365 Observability configured successfully")
         return True
-
+        
     except Exception as e:
-        logger.error(f"Error setting up observability: {e}")
+        logger.error(f"❌ Error setting up observability: {e}")
         return False
+
+
+def is_observability_configured() -> bool:
+    """Check if observability has been configured"""
+    return _observability_configured
+
+
+# Initialize observability immediately at module load time
+_initialize_observability_once()
