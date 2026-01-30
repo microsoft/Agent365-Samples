@@ -1,0 +1,67 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: E2E Test Orchestrator
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'python/openai/**'
+      - 'nodejs/openai/**'
+      - 'dotnet/semantic-kernel/**'
+      - 'dotnet/agent-framework/**'
+      - '.github/workflows/e2e-*.yml'
+      - 'scripts/e2e/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'python/openai/**'
+      - 'nodejs/openai/**'
+      - 'dotnet/semantic-kernel/**'
+      - 'dotnet/agent-framework/**'
+      - '.github/workflows/e2e-*.yml'
+      - 'scripts/e2e/**'
+  workflow_dispatch:
+    inputs:
+      sample:
+        description: 'Sample to test (leave empty for all)'
+        required: false
+        type: choice
+        options:
+          - ''
+          - 'python-openai'
+          - 'nodejs-openai'
+          - 'dotnet-sk'
+          - 'dotnet-af'
+
+permissions:
+  contents: read
+
+jobs:
+  python-openai:
+    name: Python OpenAI E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-openai' }}
+    uses: ./.github/workflows/e2e-python-openai.yml
+    secrets: inherit
+    
+  nodejs-openai:
+    name: Node.js OpenAI E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-openai' }}
+    uses: ./.github/workflows/e2e-nodejs-openai.yml
+    secrets: inherit
+    
+  dotnet-sk:
+    name: .NET Semantic Kernel E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'dotnet-sk' }}
+    uses: ./.github/workflows/e2e-dotnet-semantic-kernel.yml
+    secrets: inherit
+    
+  dotnet-af:
+    name: .NET Agent Framework E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'dotnet-af' }}
+    uses: ./.github/workflows/e2e-dotnet-agent-framework.yml
+    secrets: inherit
