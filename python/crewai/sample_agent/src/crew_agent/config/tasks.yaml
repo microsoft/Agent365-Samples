@@ -7,9 +7,12 @@ weather_check_task:
     - Wind speed and direction
     - Humidity and visibility
     - Any weather warnings or adverse conditions
+    
+    IMPORTANT: Do NOT send any emails. Your role is ONLY to gather weather data.
+    The Driving Safety Specialist will handle all email communications.
   expected_output: >
     A detailed weather report for {location} with all relevant weather metrics
-    and conditions clearly formatted.
+    and conditions clearly formatted. Do NOT send emails - just provide the data.
   agent: weather_checker
 
 driving_safety_task:
@@ -25,10 +28,16 @@ driving_safety_task:
     - Visibility: Poor visibility affects overall driving safety
     
     Provide a clear safety assessment with specific reasons based on the weather data.
+    
+    If the user requested an email, YOU are responsible for sending ONE email that includes:
+    1. The complete weather report from the previous task
+    2. Your driving safety assessment
+    Combine both into a single comprehensive email. Do NOT send multiple emails.
   expected_output: >
     A clear safety assessment stating whether it's safe to drive with summer
     tires in the current weather conditions, along with specific reasons and any
     recommendations or warnings. Format as a clear decision with supporting details.
+    If an email was requested, confirm it was sent (only once, with combined content).
   agent: driving_safety_advisor
   context:
     - weather_check_task

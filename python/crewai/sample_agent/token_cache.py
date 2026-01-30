@@ -1,30 +1,57 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+
 """
-Token caching utilities for Agent 365 Observability exporter authentication.
+Token Cache
+Caches agentic tokens for observability export.
 """
 
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Global token cache for Agent 365 Observability exporter
-_agentic_token_cache = {}
+# In-memory cache for agentic tokens
+# Key format: "tenant_id:agent_id"
+_token_cache: dict[str, str] = {}
 
 
 def cache_agentic_token(tenant_id: str, agent_id: str, token: str) -> None:
-    """Cache the agentic token for use by Agent 365 Observability exporter."""
-    key = f"{tenant_id}:{agent_id}"
-    _agentic_token_cache[key] = token
-    logger.debug(f"Cached agentic token for {key}")
+    """
+    Cache an agentic token for later use by observability exporter.
+
+    Args:
+        tenant_id: Tenant identifier
+        agent_id: Agent identifier
+        token: Agentic authentication token
+    """
+    cache_key = f"{tenant_id}:{agent_id}"
+    _token_cache[cache_key] = token
+    logger.debug(f"Cached agentic token for {cache_key}")
 
 
 def get_cached_agentic_token(tenant_id: str, agent_id: str) -> str | None:
-    """Retrieve cached agentic token for Agent 365 Observability exporter."""
-    key = f"{tenant_id}:{agent_id}"
-    token = _agentic_token_cache.get(key)
+    """
+    Retrieve a cached agentic token.
+
+    Args:
+        tenant_id: Tenant identifier
+        agent_id: Agent identifier
+
+    Returns:
+        Cached token if found, None otherwise
+    """
+    cache_key = f"{tenant_id}:{agent_id}"
+    token = _token_cache.get(cache_key)
+
     if token:
-        logger.debug(f"Retrieved cached agentic token for {key}")
+        logger.debug(f"Retrieved cached token for {cache_key}")
     else:
-        logger.debug(f"No cached token found for {key}")
+        logger.debug(f"No cached token found for {cache_key}")
+
     return token
+
+
+def clear_token_cache() -> None:
+    """Clear all cached tokens."""
+    _token_cache.clear()
+    logger.debug("Token cache cleared")
