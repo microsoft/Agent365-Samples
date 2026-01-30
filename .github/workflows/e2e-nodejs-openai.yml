@@ -59,6 +59,13 @@ jobs:
           }
         shell: pwsh
 
+      - name: Log SDK Versions
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Get-SDKVersions.ps1" `
+            -Runtime "nodejs" `
+            -WorkingDirectory "${{ env.SAMPLE_PATH }}"
+
       - name: Acquire Bearer Token (ROPC)
         id: token
         shell: pwsh
@@ -141,6 +148,15 @@ jobs:
             --logger "console;verbosity=detailed" `
             --logger "trx;LogFileName=test-results-nodejs-openai.trx" `
             --filter "FullyQualifiedName~BasicConversation|FullyQualifiedName~Notification"
+        env:
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Emit Test Conversations
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Emit-TestConversations.ps1" `
+            -TestResultsDir "${{ runner.temp }}/TestConversations"
 
       - name: Capture Agent Logs
         if: always()

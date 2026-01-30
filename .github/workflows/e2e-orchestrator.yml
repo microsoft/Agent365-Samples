@@ -12,6 +12,7 @@ on:
     paths:
       - 'python/openai/**'
       - 'nodejs/openai/**'
+      - 'nodejs/langchain/**'
       - 'dotnet/semantic-kernel/**'
       - 'dotnet/agent-framework/**'
       - '.github/workflows/e2e-*.yml'
@@ -21,6 +22,7 @@ on:
     paths:
       - 'python/openai/**'
       - 'nodejs/openai/**'
+      - 'nodejs/langchain/**'
       - 'dotnet/semantic-kernel/**'
       - 'dotnet/agent-framework/**'
       - '.github/workflows/e2e-*.yml'
@@ -35,11 +37,13 @@ on:
           - ''
           - 'python-openai'
           - 'nodejs-openai'
+          - 'nodejs-langchain'
           - 'dotnet-sk'
           - 'dotnet-af'
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   python-openai:
@@ -53,6 +57,12 @@ jobs:
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-openai' }}
     uses: ./.github/workflows/e2e-nodejs-openai.yml
     secrets: inherit
+
+  nodejs-langchain:
+    name: Node.js LangChain E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-langchain' }}
+    uses: ./.github/workflows/e2e-nodejs-langchain.yml
+    secrets: inherit
     
   dotnet-sk:
     name: .NET Semantic Kernel E2E
@@ -65,3 +75,116 @@ jobs:
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'dotnet-af' }}
     uses: ./.github/workflows/e2e-dotnet-agent-framework.yml
     secrets: inherit
+
+  # ===========================================================================
+  # Summary - Posts test results to PR
+  # ===========================================================================
+  summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [python-openai, nodejs-openai, nodejs-langchain, dotnet-sk, dotnet-af]
+    if: always()
+    
+    steps:
+      - name: Generate Summary
+        id: summary
+        run: |
+          # Determine overall status
+          OVERALL_STATUS="✅ All Tests Passed"
+          if [[ "${{ needs.python-openai.result }}" != "success" ]] || \
+             [[ "${{ needs.nodejs-openai.result }}" != "success" ]] || \
+             [[ "${{ needs.nodejs-langchain.result }}" != "success" ]] || \
+             [[ "${{ needs.dotnet-sk.result }}" != "success" ]] || \
+             [[ "${{ needs.dotnet-af.result }}" != "success" ]]; then
+            OVERALL_STATUS="⚠️ Some Tests Failed"
+          fi
+          
+          # Generate status icons using if-else for reliability
+          if [[ "${{ needs.python-openai.result }}" == "success" ]]; then PYTHON_OPENAI_ICON="✅"; else PYTHON_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-openai.result }}" == "success" ]]; then NODEJS_OPENAI_ICON="✅"; else NODEJS_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-langchain.result }}" == "success" ]]; then NODEJS_LANGCHAIN_ICON="✅"; else NODEJS_LANGCHAIN_ICON="❌"; fi
+          if [[ "${{ needs.dotnet-sk.result }}" == "success" ]]; then DOTNET_SK_ICON="✅"; else DOTNET_SK_ICON="❌"; fi
+          if [[ "${{ needs.dotnet-af.result }}" == "success" ]]; then DOTNET_AF_ICON="✅"; else DOTNET_AF_ICON="❌"; fi
+          
+          echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** $OVERALL_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Sample | Status | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Python OpenAI | $PYTHON_OPENAI_ICON | ${{ needs.python-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js OpenAI | $NODEJS_OPENAI_ICON | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js LangChain | $NODEJS_LANGCHAIN_ICON | ${{ needs.nodejs-langchain.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| .NET Semantic Kernel | $DOTNET_SK_ICON | ${{ needs.dotnet-sk.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| .NET Agent Framework | $DOTNET_AF_ICON | ${{ needs.dotnet-af.result }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pythonOpenaiIcon = '${{ needs.python-openai.result }}' === 'success' ? '✅' : '❌';
+            const nodejsOpenaiIcon = '${{ needs.nodejs-openai.result }}' === 'success' ? '✅' : '❌';
+            const nodejsLangchainIcon = '${{ needs.nodejs-langchain.result }}' === 'success' ? '✅' : '❌';
+            const dotnetSkIcon = '${{ needs.dotnet-sk.result }}' === 'success' ? '✅' : '❌';
+            const dotnetAfIcon = '${{ needs.dotnet-af.result }}' === 'success' ? '✅' : '❌';
+            
+            const allPassed = '${{ needs.python-openai.result }}' === 'success' &&
+                              '${{ needs.nodejs-openai.result }}' === 'success' &&
+                              '${{ needs.nodejs-langchain.result }}' === 'success' &&
+                              '${{ needs.dotnet-sk.result }}' === 'success' &&
+                              '${{ needs.dotnet-af.result }}' === 'success';
+            
+            const overallStatus = allPassed ? '✅ All E2E Tests Passed' : '⚠️ Some E2E Tests Failed';
+            
+            const body = [
+              `## ${overallStatus}`,
+              '',
+              '| Sample | Status | Result |',
+              '|--------|--------|--------|',
+              `| Python OpenAI | ${pythonOpenaiIcon} | ${{ needs.python-openai.result }} |`,
+              `| Node.js OpenAI | ${nodejsOpenaiIcon} | ${{ needs.nodejs-openai.result }} |`,
+              `| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |`,
+              `| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |`,
+              `| .NET Agent Framework | ${dotnetAfIcon} | ${{ needs.dotnet-af.result }} |`,
+              '',
+              `[View full test details](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})`
+            ].join('\n');
+            
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            console.log(`Found ${comments.length} comments on PR #${context.issue.number}`);
+            
+            const botComment = comments.find(comment => 
+              comment.user.login === 'github-actions[bot]' && 
+              comment.body.includes('E2E')
+            );
+            
+            console.log(`Bot comment found: ${!!botComment}, ID: ${botComment?.id}`);
+            
+            if (botComment) {
+              // Update existing comment
+              console.log(`Updating existing comment ${botComment.id}...`);
+              const result = await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+              console.log(`Update result: ${result.status}`);
+            } else {
+              // Create new comment
+              console.log('Creating new comment...');
+              const result = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+              console.log(`Create result: ${result.status}, comment ID: ${result.data.id}`);
+            }

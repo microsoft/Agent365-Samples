@@ -53,6 +53,13 @@ jobs:
         working-directory: ${{ env.SAMPLE_PATH }}
         run: uv sync
 
+      - name: Log SDK Versions
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Get-SDKVersions.ps1" `
+            -Runtime "python" `
+            -WorkingDirectory "${{ env.SAMPLE_PATH }}"
+
       - name: Acquire Bearer Token (ROPC)
         id: token
         shell: pwsh
@@ -163,14 +170,12 @@ jobs:
           path: ${{ runner.temp }}/TestResults/
           retention-days: 30
 
-      - name: Upload Test Conversations
+      - name: Emit Test Conversations
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-conversations-python-openai
-          path: ${{ runner.temp }}/TestConversations/
-          retention-days: 30
-        continue-on-error: true
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Emit-TestConversations.ps1" `
+            -TestResultsDir "${{ runner.temp }}/TestConversations"
 
       - name: Capture Agent Logs
         if: always()
