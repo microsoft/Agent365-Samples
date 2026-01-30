@@ -148,10 +148,8 @@ All agent operations are traced with Agent 365 observability:
 sample_agent/
 ├── .env.template              # Environment template with documentation
 ├── start_with_generic_host.py # Main entry point
-├── host_agent_server.py       # Agent 365 SDK hosting
+├── host_agent_server.py       # Agent 365 SDK hosting + observability setup
 ├── agent.py                   # CrewAI agent wrapper with observability
-├── observability_config.py    # Observability setup
-├── token_cache.py             # Bearer token caching
 ├── turn_context_utils.py      # Turn context utilities
 ├── ToolingManifest.json       # MCP server definitions
 └── src/crew_agent/
