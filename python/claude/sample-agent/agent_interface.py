@@ -25,7 +25,11 @@ class AgentInterface(ABC):
 
     @abstractmethod
     async def process_user_message(
-        self, message: str, auth: Authorization, context: TurnContext
+        self,
+        message: str,
+        auth: Authorization,
+        context: TurnContext,
+        auth_handler_name: str | None = None,
     ) -> str:
         """Process a user message and return a response."""
         pass
