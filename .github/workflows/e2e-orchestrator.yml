@@ -151,10 +151,6 @@ jobs:
               `[View full test details](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})`
             ].join('\n');
             
-            console.log('PR Number:', context.issue.number);
-            console.log('Event:', context.eventName);
-            console.log('Body length:', body.length);
-            
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -162,23 +158,13 @@ jobs:
               issue_number: context.issue.number,
             });
             
-            console.log('Found', comments.length, 'comments');
-            
-            // Debug: log all comments
-            comments.forEach((c, i) => {
-              console.log(`Comment ${i}: user=${c.user.login}, type=${c.user.type}, includes E2E=${c.body.includes('E2E')}`);
-            });
-            
             const botComment = comments.find(comment => 
               comment.user.login === 'github-actions[bot]' && 
               comment.body.includes('E2E')
             );
             
-            console.log('Bot comment found:', !!botComment, botComment?.id);
-            
             if (botComment) {
               // Update existing comment
-              console.log('Updating comment', botComment.id);
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
