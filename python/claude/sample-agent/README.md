@@ -65,7 +65,49 @@ The Claude Agent SDK provides these tools out of the box:
 - **Bash**: Execute shell commands
 - **Grep**: Search file contents
 
-No additional MCP server configuration needed!
+## MCP Tooling Integration
+
+This sample also supports MCP (Model Context Protocol) tools for extended capabilities like email, calendar, and other Microsoft 365 services.
+
+### MCP Configuration
+
+MCP servers are configured in `ToolingManifest.json`:
+
+```json
+{
+  "mcpServers": [
+    {
+      "mcpServerName": "mcp_MailTools",
+      "mcpServerUniqueName": "mcp_MailTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
+      "scope": "McpServers.Mail.All",
+      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    }
+  ]
+}
+```
+
+### Environment Variables for MCP
+
+Add these to your `.env` file:
+
+```
+# Optional environment label used by local tooling
+ENVIRONMENT=Development
+
+# Set to true to use proper token exchange for MCP authentication (required for cloud MCP servers)
+USE_AGENTIC_AUTH=true
+```
+
+Notes:
+- MCP server discovery first attempts SDK-based discovery. If no servers are returned, the agent falls back to `ToolingManifest.json` regardless of `ENVIRONMENT`.
+
+### MCP Authentication
+
+MCP tools require proper Azure authentication:
+
+- **Development**: Set `USE_AGENTIC_AUTH=false` with a valid `BEARER_TOKEN` for local testing
+- **Production**: Uses token exchange with proper scopes via the Microsoft 365 Agents SDK
 
 ## Support
 

@@ -49,6 +49,13 @@ jobs:
         working-directory: ${{ env.SAMPLE_PATH }}
         run: dotnet build --no-restore
 
+      - name: Log SDK Versions
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Get-SDKVersions.ps1" `
+            -Runtime "dotnet" `
+            -WorkingDirectory "${{ env.SAMPLE_PATH }}"
+
       - name: Acquire Bearer Token (ROPC)
         id: token
         shell: pwsh
@@ -125,6 +132,15 @@ jobs:
             --verbosity normal `
             --logger "console;verbosity=detailed" `
             --logger "trx;LogFileName=test-results-dotnet-sk.trx"
+        env:
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Emit Test Conversations
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Emit-TestConversations.ps1" `
+            -TestResultsDir "${{ runner.temp }}/TestConversations"
 
       - name: Capture Agent Logs
         if: always()
