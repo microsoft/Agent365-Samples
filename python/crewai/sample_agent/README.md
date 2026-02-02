@@ -8,7 +8,7 @@ This sample demonstrates how to build a multi-agent system using CrewAI while in
 - **Observability**: Complete tracing with `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` for all agent operations
 - **Notifications**: Email and Teams @mention notification support
 - **Multi-Agent Orchestration**: Sequential agent workflow with Weather Checker and Driving Safety Advisor agents
-- **Azure OpenAI Integration**: Native support for Azure OpenAI deployments with LiteLLM
+- **Azure OpenAI Integration**: Native support for Azure OpenAI deployments via CrewAI's `azure-ai-inference` extra and LiteLLM routing
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
 This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
@@ -171,7 +171,7 @@ sample_agent/
 | `Weather tool returns no data` | Set `TAVILY_API_KEY` in `.env` |
 | `Azure OpenAI 401 error` | Verify `AZURE_API_KEY` and `AZURE_API_BASE` are correct |
 | `Duplicate emails sent` | Update `tasks.yaml` - only Driving Safety agent should send emails |
-| `CrewAI tracing 401` | This is a warning from CrewAI cloud tracing; local observability still works |
+| `CrewAI tracing 401` | This is expected when CrewAI cloud tracing is not configured. It can be safely ignored; local observability still works |
 
 ### Logs to Check
 

@@ -33,6 +33,7 @@ driving_safety_task:
     1. The complete weather report from the previous task
     2. Your driving safety assessment
     Combine both into a single comprehensive email. Do NOT send multiple emails.
+    Use the SendEmailWithAttachmentsAsync tool to send the email directly (do NOT use draft tools).
   expected_output: >
     A clear safety assessment stating whether it's safe to drive with summer
     tires in the current weather conditions, along with specific reasons and any

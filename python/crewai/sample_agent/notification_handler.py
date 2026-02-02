@@ -44,6 +44,13 @@ async def handle_notification(
         notification_type = notification_activity.notification_type
         logger.info(f"📬 Processing notification: {notification_type}")
 
+        # Validate notification_type before comparisons
+        if notification_type is None:
+            logger.warning("Received notification with None notification_type")
+            return await _handle_generic_notification(
+                agent, notification_activity, auth, context, auth_handler_name
+            )
+
         # Handle Email Notifications
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
             return await _handle_email_notification(

@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 import logging
 import os
+import random
 import aiohttp
 import asyncio
 import json
@@ -40,7 +41,7 @@ DEFAULT_MCP_PLATFORM_ENDPOINT = "https://agent365.svc.cloud.microsoft"
 MCP_REQUEST_TIMEOUT_SECONDS = 30
 MCP_CONNECT_TIMEOUT_SECONDS = 10
 MCP_MAX_RETRIES = 2
-MCP_RETRY_DELAY_SECONDS = 1
+MCP_RETRY_BASE_DELAY_SECONDS = 1  # Base delay for exponential backoff
 
 
 def get_mcp_platform_endpoint() -> str:
@@ -214,15 +215,14 @@ class McpToolRegistrationService:
         
         # Fallback to static BEARER_TOKEN from environment
         if not auth_token:
-            bearer_token = os.getenv("BEARER_TOKEN")
-            if bearer_token and bearer_token not in ["your_bearer_token_here", ""]:
+            bearer_token = os.getenv("BEARER_TOKEN", "").strip()
+            if bearer_token:
                 auth_token = bearer_token
                 self._logger.info("ℹ️ Using BEARER_TOKEN from environment for MCP authentication")
         
         # For local development, allow connections without auth token
         if not auth_token:
-            self._logger.info("ℹ️ No auth token - will attempt connections (localhost may work)")
-            auth_token = ""
+            self._logger.info("ℹ️ No auth token - will attempt local connections only")
         
         self._auth_token = auth_token
         
@@ -301,9 +301,18 @@ class McpToolRegistrationService:
                         f"{len(connection.tools)} tools"
                     )
                     
-            except Exception as e:
+            except (TimeoutError, ConnectionError, OSError) as e:
+                # Recoverable network errors - continue to next server
                 self._logger.warning(
                     f"Failed to connect to MCP server {server_config['name']}: {e}"
+                )
+                continue
+            except Exception as e:
+                # Non-recoverable or unexpected errors - log full stack trace
+                import traceback
+                self._logger.error(
+                    f"Unexpected error connecting to MCP server {server_config['name']}: {e}\n"
+                    f"{traceback.format_exc()}"
                 )
                 continue
         
@@ -581,9 +590,12 @@ class McpToolRegistrationService:
                 last_error = e
                 self._logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
             
-            # Wait before retry (except on last attempt)
+            # Wait before retry with exponential backoff and jitter (except on last attempt)
             if attempt < MCP_MAX_RETRIES:
-                await asyncio.sleep(MCP_RETRY_DELAY_SECONDS)
+                # Exponential backoff: base_delay * 2^attempt + random jitter (0-0.5s)
+                delay = MCP_RETRY_BASE_DELAY_SECONDS * (2 ** attempt) + random.uniform(0, 0.5)
+                self._logger.info(f"Retrying in {delay:.2f}s...")
+                await asyncio.sleep(delay)
         
         # All retries exhausted
         self._logger.error(f"MCP tool '{tool_name}' failed after {MCP_MAX_RETRIES + 1} attempts")

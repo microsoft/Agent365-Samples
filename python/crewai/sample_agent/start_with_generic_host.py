@@ -11,6 +11,8 @@ to prevent CrewAI from setting up its own TracerProvider.
 import sys
 import os
 
+from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
+
 # ============================================================
 # CRITICAL: Configure observability BEFORE importing CrewAI
 # CrewAI sets up its own TracerProvider which would override ours
@@ -30,8 +32,8 @@ def _configure_observability_early():
         from microsoft_agents_a365.observability.core.config import configure as configure_observability
         from token_cache import get_cached_agentic_token
         
-        service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", "crewai-agent-sample")
-        service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples")
+        service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", DEFAULT_SERVICE_NAME)
+        service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", DEFAULT_SERVICE_NAMESPACE)
         
         def token_resolver(agent_id: str, tenant_id: str) -> str | None:
             """Resolve authentication token for observability exporter"""

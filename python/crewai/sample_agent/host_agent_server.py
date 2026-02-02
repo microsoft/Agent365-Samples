@@ -60,6 +60,7 @@ from turn_context_utils import (
     create_request,
 )
 from token_cache import cache_agentic_token, get_cached_agentic_token
+from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -112,7 +113,7 @@ class GenericAgentHost:
 
         # Initialize notification support
         self.agent_notification = AgentNotification(self.agent_app)
-        logger.info("✅ Notification handlers will be registered")
+        logger.info("✅ Notification support initialized (handlers will be registered)")
 
         # Setup message handlers
         self._setup_handlers()
@@ -264,31 +265,24 @@ class GenericAgentHost:
                     f"Sorry, I encountered an error processing the notification: {str(e)}"
                 )
 
-        # Register for 'agents' channel (production - Outlook, Teams notifications)
+        # Register a single handler for both 'agents' (production) and 'msteams' (testing) channels
+        # by applying the on_agent_notification decorator twice to the same function. This avoids
+        # duplicated handler implementations while still explicitly registering per channel.
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
         )
-        async def on_notification_agents(
-            context: TurnContext,
-            state: TurnState,
-            notification_activity: AgentNotificationActivity,
-        ):
-            """Handle notifications from 'agents' channel (production)"""
-            await handle_notification_common(context, state, notification_activity)
-
-        # Register for 'msteams' channel (testing - Agents Playground)
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="msteams", sub_channel="*"),
         )
-        async def on_notification_msteams(
+        async def on_notification_agents_and_msteams(
             context: TurnContext,
             state: TurnState,
             notification_activity: AgentNotificationActivity,
         ):
-            """Handle notifications from 'msteams' channel (testing)"""
+            """Handle notifications from both 'agents' (production) and 'msteams' (testing) channels"""
             await handle_notification_common(context, state, notification_activity)
 
-        logger.info("✅ Notification handlers registered for 'agents' and 'msteams' channels")
+        logger.info("✅ Notification handler registered for 'agents' and 'msteams' channels")
 
     async def _handle_notification_with_agent(
         self, context: TurnContext, notification_activity: AgentNotificationActivity
@@ -541,13 +535,13 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
             resource_attrs = dict(existing_provider.resource.attributes)
             service_name = resource_attrs.get('service.name', '')
             # If service name contains our identifier, skip reconfiguration
-            if 'crewai-agent' in service_name.lower() or 'agent365' in service_name.lower():
+            if DEFAULT_SERVICE_NAME.split('-')[0] in service_name.lower() or 'agent365' in service_name.lower():
                 is_already_configured = True
                 logger.info(f"✅ Observability already configured: {service_name}")
         
         if not is_already_configured:
-            service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", "crewai-agent-sample")
-            service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples")
+            service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", DEFAULT_SERVICE_NAME)
+            service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", DEFAULT_SERVICE_NAMESPACE)
             
             # Token resolver for observability exporter (must be sync)
             def token_resolver(agent_id: str, tenant_id: str) -> str | None:

@@ -26,6 +26,8 @@ from microsoft_agents_a365.observability.core.middleware.baggage_builder import 
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
 from microsoft_agents_a365.observability.hosting.scope_helpers.populate_baggage import populate
 
+from constants import DEFAULT_AGENT_ID
+
 
 @dataclass
 class TurnContextDetails:
@@ -66,7 +68,7 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
     tenant_id = recipient.tenant_id if recipient else None
     agent_id = getattr(recipient, "id", None) if recipient else None
     if not agent_id:
-        agent_id = os.getenv("AGENT_ID", "crewai-agent")
+        agent_id = os.getenv("AGENT_ID", DEFAULT_AGENT_ID)
     agent_name = getattr(recipient, "name", None) if recipient else None
     agent_upn = getattr(recipient, "name", None) if recipient else None
     agent_blueprint_id = getattr(recipient, "agentic_app_id", None) if recipient else None
@@ -81,6 +83,14 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
     caller_id = getattr(caller, "id", None)
     caller_name = getattr(caller, "name", None)
     caller_aad_object_id = getattr(caller, "aad_object_id", None)
+
+    # Warn if using fallback tenant_id to help identify configuration issues in production
+    if not tenant_id:
+        import logging
+        logging.getLogger(__name__).warning(
+            "tenant_id not found in TurnContext; using 'default-tenant'. "
+            "This may make it difficult to distinguish between deployments in telemetry."
+        )
 
     return TurnContextDetails(
         tenant_id=tenant_id or "default-tenant",
@@ -191,12 +201,17 @@ def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = 
     """
     Build a BaggageBuilder populated from TurnContext activity.
 
+    Uses the SDK's populate() function which extracts the following from TurnContext:
+    - tenant_id: From activity.conversation.tenant_id
+    - agent_id: From activity.recipient.id
+    - correlation_id: From activity channel data or generates new one
+
     Args:
         context: The TurnContext from the Microsoft Agents SDK
-        correlation_id: Optional correlation id to add to baggage
+        correlation_id: Optional correlation id to override the one extracted by populate()
 
     Returns:
-        Populated BaggageBuilder instance
+        Populated BaggageBuilder instance ready to use with .build() context manager
     """
     builder = BaggageBuilder()
     populate(builder, context)

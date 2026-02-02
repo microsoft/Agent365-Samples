@@ -228,9 +228,27 @@ def _create_tool_class(
         def _run(self, **kwargs) -> str:
             """Execute MCP tool with ExecuteToolScope observability."""
             # Run async call_tool in sync context
-            loop = asyncio.new_event_loop()
+            # Handle both cases: running inside an existing event loop or not
             try:
-                result = loop.run_until_complete(
+                # Check if there's already a running event loop (e.g., from CrewAI)
+                loop = asyncio.get_running_loop()
+                # We're inside an async context - use run_coroutine_threadsafe
+                # This shouldn't normally happen with CrewAI's sync tool execution
+                import concurrent.futures
+                future = asyncio.run_coroutine_threadsafe(
+                    tool_executor.call_tool(
+                        tool_name=tool_def.name,
+                        arguments=kwargs,
+                        agent_details=get_agent_details(),
+                        tenant_details=get_tenant_details(),
+                    ),
+                    loop
+                )
+                result = future.result(timeout=300)  # 5 minute timeout
+                return result
+            except RuntimeError:
+                # No running event loop - use asyncio.run() for clean lifecycle management
+                result = asyncio.run(
                     tool_executor.call_tool(
                         tool_name=tool_def.name,
                         arguments=kwargs,
@@ -242,7 +260,5 @@ def _create_tool_class(
             except Exception as e:
                 logger.error(f"❌ MCP tool '{tool_def.name}' error: {e}")
                 return f"Error executing {tool_def.name}: {str(e)}"
-            finally:
-                loop.close()
     
     return ObservableMCPTool()

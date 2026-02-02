@@ -11,6 +11,7 @@ This keeps the CrewAI logic inside src/crew_agent and wraps it with:
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 
@@ -59,6 +60,13 @@ from turn_context_utils import (
     create_request,
     build_baggage_builder,
 )
+from constants import DEFAULT_AGENT_ID
+
+# Context variables for thread/async-safe observability context
+# These are used by MCP tool wrappers to access the current request's context
+# without risk of concurrent request interference
+_current_agent_details: contextvars.ContextVar = contextvars.ContextVar('agent_details', default=None)
+_current_tenant_details: contextvars.ContextVar = contextvars.ContextVar('tenant_details', default=None)
 
 
 class CrewAIAgent(AgentInterface):
@@ -70,10 +78,6 @@ class CrewAIAgent(AgentInterface):
         self.mcp_tool_executor = MCPToolExecutor(self.mcp_service)
         self.mcp_servers_initialized = False
         self.mcp_tools: list[MCPToolDefinition] = []
-        
-        # Context for observability - set during message processing
-        self._current_agent_details = None
-        self._current_tenant_details = None
 
         logger.info("CrewAIAgent initialized")
 
@@ -96,7 +100,7 @@ class CrewAIAgent(AgentInterface):
             if context.activity and context.activity.recipient:
                 agentic_app_id = context.activity.recipient.agentic_app_id
             if not agentic_app_id:
-                agentic_app_id = os.getenv("AGENTIC_APP_ID", "crewai-agent")
+                agentic_app_id = os.getenv("AGENTIC_APP_ID", DEFAULT_AGENT_ID)
             
             # Get auth token - prefer token exchange for proper MCP authentication
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
@@ -135,8 +139,8 @@ class CrewAIAgent(AgentInterface):
         return create_observable_mcp_tools(
             mcp_tools=self.mcp_tools,
             tool_executor=self.mcp_tool_executor,
-            get_agent_details=lambda: self._current_agent_details,
-            get_tenant_details=lambda: self._current_tenant_details,
+            get_agent_details=lambda: _current_agent_details.get(),
+            get_tenant_details=lambda: _current_tenant_details.get(),
         )
 
     # =========================================================================
@@ -178,28 +182,30 @@ class CrewAIAgent(AgentInterface):
                     # Setup MCP servers
                     await self._setup_mcp_servers(auth, auth_handler_name, context)
 
-                    # Store context for observable MCP tool wrappers
-                    self._current_agent_details = agent_details
-                    self._current_tenant_details = tenant_details
+                    # Store context for observable MCP tool wrappers using context variables
+                    # This is thread/async-safe for concurrent request handling
+                    agent_details_token = _current_agent_details.set(agent_details)
+                    tenant_details_token = _current_tenant_details.set(tenant_details)
 
-                    # Create observable MCP tool wrappers
-                    observable_mcp_tools = self._create_observable_tools()
-                    if observable_mcp_tools:
-                        logger.info(f"📊 Created {len(observable_mcp_tools)} observable MCP tool wrapper(s)")
-                        for tool in observable_mcp_tools:
-                            logger.info(f"   🔧 {tool.name}: ExecuteToolScope enabled")
+                    try:
+                        # Create observable MCP tool wrappers
+                        observable_mcp_tools = self._create_observable_tools()
+                        if observable_mcp_tools:
+                            logger.info(f"📊 Created {len(observable_mcp_tools)} observable MCP tool wrapper(s)")
+                            for tool in observable_mcp_tools:
+                                logger.info(f"   🔧 {tool.name}: ExecuteToolScope enabled")
 
-                    # Run CrewAI with InferenceScope
-                    full_response = await self._run_crew_with_inference_scope(
-                        message, observable_mcp_tools, agent_details, tenant_details, request
-                    )
+                        # Run CrewAI with InferenceScope
+                        full_response = await self._run_crew_with_inference_scope(
+                            message, observable_mcp_tools, agent_details, tenant_details, request
+                        )
 
-                    if hasattr(invoke_scope, 'record_output_messages'):
-                        invoke_scope.record_output_messages([full_response])
-                    
-                    # Clear context after processing
-                    self._current_agent_details = None
-                    self._current_tenant_details = None
+                        if hasattr(invoke_scope, 'record_output_messages'):
+                            invoke_scope.record_output_messages([full_response])
+                    finally:
+                        # Reset context variables to previous values
+                        _current_agent_details.reset(agent_details_token)
+                        _current_tenant_details.reset(tenant_details_token)
 
                 logger.info("✅ Observability scopes closed successfully")
                 return full_response
