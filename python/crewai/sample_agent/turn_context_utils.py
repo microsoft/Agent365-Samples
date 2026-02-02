@@ -9,6 +9,7 @@ This module encapsulates repeated logic for extracting agent, caller, and
 tenant information from the Microsoft Agents SDK TurnContext.
 """
 
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -21,7 +22,11 @@ from microsoft_agents_a365.observability.core import (
     ExecutionType,
     InvokeAgentDetails,
 )
+from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
+from microsoft_agents_a365.observability.hosting.scope_helpers.populate_baggage import populate
+
+from constants import DEFAULT_AGENT_ID
 
 
 @dataclass
@@ -62,8 +67,10 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
     # Extract agent details from recipient (ChannelAccount)
     tenant_id = recipient.tenant_id if recipient else None
     agent_id = getattr(recipient, "id", None) if recipient else None
+    if not agent_id:
+        agent_id = os.getenv("AGENT_ID", DEFAULT_AGENT_ID)
     agent_name = getattr(recipient, "name", None) if recipient else None
-    agent_upn = getattr(recipient, "name", None) if recipient else None  # ChannelAccount doesn't have UPN
+    agent_upn = getattr(recipient, "name", None) if recipient else None
     agent_blueprint_id = getattr(recipient, "agentic_app_id", None) if recipient else None
     agent_auid = getattr(recipient, "agentic_user_id", None) if recipient else None
 
@@ -72,14 +79,21 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
     correlation_id = str(uuid.uuid4())
 
     # Extract caller details from from_property (ChannelAccount)
-    # Note: ChannelAccount has: id, name, aad_object_id, role, agentic_user_id, agentic_app_id, tenant_id
     caller = activity.from_property if activity and activity.from_property else None
     caller_id = getattr(caller, "id", None)
     caller_name = getattr(caller, "name", None)
     caller_aad_object_id = getattr(caller, "aad_object_id", None)
 
+    # Warn if using fallback tenant_id to help identify configuration issues in production
+    if not tenant_id:
+        import logging
+        logging.getLogger(__name__).warning(
+            "tenant_id not found in TurnContext; using 'default-tenant'. "
+            "This may make it difficult to distinguish between deployments in telemetry."
+        )
+
     return TurnContextDetails(
-        tenant_id=tenant_id,
+        tenant_id=tenant_id or "default-tenant",
         agent_id=agent_id,
         agent_name=agent_name,
         agent_upn=agent_upn,
@@ -93,7 +107,7 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
     )
 
 
-def create_agent_details(details: TurnContextDetails, description: str = "AI agent") -> AgentDetails:
+def create_agent_details(details: TurnContextDetails, description: str = "AI agent powered by CrewAI framework") -> AgentDetails:
     """
     Create AgentDetails from extracted TurnContextDetails.
 
@@ -127,9 +141,9 @@ def create_caller_details(details: TurnContextDetails) -> CallerDetails:
         CallerDetails for observability
     """
     return CallerDetails(
-        caller_id=details.caller_id,
-        caller_upn=details.caller_name,
-        caller_user_id=details.caller_aad_object_id or details.caller_id,
+        caller_id=details.caller_id or "unknown-caller",
+        caller_upn=details.caller_name or "unknown-user",
+        caller_user_id=details.caller_aad_object_id or details.caller_id or "unknown-user-id",
         caller_name=details.caller_name,
     )
 
@@ -165,7 +179,7 @@ def create_request(details: TurnContextDetails, message: str) -> Request:
     )
 
 
-def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent") -> InvokeAgentDetails:
+def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent powered by CrewAI framework") -> InvokeAgentDetails:
     """
     Create InvokeAgentDetails from extracted TurnContextDetails.
 
@@ -181,3 +195,26 @@ def create_invoke_agent_details(details: TurnContextDetails, description: str = 
         details=agent_details,
         session_id=details.conversation_id,
     )
+
+
+def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = None) -> BaggageBuilder:
+    """
+    Build a BaggageBuilder populated from TurnContext activity.
+
+    Uses the SDK's populate() function which extracts the following from TurnContext:
+    - tenant_id: From activity.conversation.tenant_id
+    - agent_id: From activity.recipient.id
+    - correlation_id: From activity channel data or generates new one
+
+    Args:
+        context: The TurnContext from the Microsoft Agents SDK
+        correlation_id: Optional correlation id to override the one extracted by populate()
+
+    Returns:
+        Populated BaggageBuilder instance ready to use with .build() context manager
+    """
+    builder = BaggageBuilder()
+    populate(builder, context)
+    if correlation_id:
+        builder.correlation_id(correlation_id)
+    return builder
