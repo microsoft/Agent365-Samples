@@ -35,6 +35,20 @@ The following SDK package versions are used across the samples in this repositor
 
 ### Microsoft Agent 365 SDK Packages
 
+#### Python
+| Package | Version |
+|---------|---------|
+| `microsoft_agents_a365_notifications` | `0.1.0` |
+| `microsoft_agents_a365_observability_core` | `0.1.0` |
+| `microsoft_agents_a365_observability_extensions_openai` | `0.1.0` |
+| `microsoft_agents_a365_runtime` | `0.1.0` |
+| `microsoft_agents_a365_tooling` | `0.1.0` |
+| `microsoft_agents_a365_tooling_extensions_openai` | `0.1.0` |
+| `microsoft-agents-a365-observability-core` | `0.1.0` |
+| `microsoft-agents-a365-observability-hosting` | `0.2.0` |
+| `microsoft-agents-a365-tooling` | `0.1.0` |
+
+#### Node.js
 | Package | Version |
 |---------|---------|
 | `@microsoft/agents-a365-notifications` | `0.1.0-preview.30` |
@@ -45,19 +59,14 @@ The following SDK package versions are used across the samples in this repositor
 | `@microsoft/agents-a365-tooling` | `0.1.0-preview.30` |
 | `@microsoft/agents-a365-tooling-extensions-langchain` | `0.1.0-preview.30` |
 | `@microsoft/agents-a365-tooling-extensions-openai` | `0.1.0-preview.30` |
+
+#### .NET
+| Package | Version |
+|---------|---------|
 | `Microsoft.Agents.A365.Notifications` | `*-beta.*` |
 | `Microsoft.Agents.A365.Observability.Extensions.AgentFramework` | `*-beta.*` |
 | `Microsoft.Agents.A365.Tooling.Extensions.AgentFramework` | `*-beta.*` |
 | `Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel` | `*-beta.*` |
-| `microsoft_agents_a365_notifications` | `0.1.0` |
-| `microsoft_agents_a365_observability_core` | `0.1.0` |
-| `microsoft_agents_a365_observability_extensions_openai` | `0.1.0` |
-| `microsoft_agents_a365_runtime` | `0.1.0` |
-| `microsoft_agents_a365_tooling` | `0.1.0` |
-| `microsoft_agents_a365_tooling_extensions_openai` | `0.1.0` |
-| `microsoft-agents-a365-observability-core` | `0.1.0` |
-| `microsoft-agents-a365-observability-hosting` | `0.2.0` |
-| `microsoft-agents-a365-tooling` | `0.1.0` |
 
 <!-- SDK_VERSIONS_END -->
 

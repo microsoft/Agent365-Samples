@@ -160,35 +160,52 @@ foreach ($sample in $samples) {
     }
 }
 
-# Group packages by category
+# Group packages by category and language
 $agentsSdkVersions = @{}
-$a365SdkVersions = @{}
+$a365Python = @{}
+$a365Nodejs = @{}
+$a365Dotnet = @{}
 
 foreach ($sample in $allVersions.GetEnumerator()) {
+    $runtime = $sample.Value.Type
+    
     foreach ($pkg in $sample.Value.Versions.GetEnumerator()) {
         $pkgName = $pkg.Key
         $version = $pkg.Value
-        $sampleName = $sample.Key
         
-        # Determine category
+        # Determine if it's Agent 365 SDK
         $isA365 = $pkgName -match 'a365|A365'
         
         if ($isA365) {
-            if (-not $a365SdkVersions.ContainsKey($pkgName)) {
-                $a365SdkVersions[$pkgName] = @{ Version = $version; Samples = @() }
+            # Group A365 packages by language
+            switch ($runtime) {
+                'python' {
+                    if (-not $a365Python.ContainsKey($pkgName)) {
+                        $a365Python[$pkgName] = $version
+                    }
+                }
+                'nodejs' {
+                    if (-not $a365Nodejs.ContainsKey($pkgName)) {
+                        $a365Nodejs[$pkgName] = $version
+                    }
+                }
+                'dotnet' {
+                    if (-not $a365Dotnet.ContainsKey($pkgName)) {
+                        $a365Dotnet[$pkgName] = $version
+                    }
+                }
             }
-            $a365SdkVersions[$pkgName].Samples += $sampleName
         }
         else {
+            # Microsoft Agents SDK (base SDK)
             if (-not $agentsSdkVersions.ContainsKey($pkgName)) {
-                $agentsSdkVersions[$pkgName] = @{ Version = $version; Samples = @() }
+                $agentsSdkVersions[$pkgName] = @{ Version = $version; Runtime = $runtime }
             }
-            $agentsSdkVersions[$pkgName].Samples += $sampleName
         }
     }
 }
 
-# Generate markdown table
+# Generate markdown sections
 $markdown = @"
 
 ### Microsoft Agents SDK Packages
@@ -208,14 +225,43 @@ $markdown += @"
 
 ### Microsoft Agent 365 SDK Packages
 
+#### Python
 | Package | Version |
 |---------|---------|
 "@
 
-# Sort and add A365 SDK packages
-$sortedA365Sdk = $a365SdkVersions.GetEnumerator() | Sort-Object { $_.Key }
-foreach ($pkg in $sortedA365Sdk) {
-    $markdown += "`n| ``$($pkg.Key)`` | ``$($pkg.Value.Version)`` |"
+# Sort and add Python A365 packages
+$sortedA365Python = $a365Python.GetEnumerator() | Sort-Object { $_.Key }
+foreach ($pkg in $sortedA365Python) {
+    $markdown += "`n| ``$($pkg.Key)`` | ``$($pkg.Value)`` |"
+}
+
+$markdown += @"
+
+
+#### Node.js
+| Package | Version |
+|---------|---------|
+"@
+
+# Sort and add Node.js A365 packages
+$sortedA365Nodejs = $a365Nodejs.GetEnumerator() | Sort-Object { $_.Key }
+foreach ($pkg in $sortedA365Nodejs) {
+    $markdown += "`n| ``$($pkg.Key)`` | ``$($pkg.Value)`` |"
+}
+
+$markdown += @"
+
+
+#### .NET
+| Package | Version |
+|---------|---------|
+"@
+
+# Sort and add .NET A365 packages
+$sortedA365Dotnet = $a365Dotnet.GetEnumerator() | Sort-Object { $_.Key }
+foreach ($pkg in $sortedA365Dotnet) {
+    $markdown += "`n| ``$($pkg.Key)`` | ``$($pkg.Value)`` |"
 }
 
 $markdown += "`n"
