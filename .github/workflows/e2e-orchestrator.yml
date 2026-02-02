@@ -136,6 +136,8 @@ jobs:
           echo "| Node.js LangChain | $NODEJS_LANGCHAIN_ICON | ${{ needs.nodejs-langchain.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Semantic Kernel | $DOTNET_SK_ICON | ${{ needs.dotnet-sk.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Agent Framework | $DOTNET_AF_ICON | ${{ needs.dotnet-af.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> 📦 **SDK Versions**: Click on each sample workflow above to view detailed SDK version information in the step summary." >> $GITHUB_STEP_SUMMARY
 
       - name: Post PR Comment
         if: github.event_name == 'pull_request'
@@ -166,6 +168,8 @@ jobs:
               `| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |`,
               `| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |`,
               `| .NET Agent Framework | ${dotnetAfIcon} | ${{ needs.dotnet-af.result }} |`,
+              '',
+              `> 📦 **SDK Versions**: View the [workflow summary](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}) for detailed SDK version information.`,
               '',
               `[View full test details](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})`
             ].join('\n');
