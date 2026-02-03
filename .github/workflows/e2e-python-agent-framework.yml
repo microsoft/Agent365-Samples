@@ -81,16 +81,16 @@ jobs:
         shell: pwsh
         run: |
           $configMappings = @{
-            "AZURE_OPENAI_API_KEY" = "${{ secrets.PYTHON_AF_AZURE_OPENAI_API_KEY }}"
-            "AZURE_OPENAI_ENDPOINT" = "${{ secrets.PYTHON_AF_AZURE_OPENAI_ENDPOINT }}"
-            "AZURE_OPENAI_DEPLOYMENT" = "${{ secrets.PYTHON_AF_AZURE_OPENAI_DEPLOYMENT }}"
+            "AZURE_OPENAI_API_KEY" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_API_KEY }}"
+            "AZURE_OPENAI_ENDPOINT" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_ENDPOINT }}"
+            "AZURE_OPENAI_DEPLOYMENT" = "${{ secrets.PYTHON_OPENAI_AZURE_OPENAI_DEPLOYMENT }}"
             "AZURE_OPENAI_API_VERSION" = "2024-12-01-preview"
             "USE_AGENTIC_AUTH" = "false"
             "MCP_PLATFORM_ENDPOINT" = "https://agent365.svc.cloud.microsoft"
-            "AGENT_ID" = "${{ secrets.PYTHON_AF_AGENT_ID }}"
+            "AGENT_ID" = "${{ secrets.PYTHON_OPENAI_AGENT_ID }}"
             "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__AUTHTYPE" = "ClientSecret"
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID" = "${{ secrets.PYTHON_AF_AGENT_ID }}"
-            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET" = "${{ secrets.PYTHON_AF_CLIENT_SECRET }}"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID" = "${{ secrets.PYTHON_OPENAI_AGENT_ID }}"
+            "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET" = "${{ secrets.PYTHON_OPENAI_CLIENT_SECRET }}"
             "CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID" = "${{ secrets.TENANT_ID }}"
             "CONNECTIONSMAP__0__SERVICEURL" = "*"
             "CONNECTIONSMAP__0__CONNECTION" = "SERVICE_CONNECTION"
