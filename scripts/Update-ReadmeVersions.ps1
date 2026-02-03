@@ -106,30 +106,30 @@ function Get-NodejsVersions {
     $packageJsonPath = Join-Path $Path "package.json"
     
     if (Test-Path $packageJsonPath) {
+        # Read package.json first (before Push-Location)
+        $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+        
+        $allDeps = @{}
+        if ($packageJson.dependencies) {
+            $packageJson.dependencies.PSObject.Properties | ForEach-Object {
+                $allDeps[$_.Name] = $_.Value
+            }
+        }
+        if ($packageJson.devDependencies) {
+            $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
+                if (-not $allDeps.ContainsKey($_.Name)) {
+                    $allDeps[$_.Name] = $_.Value
+                }
+            }
+        }
+        
         # Try to get actual installed versions from node_modules
         Push-Location $Path
         try {
             # Install dependencies first
             npm install --silent 2>$null
             
-            $nodeModulesPath = Join-Path $Path "node_modules"
-            
-            # Read package.json to get list of Microsoft packages
-            $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
-            
-            $allDeps = @{}
-            if ($packageJson.dependencies) {
-                $packageJson.dependencies.PSObject.Properties | ForEach-Object {
-                    $allDeps[$_.Name] = $_.Value
-                }
-            }
-            if ($packageJson.devDependencies) {
-                $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
-                    if (-not $allDeps.ContainsKey($_.Name)) {
-                        $allDeps[$_.Name] = $_.Value
-                    }
-                }
-            }
+            $nodeModulesPath = "node_modules"
             
             foreach ($dep in $allDeps.GetEnumerator()) {
                 if ($dep.Key -like '@microsoft/agents*') {
@@ -156,23 +156,7 @@ function Get-NodejsVersions {
         catch {
             Write-Host "  Warning: Could not get installed versions, falling back to package.json" -ForegroundColor Yellow
             
-            # Fallback to reading package.json
-            $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
-            
-            $allDeps = @{}
-            if ($packageJson.dependencies) {
-                $packageJson.dependencies.PSObject.Properties | ForEach-Object {
-                    $allDeps[$_.Name] = $_.Value
-                }
-            }
-            if ($packageJson.devDependencies) {
-                $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
-                    if (-not $allDeps.ContainsKey($_.Name)) {
-                        $allDeps[$_.Name] = $_.Value
-                    }
-                }
-            }
-            
+            # Fallback to declared versions
             foreach ($dep in $allDeps.GetEnumerator()) {
                 if ($dep.Key -like '@microsoft/agents*') {
                     $version = $dep.Value -replace '[\^~>=<]', ''
