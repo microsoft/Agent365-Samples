@@ -45,27 +45,53 @@ function Get-PythonVersions {
     $pyprojectPath = Join-Path $Path "pyproject.toml"
     
     if (Test-Path $pyprojectPath) {
-        $content = Get-Content $pyprojectPath -Raw
-        
-        # Extract microsoft-agents packages
-        $pattern = '(microsoft[-_]agents[-_][a-zA-Z0-9_-]+)\s*[>=<~^]*\s*"?([0-9]+\.[0-9]+\.[0-9]+[^"]*)"?'
-        $matches = [regex]::Matches($content, $pattern)
-        
-        foreach ($match in $matches) {
-            $pkgName = $match.Groups[1].Value
-            $version = $match.Groups[2].Value -replace '[",\s]', ''
-            $versions[$pkgName] = $version
+        # Try to get actual installed versions using uv pip list
+        Push-Location $Path
+        try {
+            # Sync dependencies first to ensure we have the latest
+            uv sync --quiet 2>$null
+            
+            $pipListJson = uv pip list --format=json 2>$null
+            if ($pipListJson) {
+                $packages = $pipListJson | ConvertFrom-Json
+                foreach ($pkg in $packages) {
+                    if ($pkg.name -like 'microsoft-agents-*' -or $pkg.name -like 'microsoft_agents_*') {
+                        $versions[$pkg.name] = $pkg.version
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Host "  Warning: Could not get installed versions, falling back to pyproject.toml" -ForegroundColor Yellow
+        }
+        finally {
+            Pop-Location
         }
         
-        # Try alternate pattern for dependencies section
-        $depsPattern = '"(microsoft[-_]agents[-_][a-zA-Z0-9_-]+)[>=<~^]*([0-9]+\.[0-9]+\.[0-9]+[^"]*)"'
-        $depsMatches = [regex]::Matches($content, $depsPattern)
-        
-        foreach ($match in $depsMatches) {
-            $pkgName = $match.Groups[1].Value
-            $version = $match.Groups[2].Value -replace '[",\s]', ''
-            if (-not $versions.ContainsKey($pkgName)) {
+        # Fallback to parsing pyproject.toml if uv failed
+        if ($versions.Count -eq 0) {
+            $content = Get-Content $pyprojectPath -Raw
+            
+            # Extract microsoft-agents packages
+            $pattern = '(microsoft[-_]agents[-_][a-zA-Z0-9_-]+)\s*[>=<~^]*\s*"?([0-9]+\.[0-9]+\.[0-9]+[^"]*)"?'
+            $matches = [regex]::Matches($content, $pattern)
+            
+            foreach ($match in $matches) {
+                $pkgName = $match.Groups[1].Value
+                $version = $match.Groups[2].Value -replace '[",\s]', ''
                 $versions[$pkgName] = $version
+            }
+            
+            # Try alternate pattern for dependencies section
+            $depsPattern = '"(microsoft[-_]agents[-_][a-zA-Z0-9_-]+)[>=<~^]*([0-9]+\.[0-9]+\.[0-9]+[^"]*)"'
+            $depsMatches = [regex]::Matches($content, $depsPattern)
+            
+            foreach ($match in $depsMatches) {
+                $pkgName = $match.Groups[1].Value
+                $version = $match.Groups[2].Value -replace '[",\s]', ''
+                if (-not $versions.ContainsKey($pkgName)) {
+                    $versions[$pkgName] = $version
+                }
             }
         }
     }
@@ -80,28 +106,82 @@ function Get-NodejsVersions {
     $packageJsonPath = Join-Path $Path "package.json"
     
     if (Test-Path $packageJsonPath) {
-        $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
-        
-        $allDeps = @{}
-        if ($packageJson.dependencies) {
-            $packageJson.dependencies.PSObject.Properties | ForEach-Object {
-                $allDeps[$_.Name] = $_.Value
-            }
-        }
-        if ($packageJson.devDependencies) {
-            $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
-                if (-not $allDeps.ContainsKey($_.Name)) {
+        # Try to get actual installed versions from node_modules
+        Push-Location $Path
+        try {
+            # Install dependencies first
+            npm install --silent 2>$null
+            
+            $nodeModulesPath = Join-Path $Path "node_modules"
+            
+            # Read package.json to get list of Microsoft packages
+            $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+            
+            $allDeps = @{}
+            if ($packageJson.dependencies) {
+                $packageJson.dependencies.PSObject.Properties | ForEach-Object {
                     $allDeps[$_.Name] = $_.Value
                 }
             }
-        }
-        
-        foreach ($dep in $allDeps.GetEnumerator()) {
-            if ($dep.Key -like '@microsoft/agents*') {
-                # Clean version string (remove ^, ~, etc.)
-                $version = $dep.Value -replace '[\^~>=<]', ''
-                $versions[$dep.Key] = $version
+            if ($packageJson.devDependencies) {
+                $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
+                    if (-not $allDeps.ContainsKey($_.Name)) {
+                        $allDeps[$_.Name] = $_.Value
+                    }
+                }
             }
+            
+            foreach ($dep in $allDeps.GetEnumerator()) {
+                if ($dep.Key -like '@microsoft/agents*') {
+                    # Try to get actual installed version from node_modules
+                    $pkgPathParts = $dep.Key -split '/'
+                    $pkgPath = $nodeModulesPath
+                    foreach ($part in $pkgPathParts) {
+                        $pkgPath = Join-Path $pkgPath $part
+                    }
+                    $installedPkgJsonPath = Join-Path $pkgPath "package.json"
+                    
+                    if (Test-Path $installedPkgJsonPath) {
+                        $installedPkgJson = Get-Content $installedPkgJsonPath -Raw | ConvertFrom-Json
+                        $versions[$dep.Key] = $installedPkgJson.version
+                    }
+                    else {
+                        # Fallback to declared version
+                        $version = $dep.Value -replace '[\^~>=<]', ''
+                        $versions[$dep.Key] = $version
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Host "  Warning: Could not get installed versions, falling back to package.json" -ForegroundColor Yellow
+            
+            # Fallback to reading package.json
+            $packageJson = Get-Content $packageJsonPath -Raw | ConvertFrom-Json
+            
+            $allDeps = @{}
+            if ($packageJson.dependencies) {
+                $packageJson.dependencies.PSObject.Properties | ForEach-Object {
+                    $allDeps[$_.Name] = $_.Value
+                }
+            }
+            if ($packageJson.devDependencies) {
+                $packageJson.devDependencies.PSObject.Properties | ForEach-Object {
+                    if (-not $allDeps.ContainsKey($_.Name)) {
+                        $allDeps[$_.Name] = $_.Value
+                    }
+                }
+            }
+            
+            foreach ($dep in $allDeps.GetEnumerator()) {
+                if ($dep.Key -like '@microsoft/agents*') {
+                    $version = $dep.Value -replace '[\^~>=<]', ''
+                    $versions[$dep.Key] = $version
+                }
+            }
+        }
+        finally {
+            Pop-Location
         }
     }
     
@@ -115,15 +195,49 @@ function Get-DotnetVersions {
     $csprojFiles = Get-ChildItem -Path $Path -Filter "*.csproj" -ErrorAction SilentlyContinue
     
     foreach ($csproj in $csprojFiles) {
-        [xml]$xml = Get-Content $csproj.FullName
-        
-        $packageRefs = $xml.SelectNodes("//PackageReference")
-        foreach ($pkg in $packageRefs) {
-            $pkgName = $pkg.GetAttribute("Include")
-            $pkgVersion = $pkg.GetAttribute("Version")
+        # Try to get resolved versions using dotnet list package
+        Push-Location $Path
+        try {
+            # Restore first to ensure we have resolved versions
+            dotnet restore --verbosity quiet 2>$null
             
-            if ($pkgName -like 'Microsoft.Agents*') {
-                $versions[$pkgName] = $pkgVersion
+            $packageListJson = dotnet list package --format json 2>$null
+            if ($packageListJson) {
+                $packages = $packageListJson | ConvertFrom-Json
+                
+                if ($packages -and $packages.projects) {
+                    foreach ($project in $packages.projects) {
+                        foreach ($framework in $project.frameworks) {
+                            foreach ($pkg in $framework.topLevelPackages) {
+                                if ($pkg.id -like 'Microsoft.Agents*') {
+                                    # Use resolvedVersion (actual installed version) not requestedVersion (wildcard)
+                                    $versions[$pkg.id] = $pkg.resolvedVersion
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Host "  Warning: Could not get resolved versions, falling back to csproj" -ForegroundColor Yellow
+        }
+        finally {
+            Pop-Location
+        }
+        
+        # Fallback to reading csproj directly if dotnet list failed
+        if ($versions.Count -eq 0) {
+            [xml]$xml = Get-Content $csproj.FullName
+            
+            $packageRefs = $xml.SelectNodes("//PackageReference")
+            foreach ($pkg in $packageRefs) {
+                $pkgName = $pkg.GetAttribute("Include")
+                $pkgVersion = $pkg.GetAttribute("Version")
+                
+                if ($pkgName -like 'Microsoft.Agents*') {
+                    $versions[$pkgName] = $pkgVersion
+                }
             }
         }
     }
