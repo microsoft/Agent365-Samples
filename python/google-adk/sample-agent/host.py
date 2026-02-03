@@ -35,6 +35,17 @@ from microsoft_agents_a365.notifications.models import (
     EmailResponse
 )
 
+# Observability imports
+from microsoft_agents_a365.runtime.environment_utils import (
+    get_observability_authentication_scope,
+)
+from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
+    BaggageBuilder,
+)
+
+# Token caching
+from token_cache import cache_agentic_token
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -76,6 +87,22 @@ class AgentHost(AgentApplication):
 
         self._setup_handlers()
 
+    async def _setup_observability_token(self, context: TurnContext) -> None:
+        """Exchange and cache token for Agent 365 Observability."""
+        try:
+            tenant_id = context.activity.recipient.tenant_id
+            agent_id = context.activity.recipient.agentic_app_id
+
+            exaau_token = await self.auth.exchange_token(
+                context,
+                scopes=get_observability_authentication_scope(),
+                auth_handler_id=self.auth_handler_name,
+            )
+
+            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to cache observability token: {e}")
+
     def _setup_handlers(self):
         """Set up activity handlers for the agent."""
         auth_handlers = [self.auth_handler_name]
@@ -97,12 +124,20 @@ class AgentHost(AgentApplication):
                 await context.send_activity("Please send me a message and I'll help you!")
                 return
 
-            response = await self.agent.invoke_agent_with_scope(
-                message=user_message,
-                auth=self.auth,
-                auth_handler_name=self.auth_handler_name,
-                context=context
-            )
+            # Setup observability token before processing message
+            await self._setup_observability_token(context)
+
+            # Process message with baggage context
+            tenant_id = context.activity.recipient.tenant_id
+            agent_id = context.activity.recipient.agentic_app_id
+
+            with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                response = await self.agent.invoke_agent_with_scope(
+                    message=user_message,
+                    auth=self.auth,
+                    auth_handler_name=self.auth_handler_name,
+                    context=context
+                )
 
             await context.send_activity(Activity(type=ActivityTypes.message, text=response))
 
@@ -120,25 +155,33 @@ class AgentHost(AgentApplication):
             notification_type = notification_activity.notification_type
             logger.info(f"Received agent notification of type: {notification_type}")
 
-            # Handle Email Notifications
-            if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
-                await self.email_notification_handler(context, notification_activity)
-                return
+            # Setup observability token before processing notification
+            await self._setup_observability_token(context)
 
-            # Handle Word Comment Notifications
-            if notification_type == NotificationTypes.WPX_COMMENT:
-                await self.word_comment_notification_handler(context, notification_activity)
-                return
+            # Process notification with baggage context
+            tenant_id = context.activity.recipient.tenant_id
+            agent_id = context.activity.recipient.agentic_app_id
 
-            # Generic notification handling
-            notification_message = notification_activity.activity.text or ""
-            response = "I was unable to process your request. Please try again later."
-            if not notification_message:
-                response = f"Notification received: {notification_type}"
-            else:
-                response = await self.agent.invoke_agent_with_scope(notification_message, self.auth, self.auth_handler_name, context)
+            with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                # Handle Email Notifications
+                if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+                    await self.email_notification_handler(context, notification_activity)
+                    return
 
-            await context.send_activity(response)
+                # Handle Word Comment Notifications
+                if notification_type == NotificationTypes.WPX_COMMENT:
+                    await self.word_comment_notification_handler(context, notification_activity)
+                    return
+
+                # Generic notification handling
+                notification_message = notification_activity.activity.text or ""
+                response = "I was unable to process your request. Please try again later."
+                if not notification_message:
+                    response = f"Notification received: {notification_type}"
+                else:
+                    response = await self.agent.invoke_agent_with_scope(notification_message, self.auth, self.auth_handler_name, context)
+
+                await context.send_activity(response)
 
     async def email_notification_handler(self, context: TurnContext, notification_activity: AgentNotificationActivity):
         """Handle email notifications."""
