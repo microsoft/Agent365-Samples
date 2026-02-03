@@ -1,6 +1,6 @@
 # n8n Sample Agent
 
-This sample demonstrates how to build an agent using n8n with its Microsoft Agent 365 node. The new Microsoft Agent 365 node in n8n has built in:
+This sample demonstrates how to build an agent using n8n with its Microsoft Agent 365 node. The new Microsoft Agent 365 node in n8n has built-in:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for the agent
 - **Notifications**: Services and models for managing user notifications
@@ -148,7 +148,7 @@ Connect your agent blueprint to the n8n workflow:
 - Return to the [Microsoft Teams Developer Portal](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#configure-the-agent-identity-blueprint)
 - Navigate to your Agent Blueprint → **Configuration**
 - Select **API Based** as the configuration type
-- Set the **Backend URL** to your n8n workflow's webhook URL from Step 4
+- Set the **Backend URL** to your n8n workflow's webhook URL from Step 5
 
 #### Step 7: Hire an agent as a digital worker
 - Follow the [documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard) to hire an agent as a digital worker
