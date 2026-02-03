@@ -22,8 +22,11 @@ on:
         options:
           - ''
           - 'python-openai'
+          - 'python-af'
+          - 'python-google-adk'
           - 'nodejs-openai'
           - 'nodejs-langchain'
+          - 'nodejs-copilot-studio'
           - 'dotnet-sk'
           - 'dotnet-af'
 
@@ -37,6 +40,18 @@ jobs:
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-openai' }}
     uses: ./.github/workflows/e2e-python-openai.yml
     secrets: inherit
+
+  python-af:
+    name: Python Agent Framework E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-af' }}
+    uses: ./.github/workflows/e2e-python-agent-framework.yml
+    secrets: inherit
+
+  python-google-adk:
+    name: Python Google ADK E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-google-adk' }}
+    uses: ./.github/workflows/e2e-python-google-adk.yml
+    secrets: inherit
     
   nodejs-openai:
     name: Node.js OpenAI E2E
@@ -48,6 +63,12 @@ jobs:
     name: Node.js LangChain E2E
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-langchain' }}
     uses: ./.github/workflows/e2e-nodejs-langchain.yml
+    secrets: inherit
+
+  nodejs-copilot-studio:
+    name: Node.js Copilot Studio E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-copilot-studio' }}
+    uses: ./.github/workflows/e2e-nodejs-copilot-studio.yml
     secrets: inherit
     
   dotnet-sk:
@@ -69,7 +90,7 @@ jobs:
   e2e-status:
     name: E2E Status
     runs-on: ubuntu-latest
-    needs: [python-openai, nodejs-openai, nodejs-langchain, dotnet-sk, dotnet-af]
+    needs: [python-openai, python-af, python-google-adk, nodejs-openai, nodejs-langchain, nodejs-copilot-studio, dotnet-sk, dotnet-af]
     if: always()
     
     steps:
@@ -78,7 +99,7 @@ jobs:
           echo "Checking E2E test results..."
           
           # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.python-openai.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.dotnet-sk.result }} ${{ needs.dotnet-af.result }}"
+          results="${{ needs.python-openai.result }} ${{ needs.python-af.result }} ${{ needs.python-google-adk.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-copilot-studio.result }} ${{ needs.dotnet-sk.result }} ${{ needs.dotnet-af.result }}"
           
           echo "Job results: $results"
           
@@ -97,8 +118,11 @@ jobs:
           # Determine overall status
           OVERALL_STATUS="✅ All Tests Passed"
           if [[ "${{ needs.python-openai.result }}" != "success" ]] || \
+             [[ "${{ needs.python-af.result }}" != "success" ]] || \
+             [[ "${{ needs.python-google-adk.result }}" != "success" ]] || \
              [[ "${{ needs.nodejs-openai.result }}" != "success" ]] || \
              [[ "${{ needs.nodejs-langchain.result }}" != "success" ]] || \
+             [[ "${{ needs.nodejs-copilot-studio.result }}" != "success" ]] || \
              [[ "${{ needs.dotnet-sk.result }}" != "success" ]] || \
              [[ "${{ needs.dotnet-af.result }}" != "success" ]]; then
             OVERALL_STATUS="⚠️ Some Tests Failed"
@@ -106,8 +130,11 @@ jobs:
           
           # Generate status icons using if-else for reliability
           if [[ "${{ needs.python-openai.result }}" == "success" ]]; then PYTHON_OPENAI_ICON="✅"; else PYTHON_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.python-af.result }}" == "success" ]]; then PYTHON_AF_ICON="✅"; else PYTHON_AF_ICON="❌"; fi
+          if [[ "${{ needs.python-google-adk.result }}" == "success" ]]; then PYTHON_GOOGLE_ADK_ICON="✅"; else PYTHON_GOOGLE_ADK_ICON="❌"; fi
           if [[ "${{ needs.nodejs-openai.result }}" == "success" ]]; then NODEJS_OPENAI_ICON="✅"; else NODEJS_OPENAI_ICON="❌"; fi
           if [[ "${{ needs.nodejs-langchain.result }}" == "success" ]]; then NODEJS_LANGCHAIN_ICON="✅"; else NODEJS_LANGCHAIN_ICON="❌"; fi
+          if [[ "${{ needs.nodejs-copilot-studio.result }}" == "success" ]]; then NODEJS_COPILOT_STUDIO_ICON="✅"; else NODEJS_COPILOT_STUDIO_ICON="❌"; fi
           if [[ "${{ needs.dotnet-sk.result }}" == "success" ]]; then DOTNET_SK_ICON="✅"; else DOTNET_SK_ICON="❌"; fi
           if [[ "${{ needs.dotnet-af.result }}" == "success" ]]; then DOTNET_AF_ICON="✅"; else DOTNET_AF_ICON="❌"; fi
           
@@ -118,8 +145,11 @@ jobs:
           echo "| Sample | Status | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Python OpenAI | $PYTHON_OPENAI_ICON | ${{ needs.python-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Agent Framework | $PYTHON_AF_ICON | ${{ needs.python-af.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Google ADK | $PYTHON_GOOGLE_ADK_ICON | ${{ needs.python-google-adk.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js OpenAI | $NODEJS_OPENAI_ICON | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js LangChain | $NODEJS_LANGCHAIN_ICON | ${{ needs.nodejs-langchain.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js Copilot Studio | $NODEJS_COPILOT_STUDIO_ICON | ${{ needs.nodejs-copilot-studio.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Semantic Kernel | $DOTNET_SK_ICON | ${{ needs.dotnet-sk.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Agent Framework | $DOTNET_AF_ICON | ${{ needs.dotnet-af.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -131,14 +161,20 @@ jobs:
         with:
           script: |
             const pythonOpenaiIcon = '${{ needs.python-openai.result }}' === 'success' ? '✅' : '❌';
+            const pythonAfIcon = '${{ needs.python-af.result }}' === 'success' ? '✅' : '❌';
+            const pythonGoogleAdkIcon = '${{ needs.python-google-adk.result }}' === 'success' ? '✅' : '❌';
             const nodejsOpenaiIcon = '${{ needs.nodejs-openai.result }}' === 'success' ? '✅' : '❌';
             const nodejsLangchainIcon = '${{ needs.nodejs-langchain.result }}' === 'success' ? '✅' : '❌';
+            const nodejsCopilotStudioIcon = '${{ needs.nodejs-copilot-studio.result }}' === 'success' ? '✅' : '❌';
             const dotnetSkIcon = '${{ needs.dotnet-sk.result }}' === 'success' ? '✅' : '❌';
             const dotnetAfIcon = '${{ needs.dotnet-af.result }}' === 'success' ? '✅' : '❌';
             
             const allPassed = '${{ needs.python-openai.result }}' === 'success' &&
+                              '${{ needs.python-af.result }}' === 'success' &&
+                              '${{ needs.python-google-adk.result }}' === 'success' &&
                               '${{ needs.nodejs-openai.result }}' === 'success' &&
                               '${{ needs.nodejs-langchain.result }}' === 'success' &&
+                              '${{ needs.nodejs-copilot-studio.result }}' === 'success' &&
                               '${{ needs.dotnet-sk.result }}' === 'success' &&
                               '${{ needs.dotnet-af.result }}' === 'success';
             
@@ -150,8 +186,11 @@ jobs:
               '| Sample | Status | Result |',
               '|--------|--------|--------|',
               `| Python OpenAI | ${pythonOpenaiIcon} | ${{ needs.python-openai.result }} |`,
+              `| Python Agent Framework | ${pythonAfIcon} | ${{ needs.python-af.result }} |`,
+              `| Python Google ADK | ${pythonGoogleAdkIcon} | ${{ needs.python-google-adk.result }} |`,
               `| Node.js OpenAI | ${nodejsOpenaiIcon} | ${{ needs.nodejs-openai.result }} |`,
               `| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |`,
+              `| Node.js Copilot Studio | ${nodejsCopilotStudioIcon} | ${{ needs.nodejs-copilot-studio.result }} |`,
               `| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |`,
               `| .NET Agent Framework | ${dotnetAfIcon} | ${{ needs.dotnet-af.result }} |`,
               '',

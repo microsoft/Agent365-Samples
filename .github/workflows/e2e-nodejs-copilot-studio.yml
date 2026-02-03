@@ -1,0 +1,180 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: E2E - Node.js Copilot Studio
+
+on:
+  workflow_call:  # Allow orchestrator to call this workflow
+  workflow_dispatch:  # Allow manual triggering
+  push:
+    branches: [main]
+    paths:
+      - 'nodejs/copilot-studio/**'
+      - 'scripts/e2e/**'
+      - '.github/workflows/e2e-nodejs-copilot-studio.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'nodejs/copilot-studio/**'
+      - 'scripts/e2e/**'
+
+permissions:
+  contents: read
+
+env:
+  SAMPLE_PATH: nodejs/copilot-studio/sample-agent
+  AGENT_PORT: 3978
+  SCRIPTS_PATH: scripts/e2e
+  E2E_TESTS_PATH: tests/e2e
+
+jobs:
+  nodejs-copilot-studio:
+    name: Node.js Copilot Studio Agent
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: |
+          if (Test-Path "package-lock.json") {
+            npm ci
+          } else {
+            npm install
+          }
+          if (Test-Path "tsconfig.json") {
+            npm run build
+          }
+        shell: pwsh
+
+      - name: Log SDK Versions
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Get-SDKVersions.ps1" `
+            -Runtime "nodejs" `
+            -WorkingDirectory "${{ env.SAMPLE_PATH }}"
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Generate .env configuration
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "NODE_ENV" = "development"
+            "directConnectUrl" = "${{ secrets.NODEJS_COPILOT_STUDIO_DIRECT_CONNECT_URL }}"
+            "environmentId" = "${{ secrets.NODEJS_COPILOT_STUDIO_ENVIRONMENT_ID }}"
+            "agentIdentifier" = "${{ secrets.NODEJS_COPILOT_STUDIO_AGENT_IDENTIFIER }}"
+            "connections__service_connection__settings__authType" = "ClientSecret"
+            "connections__service_connection__settings__clientId" = "${{ secrets.NODEJS_COPILOT_STUDIO_AGENT_ID }}"
+            "connections__service_connection__settings__clientSecret" = "${{ secrets.NODEJS_COPILOT_STUDIO_CLIENT_SECRET }}"
+            "connections__service_connection__settings__tenantId" = "${{ secrets.TENANT_ID }}"
+            "connectionsMap__0__serviceUrl" = "*"
+            "connectionsMap__0__connection" = "service_connection"
+            "agentic_scopes" = "https://api.powerplatform.com/.default"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-EnvConfig.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/.env" `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Port ${{ env.AGENT_PORT }} `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "node dist/index.js" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "nodejs"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              throw "Agent process has stopped"
+            }
+          }
+          $agentUrl = "http://localhost:${{ env.AGENT_PORT }}"
+          $healthResponse = Invoke-WebRequest -Uri "$agentUrl/api/health" -Method GET -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health check: $($healthResponse.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --verbosity normal `
+            --logger "console;verbosity=detailed" `
+            --logger "trx;LogFileName=test-results-nodejs-copilot-studio.trx" `
+            --filter "Category=HTTP"
+        env:
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Emit Test Conversations
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Emit-TestConversations.ps1" `
+            -TestResultsDir "${{ runner.temp }}/TestConversations"
+
+      - name: Capture Agent Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Stop Agent Process
+        if: always()
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" -AgentPID $agentPid
+          }
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-nodejs-copilot-studio
+          path: |
+            ${{ env.E2E_TESTS_PATH }}/TestResults/**/*.trx
+            ${{ env.E2E_TESTS_PATH }}/TestResults/**/*-logs.txt
+          retention-days: 7
