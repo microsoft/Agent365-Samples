@@ -147,8 +147,9 @@ jobs:
             --verbosity normal `
             --logger "console;verbosity=detailed" `
             --logger "trx;LogFileName=test-results-nodejs-langchain.trx" `
-            --filter "FullyQualifiedName~BasicConversation|FullyQualifiedName~Notification"
+            --filter "Category=HTTP"
         env:
+          AGENT_URL: http://localhost:${{ env.AGENT_PORT }}
           TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
 
       - name: Emit Test Conversations
