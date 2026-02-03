@@ -9,7 +9,7 @@ This sample demonstrates how to build an agent using n8n with its Microsoft Agen
 ## Prerequisites
 
 - Microsoft Agent 365
-- n8n instance with Microsoft Agent 365 Node
+- n8n instance (version 2.7.0 or later) with Microsoft Agent 365 Node
 
 ## Running the Agent
 
