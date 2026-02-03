@@ -1,23 +1,28 @@
 [project]
 name = "crew_agent"
 version = "0.1.0"
-description = "crew-agent using crewAI"
-authors = [{ name = "Your Name", email = "you@example.com" }]
+description = "CrewAI Sample Agent using Microsoft Agent 365 SDK with MCP tooling support"
+authors = [{ name = "Microsoft", email = "support@microsoft.com" }]
 requires-python = ">=3.11"
 dependencies = [
-    "crewai[tools]==1.4.1",
+    "crewai[azure-ai-inference,tools]==1.4.1",
     "tavily-python>=0.3.0",
     "python-dotenv>=1.0.0",
+    
     # Microsoft 365 Agents SDK - hosting and auth
     "microsoft-agents-hosting-aiohttp",
     "microsoft-agents-hosting-core",
     "microsoft-agents-authentication-msal",
     "microsoft-agents-activity",
+    
     # Core hosting deps
     "aiohttp",
+    
     # Microsoft Agent 365 SDK packages
     "microsoft_agents_a365_tooling >= 0.1.0",
     "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft-agents-a365-observability-hosting>=0.2.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
     "microsoft_agents_a365_runtime >= 0.1.0",
     "wrapt>=2.0.1",
 ]

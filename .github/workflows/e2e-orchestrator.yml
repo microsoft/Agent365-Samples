@@ -9,24 +9,10 @@ on:
     - cron: '0 */6 * * *'
   push:
     branches: [main]
-    paths:
-      - 'python/openai/**'
-      - 'nodejs/openai/**'
-      - 'nodejs/langchain/**'
-      - 'dotnet/semantic-kernel/**'
-      - 'dotnet/agent-framework/**'
-      - '.github/workflows/e2e-*.yml'
-      - 'scripts/e2e/**'
+    # No paths filter - E2E tests should always run to catch regressions
   pull_request:
     branches: [main]
-    paths:
-      - 'python/openai/**'
-      - 'nodejs/openai/**'
-      - 'nodejs/langchain/**'
-      - 'dotnet/semantic-kernel/**'
-      - 'dotnet/agent-framework/**'
-      - '.github/workflows/e2e-*.yml'
-      - 'scripts/e2e/**'
+    # No paths filter - E2E tests should always run to catch regressions
   workflow_dispatch:
     inputs:
       sample:
