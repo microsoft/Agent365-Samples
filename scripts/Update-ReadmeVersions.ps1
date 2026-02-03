@@ -49,9 +49,16 @@ function Get-PythonVersions {
         Push-Location $Path
         try {
             # Sync dependencies first to ensure we have the latest
-            uv sync --quiet 2>$null
+            $syncResult = uv sync --quiet 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Note: uv sync returned exit code $LASTEXITCODE" -ForegroundColor Gray
+            }
             
-            $pipListJson = uv pip list --format=json 2>$null
+            $pipListJson = uv pip list --format=json 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Note: uv pip list returned exit code $LASTEXITCODE" -ForegroundColor Gray
+                $pipListJson = $null
+            }
             if ($pipListJson) {
                 $packages = $pipListJson | ConvertFrom-Json
                 foreach ($pkg in $packages) {
@@ -127,7 +134,10 @@ function Get-NodejsVersions {
         Push-Location $Path
         try {
             # Install dependencies first
-            npm install --silent 2>$null
+            $npmResult = npm install --silent 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Note: npm install returned exit code $LASTEXITCODE" -ForegroundColor Gray
+            }
             
             $nodeModulesPath = "node_modules"
             
@@ -183,9 +193,16 @@ function Get-DotnetVersions {
         Push-Location $Path
         try {
             # Restore first to ensure we have resolved versions
-            dotnet restore --verbosity quiet 2>$null
+            $restoreResult = dotnet restore --verbosity quiet 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Note: dotnet restore returned exit code $LASTEXITCODE" -ForegroundColor Gray
+            }
             
-            $packageListJson = dotnet list package --format json 2>$null
+            $packageListJson = dotnet list package --format json 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Note: dotnet list package returned exit code $LASTEXITCODE" -ForegroundColor Gray
+                $packageListJson = $null
+            }
             if ($packageListJson) {
                 $packages = $packageListJson | ConvertFrom-Json
                 
