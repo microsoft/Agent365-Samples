@@ -38,7 +38,7 @@ from microsoft_agents_a365.notifications.models import (
 import logging
 logger = logging.getLogger(__name__)
 
-class MyAgent(AgentApplication):
+class AgentHost(AgentApplication):
     """Sample Agent Application using Agent 365 SDK."""
 
     def __init__(self, agent: AgentInterface):
@@ -132,7 +132,7 @@ class MyAgent(AgentApplication):
 
             # Generic notification handling
             notification_message = notification_activity.activity.text or ""
-            response = "I was unable to proccess your request. Please try again later."
+            response = "I was unable to process your request. Please try again later."
             if not notification_message:
                 response = f"Notification received: {notification_type}"
             else:

@@ -2,7 +2,7 @@
 
 # Internal imports
 import os
-from hosting import MyAgent
+from host import AgentHost
 from agent import GoogleADKAgent
 
 import os
@@ -74,7 +74,7 @@ def main():
         service_namespace="GoogleADKTesting",
     )
 
-    agent_application = MyAgent(GoogleADKAgent())
+    agent_application = AgentHost(GoogleADKAgent())
     start_server(agent_application)
 
 

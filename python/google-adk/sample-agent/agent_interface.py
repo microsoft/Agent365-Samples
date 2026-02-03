@@ -17,13 +17,6 @@ class AgentInterface(ABC):
     providing stronger guarantees than a Protocol.
     """
     @abstractmethod
-    async def invoke_agent(
-        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
-    ) -> str:
-        """Process a user message and return a response."""
-        pass
-
-    @abstractmethod
     async def invoke_agent_with_scope(
         self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
     ) -> str:
