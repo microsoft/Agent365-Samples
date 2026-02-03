@@ -332,7 +332,7 @@ class GenericAgentHost:
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
         print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
-        print(f"🚀 Server: 0.0.0.0:{port} (listening on all interfaces)")
+        print(f"🚀 Server: Listening on 0.0.0.0:{port} (all interfaces)")
         print(f"📚 Endpoint: http://localhost:{port}/api/messages")
         print(f"❤️  Health: http://localhost:{port}/api/health\n")
 
