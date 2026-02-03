@@ -325,16 +325,16 @@ class GenericAgentHost:
 
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
-            if s.connect_ex(("0.0.0.0", desired_port)) == 0:
+            if s.connect_ex(("127.0.0.1", desired_port)) == 0:
                 port = desired_port + 1
 
         print("=" * 80)
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
         print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
-        print(f"🚀 Server: 0.0.0.0:{port}")
-        print(f"📚 Endpoint: http://0.0.0.0:{port}/api/messages")
-        print(f"❤️  Health: http://0.0.0.0:{port}/api/health\n")
+        print(f"🚀 Server: 0.0.0.0:{port} (listening on all interfaces)")
+        print(f"📚 Endpoint: http://localhost:{port}/api/messages")
+        print(f"❤️  Health: http://localhost:{port}/api/health\n")
 
         try:
             run_app(app, host="0.0.0.0", port=port, handle_signals=True)
