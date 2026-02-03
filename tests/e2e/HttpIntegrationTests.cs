@@ -263,7 +263,7 @@ public class HttpIntegrationTests : IAsyncLifetime
         }
     }
 
-    [Fact(Skip = "Requires OPENAI_API_KEY to be configured - skipping for now")]
+    [Fact]
     [Trait("Category", "HTTP")]
     public async Task TestMcpEmailTools_WhenAskingForTools_ReturnsEmailCapabilities()
     {
