@@ -256,7 +256,7 @@ app.MapGet("/api/channels", () =>
     return Results.Json(clients);
 }).AllowAnonymous();
 
-// WNS: Send notification to trigger client connection (matches ProtoSite pattern)
+// WNS: Send notification to trigger client connection or discovery (matches ProtoSite pattern)
 app.MapPost("/api/notify/{clientName}", async (string clientName, WnsService wnsService, HttpContext context) =>
 {
     if (!registeredClients.TryGetValue(clientName, out var client))
@@ -265,40 +265,114 @@ app.MapPost("/api/notify/{clientName}", async (string clientName, WnsService wns
         return Results.NotFound(new { message = "Client not found" });
     }
 
-    var sessionId = Guid.NewGuid().ToString();
+    // Read the request body to check the notification type
+    string requestBody;
+    using (var reader = new StreamReader(context.Request.Body))
+    {
+        requestBody = await reader.ReadToEndAsync();
+    }
 
-    // Create WebSocket callback URL with serverId parameter
+    string? notificationType = null;
+    string? requestId = null;
+    string? serverId = null;
+    string? callbackUrl = null;
+
+    // Parse the request to determine the type
+    if (!string.IsNullOrEmpty(requestBody))
+    {
+        try
+        {
+            var jsonDoc = System.Text.Json.JsonDocument.Parse(requestBody);
+            if (jsonDoc.RootElement.TryGetProperty("type", out var typeElement))
+            {
+                notificationType = typeElement.GetString();
+            }
+            if (jsonDoc.RootElement.TryGetProperty("requestId", out var reqIdElement))
+            {
+                requestId = reqIdElement.GetString();
+            }
+            if (jsonDoc.RootElement.TryGetProperty("callbackUrl", out var callbackElement))
+            {
+                callbackUrl = callbackElement.GetString();
+            }
+            if (jsonDoc.RootElement.TryGetProperty("serverId", out var serverIdElement))
+            {
+                serverId = serverIdElement.GetString();
+            }
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "[WNS NOTIFY] Failed to parse request body");
+        }
+    }
+
     var scheme = context.Request.IsHttps ? "wss" : "ws";
+    var httpScheme = context.Request.IsHttps ? "https" : "http";
     var host = context.Request.Host.ToString();
 
-    // Include the MCP server ID as a query parameter so the desktop client knows which server to use
-    var serverId = "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server";
-    var callbackUrl = $"{scheme}://{host}/ws/mcp/{sessionId}?serverId={Uri.EscapeDataString(serverId)}";
-
-    // Create pending session
-    sessions.TryAdd(sessionId, new McpSession { SessionId = sessionId });
-
-    app.Logger.LogInformation("[WNS NOTIFY] Sending notification to '{ClientName}'", clientName);
-    app.Logger.LogInformation("[WNS NOTIFY] Session ID: {SessionId}", sessionId);
-    app.Logger.LogInformation("[WNS NOTIFY] Callback URL: {CallbackUrl}", callbackUrl);
-    app.Logger.LogInformation("[WNS NOTIFY] Server ID: {ServerId}", serverId);
-
-    // Pass serverId in the payload so locaproto can use proxy mode
-    var (success, errorMessage) = await wnsService.SendNotificationAsync(client.ChannelUri, callbackUrl, serverId);
-
-    if (success)
+    // Handle discovery requests (list_servers)
+    if (notificationType == "list_servers")
     {
-        return Results.Ok(new
+        requestId ??= Guid.NewGuid().ToString();
+        callbackUrl ??= $"{httpScheme}://{host}/api/discovery/{requestId}/servers";
+
+        app.Logger.LogInformation("[WNS NOTIFY] Sending DISCOVERY notification to '{ClientName}'", clientName);
+        app.Logger.LogInformation("[WNS NOTIFY] Request ID: {RequestId}", requestId);
+        app.Logger.LogInformation("[WNS NOTIFY] Callback URL: {CallbackUrl}", callbackUrl);
+
+        // Send notification with type="list_servers" - desktop client should run odr mcp list
+        // and POST results to the callback URL
+        var (success, errorMessage) = await wnsService.SendDiscoveryNotificationAsync(
+            client.ChannelUri, requestId, callbackUrl);
+
+        if (success)
         {
-            message = "Notification sent",
-            sessionId,
-            callbackUrl
-        });
+            return Results.Ok(new
+            {
+                message = "Discovery notification sent",
+                requestId,
+                callbackUrl
+            });
+        }
+        else
+        {
+            return Results.Json(new { message = $"Failed to send notification: {errorMessage}" }, statusCode: 500);
+        }
     }
     else
     {
-        sessions.TryRemove(sessionId, out _);
-        return Results.Json(new { message = $"Failed to send notification: {errorMessage}" }, statusCode: 500);
+        // Handle MCP server invocation (original flow)
+        var sessionId = Guid.NewGuid().ToString();
+
+        // Use serverId from request body, or fall back to default file-mcp-server
+        serverId ??= "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server";
+        callbackUrl = $"{scheme}://{host}/ws/mcp/{sessionId}?serverId={Uri.EscapeDataString(serverId)}";
+
+        // Create pending session
+        sessions.TryAdd(sessionId, new McpSession { SessionId = sessionId });
+
+        app.Logger.LogInformation("[WNS NOTIFY] Sending MCP notification to '{ClientName}'", clientName);
+        app.Logger.LogInformation("[WNS NOTIFY] Session ID: {SessionId}", sessionId);
+        app.Logger.LogInformation("[WNS NOTIFY] Callback URL: {CallbackUrl}", callbackUrl);
+        app.Logger.LogInformation("[WNS NOTIFY] Server ID: {ServerId}", serverId);
+
+        // Pass serverId in the payload so locaproto can use proxy mode
+        var (success, errorMessage) = await wnsService.SendNotificationAsync(client.ChannelUri, callbackUrl, serverId);
+
+        if (success)
+        {
+            return Results.Ok(new
+            {
+                message = "Notification sent",
+                sessionId,
+                callbackUrl
+            });
+        }
+        else
+        {
+            sessions.TryRemove(sessionId, out _);
+            return Results.Json(new { message = $"Failed to send notification: {errorMessage}" }, statusCode: 500);
+        }
     }
 }).AllowAnonymous();
 
@@ -500,6 +574,134 @@ app.MapPost("/api/mcp/{sessionId}", async (HttpContext context, string sessionId
 
 // ============================================
 // END OF WNS-RELATED ENDPOINTS
+// ============================================
+
+// ============================================
+// DISCOVERY ENDPOINTS (for list_servers)
+// ============================================
+
+// Storage for discovery requests
+var discoveryRequests = new ConcurrentDictionary<string, DiscoveryResult>();
+
+// Desktop client posts discovery results here
+app.MapPost("/api/discovery/{requestId}/servers", async (string requestId, HttpContext context) =>
+{
+    try
+    {
+        using var reader = new StreamReader(context.Request.Body);
+        var requestBody = await reader.ReadToEndAsync();
+
+        app.Logger.LogInformation("[DISCOVERY] Received server list for request {RequestId}: {Body}",
+            requestId, requestBody.Length > 200 ? requestBody.Substring(0, 200) + "..." : requestBody);
+
+        var result = new DiscoveryResult
+        {
+            RequestId = requestId,
+            Status = "completed",
+            RawResponse = requestBody,
+            ReceivedAt = DateTime.UtcNow
+        };
+
+        discoveryRequests.AddOrUpdate(requestId, result, (key, old) => result);
+
+        return Results.Ok(new { message = "Servers received", requestId });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "[DISCOVERY] Error processing server list for request {RequestId}", requestId);
+        return Results.Problem($"Error: {ex.Message}", statusCode: 500);
+    }
+}).AllowAnonymous();
+
+// SDK polls this endpoint for discovery results
+app.MapGet("/api/discovery/{requestId}/servers", (string requestId) =>
+{
+    app.Logger.LogInformation("[DISCOVERY] SDK polling for request {RequestId}", requestId);
+
+    if (discoveryRequests.TryGetValue(requestId, out var result))
+    {
+        app.Logger.LogInformation("[DISCOVERY] Found result for {RequestId}, status: {Status}", requestId, result.Status);
+
+        if (result.Status == "completed")
+        {
+            // Parse the raw response to extract servers
+            // Desktop may post either:
+            // 1. Bare array: [ { "id": "...", ... }, ... ]
+            // 2. Wrapped: { "servers": [ ... ] }
+            // 3. Wrapped with error: { "servers": [], "error": "..." }
+            try
+            {
+                var jsonDoc = System.Text.Json.JsonDocument.Parse(result.RawResponse);
+                System.Text.Json.JsonElement serversArray;
+                string? errorMessage = null;
+
+                if (jsonDoc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    // Case 1: Desktop posted bare array
+                    serversArray = jsonDoc.RootElement;
+                    app.Logger.LogInformation("[DISCOVERY] Raw response is bare array with {Count} items", serversArray.GetArrayLength());
+                }
+                else if (jsonDoc.RootElement.TryGetProperty("servers", out var servers))
+                {
+                    // Case 2/3: Desktop posted wrapped object
+                    serversArray = servers;
+                    jsonDoc.RootElement.TryGetProperty("error", out var errorElement);
+                    errorMessage = errorElement.ValueKind == System.Text.Json.JsonValueKind.String ? errorElement.GetString() : null;
+                    app.Logger.LogInformation("[DISCOVERY] Raw response is wrapped object with {Count} servers, error: {Error}", 
+                        serversArray.GetArrayLength(), errorMessage ?? "none");
+                }
+                else
+                {
+                    // Unexpected format - return empty
+                    app.Logger.LogWarning("[DISCOVERY] Unexpected response format: {Response}", 
+                        result.RawResponse.Length > 100 ? result.RawResponse.Substring(0, 100) + "..." : result.RawResponse);
+                    return Results.Json(new { status = "completed", requestId, servers = new object[] { }, error = "Unexpected response format" });
+                }
+
+                if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    return Results.Json(new { status = "error", requestId, servers = new object[] { }, error = errorMessage });
+                }
+
+                return Results.Json(new
+                {
+                    status = "completed",
+                    requestId = requestId,
+                    servers = serversArray
+                });
+            }
+            catch (Exception ex)
+            {
+                app.Logger.LogError(ex, "[DISCOVERY] Failed to parse response: {Response}", 
+                    result.RawResponse?.Length > 100 ? result.RawResponse.Substring(0, 100) + "..." : result.RawResponse);
+                return Results.Json(new
+                {
+                    status = "completed",
+                    requestId = requestId,
+                    servers = new object[] { }
+                });
+            }
+        }
+        else
+        {
+            return Results.Json(new { status = result.Status, requestId });
+        }
+    }
+
+    // Request not yet received - create a pending entry
+    app.Logger.LogDebug("[DISCOVERY] No result yet for {RequestId}, creating pending entry", requestId);
+    discoveryRequests.TryAdd(requestId, new DiscoveryResult
+    {
+        RequestId = requestId,
+        Status = "pending",
+        ReceivedAt = DateTime.UtcNow
+    });
+
+    return Results.Json(new { status = "pending", requestId });
+}).AllowAnonymous();
+
+// ============================================
+// END OF DISCOVERY ENDPOINTS
 // ============================================
 
 app.Run();

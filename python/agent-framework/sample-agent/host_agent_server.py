@@ -12,8 +12,7 @@ from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
 from agent_interface import AgentInterface, check_agent_inheritance
-from microsoft_agents.activity import load_configuration_from_env, Activity
-from microsoft_agents.activity_types import ActivityTypes
+from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -32,10 +31,8 @@ from microsoft_agents.hosting.core import (
 )
 from microsoft_agents_a365.notifications.agent_notification import (
     AgentNotification,
-    NotificationTypes,
     AgentNotificationActivity,
     ChannelId,
-    EmailResponse,
 )
 from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
@@ -209,16 +206,6 @@ class GenericAgentHost:
                             notification_activity, self.agent_app.auth, self.auth_handler_name, context
                         )
                     )
-
-                    if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
-                        responseActivity = Activity(type=ActivityTypes.message)
-                        if responseActivity.entities is None:
-                            responseActivity.entities = []
-                        responseActivity.entities.append(EmailResponse(response))
-
-                        await context.send_activity(responseActivity)
-                        return
-
                     await context.send_activity(response)
 
             except Exception as e:

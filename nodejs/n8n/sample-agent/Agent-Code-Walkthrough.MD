@@ -93,6 +93,7 @@ agentic_scopes=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default
 
 # MCP Tools (Optional)
 MCP_AUTH_TOKEN=optional-bearer-token
+TOOLS_MODE=MCPPlatform
 ```
 
 ---

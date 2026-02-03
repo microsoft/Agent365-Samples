@@ -13,6 +13,7 @@ using Microsoft.SemanticKernel.Agents;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using System;
+using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
@@ -27,8 +28,20 @@ public class Agent365Agent
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
     private const string TermsAndConditionsAcceptedInstructions = "You may ask follow up questions until you have enough information to answer the user's question.";
-    private string AgentInstructions() => $@"
+    private string AgentInstructions(ITurnContext turnContext) => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
+        The current date is {DateTime.Now:MMMM d, yyyy}.
+        
+        USER EMAIL ADDRESS: {turnContext.Activity.From.Name}
+        USER ID: {turnContext.Activity.From.Id}
+        When sending emails to the user, use their email address above as the recipient. Do NOT ask the user for their email address.
+        
+        MANDATORY EMAIL RULES - VIOLATION IS FORBIDDEN:
+        1. PROHIBITED: CreateDraftMessageAsync - NEVER call this function. It is forbidden.
+        2. REQUIRED: Use SendEmailAsync or SendEmailWithAttachmentsAsync to send emails immediately.
+        3. PROHIBITED: directAttachmentFilePaths parameter - NEVER use file paths. The server cannot access local files.
+        4. REQUIRED: For attachments, read the file content first using readFile, then pass content via directAttachments with FileName and ContentBase64.
+        
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
 
         Respond in JSON format with the following JSON schema:
@@ -39,8 +52,20 @@ public class Agent365Agent
         }}
         ";
 
-    private string AgentInstructions_Streaming() => $@"
+    private string AgentInstructions_Streaming(ITurnContext turnContext) => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
+        The current date is {DateTime.Now:MMMM d, yyyy}.
+        
+        USER EMAIL ADDRESS: {turnContext.Activity.From.Name}
+        USER ID: {turnContext.Activity.From.Id}
+        When sending emails to the user, use their email address above as the recipient. Do NOT ask the user for their email address.
+        
+        MANDATORY EMAIL RULES - VIOLATION IS FORBIDDEN:
+        1. PROHIBITED: CreateDraftMessageAsync - NEVER call this function. It is forbidden.
+        2. REQUIRED: Use SendEmailAsync or SendEmailWithAttachmentsAsync to send emails immediately.
+        3. PROHIBITED: directAttachmentFilePaths parameter - NEVER use file paths. The server cannot access local files.
+        4. REQUIRED: For attachments, read the file content first using readFile, then pass content via directAttachments with FileName and ContentBase64.
+        
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
 
         Respond in Markdown format
@@ -74,8 +99,30 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
+            // Get the local client name from configuration (if configured for local MCP discovery)
+            var localClientName = configuration["LocalMcp:ClientName"];
+
             // Add MCP servers (email, calendar, local file system, etc.) via ATG
-            await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
+            // If localClientName is provided, also discovers local Windows MCP servers dynamically
+            await toolService.AddToolServersWithLocalDiscoveryAsync(
+                kernel, 
+                userAuthorization, 
+                authHandlerName, 
+                turnContext,
+                localClientName);
+
+            // Diagnostic: Log all registered plugins and tools
+            var logger = service.GetService(typeof(Microsoft.Extensions.Logging.ILogger<Agent365Agent>)) as Microsoft.Extensions.Logging.ILogger;
+            if (logger != null)
+            {
+                logger.LogInformation("[DIAGNOSTIC] Total plugins registered: {PluginCount}", kernel.Plugins.Count);
+                foreach (var plugin in kernel.Plugins)
+                {
+                    var toolNames = string.Join(", ", plugin.Select(f => f.Name));
+                    logger.LogInformation("[DIAGNOSTIC] Plugin '{PluginName}' has {FunctionCount} functions: [{Functions}]",
+                        plugin.Name, plugin.Count(), toolNames);
+                }
+            }
         }
         else
         {
@@ -83,12 +130,22 @@ public class Agent365Agent
             this._kernel.ImportPluginFromObject(new TermsAndConditionsNotAcceptedPlugin(), "license");
         }
 
+        // Log user identity information for debugging
+        var agentLogger = service.GetService(typeof(Microsoft.Extensions.Logging.ILogger<Agent365Agent>)) as Microsoft.Extensions.Logging.ILogger;
+        agentLogger?.LogInformation("[AGENT-DEBUG] Activity.From.Id: {FromId}", turnContext.Activity.From?.Id ?? "NULL");
+        agentLogger?.LogInformation("[AGENT-DEBUG] Activity.From.Name: {FromName}", turnContext.Activity.From?.Name ?? "NULL");
+        agentLogger?.LogInformation("[AGENT-DEBUG] Activity.From.AadObjectId: {AadObjectId}", turnContext.Activity.From?.AadObjectId ?? "NULL");
+        agentLogger?.LogInformation("[AGENT-DEBUG] IsStreamingChannel: {IsStreaming}", turnContext.StreamingResponse.IsStreamingChannel);
+        
+        var instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming(turnContext) : AgentInstructions(turnContext);
+        agentLogger?.LogInformation("[AGENT-DEBUG] Agent Instructions: {Instructions}", instructions);
+
         // Define the agent
         this._agent =
             new()
             {
                 Id = turnContext.Activity.Recipient.AgenticAppId ?? Guid.NewGuid().ToString(),
-                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming() : AgentInstructions(),
+                Instructions = instructions,
                 Name = AgentName,
                 Kernel = this._kernel,
                 Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()
@@ -126,7 +183,7 @@ public class Agent365Agent
             {
                 Content = "Boo",
                 ContentType = Enum.Parse<Agent365AgentResponseContentType>("text", true)
-            }; ; 
+            }; 
         }
         else
         {
@@ -135,9 +192,9 @@ public class Agent365Agent
             {
                 if (!string.IsNullOrEmpty(response.Content))
                 {
-                        var jsonNode = JsonNode.Parse(response.Content);
-                            context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
-                        }
+                    var jsonNode = JsonNode.Parse(response.Content);
+                        context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
+                }
 
                 chatHistory.Add(response);
                 sb.Append(response.Content);

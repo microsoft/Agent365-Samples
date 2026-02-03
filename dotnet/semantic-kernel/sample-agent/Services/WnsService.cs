@@ -274,4 +274,77 @@ public class WnsService
             return (false, errorMessage);
         }
     }
+
+    /// <summary>
+    /// Sends a WNS discovery notification to request the list of local MCP servers.
+    /// The desktop client should run `odr mcp list` and POST results to the callback URL.
+    /// </summary>
+    /// <param name="channelUri">The WNS channel URI to send to</param>
+    /// <param name="requestId">The unique request ID for this discovery operation</param>
+    /// <param name="callbackUrl">The callback URL where the client should POST the server list</param>
+    /// <returns>A tuple indicating success and an optional error message</returns>
+    public async Task<(bool Success, string? ErrorMessage)> SendDiscoveryNotificationAsync(
+        string channelUri, string requestId, string callbackUrl)
+    {
+        _logger.LogInformation("[WNS SERVICE] Sending DISCOVERY notification");
+        _logger.LogInformation("[WNS SERVICE] Request ID: {RequestId}", requestId);
+        _logger.LogInformation("[WNS SERVICE] Callback URL: {CallbackUrl}", callbackUrl);
+
+        try
+        {
+            var accessToken = await GetAccessTokenAsync();
+
+            // Build discovery notification payload
+            // type="list_servers" tells the desktop client to run odr mcp list
+            // and POST results to the callbackUrl
+            var notification = new
+            {
+                type = "list_servers",
+                requestId = requestId,
+                callbackUrl = callbackUrl,
+                timestamp = DateTime.UtcNow
+            };
+
+            var payload = JsonSerializer.Serialize(notification);
+            _logger.LogInformation("[WNS SERVICE] Payload: {Payload}", payload);
+
+            using var client = new HttpClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            var payloadBytes = Encoding.UTF8.GetBytes(payload);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, channelUri);
+            request.Content = new ByteArrayContent(payloadBytes);
+            request.Content.Headers.ContentType =
+                System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/octet-stream");
+            request.Content.Headers.ContentLength = payloadBytes.Length;
+
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {accessToken}");
+            request.Headers.TryAddWithoutValidation("X-WNS-Type", "wns/raw");
+            request.Headers.TryAddWithoutValidation("X-WNS-RequestForStatus", "true");
+
+            _logger.LogInformation("[WNS SERVICE] Sending discovery notification...");
+
+            var response = await client.SendAsync(request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _logger.LogInformation("[WNS SERVICE] Discovery notification sent successfully");
+                return (true, null);
+            }
+            else
+            {
+                var responseBody = await response.Content.ReadAsStringAsync();
+                var errorMessage = $"WNS returned {response.StatusCode}: {responseBody}";
+                _logger.LogError("[WNS SERVICE] Discovery notification failed: {ErrorMessage}", errorMessage);
+                return (false, errorMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = $"Exception: {ex.Message}";
+            _logger.LogError(ex, "[WNS SERVICE] Error sending discovery notification");
+            return (false, errorMessage);
+        }
+    }
 }

@@ -73,7 +73,6 @@ build/
 .eggs/
 .pytest_cache/
 _version.py
-uv.lock
 
 # Virtual environments
 .venv/

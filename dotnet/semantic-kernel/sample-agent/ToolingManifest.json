@@ -1,25 +1,25 @@
 {
-	"mcpServers": [
-		{
-			"mcpServerName": "mcp_MailTools"
-		},
-		{
-			"mcpServerName": "mcp_CalendarTools"
-		},
-		{
-			"mcpServerName": "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server",
-			"id": "file-mcp-server",
-			"url": "",
-			"scope": "local",
-			"audience": "local",
-			"publisher": "Microsoft",
-			"transportType": "Wns",
-			"wnsConfig": {
-				"clientName": "Lavanya",
-				"proxyBaseUrl": "https://lavanya01085-webapp.azurewebsites.net",
-				"connectionTimeoutSeconds": 30,
-				"localServerId": "MicrosoftWindows.Client.Core_cw5n1h2txyewy_com.microsoft.windows.ai.mcpServer_file-mcp-server"
-			}
-		}
-	]
+  "mcpServers": [
+    {
+      "mcpServerName": "mcp_MailTools",
+      "mcpServerUniqueName": "mcp_MailTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
+      "scope": "McpServers.Mail.All",
+      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    },
+    {
+      "mcpServerName": "mcp_CalendarTools",
+      "mcpServerUniqueName": "mcp_CalendarTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools",
+      "scope": "McpServers.Calendar.All",
+      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    },
+    {
+      "mcpServerName": "mcp_ODSPRemoteServer",
+      "mcpServerUniqueName": "mcp_ODSPRemoteServer",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_ODSPRemoteServer",
+      "scope": "McpServers.OneDriveSharepoint.All",
+      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    }
+  ]
 }
