@@ -48,7 +48,7 @@ ms_agents_logger.setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load configuration
-load_dotenv()
+load_dotenv(override=True)
 agents_sdk_config = load_configuration_from_env(environ)
 
 
@@ -196,6 +196,7 @@ class GenericAgentHost:
 
     def create_auth_configuration(self) -> AgentAuthConfiguration | None:
         """Create authentication configuration based on available environment variables."""
+        # Check for direct CLIENT_ID/TENANT_ID/CLIENT_SECRET env vars first
         client_id = environ.get("CLIENT_ID")
         tenant_id = environ.get("TENANT_ID")
         client_secret = environ.get("CLIENT_SECRET")
@@ -250,7 +251,7 @@ class GenericAgentHost:
         if auth_configuration:
             middlewares.append(jwt_authorization_middleware)
 
-        # Anonymous claims middleware
+        # Anonymous claims middleware - provides claims for unauthenticated requests
         @web_middleware
         async def anonymous_claims(request, handler):
             if not auth_configuration:
@@ -298,6 +299,10 @@ class GenericAgentHost:
                 )
                 port = desired_port + 1
 
+        # For Azure App Service, bind to 0.0.0.0 to accept external connections
+        host = environ.get("WEBSITE_HOSTNAME", None)
+        bind_host = "0.0.0.0" if host else "localhost"
+        
         print("=" * 80)
         print(f"🏢 Generic Agent Host - {self.agent_class.__name__}")
         print("=" * 80)
@@ -306,13 +311,13 @@ class GenericAgentHost:
         print("🎯 Compatible with Agents Playground")
         if port != desired_port:
             print(f"⚠️ Requested port {desired_port} busy; using fallback {port}")
-        print(f"\n🚀 Starting server on localhost:{port}")
-        print(f"📚 Bot Framework endpoint: http://localhost:{port}/api/messages")
-        print(f"❤️ Health: http://localhost:{port}/api/health")
+        print(f"\n🚀 Starting server on {bind_host}:{port}")
+        print(f"📚 Bot Framework endpoint: http://{bind_host}:{port}/api/messages")
+        print(f"❤️ Health: http://{bind_host}:{port}/api/health")
         print("🎯 Ready for testing!\n")
 
         try:
-            run_app(app, host="localhost", port=port)
+            run_app(app, host=bind_host, port=port)
         except KeyboardInterrupt:
             print("\n👋 Server stopped")
         except Exception as error:

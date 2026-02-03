@@ -2,10 +2,10 @@
 # Licensed under the MIT License.
 
 """
-MCP Tool Registration Service for CrewAI Agent
+MCP Tool Registration Service for Claude Agent SDK
 
-This service provides MCP (Model Context Protocol) tool integration for CrewAI agents,
-enabling tool discovery, connection, and execution against Agent365 MCP servers.
+This service provides MCP (Model Context Protocol) tool integration for Claude agents,
+similar to the OpenAI extension but adapted for Claude's tool calling mechanism.
 
 Features:
 - Discovers MCP servers from McpToolServerConfigurationService (production) or ToolingManifest.json (dev)
@@ -13,17 +13,14 @@ Features:
 - Lists available tools from MCP servers
 - Executes MCP tool calls and returns results
 - Handles authentication and authorization
-- Converts tools to CrewAI-compatible format
 """
 
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 import logging
 import os
-import random
 import aiohttp
 import asyncio
-import json
 
 from microsoft_agents.hosting.core import Authorization, TurnContext
 from microsoft_agents_a365.tooling.utils.constants import Constants
@@ -41,7 +38,7 @@ DEFAULT_MCP_PLATFORM_ENDPOINT = "https://agent365.svc.cloud.microsoft"
 MCP_REQUEST_TIMEOUT_SECONDS = 30
 MCP_CONNECT_TIMEOUT_SECONDS = 10
 MCP_MAX_RETRIES = 2
-MCP_RETRY_BASE_DELAY_SECONDS = 1  # Base delay for exponential backoff
+MCP_RETRY_DELAY_SECONDS = 1
 
 
 def get_mcp_platform_endpoint() -> str:
@@ -70,23 +67,28 @@ class MCPServerConnection:
     connected: bool = False
 
 
+# Claude SDK MCP server config type
+McpHttpServerConfig = Dict[str, Any]  # {"type": "http", "url": str, "headers": dict}
+
+
 class McpToolRegistrationService:
     """
-    Service for managing MCP tools and servers for CrewAI agents.
+    Service for managing MCP tools and servers for Claude agents.
     
-    This service provides tool discovery, connection, and execution capabilities
-    for MCP servers, enabling CrewAI agents to use Agent365 platform tools.
+    This service provides equivalent functionality to the OpenAI extension's
+    McpToolRegistrationService, but adapted for Claude Agent SDK which doesn't
+    have native MCP support.
     
     Discovery modes:
     - Production: Uses McpToolServerConfigurationService to discover servers from Gateway
     - Development: Falls back to ToolingManifest.json if SDK returns no servers
     """
     
-    _orchestrator_name: str = "CrewAI"
+    _orchestrator_name: str = "Claude"
 
     def __init__(self, logger: Optional[logging.Logger] = None):
         """
-        Initialize the MCP Tool Registration Service for CrewAI.
+        Initialize the MCP Tool Registration Service for Claude.
         
         Args:
             logger: Logger instance for logging operations.
@@ -107,6 +109,8 @@ class McpToolRegistrationService:
         Returns:
             List of server configurations with name, url, scope, audience.
         """
+        import json
+        
         servers = []
         manifest_path = os.path.join(os.getcwd(), "ToolingManifest.json")
         
@@ -199,32 +203,43 @@ class McpToolRegistrationService:
         Returns:
             List of all available tool definitions from connected servers.
         """
-        # Get authentication token if not provided
-        if not auth_token:
-            try:
+        # Determine authentication mode (mutually exclusive, no fallbacks)
+        if auth_token:
+            self._auth_token = auth_token
+            self._logger.info("Using provided auth token for MCP authentication")
+        else:
+            environment = os.getenv("ENVIRONMENT", "Production").strip().lower()
+            bearer_token = (os.getenv("BEARER_TOKEN") or "").strip()
+
+            if bearer_token:
+                # Bearer token mode (development only)
+                if environment != "development":
+                    raise ValueError(
+                        "BEARER_TOKEN is set but ENVIRONMENT is not 'development'. "
+                        "Bearer tokens are only supported in development environments."
+                    )
+                self._auth_token = bearer_token
+                self._logger.info("Using BEARER_TOKEN authentication (development mode)")
+            elif auth_handler_name:
+                # Auth handler mode (production)
                 scopes = get_mcp_platform_authentication_scope()
                 self._logger.info(f"🔑 Attempting token exchange with scopes: {scopes}")
                 auth_result = await auth.exchange_token(context, scopes, auth_handler_name)
-                if auth_result and auth_result.token:
-                    auth_token = auth_result.token
-                    self._logger.info("✅ Token exchange successful for MCP authentication")
-                else:
-                    self._logger.warning("⚠️ Token exchange returned no token")
-            except Exception as e:
-                self._logger.warning(f"⚠️ Token exchange failed: {type(e).__name__}: {e}")
-        
-        # Fallback to static BEARER_TOKEN from environment
-        if not auth_token:
-            bearer_token = os.getenv("BEARER_TOKEN", "").strip()
-            if bearer_token:
-                auth_token = bearer_token
-                self._logger.info("ℹ️ Using BEARER_TOKEN from environment for MCP authentication")
-        
-        # For local development, allow connections without auth token
-        if not auth_token:
-            self._logger.info("ℹ️ No auth token - will attempt local connections only")
-        
-        self._auth_token = auth_token
+                if not auth_result or not auth_result.token:
+                    raise RuntimeError(
+                        f"Auth handler '{auth_handler_name}' is configured but failed to provide a token. "
+                        "Not falling back to unauthenticated mode."
+                    )
+                self._auth_token = auth_result.token
+                self._logger.info(f"Using auth handler: {auth_handler_name}")
+            else:
+                # No authentication configured
+                self._auth_token = None
+                self._logger.warning(
+                    "No authentication configured - MCP servers requiring auth will be skipped"
+                )
+
+        auth_token = self._auth_token
         
         # Get the MCP platform base URL for reference
         platform_endpoint = get_mcp_platform_endpoint()
@@ -301,18 +316,9 @@ class McpToolRegistrationService:
                         f"{len(connection.tools)} tools"
                     )
                     
-            except (TimeoutError, ConnectionError, OSError) as e:
-                # Recoverable network errors - continue to next server
+            except Exception as e:
                 self._logger.warning(
                     f"Failed to connect to MCP server {server_config['name']}: {e}"
-                )
-                continue
-            except Exception as e:
-                # Non-recoverable or unexpected errors - log full stack trace
-                import traceback
-                self._logger.error(
-                    f"Unexpected error connecting to MCP server {server_config['name']}: {e}\n"
-                    f"{traceback.format_exc()}"
                 )
                 continue
         
@@ -350,7 +356,7 @@ class McpToolRegistrationService:
                 return None
             headers = {
                 Constants.Headers.AUTHORIZATION: f"{Constants.Headers.BEARER_PREFIX} {auth_token}",
-                "User-Agent": f"CrewAI-Agent-SDK/1.0 ({self._orchestrator_name})",
+                "User-Agent": f"Claude-Agent-SDK/1.0 ({self._orchestrator_name})",
                 "Content-Type": "application/json",
             }
             self._logger.info(f"☁️ Connecting to remote MCP server: {url}")
@@ -385,6 +391,8 @@ class McpToolRegistrationService:
         Returns:
             Parsed JSON-RPC result from the SSE stream
         """
+        import json
+        
         content_type = response.headers.get('Content-Type', '')
         
         # If it's regular JSON, parse directly
@@ -590,37 +598,75 @@ class McpToolRegistrationService:
                 last_error = e
                 self._logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
             
-            # Wait before retry with exponential backoff and jitter (except on last attempt)
+            # Wait before retry (except on last attempt)
             if attempt < MCP_MAX_RETRIES:
-                # Exponential backoff: base_delay * 2^attempt + random jitter (0-0.5s)
-                delay = MCP_RETRY_BASE_DELAY_SECONDS * (2 ** attempt) + random.uniform(0, 0.5)
-                self._logger.info(f"Retrying in {delay:.2f}s...")
-                await asyncio.sleep(delay)
+                await asyncio.sleep(MCP_RETRY_DELAY_SECONDS)
         
         # All retries exhausted
         self._logger.error(f"MCP tool '{tool_name}' failed after {MCP_MAX_RETRIES + 1} attempts")
         raise last_error or Exception("MCP tool call failed")
 
-    def get_tools_for_crewai(self) -> List[Dict[str, Any]]:
+    def get_tools_for_claude(self) -> List[Dict[str, Any]]:
         """
-        Get tool definitions in CrewAI's expected format.
+        Get tool definitions in Claude's expected format.
         
         Returns:
-            List of MCP server configurations formatted for CrewAI.
+            List of tool definitions compatible with Claude's tool use format.
         """
-        crewai_mcp_servers = []
+        claude_tools = []
+        
+        for tool in self._tools_by_name.values():
+            claude_tool = {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            }
+            claude_tools.append(claude_tool)
+        
+        return claude_tools
+
+    def get_mcp_servers_for_claude(self) -> Dict[str, McpHttpServerConfig]:
+        """
+        Get MCP server configurations in Claude SDK's expected format.
+        
+        Claude SDK expects mcp_servers as:
+        {
+            "server_name": {
+                "type": "http",
+                "url": "https://...",
+                "headers": {"Authorization": "Bearer ..."}
+            }
+        }
+        
+        Returns:
+            Dict mapping server names to McpHttpServerConfig objects.
+        """
+        mcp_servers: Dict[str, McpHttpServerConfig] = {}
         
         for connection in self._connected_servers:
-            crewai_mcp_servers.append({
-                "id": connection.name,
-                "transport": "sse",
-                "options": {
-                    "url": connection.url,
-                    "headers": connection.headers,
-                },
-            })
+            mcp_servers[connection.name] = {
+                "type": "http",
+                "url": connection.url,
+                "headers": connection.headers,
+            }
         
-        return crewai_mcp_servers
+        return mcp_servers
+
+    def get_allowed_tool_names_for_claude(self) -> List[str]:
+        """
+        Get tool names in Claude's MCP format: mcp__<server>__<tool>
+        
+        Returns:
+            List of tool names prefixed for Claude MCP usage.
+        """
+        allowed_tools = []
+        
+        for tool in self._tools_by_name.values():
+            # Claude MCP tool naming convention: mcp__<server_name>__<tool_name>
+            prefixed_name = f"mcp__{tool.server_name}__{tool.name}"
+            allowed_tools.append(prefixed_name)
+        
+        return allowed_tools
 
     def get_available_tool_names(self) -> List[str]:
         """
@@ -631,53 +677,9 @@ class McpToolRegistrationService:
         """
         return list(self._tools_by_name.keys())
 
-    def get_tool_by_name(self, name: str) -> Optional[MCPToolDefinition]:
-        """
-        Get a tool definition by name.
-        
-        Args:
-            name: The tool name to look up.
-            
-        Returns:
-            MCPToolDefinition or None if not found.
-        """
-        return self._tools_by_name.get(name)
-
     async def cleanup(self):
         """Clean up all connected MCP servers."""
         self._connected_servers = []
         self._tools_by_name = {}
         self._auth_token = None
         self._logger.info("MCP tool registration service cleaned up")
-
-    # Legacy method for backwards compatibility
-    async def list_tool_servers(
-        self,
-        agentic_app_id: str,
-        auth: Authorization,
-        context: TurnContext,
-        auth_token: Optional[str] = None,
-        auth_handler_name: str = "AGENTIC"
-    ) -> List:
-        """
-        Fetch MCP server configurations the agent is allowed to use.
-        
-        This is a legacy method for backwards compatibility.
-        Prefer using discover_and_connect_servers() for full functionality.
-
-        Returns a list of MCP server configuration objects (metadata only).
-        """
-        token = auth_token
-        if not token:
-            scopes = get_mcp_platform_authentication_scope()
-            auth_token_obj = await auth.exchange_token(context, scopes, auth_handler_name)
-            token = auth_token_obj.token
-
-        self._logger.info("Listing MCP tool servers for agent %s", agentic_app_id)
-        mcp_server_configs = await self._config_service.list_tool_servers(
-            agentic_app_id=agentic_app_id,
-            auth_token=token,
-        )
-
-        self._logger.info("Loaded %d MCP server configurations", len(mcp_server_configs))
-        return mcp_server_configs

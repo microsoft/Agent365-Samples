@@ -1,6 +1,6 @@
 # Microsoft Agent 365 SDK Samples and Prompts
 
-[![E2E Tests](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml)
+[![E2E Tests](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-orchestrator.yml?branch=main&label=E2E%20All%20Samples)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-orchestrator.yml)
 
 This repository contains sample agents and prompts for building with the Microsoft Agent 365 SDK. The Microsoft Agent 365 SDK extends the Microsoft 365 Agents SDK with enterprise-grade capabilities for building sophisticated agents. It provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
@@ -11,10 +11,64 @@ This repository contains sample agents and prompts for building with the Microso
 
 | Sample | Status |
 |--------|--------|
-| Python OpenAI | [![Python OpenAI](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=python-openai)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| Node.js OpenAI | [![Node.js OpenAI](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=nodejs-openai)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| .NET Semantic Kernel | [![.NET SK](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=dotnet-semantic-kernel)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
-| .NET Agent Framework | [![.NET AF](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml/badge.svg?job=dotnet-agent-framework)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-agent-samples.yml) |
+| Python OpenAI | [![Python OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-openai.yml) |
+| Node.js OpenAI | [![Node.js OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-openai.yml) |
+| Node.js LangChain | [![Node.js LangChain](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-langchain.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-langchain.yml) |
+| .NET Semantic Kernel | [![.NET SK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-dotnet-semantic-kernel.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-dotnet-semantic-kernel.yml) |
+| .NET Agent Framework | [![.NET AF](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-dotnet-agent-framework.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-dotnet-agent-framework.yml) |
+
+## SDK Versions
+
+The following SDK package versions are used across the samples in this repository. This section is automatically updated when package versions change.
+
+<!-- SDK_VERSIONS_START -->
+
+### Microsoft Agents SDK Packages
+
+| Package | Version |
+|---------|---------|
+| `@microsoft/agents-activity` | `1.2.2` |
+| `@microsoft/agents-hosting` | `1.2.2` |
+| `Microsoft.Agents.AI` | `1.0.0-preview.251113.1` |
+| `Microsoft.Agents.Authentication.Msal` | `1.3.*-*` |
+| `Microsoft.Agents.Hosting.AspNetCore` | `1.3.*-*` |
+
+### Microsoft Agent 365 SDK Packages
+
+#### Python
+| Package | Version |
+|---------|---------|
+| `microsoft_agents_a365_notifications` | `0.1.0` |
+| `microsoft_agents_a365_observability_core` | `0.1.0` |
+| `microsoft_agents_a365_observability_extensions_openai` | `0.1.0` |
+| `microsoft_agents_a365_runtime` | `0.1.0` |
+| `microsoft_agents_a365_tooling` | `0.1.0` |
+| `microsoft_agents_a365_tooling_extensions_openai` | `0.1.0` |
+| `microsoft-agents-a365-observability-core` | `0.1.0` |
+| `microsoft-agents-a365-observability-hosting` | `0.2.0` |
+| `microsoft-agents-a365-tooling` | `0.1.0` |
+
+#### Node.js
+| Package | Version |
+|---------|---------|
+| `@microsoft/agents-a365-notifications` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-observability` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-observability-extensions-openai` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-observability-hosting` | `0.1.0-preview.64` |
+| `@microsoft/agents-a365-runtime` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-tooling` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-tooling-extensions-langchain` | `0.1.0-preview.30` |
+| `@microsoft/agents-a365-tooling-extensions-openai` | `0.1.0-preview.30` |
+
+#### .NET
+| Package | Version |
+|---------|---------|
+| `Microsoft.Agents.A365.Notifications` | `*-beta.*` |
+| `Microsoft.Agents.A365.Observability.Extensions.AgentFramework` | `*-beta.*` |
+| `Microsoft.Agents.A365.Tooling.Extensions.AgentFramework` | `*-beta.*` |
+| `Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel` | `*-beta.*` |
+
+<!-- SDK_VERSIONS_END -->
 
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).

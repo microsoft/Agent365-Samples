@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// IMPORTANT: Load environment variables FIRST before any other imports
+// This ensures AZURE_OPENAI_* and other config is available when packages initialize
+import { configDotenv } from 'dotenv';
+configDotenv();
+
 import { Agent, run } from '@openai/agents';
 import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
