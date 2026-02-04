@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Note: dotenv is loaded in agent.ts before AgentApplication is instantiated
+// IMPORTANT: Load environment variables FIRST before any other imports
+// This ensures all config is available when packages initialize at import time
+import { configDotenv } from 'dotenv';
+configDotenv();
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'

@@ -40,7 +40,9 @@ jobs:
         python -m py_compile agent_interface.py
         python -m py_compile local_authentication_options.py
         python -m py_compile token_cache.py
-        python -m py_compile observability_helpers.py
+        python -m py_compile observability_config.py
+        python -m py_compile turn_context_utils.py
+        python -m py_compile mcp_tool_registration_service.py
     
     - name: Validate pyproject.toml
       run: |
@@ -70,7 +72,9 @@ jobs:
             import agent_interface
             import local_authentication_options
             import token_cache
-            import observability_helpers
+          import observability_config
+          import turn_context_utils
+          import mcp_tool_registration_service
             print('✅ All imports validated successfully')
         except ImportError as e:
             print(f'❌ Import validation failed: {e}')

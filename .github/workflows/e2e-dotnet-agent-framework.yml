@@ -1,0 +1,169 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: E2E - .NET Agent Framework
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'dotnet/agent-framework/**'
+      - 'scripts/e2e/**'
+      - '.github/workflows/e2e-dotnet-agent-framework.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'dotnet/agent-framework/**'
+      - 'scripts/e2e/**'
+
+permissions:
+  contents: read
+
+env:
+  SAMPLE_PATH: dotnet/agent-framework/sample-agent
+  AGENT_PORT: 3978
+  SCRIPTS_PATH: scripts/e2e
+  E2E_TESTS_PATH: tests/e2e
+
+jobs:
+  dotnet-agent-framework:
+    name: .NET Agent Framework Agent
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet restore
+
+      - name: Build
+        working-directory: ${{ env.SAMPLE_PATH }}
+        run: dotnet build --no-restore
+
+      - name: Log SDK Versions
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Get-SDKVersions.ps1" `
+            -Runtime "dotnet" `
+            -WorkingDirectory "${{ env.SAMPLE_PATH }}"
+
+      - name: Acquire Bearer Token (ROPC)
+        id: token
+        shell: pwsh
+        run: |
+          $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
+            -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
+            -TenantId "${{ secrets.MCP_TENANT_ID }}" `
+            -Username "${{ secrets.MCP_TEST_USERNAME }}" `
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+          echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
+          echo "::add-mask::$token"
+
+      - name: Copy ToolingManifest.json
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Copy-ToolingManifest.ps1" -TargetPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Generate appsettings.json
+        shell: pwsh
+        run: |
+          $configMappings = @{
+            "AIServices:AzureOpenAI:Endpoint" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_ENDPOINT }}"
+            "AIServices:AzureOpenAI:ApiKey" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_API_KEY }}"
+            "AIServices:AzureOpenAI:DeploymentName" = "${{ secrets.DOTNET_AF_AZURE_OPENAI_DEPLOYMENT }}"
+            "TokenValidation:Enabled" = "false"
+            "Connections:ServiceConnection:Settings:AuthType" = "ClientSecret"
+            "Connections:ServiceConnection:Settings:ClientId" = "${{ secrets.DOTNET_AF_CLIENT_ID }}"
+            "Connections:ServiceConnection:Settings:ClientSecret" = "${{ secrets.DOTNET_AF_CLIENT_SECRET }}"
+            "Connections:ServiceConnection:Settings:TenantId" = "${{ secrets.TENANT_ID }}"
+            "Connections:ServiceConnection:Settings:AuthorityEndpoint" = "https://login.microsoftonline.com/${{ secrets.TENANT_ID }}"
+            "Connections:ServiceConnection:Settings:Scopes:0" = "5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"
+          }
+          & "${{ env.SCRIPTS_PATH }}/Generate-AppSettings.ps1" `
+            -OutputPath "${{ env.SAMPLE_PATH }}/appsettings.json" `
+            -ConfigMappings $configMappings
+
+      - name: Start Agent
+        id: start-agent
+        shell: pwsh
+        run: |
+          $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}" `
+            -StartCommand "dotnet run --no-build" `
+            -Port ${{ env.AGENT_PORT }} `
+            -BearerToken "${{ steps.token.outputs.BEARER_TOKEN }}" `
+            -Environment "Development" `
+            -Runtime "dotnet"
+          echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
+
+      - name: Verify Agent Running
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            try {
+              $proc = Get-Process -Id $agentPid -ErrorAction Stop
+              Write-Host "Agent process (PID: $agentPid) is running: $($proc.ProcessName)" -ForegroundColor Green
+            } catch {
+              Write-Host "ERROR: Agent process (PID: $agentPid) is NOT running!" -ForegroundColor Red
+              throw "Agent process has stopped"
+            }
+          }
+          $response = Invoke-WebRequest -Uri "http://localhost:${{ env.AGENT_PORT }}/api/health" -UseBasicParsing -ErrorAction SilentlyContinue
+          Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
+
+      - name: Restore E2E Test Dependencies
+        run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
+
+      - name: Run .NET E2E Tests
+        shell: pwsh
+        run: |
+          dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
+            --no-restore `
+            --verbosity normal `
+            --logger "console;verbosity=detailed" `
+            --logger "trx;LogFileName=test-results-dotnet-af.trx"
+        env:
+          TEST_RESULTS_DIR: ${{ runner.temp }}/TestConversations
+
+      - name: Emit Test Conversations
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Emit-TestConversations.ps1" `
+            -TestResultsDir "${{ runner.temp }}/TestConversations"
+
+      - name: Capture Agent Logs
+        if: always()
+        shell: pwsh
+        run: |
+          & "${{ env.SCRIPTS_PATH }}/Capture-AgentLogs.ps1" `
+            -AgentPath "${{ env.SAMPLE_PATH }}"
+
+      - name: Stop Agent Process
+        if: always()
+        shell: pwsh
+        run: |
+          $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
+          if ($agentPid) {
+            & "${{ env.SCRIPTS_PATH }}/Stop-AgentProcess.ps1" -AgentPID $agentPid
+          }
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-dotnet-af
+          path: |
+            ${{ env.E2E_TESTS_PATH }}/TestResults/**/*.trx
+            ${{ env.E2E_TESTS_PATH }}/TestResults/**/*-logs.txt
+          retention-days: 7

@@ -1,5 +1,9 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { createAgent, ReactAgent } from "langchain";
-import { ChatOpenAI } from "@langchain/openai";
+import { AzureChatOpenAI, ChatOpenAI } from "@langchain/openai";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 
 // Tooling Imports
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-langchain';
@@ -45,8 +49,41 @@ a365Observability.start();
 const toolService = new McpToolRegistrationService();
 
 const agentName = "LangChainA365Agent";
+
+/**
+ * Creates the appropriate chat model based on available environment variables.
+ * Supports both Azure OpenAI and regular OpenAI.
+ */
+function createChatModel(): BaseChatModel {
+  // Check for Azure OpenAI configuration first
+  if (process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT) {
+    console.log('Using Azure OpenAI');
+    return new AzureChatOpenAI({
+      azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT?.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
+      azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
+      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview",
+      temperature: 0,
+    });
+  }
+  
+  // Fall back to regular OpenAI
+  if (process.env.OPENAI_API_KEY) {
+    console.log('Using OpenAI');
+    return new ChatOpenAI({
+      openAIApiKey: process.env.OPENAI_API_KEY,
+      modelName: process.env.OPENAI_MODEL || "gpt-4o",
+      temperature: 0,
+    });
+  }
+  
+  throw new Error('No OpenAI credentials found. Please set either AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT, or OPENAI_API_KEY.');
+}
+
+const model = createChatModel();
+
 const agent = createAgent({
-  model: new ChatOpenAI({ temperature: 0 }),
+  model,
   name: agentName,
   systemPrompt: `You are a helpful assistant with access to tools.
 
@@ -95,7 +132,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
     console.error('Error adding MCP tool servers:', error);
   }
 
-  return new LangChainClient(agentWithMcpTools || agent);
+  return new LangChainClient(agentWithMcpTools || agent, turnContext);
 }
 
 /**
@@ -104,9 +141,11 @@ export async function getClient(authorization: Authorization, authHandlerName: s
  */
 class LangChainClient implements Client {
   private agent: ReactAgent;
+  private turnContext: TurnContext;
 
-  constructor(agent: ReactAgent) {
+  constructor(agent: ReactAgent, turnContext: TurnContext) {
     this.agent = agent;
+    this.turnContext = turnContext;
   }
 
   /**
@@ -153,13 +192,13 @@ class LangChainClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
+      agentName: agentName,
+      conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
     const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
     };
 
     let response = '';
