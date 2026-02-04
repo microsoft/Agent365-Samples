@@ -186,17 +186,22 @@ export async function getClient(
   // Load Copilot Studio connection settings from environment
   const settings = loadCopilotStudioConnectionSettingsFromEnv();
 
-  // Acquire token for Copilot Studio API
-  const tokenResult = await authorization.exchangeToken(turnContext, authHandlerName, {
-    scopes: ['https://api.powerplatform.com/.default']
-  });
+  let authtoken = process.env.BEARER_TOKEN;
+  if (!authtoken) {
+    // Acquire token for Copilot Studio API
+    const tokenResult = await authorization.exchangeToken(turnContext, authHandlerName, {
+      scopes: ['https://api.powerplatform.com/.default']
+    });
 
-  if (!tokenResult?.token) {
-    throw new Error('Failed to acquire token for Copilot Studio. User may need to sign in.');
+    if (!tokenResult?.token) {
+      throw new Error('Failed to acquire token for Copilot Studio. User may need to sign in.');
+    }
+
+    authtoken = tokenResult.token;
   }
 
   // Create the Copilot Studio client with the token
-  const copilotClient = new CopilotStudioClient(settings, tokenResult.token);
+  const copilotClient = new CopilotStudioClient(settings, authtoken);
 
   return new McsClient(copilotClient);
 }
