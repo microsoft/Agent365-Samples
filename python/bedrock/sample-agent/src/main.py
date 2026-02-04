@@ -1,68 +1,88 @@
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT License.
+# Copyright (c) Microsoft. All rights reserved.
 
-"""
-Amazon Bedrock Sample Agent - Main Entry Point
+# Internal imports
+import os
+from hosting import MyAgent
+from agent import GoogleADKAgent
 
-FastAPI server that handles incoming messages and routes them to the Bedrock agent.
-"""
-
-# Load environment variables before importing other modules
-from dotenv import load_dotenv
-
-load_dotenv()
-
-import logging
 import os
 
-import uvicorn
+# Server imports
 from aiohttp.web import Application, Request, Response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 
-from agent import agent_application
+# Microsoft Agents SDK imports
+from microsoft_agents.hosting.core import AgentApplication, ClaimsIdentity, AuthenticationConstants
+from microsoft_agents.hosting.aiohttp import start_agent_process, jwt_authorization_middleware
+from microsoft_agents.activity import load_configuration_from_env
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Microsoft Agent 365 Observability Imports
+from microsoft_agents_a365.observability.core.config import configure
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
+# Logging
+import logging
 logger = logging.getLogger(__name__)
 
-# Determine if running in production
-is_production = bool(os.getenv("WEBSITE_SITE_NAME")) or os.getenv("PYTHON_ENV") == "production"
+def start_server(agent_app: AgentApplication):
+    """Start the agent application server."""
+    isProduction = os.getenv("WEBSITE_SITE_NAME") is not None
 
+    async def entry_point(req: Request) -> Response:
+        return await start_agent_process(req, agent_app, agent_app.adapter)
 
-async def handle_messages(request: Request) -> Response:
-    """
-    Handle incoming messages from the Microsoft 365 Agents platform.
-    Routes messages to the Bedrock agent for processing.
-    """
-    adapter = agent_application.adapter
+    # Configure middlewares
+    @web_middleware
+    async def anonymous_claims(request, handler):
+        request['claims_identity'] = ClaimsIdentity(
+            {
+                AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
+                AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
+            },
+            False,
+            "Anonymous",
+        )
+        return await handler(request)
 
-    return await adapter.process(request, agent_application)
+    middlewares = [anonymous_claims]
+    auth_config = load_configuration_from_env(os.environ)
+    if (auth_config and isProduction):
+        middlewares.append(jwt_authorization_middleware)
 
+    # Configure App
+    app = Application(middlewares=middlewares)
+    app.router.add_post("/api/messages", entry_point)
+    app["agent_configuration"] = auth_config
 
-async def health_check(request: Request) -> Response:
-    """Health check endpoint for monitoring."""
-    from aiohttp.web import json_response
+    try:
+        host = "0.0.0.0" if isProduction else "localhost"
+        run_app(app, host=host, port=int(3978), handle_signals=True)
+    except KeyboardInterrupt:
+        logger.info("\nShutting down server gracefully...")
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        raise e
 
-    return json_response({"status": "healthy", "agent": "bedrock-sample"})
+def main():
+    """Main function to run the sample agent application."""
+    # Configure observability
+    configure(
+        service_name="GoogleADKSampleAgent",
+        service_namespace="GoogleADKTesting",
+    )
 
-
-def create_app() -> Application:
-    """Create and configure the aiohttp application."""
-    app = Application()
-
-    # Add routes
-    app.router.add_post("/api/messages", handle_messages)
-    app.router.add_get("/health", health_check)
-
-    return app
+    agent_application = MyAgent(GoogleADKAgent())
+    start_server(agent_application)
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "3978"))
-    host = "0.0.0.0" if is_production else "127.0.0.1"
-
-    logger.info(f"\nServer starting on {host}:{port}")
-    logger.info(f"Production mode: {is_production}")
-
-    app = create_app()
-    run_app(app, host=host, port=port)
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("\nShutting down gracefully...")
+    except Exception as e:
+        logger.error(f"Application error: {e}")
+        raise e
