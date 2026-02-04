@@ -31,7 +31,7 @@ jobs:
   nodejs-copilot-studio:
     name: Node.js Copilot Studio Agent
     runs-on: windows-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -74,7 +74,8 @@ jobs:
             -ClientId "${{ secrets.MCP_CLIENT_ID }}" `
             -TenantId "${{ secrets.MCP_TENANT_ID }}" `
             -Username "${{ secrets.MCP_TEST_USERNAME }}" `
-            -Password "${{ secrets.MCP_TEST_PASSWORD }}"
+            -Password "${{ secrets.MCP_TEST_PASSWORD }}" `
+            -Scope "https://api.powerplatform.com/CopilotStudio.Copilots.Invoke"
           echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
           echo "::add-mask::$token"
 
