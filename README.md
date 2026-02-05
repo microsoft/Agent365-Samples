@@ -19,52 +19,11 @@ This repository contains sample agents and prompts for building with the Microso
 
 ## SDK Versions
 
-The following SDK packages are used across the samples in this repository. Version badges update automatically from package registries.
+The SDK versions used by each sample are displayed in the **E2E test workflow summaries**. Each E2E run installs the latest compatible packages and logs the resolved versions.
 
-### Microsoft Agents SDK Packages
+📦 **View SDK Versions**: Click any E2E status badge above, then select a workflow run and view the **"Log SDK Versions"** step in the job summary.
 
-| Package | Version |
-|---------|---------|
-| `@microsoft/agents-activity` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-activity?label=npm)](https://www.npmjs.com/package/@microsoft/agents-activity) |
-| `@microsoft/agents-hosting` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-hosting?label=npm)](https://www.npmjs.com/package/@microsoft/agents-hosting) |
-| `microsoft-agents-activity` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-activity?label=pypi)](https://pypi.org/project/microsoft-agents-activity) |
-| `microsoft-agents-hosting-core` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-hosting-core?label=pypi)](https://pypi.org/project/microsoft-agents-hosting-core) |
-| `microsoft-agents-hosting-aiohttp` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-hosting-aiohttp?label=pypi)](https://pypi.org/project/microsoft-agents-hosting-aiohttp) |
-| `microsoft-agents-authentication-msal` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-authentication-msal?label=pypi)](https://pypi.org/project/microsoft-agents-authentication-msal) |
-| `Microsoft.Agents.Hosting.AspNetCore` | [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.Hosting.AspNetCore?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.Hosting.AspNetCore) |
-| `Microsoft.Agents.Authentication.Msal` | [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.Authentication.Msal?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.Authentication.Msal) |
-| `Microsoft.Agents.AI` | [![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.AI?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.AI) |
-
-### Microsoft Agent 365 SDK Packages
-
-#### Python
-| Package | Version |
-|---------|---------|
-| `microsoft-agents-a365-tooling` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-tooling?label=pypi)](https://pypi.org/project/microsoft-agents-a365-tooling) |
-| `microsoft-agents-a365-tooling-extensions-openai` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-tooling-extensions-openai?label=pypi)](https://pypi.org/project/microsoft-agents-a365-tooling-extensions-openai) |
-| `microsoft-agents-a365-observability-core` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-observability-core?label=pypi)](https://pypi.org/project/microsoft-agents-a365-observability-core) |
-| `microsoft-agents-a365-observability-hosting` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-observability-hosting?label=pypi)](https://pypi.org/project/microsoft-agents-a365-observability-hosting) |
-| `microsoft-agents-a365-notifications` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-notifications?label=pypi)](https://pypi.org/project/microsoft-agents-a365-notifications) |
-| `microsoft-agents-a365-runtime` | [![PyPI](https://img.shields.io/pypi/v/microsoft-agents-a365-runtime?label=pypi)](https://pypi.org/project/microsoft-agents-a365-runtime) |
-
-#### Node.js
-| Package | Version |
-|---------|---------|
-| `@microsoft/agents-a365-tooling` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-tooling?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-tooling) |
-| `@microsoft/agents-a365-tooling-extensions-openai` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-tooling-extensions-openai?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-openai) |
-| `@microsoft/agents-a365-tooling-extensions-langchain` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-tooling-extensions-langchain?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-langchain) |
-| `@microsoft/agents-a365-observability` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-observability?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-observability) |
-| `@microsoft/agents-a365-observability-hosting` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-observability-hosting?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-observability-hosting) |
-| `@microsoft/agents-a365-notifications` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-notifications?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-notifications) |
-| `@microsoft/agents-a365-runtime` | [![npm](https://img.shields.io/npm/v/@microsoft/agents-a365-runtime?label=npm)](https://www.npmjs.com/package/@microsoft/agents-a365-runtime) |
-
-#### .NET
-| Package | Version |
-|---------|---------|
-| `Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel` | [![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel) |
-| `Microsoft.Agents.A365.Tooling.Extensions.AgentFramework` | [![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.A365.Tooling.Extensions.AgentFramework?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.Tooling.Extensions.AgentFramework) |
-| `Microsoft.Agents.A365.Observability.Extensions.AgentFramework` | [![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.A365.Observability.Extensions.AgentFramework?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.Observability.Extensions.AgentFramework) |
-| `Microsoft.Agents.A365.Notifications` | [![NuGet](https://img.shields.io/nuget/vpre/Microsoft.Agents.A365.Notifications?label=nuget)](https://www.nuget.org/packages/Microsoft.Agents.A365.Notifications) |
+The samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to automatically pick up the latest compatible SDK releases during each test run.
 
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
