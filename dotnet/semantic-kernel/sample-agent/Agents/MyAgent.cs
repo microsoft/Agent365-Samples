@@ -356,7 +356,7 @@ public class MyAgent : AgentApplication
     private async Task<Agent365Agent> GetAgent365Agent(ServiceCollection serviceCollection, ITurnContext turnContext, string authHandlerName)
     {
         // Use the root service provider from DI instead of building a new isolated one
-        // This ensures singletons like WnsService and LocalMcpProxyService are accessible
+        // This ensures singletons registered in DI are accessible
         return await Agent365Agent.CreateA365AgentWrapper(_kernel, _serviceProvider, _toolsService, authHandlerName, UserAuthorization, turnContext, _configuration).ConfigureAwait(false);
     }
 }

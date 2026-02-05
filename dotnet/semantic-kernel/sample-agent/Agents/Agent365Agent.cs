@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Agent365SemanticKernelSampleAgent.Plugins;
-using Agent365SemanticKernelSampleAgent.Services;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;

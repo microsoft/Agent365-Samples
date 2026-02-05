@@ -21,6 +21,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Notification\Microsoft.Agents.A365.Notifications\Microsoft.Agents.A365.Notifications.csproj" />
 		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Tooling\Extensions\SemanticKernel\Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.csproj" />
+		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Tooling\LocalMcp\Microsoft.Agents.A365.Tooling.LocalMcp.csproj" />
 		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Observability\Runtime\Microsoft.Agents.A365.Observability.Runtime.csproj" />
 		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Observability\Hosting\Microsoft.Agents.A365.Observability.Hosting.csproj" />
 		<ProjectReference Include="..\..\..\..\Agent365-dotnet\src\Observability\Extensions\SemanticKernel\Microsoft.Agents.A365.Observability.Extensions.SemanticKernel.csproj" />
