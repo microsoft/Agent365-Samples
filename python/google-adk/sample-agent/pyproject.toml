@@ -46,6 +46,11 @@ name = "pypi"
 url = "https://pypi.org/simple"
 default = true
 
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv]
+prerelease = "allow"
+
 [project.optional-dependencies]
 dev = [
     # For development and testing

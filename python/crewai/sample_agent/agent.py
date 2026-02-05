@@ -1,15 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+
 """
 CrewAI Agent wrapper hosted with Microsoft Agents SDK.
 
 This keeps the CrewAI logic inside src/crew_agent and wraps it with:
 - Generic host contract (AgentInterface)
-- Complete observability with BaggageBuilder, InvokeAgentScope, InferenceScope
-- Optional MCP server discovery (metadata only today)
+- Complete observability with BaggageBuilder, InvokeAgentScope, InferenceScope, ExecuteToolScope
+- Full MCP server discovery, connection, and tool execution
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 
@@ -23,17 +25,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# DEPENDENCY IMPORTS
+# IMPORTS
 # =============================================================================
-# <DependencyImports>
 
 # Agent Interface
 from agent_interface import AgentInterface
 
 # Microsoft Agents SDK
 from local_authentication_options import LocalAuthenticationOptions
-from mcp_tool_registration_service import McpToolRegistrationService
+from mcp_tool_registration_service import McpToolRegistrationService, MCPToolDefinition
 from microsoft_agents.hosting.core import Authorization, TurnContext
+
+# MCP Observable Tools
+from mcp_observable_tools import MCPToolExecutor, create_observable_mcp_tools
+
+# Notification Handler
+from notification_handler import handle_notification
 
 # Observability Components
 from microsoft_agents_a365.observability.core import (
@@ -42,10 +49,6 @@ from microsoft_agents_a365.observability.core import (
     InferenceCallDetails,
     InferenceOperationType,
 )
-from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-
-# MCP Tooling
-from microsoft_agents_a365.tooling.utils.utility import get_mcp_platform_authentication_scope
 
 # Shared turn context utilities
 from turn_context_utils import (
@@ -55,109 +58,94 @@ from turn_context_utils import (
     create_caller_details,
     create_tenant_details,
     create_request,
+    build_baggage_builder,
 )
+from constants import DEFAULT_AGENT_ID
 
-# </DependencyImports>
+# Context variables for thread/async-safe observability context
+# These are used by MCP tool wrappers to access the current request's context
+# without risk of concurrent request interference
+_current_agent_details: contextvars.ContextVar = contextvars.ContextVar('agent_details', default=None)
+_current_tenant_details: contextvars.ContextVar = contextvars.ContextVar('tenant_details', default=None)
 
 
 class CrewAIAgent(AgentInterface):
     """CrewAI Agent wrapper suitable for GenericAgentHost."""
 
-    # =========================================================================
-    # INITIALIZATION
-    # =========================================================================
-    # <Initialization>
-
     def __init__(self):
         self.auth_options = LocalAuthenticationOptions.from_environment()
         self.mcp_service = McpToolRegistrationService(logger=logger)
+        self.mcp_tool_executor = MCPToolExecutor(self.mcp_service)
         self.mcp_servers_initialized = False
-        self.mcp_servers = []
+        self.mcp_tools: list[MCPToolDefinition] = []
 
-        self._log_env_configuration()
-
-        # Observability is already configured at module level via observability_config.py
-        # No need to configure again here
-        logger.info("CrewAI Agent uses observability configured at module level")
-
-    # </Initialization>
-
-    def _log_env_configuration(self):
-        """Log environment configuration for debugging."""
-        logger.info("CrewAI Agent Configuration:")
-        logger.info("  - OPENAI_API_KEY: %s", "***" if os.getenv("OPENAI_API_KEY") else "NOT SET")
-        logger.info("  - AZURE_OPENAI_API_KEY: %s", "***" if os.getenv("AZURE_OPENAI_API_KEY") else "NOT SET")
-        logger.info("  - AZURE_OPENAI_ENDPOINT: %s", os.getenv("AZURE_OPENAI_ENDPOINT", "NOT SET"))
-        logger.info("  - USE_AGENTIC_AUTH: %s", os.getenv("USE_AGENTIC_AUTH", "false"))
-        logger.info("  - AGENTIC_APP_ID: %s", os.getenv("AGENTIC_APP_ID", "crewai-agent"))
+        logger.info("CrewAIAgent initialized")
 
     # =========================================================================
     # MCP SERVER SETUP
     # =========================================================================
-    # <McpSetup>
 
-    async def _setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
-        """Fetch MCP server configs and convert to CrewAI MCP definitions."""
+    async def _setup_mcp_servers(
+        self, auth: Authorization, auth_handler_name: str, context: TurnContext
+    ):
+        """
+        Discover MCP servers, connect to them, and fetch available tools.
+        """
         if self.mcp_servers_initialized:
             return
 
         try:
-            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
+            # Get agentic_app_id from context or environment
+            agentic_app_id = None
+            if context.activity and context.activity.recipient:
+                agentic_app_id = context.activity.recipient.agentic_app_id
+            if not agentic_app_id:
+                agentic_app_id = os.getenv("AGENTIC_APP_ID", DEFAULT_AGENT_ID)
+            
+            # Get auth token - prefer token exchange for proper MCP authentication
+            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
             auth_token = None
-
-            if use_agentic_auth:
-                # Fetch token for MCP platform and pass it through
-                scopes = get_mcp_platform_authentication_scope()
-                token_obj = await auth.exchange_token(
-                    context,
-                    scopes=scopes,
-                    auth_handler_id=auth_handler_name,
-                )
-                auth_token = token_obj.token
-                self.mcp_servers = await self.mcp_service.list_tool_servers(
-                    agentic_app_id=os.getenv("AGENTIC_APP_ID", "crewai-agent"),
-                    auth=auth,
-                    context=context,
-                    auth_token=auth_token,
-                )
-            else:
+            
+            if not use_agentic_auth:
                 auth_token = self.auth_options.bearer_token
-                self.mcp_servers = await self.mcp_service.list_tool_servers(
-                    agentic_app_id=os.getenv("AGENTIC_APP_ID", "crewai-agent"),
-                    auth=auth,
-                    context=context,
-                    auth_token=auth_token,
-                )
-
-            mcp_entries = []
-            for server in self.mcp_servers:
-                server_url = getattr(server, "url", None) or getattr(server, "mcp_server_unique_name", None)
-                server_id = getattr(server, "mcp_server_name", None) or getattr(server, "mcp_server_unique_name", None)
-                if not server_url or not server_id:
-                    continue
-                mcp_entries.append(
-                    {
-                        "id": server_id,
-                        "transport": "sse",
-                        "options": {
-                            "url": server_url,
-                            "headers": {"Authorization": f"Bearer {auth_token}"} if auth_token else {},
-                        },
-                    }
-                )
-            self.mcp_servers = mcp_entries
-            logger.info("MCP setup completed with %d servers (CrewAI formatted)", len(self.mcp_servers))
+                logger.info("ℹ️ Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
+            else:
+                logger.info("ℹ️ MCP will use token exchange for authentication")
+            
+            # Discover and connect to MCP servers
+            self.mcp_tools = await self.mcp_service.discover_and_connect_servers(
+                agentic_app_id=agentic_app_id,
+                auth=auth,
+                auth_handler_name=auth_handler_name,
+                context=context,
+                auth_token=auth_token,
+            )
+            
+            if self.mcp_tools:
+                logger.info(f"✅ {len(self.mcp_tools)} MCP tool(s) available:")
+                for tool in self.mcp_tools:
+                    logger.info(f"   🔧 {tool.name}: {tool.description[:50]}...")
+            else:
+                logger.info("ℹ️ No MCP tools discovered")
+            
         except Exception as e:
-            logger.warning("MCP setup error: %s", e)
+            logger.error(f"Error setting up MCP servers: {e}")
+            self.mcp_tools = []
         finally:
             self.mcp_servers_initialized = True
 
-    # </McpSetup>
+    def _create_observable_tools(self) -> list:
+        """Create observable MCP tool wrappers with ExecuteToolScope tracing."""
+        return create_observable_mcp_tools(
+            mcp_tools=self.mcp_tools,
+            tool_executor=self.mcp_tool_executor,
+            get_agent_details=lambda: _current_agent_details.get(),
+            get_tenant_details=lambda: _current_tenant_details.get(),
+        )
 
     # =========================================================================
     # MESSAGE PROCESSING
     # =========================================================================
-    # <MessageProcessing>
 
     async def initialize(self):
         """Initialize the agent (no-op for CrewAI wrapper)."""
@@ -168,95 +156,102 @@ class CrewAIAgent(AgentInterface):
     ) -> str:
         """
         Process a user message by running the CrewAI flow with observability tracing.
-
-        The message is treated as the location/prompt input to the crew.
         """
-        # Extract context details using shared utility
         ctx_details = extract_turn_context_details(context)
 
         try:
             logger.info(f"Processing message: {message[:100]}...")
 
-            # Use BaggageBuilder to set contextual information that flows through all spans
-            with (
-                BaggageBuilder()
-                .tenant_id(ctx_details.tenant_id)
-                .agent_id(ctx_details.agent_id)
-                .correlation_id(ctx_details.correlation_id)
-                .build()
-            ):
-                # Create observability details using shared utility
+            with build_baggage_builder(context, ctx_details.correlation_id).build():
+                # Create observability details
                 agent_details = create_agent_details(ctx_details, "AI agent powered by CrewAI framework")
                 caller_details = create_caller_details(ctx_details)
                 tenant_details = create_tenant_details(ctx_details)
                 request = create_request(ctx_details, message)
                 invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
 
-                # Use context manager pattern per documentation
                 with InvokeAgentScope.start(
                     invoke_agent_details=invoke_details,
                     tenant_details=tenant_details,
                     request=request,
                     caller_details=caller_details,
                 ) as invoke_scope:
-                    # Record input message
                     if hasattr(invoke_scope, 'record_input_messages'):
                         invoke_scope.record_input_messages([message])
 
                     # Setup MCP servers
                     await self._setup_mcp_servers(auth, auth_handler_name, context)
 
-                    # Create InferenceScope for tracking LLM call
-                    # Note: CrewAI may use multiple LLM calls internally, this wraps the overall crew execution
-                    inference_details = InferenceCallDetails(
-                        operationName=InferenceOperationType.CHAT,
-                        model=os.getenv("OPENAI_MODEL", os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")),
-                        providerName="CrewAI (OpenAI/Azure)",
-                    )
+                    # Store context for observable MCP tool wrappers using context variables
+                    # This is thread/async-safe for concurrent request handling
+                    agent_details_token = _current_agent_details.set(agent_details)
+                    tenant_details_token = _current_tenant_details.set(tenant_details)
 
-                    with InferenceScope.start(
-                        details=inference_details,
-                        agent_details=agent_details,
-                        tenant_details=tenant_details,
-                        request=request,
-                    ) as inference_scope:
-                        # Run the crew synchronously in a thread to avoid blocking the event loop
-                        from crew_agent.agent_runner import run_crew
+                    try:
+                        # Create observable MCP tool wrappers
+                        observable_mcp_tools = self._create_observable_tools()
+                        if observable_mcp_tools:
+                            logger.info(f"📊 Created {len(observable_mcp_tools)} observable MCP tool wrapper(s)")
+                            for tool in observable_mcp_tools:
+                                logger.info(f"   🔧 {tool.name}: ExecuteToolScope enabled")
 
-                        logger.info("Running CrewAI with input: %s", message)
-                        result = await asyncio.to_thread(
-                            run_crew,
-                            message,
-                            True,
-                            False,
-                            self.mcp_servers,
+                        # Run CrewAI with InferenceScope
+                        full_response = await self._run_crew_with_inference_scope(
+                            message, observable_mcp_tools, agent_details, tenant_details, request
                         )
-                        logger.info("CrewAI completed")
 
-                        full_response = self._extract_result(result)
+                        if hasattr(invoke_scope, 'record_output_messages'):
+                            invoke_scope.record_output_messages([full_response])
+                    finally:
+                        # Reset context variables to previous values
+                        _current_agent_details.reset(agent_details_token)
+                        _current_tenant_details.reset(tenant_details_token)
 
-                        # Record finish reasons on inference scope
-                        if hasattr(inference_scope, 'record_finish_reasons'):
-                            inference_scope.record_finish_reasons(["end_turn"])
-
-                        # Record output messages on inference scope
-                        if hasattr(inference_scope, 'record_output_messages'):
-                            inference_scope.record_output_messages([full_response])
-
-                    # Record output message on invoke scope (after inference scope closes)
-                    if hasattr(invoke_scope, 'record_output_messages'):
-                        invoke_scope.record_output_messages([full_response])
-
-                logger.info("Observability scopes closed successfully")
+                logger.info("✅ Observability scopes closed successfully")
                 return full_response
 
         except Exception as e:
             logger.error("Error processing message: %s", e)
             logger.exception("Full error details:")
-            # Note: Context managers handle scope closure automatically, including error recording
             return f"Sorry, I encountered an error: {str(e)}"
 
-    # </MessageProcessing>
+    async def _run_crew_with_inference_scope(
+        self, message: str, observable_mcp_tools: list, agent_details, tenant_details, request
+    ) -> str:
+        """Run CrewAI with InferenceScope for LLM call tracking."""
+        inference_details = InferenceCallDetails(
+            operationName=InferenceOperationType.CHAT,
+            model=os.getenv("OPENAI_MODEL", os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")),
+            providerName="CrewAI (OpenAI/Azure)",
+        )
+
+        with InferenceScope.start(
+            details=inference_details,
+            agent_details=agent_details,
+            tenant_details=tenant_details,
+            request=request,
+        ) as inference_scope:
+            from crew_agent.agent_runner import run_crew
+
+            logger.info("Running CrewAI with input: %s", message)
+            result = await asyncio.to_thread(
+                run_crew,
+                message,
+                True,
+                False,
+                observable_mcp_tools,
+            )
+            logger.info("CrewAI completed")
+
+            full_response = self._extract_result(result)
+
+            if hasattr(inference_scope, 'record_finish_reasons'):
+                inference_scope.record_finish_reasons(["end_turn"])
+
+            if hasattr(inference_scope, 'record_output_messages'):
+                inference_scope.record_output_messages([full_response])
+
+        return full_response
 
     def _extract_result(self, result) -> str:
         """Extract text content from crew result."""
@@ -267,17 +262,38 @@ class CrewAIAgent(AgentInterface):
         return str(result)
 
     # =========================================================================
+    # NOTIFICATION HANDLING
+    # =========================================================================
+
+    async def handle_agent_notification_activity(
+        self,
+        notification_activity,
+        auth: Authorization,
+        context: TurnContext,
+        auth_handler_name: str | None = None,
+    ) -> str:
+        """Handle agent notification activities (email, Word mentions, etc.)"""
+        return await handle_notification(
+            agent=self,
+            notification_activity=notification_activity,
+            auth=auth,
+            context=context,
+            auth_handler_name=auth_handler_name,
+        )
+
+    # =========================================================================
     # CLEANUP
     # =========================================================================
-    # <Cleanup>
 
     async def cleanup(self) -> None:
-        """Clean up agent resources."""
+        """Clean up agent resources including MCP connections."""
         try:
             logger.info("Cleaning up CrewAI agent resources...")
-            # CrewAI doesn't require explicit cleanup
+            
+            if hasattr(self, 'mcp_service'):
+                await self.mcp_service.cleanup()
+                logger.info("MCP tool registration service cleaned up")
+            
             logger.info("CrewAIAgent cleanup completed")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
-
-    # </Cleanup>
