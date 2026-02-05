@@ -76,7 +76,7 @@ class McpToolRegistrationService:
         for server_config in mcp_server_configs:
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
-                    url=server_config.mcp_server_unique_name,
+                    url=server_config.url,
                     headers=mcp_server_headers
                 )
             )
