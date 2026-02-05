@@ -116,7 +116,7 @@ class AgentHost(AgentApplication):
             )
             await context.send_activity(Activity(type=ActivityTypes.message, text=help_message))
 
-        @self.activity("message", auth_handlers=auth_handlers, rank=2)
+        @self.activity("message", rank=2)
         async def message_handler(context: TurnContext, _: TurnState):
             """Handle message activities."""
             user_message = context.activity.text

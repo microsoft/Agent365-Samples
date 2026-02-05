@@ -2,8 +2,8 @@
 
 # Internal imports
 import os
-from hosting import MyAgent
-from agent import GoogleADKAgent
+from host import AgentHost
+from agent import get_client
 
 import os
 
@@ -70,11 +70,11 @@ def main():
     """Main function to run the sample agent application."""
     # Configure observability
     configure(
-        service_name="GoogleADKSampleAgent",
-        service_namespace="GoogleADKTesting",
+        service_name="BedrockSampleAgent",
+        service_namespace="BedrockTesting",
     )
 
-    agent_application = MyAgent(GoogleADKAgent())
+    agent_application = AgentHost(get_client())
     start_server(agent_application)
 
 

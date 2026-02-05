@@ -22,6 +22,7 @@ on:
         options:
           - ''
           - 'python-openai'
+          - 'python-bedrock'
           - 'nodejs-openai'
           - 'nodejs-langchain'
           - 'dotnet-sk'
@@ -37,7 +38,13 @@ jobs:
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-openai' }}
     uses: ./.github/workflows/e2e-python-openai.yml
     secrets: inherit
-    
+
+  python-bedrock:
+    name: Python Bedrock E2E
+    if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'python-bedrock' }}
+    uses: ./.github/workflows/e2e-python-bedrock.yml
+    secrets: inherit
+
   nodejs-openai:
     name: Node.js OpenAI E2E
     if: ${{ github.event.inputs.sample == '' || github.event.inputs.sample == 'nodejs-openai' }}
@@ -69,7 +76,7 @@ jobs:
   e2e-status:
     name: E2E Status
     runs-on: ubuntu-latest
-    needs: [python-openai, nodejs-openai, nodejs-langchain, dotnet-sk, dotnet-af]
+    needs: [python-openai, python-bedrock, nodejs-openai, nodejs-langchain, dotnet-sk, dotnet-af]
     if: always()
     
     steps:
@@ -78,7 +85,7 @@ jobs:
           echo "Checking E2E test results..."
           
           # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.python-openai.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.dotnet-sk.result }} ${{ needs.dotnet-af.result }}"
+          results="${{ needs.python-openai.result }} ${{ needs.python-bedrock.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.dotnet-sk.result }} ${{ needs.dotnet-af.result }}"
           
           echo "Job results: $results"
           
@@ -97,15 +104,17 @@ jobs:
           # Determine overall status
           OVERALL_STATUS="✅ All Tests Passed"
           if [[ "${{ needs.python-openai.result }}" != "success" ]] || \
+             [[ "${{ needs.python-bedrock.result }}" != "success" ]] || \
              [[ "${{ needs.nodejs-openai.result }}" != "success" ]] || \
              [[ "${{ needs.nodejs-langchain.result }}" != "success" ]] || \
              [[ "${{ needs.dotnet-sk.result }}" != "success" ]] || \
              [[ "${{ needs.dotnet-af.result }}" != "success" ]]; then
             OVERALL_STATUS="⚠️ Some Tests Failed"
           fi
-          
+
           # Generate status icons using if-else for reliability
           if [[ "${{ needs.python-openai.result }}" == "success" ]]; then PYTHON_OPENAI_ICON="✅"; else PYTHON_OPENAI_ICON="❌"; fi
+          if [[ "${{ needs.python-bedrock.result }}" == "success" ]]; then PYTHON_BEDROCK_ICON="✅"; else PYTHON_BEDROCK_ICON="❌"; fi
           if [[ "${{ needs.nodejs-openai.result }}" == "success" ]]; then NODEJS_OPENAI_ICON="✅"; else NODEJS_OPENAI_ICON="❌"; fi
           if [[ "${{ needs.nodejs-langchain.result }}" == "success" ]]; then NODEJS_LANGCHAIN_ICON="✅"; else NODEJS_LANGCHAIN_ICON="❌"; fi
           if [[ "${{ needs.dotnet-sk.result }}" == "success" ]]; then DOTNET_SK_ICON="✅"; else DOTNET_SK_ICON="❌"; fi
@@ -118,6 +127,7 @@ jobs:
           echo "| Sample | Status | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|--------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Python OpenAI | $PYTHON_OPENAI_ICON | ${{ needs.python-openai.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Bedrock | $PYTHON_BEDROCK_ICON | ${{ needs.python-bedrock.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js OpenAI | $NODEJS_OPENAI_ICON | ${{ needs.nodejs-openai.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js LangChain | $NODEJS_LANGCHAIN_ICON | ${{ needs.nodejs-langchain.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| .NET Semantic Kernel | $DOTNET_SK_ICON | ${{ needs.dotnet-sk.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -131,12 +141,14 @@ jobs:
         with:
           script: |
             const pythonOpenaiIcon = '${{ needs.python-openai.result }}' === 'success' ? '✅' : '❌';
+            const pythonBedrockIcon = '${{ needs.python-bedrock.result }}' === 'success' ? '✅' : '❌';
             const nodejsOpenaiIcon = '${{ needs.nodejs-openai.result }}' === 'success' ? '✅' : '❌';
             const nodejsLangchainIcon = '${{ needs.nodejs-langchain.result }}' === 'success' ? '✅' : '❌';
             const dotnetSkIcon = '${{ needs.dotnet-sk.result }}' === 'success' ? '✅' : '❌';
             const dotnetAfIcon = '${{ needs.dotnet-af.result }}' === 'success' ? '✅' : '❌';
-            
+
             const allPassed = '${{ needs.python-openai.result }}' === 'success' &&
+                              '${{ needs.python-bedrock.result }}' === 'success' &&
                               '${{ needs.nodejs-openai.result }}' === 'success' &&
                               '${{ needs.nodejs-langchain.result }}' === 'success' &&
                               '${{ needs.dotnet-sk.result }}' === 'success' &&
@@ -150,6 +162,7 @@ jobs:
               '| Sample | Status | Result |',
               '|--------|--------|--------|',
               `| Python OpenAI | ${pythonOpenaiIcon} | ${{ needs.python-openai.result }} |`,
+              `| Python Bedrock | ${pythonBedrockIcon} | ${{ needs.python-bedrock.result }} |`,
               `| Node.js OpenAI | ${nodejsOpenaiIcon} | ${{ needs.nodejs-openai.result }} |`,
               `| Node.js LangChain | ${nodejsLangchainIcon} | ${{ needs.nodejs-langchain.result }} |`,
               `| .NET Semantic Kernel | ${dotnetSkIcon} | ${{ needs.dotnet-sk.result }} |`,

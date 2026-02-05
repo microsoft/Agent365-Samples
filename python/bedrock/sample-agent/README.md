@@ -53,6 +53,39 @@ Follow these steps to set up AWS access for Bedrock:
 
 > **Note**: Model access approval can take a few minutes.
 
+## Bedrock Agent Setup
+
+This sample requires a Bedrock agent. You have two options:
+
+### Option 1: Create a Bedrock Agent in AWS Console
+
+If you don't have a Bedrock agent yet, create one using the AWS Console:
+
+**[Follow AWS documentation to create a Bedrock agent](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-create.html)**
+
+Once created, note the **Agent ID** and **Alias ID** for configuration.
+
+### Option 2: Use Existing Bedrock Agent (Recommended)
+
+If you already have a Bedrock agent configured in AWS:
+
+1. **Find your agent:**
+   - Go to [AWS Bedrock Console](https://console.aws.amazon.com/bedrock/)
+   - Navigate to **Agents** in the left sidebar
+   - Select your agent and note the **Agent ID**
+
+2. **Find your agent alias:**
+   - In the agent details, go to the **Aliases** tab
+   - Note the **Alias ID** for the alias you want to use
+
+3. **Configure in `.env`:**
+   ```dotenv
+   BEDROCK_AGENT_ID=ABCD1234EF
+   BEDROCK_AGENT_ALIAS_ID=TSTALIASID
+   ```
+
+The agent will validate these IDs exist before starting.
+
 ## Configuration
 
 1. Copy the environment template:
