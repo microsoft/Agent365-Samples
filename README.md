@@ -19,56 +19,11 @@ This repository contains sample agents and prompts for building with the Microso
 
 ## SDK Versions
 
-The following SDK package versions are used across the samples in this repository. This section is automatically updated when package versions change.
+The SDK versions used by each sample are displayed in the **E2E test workflow summaries**. Each E2E run installs the latest compatible packages and logs the resolved versions.
 
-<!-- SDK_VERSIONS_START -->
+📦 **View SDK Versions**: Click any E2E status badge above, then select a workflow run and view the **"Log SDK Versions"** step in the job summary.
 
-### Microsoft Agents SDK Packages
-
-| Package | Version |
-|---------|---------|
-| `@microsoft/agents-activity` | `1.2.2` |
-| `@microsoft/agents-hosting` | `1.2.2` |
-| `Microsoft.Agents.AI` | `1.0.0-preview.251113.1` |
-| `Microsoft.Agents.Authentication.Msal` | `1.3.*-*` |
-| `Microsoft.Agents.Hosting.AspNetCore` | `1.3.*-*` |
-
-### Microsoft Agent 365 SDK Packages
-
-#### Python
-| Package | Version |
-|---------|---------|
-| `microsoft_agents_a365_notifications` | `0.1.0` |
-| `microsoft_agents_a365_observability_core` | `0.1.0` |
-| `microsoft_agents_a365_observability_extensions_openai` | `0.1.0` |
-| `microsoft_agents_a365_runtime` | `0.1.0` |
-| `microsoft_agents_a365_tooling` | `0.1.0` |
-| `microsoft_agents_a365_tooling_extensions_openai` | `0.1.0` |
-| `microsoft-agents-a365-observability-core` | `0.1.0` |
-| `microsoft-agents-a365-observability-hosting` | `0.2.0` |
-| `microsoft-agents-a365-tooling` | `0.1.0` |
-
-#### Node.js
-| Package | Version |
-|---------|---------|
-| `@microsoft/agents-a365-notifications` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-observability` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-observability-extensions-openai` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-observability-hosting` | `0.1.0-preview.64` |
-| `@microsoft/agents-a365-runtime` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-tooling` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-tooling-extensions-langchain` | `0.1.0-preview.30` |
-| `@microsoft/agents-a365-tooling-extensions-openai` | `0.1.0-preview.30` |
-
-#### .NET
-| Package | Version |
-|---------|---------|
-| `Microsoft.Agents.A365.Notifications` | `*-beta.*` |
-| `Microsoft.Agents.A365.Observability.Extensions.AgentFramework` | `*-beta.*` |
-| `Microsoft.Agents.A365.Tooling.Extensions.AgentFramework` | `*-beta.*` |
-| `Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel` | `*-beta.*` |
-
-<!-- SDK_VERSIONS_END -->
+The samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to automatically pick up the latest compatible SDK releases during each test run.
 
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
