@@ -6,7 +6,7 @@
  * In production, use a more robust caching solution like Redis
  */
 class TokenCache {
-  private cache: Map<string, string>;
+  private cache: Map<string, string | object>;
 
   constructor() {
     this.cache = new Map();
@@ -15,7 +15,7 @@ class TokenCache {
   /**
    * Store a token with key
    */
-  set(key: string, token: string): void {
+  set(key: string, token: string | object): void {
     this.cache.set(key, token);
     console.log(`🔐 Token cached for key: ${key}`);
   }
@@ -23,7 +23,7 @@ class TokenCache {
   /**
    * Retrieve a token
    */
-  get(key: string): string | null {
+  get(key: string): string | null | object {
     const entry = this.cache.get(key);
 
     if (!entry) {
@@ -50,6 +50,5 @@ class TokenCache {
 }
 
 // Create a singleton instance for the application
-const tokenCache = new TokenCache();
-
-export default tokenCache;
+export const agenticTokenCache = new TokenCache(); // stores agentic/observability tokens
+export const presenceStateCache = new TokenCache(); // stores presence state tokens
