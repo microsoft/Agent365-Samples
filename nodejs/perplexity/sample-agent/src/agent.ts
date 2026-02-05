@@ -18,7 +18,7 @@ import {
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import { getObservabilityAuthenticationScope } from "@microsoft/agents-a365-runtime";
-import tokenCache from "./token-cache";
+import { agenticTokenCache } from "./token-cache";
 import { PerplexityClient } from "./perplexityClient";
 
 // Load environment variables from .env file FIRST
@@ -50,29 +50,31 @@ const observabilitySDK = ObservabilityManager.configure(
   (builder) =>
     builder
       .withService("Perplexity Agent", "1.0.0")
-      .withTokenResolver(async (agentId, tenantId) => {
-        // Token resolver for authentication with Agent365 observability
-        console.log(
-          "🔑 Token resolver called for agent:",
-          agentId,
-          "tenant:",
-          tenantId
-        );
+      .withTokenResolver(
+        async (agentId: string, tenantId: string): Promise<string | null> => {
+          // Token resolver for authentication with Agent365 observability
+          console.log(
+            "🔑 Token resolver called for agent:",
+            agentId,
+            "tenant:",
+            tenantId,
+          );
 
-        // Retrieve the cached agentic token
-        const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
-        const cachedToken = tokenCache.get(cacheKey);
+          // Retrieve the cached agentic token
+          const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
+          const cachedToken = agenticTokenCache.get(cacheKey);
 
-        if (cachedToken) {
-          console.log("🔑 Token retrieved from cache successfully");
-          return cachedToken;
-        }
+          if (cachedToken && typeof cachedToken === "string") {
+            console.log("🔑 Token retrieved from cache successfully");
+            return cachedToken;
+          }
 
-        console.log(
-          "⚠️ No cached token found - token should be cached during agent invocation"
-        );
-        return null;
-      })
+          console.log(
+            "⚠️ No cached token found - token should be cached during agent invocation",
+          );
+          return null;
+        },
+      ),
   // .withClusterCategory(process.env.CLUSTER_CATEGORY)
 );
 
@@ -84,14 +86,14 @@ console.log("🔭 Environment variables:");
 console.log("  - ENABLE_OBSERVABILITY:", process.env["ENABLE_OBSERVABILITY"]);
 console.log(
   "  - ENABLE_A365_OBSERVABILITY:",
-  process.env["ENABLE_A365_OBSERVABILITY"]
+  process.env["ENABLE_A365_OBSERVABILITY"],
 );
 console.log("  - CLUSTER_CATEGORY:", process.env["CLUSTER_CATEGORY"]);
 
 const perplexityClient = new PerplexityClient(
   process.env["PERPLEXITY_API_KEY"] || "",
   process.env["PERPLEXITY_MODEL"] || "sonar",
-  SYSTEM_PROMPT
+  SYSTEM_PROMPT,
 );
 
 /**
@@ -100,7 +102,7 @@ const perplexityClient = new PerplexityClient(
 async function queryModel(
   userInput: string,
   agentDetails: AgentDetails,
-  tenantDetails: TenantDetails
+  tenantDetails: TenantDetails,
 ) {
   const inferenceDetails = {
     operationName: InferenceOperationType.CHAT,
@@ -115,7 +117,7 @@ async function queryModel(
   const inferenceScope = InferenceScope.start(
     inferenceDetails,
     agentDetails,
-    tenantDetails
+    tenantDetails,
   );
 
   try {
@@ -164,7 +166,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   }
 
   await context.sendActivity(
-    Activity.fromObject({ type: ActivityTypes.Typing })
+    Activity.fromObject({ type: ActivityTypes.Typing }),
   );
 
   // Extract context information from activity
@@ -211,7 +213,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     .correlationId(activityId || `corr-${Date.now()}`)
     .agentName(agentName)
     .agentDescription(
-      "AI answer engine for research, writing, and task assistance using live web search and citations"
+      "AI answer engine for research, writing, and task assistance using live web search and citations",
     )
     .callerId(userId)
     .callerName(userName)
@@ -313,7 +315,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         invokeDetails,
         tenantDetails,
         undefined, // No caller agent (human-to-agent interaction)
-        callerDetails
+        callerDetails,
       );
 
       try {
@@ -330,23 +332,23 @@ app.onActivity(ActivityTypes.Message, async (context) => {
             "agentic",
             {
               scopes: getObservabilityAuthenticationScope(),
-            }
+            },
           );
 
           const cacheKey = createAgenticTokenCacheKey(
             agentDetails.agentId,
-            tenantId
+            tenantId,
           );
-          tokenCache.set(cacheKey, aauToken?.token || "");
+          agenticTokenCache.set(cacheKey, aauToken?.token || "");
           console.log(
             "🔑 Agentic token cached for observability (length:",
             aauToken?.token?.length ?? 0,
-            ")"
+            ")",
           );
         } catch (tokenError) {
           console.error(
             "⚠️ Failed to exchange/cache agentic token:",
-            (tokenError as Error).message
+            (tokenError as Error).message,
           );
           // Continue execution - observability may still work with fallback
         }
@@ -358,7 +360,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         let modelResponse = await queryModel(
           userMessage,
           agentDetails,
-          tenantDetails
+          tenantDetails,
         );
 
         // Send response back to user
@@ -393,7 +395,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   } catch (outerError) {
     console.error("❌ Baggage scope error:", outerError);
     await context.sendActivity(
-      "Sorry, something went wrong with the observability context."
+      "Sorry, something went wrong with the observability context.",
     );
   }
 });
