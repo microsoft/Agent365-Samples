@@ -81,7 +81,16 @@ builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerC
 // Add Local MCP Proxy for Windows desktop MCP servers via WNS
 // This enables the agent to discover and call local MCP tools on the user's Windows machine
 // Configuration is read from appsettings.json sections: WnsConfiguration and LocalMcpProxy
-builder.Services.AddLocalMcpProxy(builder.Configuration);
+//
+// Storage options:
+//   .UseInMemoryStorage()           - Development only, data lost on restart
+//   .UseCustomStorage<T>()          - Production: provide your own ISessionManager implementation
+//   .UseCustomStorage(factory)      - Production: factory method for complex initialization
+//
+// Example for production with Cosmos DB:
+//   .UseCustomStorage<CosmosDbSessionManager>();
+builder.Services.AddLocalMcpProxy(builder.Configuration)
+    .UseInMemoryStorage(); // TODO: Replace with persistent storage for production
 
 // Configure the HTTP request pipeline.
 // Add AspNet token validation for Azure Bot Service and Entra.
