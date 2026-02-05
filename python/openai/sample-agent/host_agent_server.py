@@ -41,7 +41,6 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
 )
 from microsoft_agents_a365.notifications import EmailResponse
-from microsoft_agents_a365.observability.core.config import configure
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
@@ -106,7 +105,6 @@ class GenericAgentHost:
 
         # Setup message handlers
         self._setup_handlers()
-        logger.info("✅ Notification handlers registered successfully")
 
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers"""
@@ -413,11 +411,6 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
         # Check that the agent inherits from AgentInterface
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
-
-        configure(
-            service_name="OpenAIAgentTracingWithAzureOpenAI",
-            service_namespace="OpenAIAgentTesting",
-        )
 
         # Create the host
         host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
