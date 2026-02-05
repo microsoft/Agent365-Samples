@@ -1,0 +1,224 @@
+# E2E Test Metrics Collection Workflow
+# This workflow runs after E2E tests complete to collect metrics and update the dashboard
+
+name: E2E Metrics Collection
+
+on:
+  workflow_run:
+    workflows: ["E2E Test Orchestrator"]
+    types:
+      - completed
+
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Testing stage'
+        required: true
+        default: 'scheduled'
+        type: choice
+        options:
+          - pre-release
+          - pre-checkin
+          - post-checkin
+          - release
+          - scheduled
+
+permissions:
+  contents: write
+  actions: read
+  issues: write
+
+jobs:
+  collect-metrics:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Determine Testing Stage
+        id: stage
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            STAGE="${{ github.event.inputs.stage }}"
+          elif [ "${{ github.event.workflow_run.event }}" == "schedule" ]; then
+            STAGE="scheduled"
+          elif [ "${{ github.event.workflow_run.event }}" == "pull_request" ]; then
+            STAGE="pre-checkin"
+          elif [ "${{ github.event.workflow_run.head_branch }}" == "main" ]; then
+            STAGE="post-checkin"
+          else
+            STAGE="pre-checkin"
+          fi
+          echo "stage=$STAGE" >> $GITHUB_OUTPUT
+          echo "Testing stage: $STAGE"
+
+      - name: Download E2E Test Artifacts
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ./artifacts
+        continue-on-error: true
+
+      - name: List Downloaded Artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          find ./artifacts -type f -name "*.trx" 2>/dev/null || echo "No TRX files found"
+          find ./artifacts -type f -name "*.json" 2>/dev/null || echo "No JSON files found"
+
+      - name: Extract SDK Versions from Workflow Run
+        id: sdk-versions
+        if: github.event_name == 'workflow_run'
+        run: |
+          # SDK versions are logged in workflow summaries
+          # For now, we'll extract from artifacts if available
+          echo "sdk_versions={}" >> $GITHUB_OUTPUT
+
+      - name: Process Test Results
+        id: process
+        shell: pwsh
+        run: |
+          $scriptsPath = "./scripts/e2e"
+          $artifactsPath = "./artifacts"
+          $metricsDir = "./docs/metrics/raw"
+          $historyFile = "./docs/metrics/history.json"
+          $stage = "${{ steps.stage.outputs.stage }}"
+          $runId = "${{ github.event.workflow_run.id || github.run_id }}"
+          
+          # Create metrics directory
+          New-Item -ItemType Directory -Path $metricsDir -Force | Out-Null
+          
+          # Find all test result files
+          $trxFiles = Get-ChildItem -Path $artifactsPath -Filter "*.trx" -Recurse -ErrorAction SilentlyContinue
+          
+          if ($trxFiles.Count -eq 0) {
+            Write-Host "No TRX files found in artifacts" -ForegroundColor Yellow
+            
+            # Create a placeholder metric for the run
+            $metrics = @{
+              id = "$runId-no-results"
+              runId = $runId
+              sampleName = "unknown"
+              timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+              commitSha = "${{ github.event.workflow_run.head_sha || github.sha }}"
+              branch = "${{ github.event.workflow_run.head_branch || github.ref_name }}"
+              actor = "${{ github.event.workflow_run.actor.login || github.actor }}"
+              workflow = "${{ github.event.workflow_run.name || github.workflow }}"
+              stage = $stage
+              testResults = @{
+                status = "no-results"
+                passed = 0
+                failed = 0
+                skipped = 0
+                total = 0
+              }
+              sdkVersions = @{}
+              bugsCaught = @{
+                count = 0
+                stage = $stage
+                details = @()
+              }
+            }
+            
+            $metricsFile = Join-Path $metricsDir "$runId-no-results.json"
+            $metrics | ConvertTo-Json -Depth 10 | Out-File $metricsFile -Encoding UTF8
+            Write-Host "Created placeholder metrics file"
+          }
+          else {
+            Write-Host "Found $($trxFiles.Count) TRX files" -ForegroundColor Green
+            
+            foreach ($trxFile in $trxFiles) {
+              # Extract sample name from path
+              $pathParts = $trxFile.DirectoryName -split '[/\\]'
+              $sampleName = ($pathParts | Where-Object { $_ -match "(python|nodejs|dotnet)" }) -join "-"
+              if (-not $sampleName) { $sampleName = "unknown" }
+              
+              Write-Host "Processing: $($trxFile.Name) for sample: $sampleName" -ForegroundColor Cyan
+              
+              # Emit metrics for this test result
+              $metricsFile = Join-Path $metricsDir "$runId-$sampleName.json"
+              
+              & "$scriptsPath/Emit-TestMetrics.ps1" `
+                -SampleName $sampleName `
+                -TestResultsPath $trxFile.FullName `
+                -Stage $stage `
+                -OutputPath $metricsFile `
+                -RunId $runId `
+                -CommitSha "${{ github.event.workflow_run.head_sha || github.sha }}" `
+                -Branch "${{ github.event.workflow_run.head_branch || github.ref_name }}"
+            }
+          }
+          
+          # Aggregate all metrics
+          Write-Host "Aggregating metrics..." -ForegroundColor Cyan
+          & "$scriptsPath/Aggregate-Metrics.ps1" `
+            -MetricsDir $metricsDir `
+            -HistoryFile $historyFile
+          
+          # Output metrics updated flag
+          echo "metrics_updated=true" >> $env:GITHUB_OUTPUT
+          
+          # Check for failures that need GitHub issues
+          $rawFiles = Get-ChildItem -Path $metricsDir -Filter "*.json" -ErrorAction SilentlyContinue
+          $hasFailures = $false
+          foreach ($file in $rawFiles) {
+            $data = Get-Content $file.FullName | ConvertFrom-Json
+            if ($data.testResults.failed -gt 0) {
+              $hasFailures = $true
+              echo "has_failures=true" >> $env:GITHUB_OUTPUT
+              echo "failed_metrics_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
+              break
+            }
+          }
+          
+          # Clean up raw metrics (they're now in history)
+          Remove-Item -Path $metricsDir -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Commit Metrics Update
+        if: steps.process.outputs.metrics_updated == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add docs/metrics/history.json
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "📊 Update E2E test metrics [skip ci]"
+            git push origin main
+            echo "✅ Metrics committed and pushed"
+          fi
+
+      - name: Create GitHub Issues for Failures
+        if: steps.process.outputs.has_failures == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $scriptsPath = "./scripts/e2e"
+          $metricsFile = "${{ steps.process.outputs.failed_metrics_file }}"
+          
+          if (Test-Path $metricsFile) {
+            Write-Host "Creating GitHub issues for failures..." -ForegroundColor Cyan
+            & "$scriptsPath/Create-GitHubIssue.ps1" `
+              -MetricsFile $metricsFile `
+              -Repository "${{ github.repository }}"
+          } else {
+            Write-Host "No metrics file found for issue creation" -ForegroundColor Yellow
+          }
+
+      - name: Generate Metrics Summary
+        run: |
+          echo "## 📊 E2E Test Metrics Updated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Testing Stage: **${{ steps.stage.outputs.stage }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View the [Metrics Dashboard](https://microsoft.github.io/Agent365-Samples/metrics/) for detailed statistics." >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,350 @@
+{
+  "lastUpdated": "2026-02-05T10:30:00Z",
+  "totalRuns": 12,
+  "entries": [
+    {
+      "id": "run-001",
+      "timestamp": "2026-02-05T10:30:00Z",
+      "stage": "pre-release",
+      "sampleName": "python-openai",
+      "sdkVersions": {
+        "microsoft-agents-a365-tooling": "0.9.0-preview.3",
+        "microsoft-agents-core": "0.9.0-preview.3"
+      },
+      "sdkValidation": {
+        "allUpToDate": true,
+        "packagesChecked": 2,
+        "upToDate": 2,
+        "outdated": 0,
+        "usingPreRelease": 2,
+        "packages": [
+          {
+            "package": "microsoft-agents-a365-tooling",
+            "installed": "0.9.0-preview.3",
+            "latest": "0.9.0-preview.3",
+            "isUpToDate": true,
+            "isPreRelease": true
+          },
+          {
+            "package": "microsoft-agents-core",
+            "installed": "0.9.0-preview.3",
+            "latest": "0.9.0-preview.3",
+            "isUpToDate": true,
+            "isPreRelease": true
+          }
+        ]
+      },
+      "testResults": {
+        "status": "failed",
+        "total": 5,
+        "passed": 3,
+        "failed": 2,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 2,
+        "details": [
+          {
+            "testName": "test_mcp_email_tools_registration",
+            "errorMessage": "McpToolset connection timeout with new SDK auth changes",
+            "issueNumber": 215,
+            "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/215",
+            "issueState": "open"
+          },
+          {
+            "testName": "test_notification_handling",
+            "errorMessage": "AgentNotificationActivity missing type field in 0.9.0-preview.3",
+            "issueNumber": 216,
+            "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/216",
+            "issueState": "open"
+          }
+        ]
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12345"
+    },
+    {
+      "id": "run-002",
+      "timestamp": "2026-02-04T15:22:00Z",
+      "stage": "pre-checkin",
+      "sampleName": "dotnet-semantic-kernel",
+      "sdkVersions": {
+        "Microsoft.Agents.Core": "0.8.5",
+        "Microsoft.SemanticKernel": "1.45.0"
+      },
+      "sdkValidation": {
+        "allUpToDate": true,
+        "packagesChecked": 2,
+        "upToDate": 2,
+        "outdated": 0,
+        "usingPreRelease": 0,
+        "packages": [
+          {
+            "package": "Microsoft.Agents.Core",
+            "installed": "0.8.5",
+            "latest": "0.8.5",
+            "isUpToDate": true,
+            "isPreRelease": false
+          },
+          {
+            "package": "Microsoft.SemanticKernel",
+            "installed": "1.45.0",
+            "latest": "1.45.0",
+            "isUpToDate": true,
+            "isPreRelease": false
+          }
+        ]
+      },
+      "testResults": {
+        "status": "failed",
+        "total": 6,
+        "passed": 5,
+        "failed": 1,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 1,
+        "details": [
+          {
+            "testName": "test_agent_streaming_response",
+            "errorMessage": "Breaking change in SK 1.45.0 streaming API",
+            "issueNumber": 210,
+            "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/210",
+            "issueState": "closed"
+          }
+        ]
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12344"
+    },
+    {
+      "id": "run-003",
+      "timestamp": "2026-02-04T08:15:00Z",
+      "stage": "release",
+      "sampleName": "nodejs-langchain",
+      "sdkVersions": {
+        "@anthropic-ai/sdk": "0.35.0",
+        "langchain": "0.3.15"
+      },
+      "sdkValidation": {
+        "allUpToDate": true,
+        "packagesChecked": 2,
+        "upToDate": 2,
+        "outdated": 0,
+        "usingPreRelease": 0,
+        "packages": [
+          {
+            "package": "@anthropic-ai/sdk",
+            "installed": "0.35.0",
+            "latest": "0.35.0",
+            "isUpToDate": true,
+            "isPreRelease": false
+          },
+          {
+            "package": "langchain",
+            "installed": "0.3.15",
+            "latest": "0.3.15",
+            "isUpToDate": true,
+            "isPreRelease": false
+          }
+        ]
+      },
+      "testResults": {
+        "status": "failed",
+        "total": 5,
+        "passed": 4,
+        "failed": 1,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 1,
+        "details": [
+          {
+            "testName": "test_tool_calling_format",
+            "errorMessage": "LangChain 0.3.15 changed tool schema format",
+            "issueNumber": 208,
+            "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/208",
+            "issueState": "closed"
+          }
+        ]
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12343"
+    },
+    {
+      "id": "run-004",
+      "timestamp": "2026-02-03T19:45:00Z",
+      "stage": "post-checkin",
+      "sampleName": "dotnet-semantic-kernel",
+      "sdkVersions": {
+        "Microsoft.Agents.Core": "0.8.4",
+        "Microsoft.SemanticKernel": "1.44.0"
+      },
+      "testResults": {
+        "status": "passed",
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 0,
+        "details": []
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12342"
+    },
+    {
+      "id": "run-005",
+      "timestamp": "2026-02-03T14:30:00Z",
+      "stage": "pre-release",
+      "sampleName": "python-openai",
+      "sdkVersions": {
+        "microsoft-agents-a365-tooling": "0.9.0-preview.2",
+        "microsoft-agents-core": "0.9.0-preview.2"
+      },
+      "testResults": {
+        "status": "failed",
+        "total": 5,
+        "passed": 4,
+        "failed": 1,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 1,
+        "details": [
+          {
+            "testName": "test_azure_openai_auth",
+            "errorMessage": "DefaultAzureCredential not properly initialized in preview.2"
+          }
+        ]
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12341"
+    },
+    {
+      "id": "run-006",
+      "timestamp": "2026-02-02T11:00:00Z",
+      "stage": "pre-checkin",
+      "sampleName": "nodejs-langchain",
+      "sdkVersions": {
+        "@anthropic-ai/sdk": "0.34.0",
+        "langchain": "0.3.14"
+      },
+      "sdkValidation": {
+        "allUpToDate": false,
+        "packagesChecked": 2,
+        "upToDate": 0,
+        "outdated": 2,
+        "usingPreRelease": 0,
+        "packages": [
+          {
+            "package": "@anthropic-ai/sdk",
+            "installed": "0.34.0",
+            "latest": "0.35.0",
+            "isUpToDate": false,
+            "isPreRelease": false
+          },
+          {
+            "package": "langchain",
+            "installed": "0.3.14",
+            "latest": "0.3.15",
+            "isUpToDate": false,
+            "isPreRelease": false
+          }
+        ]
+      },
+      "testResults": {
+        "status": "failed",
+        "total": 5,
+        "passed": 4,
+        "failed": 1,
+        "skipped": 0
+      },
+      "bugsCaught": {
+        "count": 1,
+        "details": [
+          {
+            "testName": "test_agent_memory_persistence",
+            "errorMessage": "Memory buffer overflow with large conversation history"
+          }
+        ]
+      },
+      "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/12340"
+    }
+  ],
+  "summary": {
+    "byStage": {
+      "pre-release": { "runs": 4, "passed": 12, "failed": 3, "bugsCaught": 3 },
+      "pre-checkin": { "runs": 3, "passed": 10, "failed": 2, "bugsCaught": 2 },
+      "post-checkin": { "runs": 3, "passed": 13, "failed": 1, "bugsCaught": 1 },
+      "release": { "runs": 2, "passed": 10, "failed": 1, "bugsCaught": 1 }
+    },
+    "bySample": {
+      "dotnet-semantic-kernel": { "runs": 4, "passed": 15, "failed": 2, "bugsCaught": 2 },
+      "python-openai": { "runs": 4, "passed": 13, "failed": 3, "bugsCaught": 3 },
+      "nodejs-langchain": { "runs": 4, "passed": 17, "failed": 2, "bugsCaught": 2 }
+    },
+    "totalBugsCaught": 7,
+    "totalTestsRun": 52,
+    "totalPassed": 45,
+    "totalFailed": 7
+  },
+  "pullRequests": [
+    {
+      "number": 220,
+      "title": "Fix SK 1.45.0 streaming API breaking change",
+      "url": "https://github.com/microsoft/Agent365-Samples/pull/220",
+      "author": "anabdul",
+      "createdAt": "2026-02-04T16:00:00Z",
+      "merged": true,
+      "draft": false,
+      "fixes": [
+        {
+          "number": 210,
+          "url": "https://github.com/microsoft/Agent365-Samples/issues/210"
+        }
+      ]
+    },
+    {
+      "number": 218,
+      "title": "Update LangChain to 0.3.15 with new tool schema",
+      "url": "https://github.com/microsoft/Agent365-Samples/pull/218",
+      "author": "anabdul",
+      "createdAt": "2026-02-04T09:00:00Z",
+      "merged": true,
+      "draft": false,
+      "fixes": [
+        {
+          "number": 208,
+          "url": "https://github.com/microsoft/Agent365-Samples/issues/208"
+        }
+      ]
+    },
+    {
+      "number": 225,
+      "title": "Fix MCP toolset connection timeout issue",
+      "url": "https://github.com/microsoft/Agent365-Samples/pull/225",
+      "author": "anabdul",
+      "createdAt": "2026-02-05T11:00:00Z",
+      "merged": false,
+      "draft": false,
+      "fixes": [
+        {
+          "number": 215,
+          "url": "https://github.com/microsoft/Agent365-Samples/issues/215"
+        }
+      ]
+    },
+    {
+      "number": 226,
+      "title": "Add notification type field handling",
+      "url": "https://github.com/microsoft/Agent365-Samples/pull/226",
+      "author": "anabdul",
+      "createdAt": "2026-02-05T12:00:00Z",
+      "merged": false,
+      "draft": true,
+      "fixes": [
+        {
+          "number": 216,
+          "url": "https://github.com/microsoft/Agent365-Samples/issues/216"
+        }
+      ]
+    }
+  ]
+}
