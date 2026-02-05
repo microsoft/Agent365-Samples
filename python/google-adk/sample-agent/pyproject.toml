@@ -18,6 +18,7 @@ dependencies = [
     # Core dependencies
     "python-dotenv",
     "aiohttp",
+    "wrapt",
 
     # HTTP server support for MCP servers
     "uvicorn[standard]>=0.20.0",
