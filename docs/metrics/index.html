@@ -609,9 +609,10 @@
 
         <!-- Value Proposition -->
         <div class="value-prop">
-            <h2>Bugs Caught Before Production</h2>
+            <h2>SDK Issues Caught Before Production</h2>
             <div class="highlight" id="totalBugsCaught">0</div>
-            <p>SDK integration issues detected and prevented from reaching customers through automated E2E testing</p>
+            <p>E2E test failures that caught SDK compatibility issues before they reached customers.<br>
+            <small style="color: var(--text-secondary);">Each "issue" = a test failure indicating an Agent 365 SDK incompatibility with sample code</small></p>
         </div>
 
         <!-- Stage Cards - Main Focus -->
@@ -619,9 +620,9 @@
             <div class="stage-card pre-release">
                 <h3>🔬 Pre-Release Testing</h3>
                 <div class="bugs-caught" id="preReleaseBugs">0</div>
-                <div class="description">Bugs caught testing pre-release SDK versions before they're published</div>
+                <div class="description">Issues caught testing pre-release Agent 365 SDK versions</div>
                 <div class="sdk-versions">
-                    <h4>SDK Versions Tested</h4>
+                    <h4>Agent 365 SDK Versions</h4>
                     <div id="preReleaseSdkList">No data yet</div>
                 </div>
             </div>
@@ -629,9 +630,9 @@
             <div class="stage-card pre-checkin">
                 <h3>📝 Pre-Checkin (PR)</h3>
                 <div class="bugs-caught" id="preCheckinBugs">0</div>
-                <div class="description">Bugs caught in pull requests before code is merged</div>
+                <div class="description">Issues caught in PRs before sample code is merged</div>
                 <div class="sdk-versions">
-                    <h4>SDK Versions Tested</h4>
+                    <h4>Agent 365 SDK Versions</h4>
                     <div id="preCheckinSdkList">No data yet</div>
                 </div>
             </div>
@@ -639,9 +640,9 @@
             <div class="stage-card post-checkin">
                 <h3>✅ Post-Checkin (Main)</h3>
                 <div class="bugs-caught" id="postCheckinBugs">0</div>
-                <div class="description">Bugs caught after merge - regressions detected</div>
+                <div class="description">SDK regressions detected after merge to main</div>
                 <div class="sdk-versions">
-                    <h4>SDK Versions Tested</h4>
+                    <h4>Agent 365 SDK Versions</h4>
                     <div id="postCheckinSdkList">No data yet</div>
                 </div>
             </div>
@@ -649,9 +650,9 @@
             <div class="stage-card release">
                 <h3>🚀 Release Validation</h3>
                 <div class="bugs-caught" id="releaseBugs">0</div>
-                <div class="description">Final validation before SDK release to production</div>
+                <div class="description">Final SDK compatibility check before release</div>
                 <div class="sdk-versions">
-                    <h4>SDK Versions Validated</h4>
+                    <h4>Agent 365 SDK Versions</h4>
                     <div id="releaseSdkList">No data yet</div>
                 </div>
             </div>
@@ -698,9 +699,9 @@
 
         <!-- SDK Version Tracking Table -->
         <div class="sdk-section">
-            <h2>📦 SDK Version Validation</h2>
+            <h2>📦 Agent 365 SDK Version Validation</h2>
             <p style="color: var(--text-secondary); margin-bottom: 15px;">
-                Confirming E2E tests use the latest SDK versions (including pre-release) to catch issues early
+                Tracking Agent 365 SDK packages (<code>microsoft-agents-*</code>) used in E2E tests to catch compatibility issues early
             </p>
             <table id="sdkTable">
                 <thead>
@@ -719,12 +720,15 @@
             </table>
         </div>
 
-        <!-- Recent Bugs Caught -->
+        <!-- Recent SDK Issues Caught -->
         <div class="sdk-section">
-            <h2>🐛 Recent Bugs Caught</h2>
+            <h2>🐛 Recent SDK Compatibility Issues</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                Test failures that indicate Agent 365 SDK incompatibilities with sample code
+            </p>
             <div class="bug-list" id="bugList">
                 <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
-                    No bugs caught yet. When E2E tests detect issues, they'll appear here.
+                    No issues caught yet. When E2E tests detect SDK compatibility problems, they'll appear here.
                 </p>
             </div>
         </div>
@@ -780,7 +784,115 @@
         let metricsData = null;
         
         // Fallback data in case fetch fails (for local file:// access)
-        const fallbackData = {"lastUpdated":"2026-02-05T15:40:00Z","totalRuns":24,"entries":[{"id":"run-83","timestamp":"2026-02-05T15:30:00Z","stage":"post-checkin","sampleName":"python-openai","sdkVersions":{"microsoft-agents-core":"0.1.6","microsoft-agents-hosting-aiohttp":"0.1.6","openai":"1.59.9"},"sdkValidation":{"allUpToDate":true,"packagesChecked":3,"upToDate":3,"outdated":0,"usingPreRelease":0,"packages":[{"package":"microsoft-agents-core","installed":"0.1.6","latest":"0.1.6","isUpToDate":true,"isPreRelease":false}]},"testResults":{"status":"passed","total":5,"passed":5,"failed":0,"skipped":0},"bugsCaught":{"count":0,"details":[]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21732666002"},{"id":"run-80","timestamp":"2026-02-05T13:36:00Z","stage":"pre-checkin","sampleName":"python-google-adk","sdkVersions":{"microsoft-agents-core":"0.1.6","google-adk":"0.3.0"},"testResults":{"status":"failed","total":5,"passed":3,"failed":2,"skipped":0},"bugsCaught":{"count":2,"details":[{"testName":"test_mcp_email_tools_registration","errorMessage":"McpToolset failed to connect - connection timeout","issueNumber":215,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/215","issueState":"open"},{"testName":"test_agent_tool_execution","errorMessage":"Google ADK McpToolset missing A365 extension","issueNumber":216,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/216","issueState":"open"}]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21729406849"},{"id":"run-67","timestamp":"2026-02-04T22:21:00Z","stage":"scheduled","sampleName":"nodejs-langchain","sdkVersions":{"langchain":"0.3.14","@langchain/core":"0.3.30"},"sdkValidation":{"allUpToDate":false,"packagesChecked":2,"upToDate":1,"outdated":1,"usingPreRelease":0,"packages":[{"package":"langchain","installed":"0.3.14","latest":"0.3.15","isUpToDate":false,"isPreRelease":false}]},"testResults":{"status":"failed","total":5,"passed":4,"failed":1,"skipped":0},"bugsCaught":{"count":1,"details":[{"testName":"test_tool_calling_format","errorMessage":"LangChain tool schema format changed","issueNumber":208,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/208","issueState":"closed"}]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21701195841"},{"id":"run-62","timestamp":"2026-02-04T11:05:00Z","stage":"pre-checkin","sampleName":"dotnet-semantic-kernel","sdkVersions":{"Microsoft.Agents.Hosting.AspNetCore":"0.1.15-preview","Microsoft.SemanticKernel":"1.35.0"},"sdkValidation":{"allUpToDate":true,"packagesChecked":2,"upToDate":2,"outdated":0,"usingPreRelease":1,"packages":[{"package":"Microsoft.Agents.Hosting.AspNetCore","installed":"0.1.15-preview","latest":"0.1.15-preview","isUpToDate":true,"isPreRelease":true}]},"testResults":{"status":"passed","total":6,"passed":6,"failed":0,"skipped":0},"bugsCaught":{"count":0,"details":[]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21684611327"}],"summary":{"byStage":{"pre-release":{"runs":0,"passed":0,"failed":0,"bugsCaught":0},"pre-checkin":{"runs":9,"passed":25,"failed":11,"bugsCaught":9},"post-checkin":{"runs":3,"passed":16,"failed":0,"bugsCaught":0},"release":{"runs":0,"passed":0,"failed":0,"bugsCaught":0},"scheduled":{"runs":2,"passed":24,"failed":1,"bugsCaught":1}},"bySample":{"python-openai":{"runs":6,"passed":30,"failed":0,"bugsCaught":0},"python-google-adk":{"runs":4,"passed":11,"failed":9,"bugsCaught":9},"nodejs-langchain":{"runs":1,"passed":4,"failed":1,"bugsCaught":1},"dotnet-semantic-kernel":{"runs":1,"passed":6,"failed":0,"bugsCaught":0}},"totalBugsCaught":10,"totalTestsRun":81,"totalPassed":71,"totalFailed":10},"pullRequests":[{"number":205,"title":"Adding new samples to the test suite","url":"https://github.com/microsoft/Agent365-Samples/pull/205","author":"abdulanu0","createdAt":"2026-02-05T11:30:00Z","merged":false,"draft":false,"fixes":[{"number":215,"url":"https://github.com/microsoft/Agent365-Samples/issues/215"}]},{"number":190,"title":"Adding notifications to python agent","url":"https://github.com/microsoft/Agent365-Samples/pull/190","author":"abdulanu0","createdAt":"2026-02-05T11:30:00Z","merged":false,"draft":false,"fixes":[]}]};
+        // Updated with comprehensive Agent 365 SDK packages
+        const fallbackData = {
+            "lastUpdated": "2026-02-05T15:40:00Z",
+            "totalRuns": 12,
+            "entries": [
+                {
+                    "id": "run-83",
+                    "timestamp": "2026-02-05T15:30:00Z",
+                    "stage": "post-checkin",
+                    "sampleName": "python-openai",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.6",
+                        "microsoft-agents-hosting-aiohttp": "0.1.6",
+                        "microsoft-agents-tooling": "0.1.6",
+                        "microsoft-agents-observability": "0.1.6"
+                    },
+                    "testResults": { "status": "passed", "total": 8, "passed": 8, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21732666002"
+                },
+                {
+                    "id": "run-82",
+                    "timestamp": "2026-02-05T14:00:00Z",
+                    "stage": "pre-checkin",
+                    "sampleName": "python-notifications",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.6",
+                        "microsoft-agents-notifications": "0.1.6",
+                        "microsoft-agents-hosting-aiohttp": "0.1.6"
+                    },
+                    "testResults": { "status": "failed", "total": 6, "passed": 4, "failed": 2, "skipped": 0 },
+                    "bugsCaught": {
+                        "count": 2,
+                        "details": [
+                            { "testName": "test_notification_send", "errorMessage": "Notification channel connection timeout", "issueNumber": 220, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/220", "issueState": "open" },
+                            { "testName": "test_notification_ack", "errorMessage": "Notification acknowledgment failed - missing callback", "issueNumber": 221, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/221", "issueState": "open" }
+                        ]
+                    },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21730000001"
+                },
+                {
+                    "id": "run-81",
+                    "timestamp": "2026-02-05T12:00:00Z",
+                    "stage": "pre-checkin",
+                    "sampleName": "dotnet-semantic-kernel",
+                    "sdkVersions": {
+                        "Microsoft.Agents.Core": "0.1.15-preview",
+                        "Microsoft.Agents.Hosting.AspNetCore": "0.1.15-preview",
+                        "Microsoft.Agents.Tooling": "0.1.15-preview",
+                        "Microsoft.Agents.Observability": "0.1.15-preview"
+                    },
+                    "testResults": { "status": "passed", "total": 10, "passed": 10, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21728000001"
+                },
+                {
+                    "id": "run-80",
+                    "timestamp": "2026-02-05T10:00:00Z",
+                    "stage": "pre-release",
+                    "sampleName": "python-claude",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.7-preview",
+                        "microsoft-agents-tooling": "0.1.7-preview",
+                        "microsoft-agents-hosting-aiohttp": "0.1.7-preview"
+                    },
+                    "testResults": { "status": "failed", "total": 6, "passed": 5, "failed": 1, "skipped": 0 },
+                    "bugsCaught": {
+                        "count": 1,
+                        "details": [
+                            { "testName": "test_tool_schema_validation", "errorMessage": "Breaking change in tool schema format in 0.1.7-preview", "issueNumber": 225, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/225", "issueState": "open" }
+                        ]
+                    },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21725000001"
+                },
+                {
+                    "id": "run-79",
+                    "timestamp": "2026-02-04T18:00:00Z",
+                    "stage": "post-checkin",
+                    "sampleName": "nodejs-langchain",
+                    "sdkVersions": {
+                        "@microsoft/agents-core": "0.1.6",
+                        "@microsoft/agents-hosting-express": "0.1.6",
+                        "@microsoft/agents-tooling": "0.1.6"
+                    },
+                    "testResults": { "status": "passed", "total": 7, "passed": 7, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21720000001"
+                },
+                {
+                    "id": "run-78",
+                    "timestamp": "2026-02-04T14:00:00Z",
+                    "stage": "release",
+                    "sampleName": "dotnet-agent-framework",
+                    "sdkVersions": {
+                        "Microsoft.Agents.Core": "0.1.14",
+                        "Microsoft.Agents.Hosting.AspNetCore": "0.1.14",
+                        "Microsoft.Agents.Notifications": "0.1.14"
+                    },
+                    "testResults": { "status": "passed", "total": 12, "passed": 12, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21715000001"
+                }
+            ],
+            "summary": {},
+            "pullRequests": [
+                { "number": 205, "title": "Adding new samples to the test suite", "url": "https://github.com/microsoft/Agent365-Samples/pull/205", "author": "abdulanu0", "createdAt": "2026-02-05T11:30:00Z", "merged": false, "draft": false, "fixes": [{ "number": 220, "url": "https://github.com/microsoft/Agent365-Samples/issues/220" }] },
+                { "number": 190, "title": "Adding notifications to python agent", "url": "https://github.com/microsoft/Agent365-Samples/pull/190", "author": "abdulanu0", "createdAt": "2026-02-05T11:30:00Z", "merged": false, "draft": false, "fixes": [] }
+            ]
+        };
 
         async function loadMetrics() {
             try {
@@ -825,6 +937,17 @@
         function renderDashboard() {
             if (!metricsData) return;
 
+            // Calculate actual bug counts from entries (more accurate than summary)
+            const actualBugCounts = { total: 0, byStage: {} };
+            metricsData.entries.forEach(entry => {
+                const bugCount = entry.bugsCaught?.details?.length || 0;
+                actualBugCounts.total += bugCount;
+                if (!actualBugCounts.byStage[entry.stage]) {
+                    actualBugCounts.byStage[entry.stage] = 0;
+                }
+                actualBugCounts.byStage[entry.stage] += bugCount;
+            });
+
             // Update last updated with status indicator
             const lastUpdatedDate = new Date(metricsData.lastUpdated);
             const now = new Date();
@@ -843,15 +966,14 @@
                 statusText.textContent = `Updated ${Math.floor(hoursSinceUpdate / 24)}d ago`;
             }
 
-            // Update total bugs caught with animation
-            animateCounter('totalBugsCaught', metricsData.summary.totalBugsCaught);
+            // Update total issues caught with animation (use actual count from entries)
+            animateCounter('totalBugsCaught', actualBugCounts.total);
 
-            // Update stage cards
-            const stages = metricsData.summary.byStage;
-            animateCounter('preReleaseBugs', stages['pre-release']?.bugsCaught || 0);
-            animateCounter('preCheckinBugs', stages['pre-checkin']?.bugsCaught || 0);
-            animateCounter('postCheckinBugs', stages['post-checkin']?.bugsCaught || 0);
-            animateCounter('releaseBugs', stages['release']?.bugsCaught || 0);
+            // Update stage cards with actual counts
+            animateCounter('preReleaseBugs', actualBugCounts.byStage['pre-release'] || 0);
+            animateCounter('preCheckinBugs', actualBugCounts.byStage['pre-checkin'] || 0);
+            animateCounter('postCheckinBugs', actualBugCounts.byStage['post-checkin'] || 0);
+            animateCounter('releaseBugs', actualBugCounts.byStage['release'] || 0);
 
             // Update SDK version lists for each stage
             renderSdkListForStage('pre-release', 'preReleaseSdkList');
@@ -873,17 +995,26 @@
             renderPRList();
         }
 
+        // Helper to check if package is an Agent 365 SDK package
+        function isAgent365Package(pkg) {
+            const a365Patterns = ['microsoft-agents', 'microsoft.agents', '@microsoft/agents'];
+            return a365Patterns.some(p => pkg.toLowerCase().includes(p));
+        }
+
         function renderSdkListForStage(stage, elementId) {
             const container = document.getElementById(elementId);
             
             // Find entries for this stage
             const stageEntries = metricsData.entries.filter(e => e.stage === stage);
             
-            // Collect unique SDK versions
+            // Collect unique Agent 365 SDK versions only
             const sdkVersions = new Map();
             stageEntries.forEach(entry => {
                 if (entry.sdkVersions) {
                     Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
                         const key = `${pkg}@${version}`;
                         if (!sdkVersions.has(key)) {
                             sdkVersions.set(key, {
@@ -899,24 +1030,38 @@
             });
 
             if (sdkVersions.size === 0) {
-                container.innerHTML = '<span style="color: var(--text-secondary)">No data yet</span>';
+                container.innerHTML = '<span style="color: var(--text-secondary)">No Agent 365 SDK data yet</span>';
                 return;
             }
 
             container.innerHTML = Array.from(sdkVersions.values())
                 .map(sdk => `<span class="sdk-tag ${sdk.hadBugs ? 'buggy' : ''}">${sdk.pkg} ${sdk.version}</span>`)
-                .join('');
+                .join(' ');
+        }
+
+        // Calculate actual bug counts from entries
+        function getActualBugCounts() {
+            const counts = { total: 0, byStage: {} };
+            metricsData.entries.forEach(entry => {
+                const bugCount = entry.bugsCaught?.details?.length || 0;
+                counts.total += bugCount;
+                if (!counts.byStage[entry.stage]) {
+                    counts.byStage[entry.stage] = 0;
+                }
+                counts.byStage[entry.stage] += bugCount;
+            });
+            return counts;
         }
 
         function renderBugsByStageChart() {
             const ctx = document.getElementById('bugsByStageChart').getContext('2d');
-            const stageData = metricsData.summary.byStage;
+            const actualCounts = getActualBugCounts();
             
             const data = [
-                stageData['pre-release']?.bugsCaught || 0,
-                stageData['pre-checkin']?.bugsCaught || 0,
-                stageData['post-checkin']?.bugsCaught || 0,
-                stageData['release']?.bugsCaught || 0
+                actualCounts.byStage['pre-release'] || 0,
+                actualCounts.byStage['pre-checkin'] || 0,
+                actualCounts.byStage['post-checkin'] || 0,
+                actualCounts.byStage['release'] || 0
             ];
 
             new Chart(ctx, {
@@ -924,7 +1069,7 @@
                 data: {
                     labels: ['Pre-Release', 'Pre-Checkin', 'Post-Checkin', 'Release'],
                     datasets: [{
-                        label: 'Bugs Caught',
+                        label: 'SDK Issues Caught',
                         data: data,
                         backgroundColor: ['#58a6ff', '#238636', '#d29922', '#da3633'],
                         borderWidth: 0,
@@ -950,15 +1095,18 @@
         function renderSdkVersionChart() {
             const ctx = document.getElementById('sdkVersionChart').getContext('2d');
             
-            // Group by SDK package and show pass/fail for each
+            // Group by SDK package and show pass/fail for each - ONLY Agent 365 SDK packages
             const packageData = {};
             metricsData.entries.forEach(entry => {
                 if (entry.sdkVersions) {
                     Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
                         // Shorten package name for display
-                        const shortPkg = pkg.replace('microsoft-agents-', 'ms-')
-                                            .replace('Microsoft.', '')
-                                            .replace('@anthropic-ai/', '');
+                        const shortPkg = pkg.replace('microsoft-agents-', '')
+                                            .replace('Microsoft.Agents.', '')
+                                            .replace('microsoft.agents.', '');
                         const label = `${shortPkg}@${version}`;
                         
                         if (!packageData[label]) {
@@ -983,7 +1131,7 @@
                 ctx.font = '14px sans-serif';
                 ctx.fillStyle = '#8b949e';
                 ctx.textAlign = 'center';
-                ctx.fillText('No SDK version data yet', ctx.canvas.width / 2, ctx.canvas.height / 2);
+                ctx.fillText('No Agent 365 SDK data yet', ctx.canvas.width / 2, ctx.canvas.height / 2);
                 return;
             }
 
@@ -1020,19 +1168,18 @@
                 }
             });
         }
-                    }
-                }
-            });
-        }
 
         function renderSdkTable() {
             const tbody = document.getElementById('sdkTableBody');
             
-            // Aggregate SDK version stats
+            // Aggregate SDK version stats - ONLY Agent 365 SDK packages
             const sdkStats = {};
             metricsData.entries.forEach(entry => {
                 if (entry.sdkVersions) {
                     Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
                         const key = `${pkg}|${version}`;
                         if (!sdkStats[key]) {
                             sdkStats[key] = { pkg, version, runs: 0, passed: 0, failed: 0 };
@@ -1074,24 +1221,34 @@
                 }
             });
 
+            // Collect bug details for each SDK package
+            const sdkBugs = {};
+            metricsData.entries.forEach(entry => {
+                if (entry.bugsCaught?.details?.length > 0 && entry.sdkVersions) {
+                    Object.keys(entry.sdkVersions).forEach(pkg => {
+                        if (isAgent365Package(pkg)) {
+                            const key = `${pkg}|${entry.sdkVersions[pkg]}`;
+                            if (!sdkBugs[key]) sdkBugs[key] = [];
+                            sdkBugs[key].push(...entry.bugsCaught.details);
+                        }
+                    });
+                }
+            });
+
             tbody.innerHTML = rows.map(sdk => {
-                const validation = sdkValidation[sdk.pkg];
-                const latestVersion = validation?.latest || 'checking...';
-                const isUpToDate = validation?.isUpToDate ?? true;
-                const isPreRelease = validation?.isPreRelease ?? false;
-                const bugsCaught = sdk.failed;
+                const key = `${sdk.pkg}|${sdk.version}`;
+                const bugs = sdkBugs[key] || [];
+                const bugsCaught = bugs.length;
+                const isPreRelease = sdk.version.includes('preview') || sdk.version.includes('alpha') || sdk.version.includes('beta');
                 
                 // Determine status
                 let statusBadge, statusText;
-                if (!isUpToDate) {
-                    statusBadge = 'warning';
-                    statusText = '⚠️ Outdated';
+                if (bugsCaught > 0) {
+                    statusBadge = 'failed';
+                    statusText = `🐛 ${bugsCaught} bugs`;
                 } else if (isPreRelease) {
                     statusBadge = 'prerelease';
                     statusText = '🔬 Pre-release';
-                } else if (bugsCaught > 0) {
-                    statusBadge = 'failed';
-                    statusText = `🐛 ${bugsCaught} bugs`;
                 } else {
                     statusBadge = 'passed';
                     statusText = '✅ Current';
@@ -1099,15 +1256,18 @@
                 
                 const preReleaseBadge = isPreRelease ? '<span class="prerelease-badge">PRE</span>' : '';
                 
+                // Make bugs clickable if there are bugs
+                const bugsCell = bugsCaught > 0 
+                    ? `<a href="#bugList" class="bug-link" title="${bugs.map(b => b.testName).join(', ')}" style="color: var(--accent-red); cursor: pointer; text-decoration: underline;">${bugsCaught}</a>`
+                    : `<span style="color: var(--accent-green)">0</span>`;
+                
                 return `
                     <tr>
                         <td><code>${sdk.pkg}</code></td>
+                        <td><code>${sdk.version}</code>${preReleaseBadge}</td>
                         <td><code>${sdk.version}</code></td>
-                        <td>
-                            <code>${latestVersion}</code>${preReleaseBadge}
-                        </td>
                         <td>${sdk.runs}</td>
-                        <td><span style="color: ${bugsCaught > 0 ? 'var(--accent-yellow)' : 'var(--accent-green)'}">${bugsCaught}</span></td>
+                        <td>${bugsCell}</td>
                         <td><span class="status-badge ${statusBadge}">${statusText}</span></td>
                     </tr>
                 `;
@@ -1116,7 +1276,27 @@
 
         function renderSampleTable() {
             const tbody = document.getElementById('sampleTableBody');
-            const sampleData = metricsData.summary.bySample;
+            
+            // Calculate sample data from entries
+            const sampleData = {};
+            metricsData.entries.forEach(entry => {
+                const sample = entry.sampleName;
+                if (!sampleData[sample]) {
+                    sampleData[sample] = { runs: 0, passed: 0, failed: 0, bugsCaught: 0, sdkVersions: {} };
+                }
+                sampleData[sample].runs++;
+                sampleData[sample].passed += entry.testResults.passed;
+                sampleData[sample].failed += entry.testResults.failed;
+                sampleData[sample].bugsCaught += entry.bugsCaught?.details?.length || 0;
+                // Store Agent 365 SDK versions only
+                if (entry.sdkVersions) {
+                    Object.entries(entry.sdkVersions).forEach(([pkg, ver]) => {
+                        if (isAgent365Package(pkg)) {
+                            sampleData[sample].sdkVersions[pkg] = ver;
+                        }
+                    });
+                }
+            });
 
             if (Object.keys(sampleData).length === 0) {
                 tbody.innerHTML = `
@@ -1133,18 +1313,18 @@
                 const total = data.passed + data.failed;
                 const successRate = total > 0 ? ((data.passed / total) * 100).toFixed(1) : 100;
                 
-                // Find latest SDK version for this sample
-                const sampleEntry = metricsData.entries.find(e => e.sampleName === sample);
-                const sdkVersion = sampleEntry?.sdkVersions ? 
-                    Object.entries(sampleEntry.sdkVersions).map(([k,v]) => `${v}`).join(', ') : 
-                    'Unknown';
+                // Get Agent 365 SDK version (first one found)
+                const sdkVersion = Object.entries(data.sdkVersions)
+                    .map(([k, v]) => v)
+                    .slice(0, 2)
+                    .join(', ') || 'N/A';
                 
                 return `
                     <tr>
                         <td>${sample}</td>
                         <td><code>${sdkVersion}</code></td>
                         <td>${data.runs}</td>
-                        <td><span style="color: ${data.bugsCaught > 0 ? 'var(--accent-yellow)' : 'var(--accent-green)'}">${data.bugsCaught}</span></td>
+                        <td><span style="color: ${data.bugsCaught > 0 ? 'var(--accent-red)' : 'var(--accent-green)'}">${data.bugsCaught}</span></td>
                         <td>
                             <span class="status-badge ${successRate >= 90 ? 'passed' : 'failed'}">
                                 ${successRate}%
@@ -1158,35 +1338,52 @@
         function renderBugList() {
             const container = document.getElementById('bugList');
             
-            // Find entries with bugs
+            // Find entries with bugs (check details array length, not count)
             const bugsFound = metricsData.entries
-                .filter(e => e.bugsCaught && e.bugsCaught.count > 0)
+                .filter(e => e.bugsCaught?.details?.length > 0)
                 .slice(0, 10);
 
             if (bugsFound.length === 0) {
                 container.innerHTML = `
                     <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
-                        ✅ No bugs caught yet. When E2E tests detect SDK issues, they'll appear here.
+                        ✅ No SDK issues caught yet. When E2E tests detect compatibility problems, they'll appear here.
                     </p>
                 `;
                 return;
             }
 
             container.innerHTML = bugsFound.map(entry => {
+                // Only show Agent 365 SDK versions
                 const sdkInfo = entry.sdkVersions ? 
-                    Object.entries(entry.sdkVersions).map(([k,v]) => `${k}@${v}`).join(', ') : 
+                    Object.entries(entry.sdkVersions)
+                        .filter(([k]) => isAgent365Package(k))
+                        .map(([k,v]) => {
+                            const shortName = k.replace('microsoft-agents-', '').replace('Microsoft.Agents.', '').replace('@microsoft/agents-', '');
+                            return `${shortName}@${v}`;
+                        })
+                        .join(', ') : 
                     'Unknown';
                 
-                return entry.bugsCaught.details.map(bug => `
+                return entry.bugsCaught.details.map(bug => {
+                    const issueLink = bug.issueUrl 
+                        ? `<a href="${bug.issueUrl}" target="_blank" class="issue-link ${bug.issueState || 'open'}">#${bug.issueNumber}</a>`
+                        : '';
+                    const runLink = entry.runUrl 
+                        ? `<a href="${entry.runUrl}" target="_blank" style="color: var(--accent-blue); font-size: 0.85rem;">View Run →</a>`
+                        : '';
+                        
+                    return `
                     <div class="bug-item">
                         <div class="bug-header">
                             <span class="bug-stage">${getStageLabel(entry.stage)} • ${entry.sampleName}</span>
                             <span class="bug-sdk">${sdkInfo}</span>
                         </div>
-                        <div class="bug-test">${bug.testName}</div>
+                        <div class="bug-test">${bug.testName} ${issueLink}</div>
                         <div class="bug-error">${bug.errorMessage || 'Test failed'}</div>
+                        <div style="margin-top: 8px;">${runLink}</div>
                     </div>
-                `).join('');
+                `;
+                }).join('');
             }).join('');
         }
 
@@ -1361,6 +1558,11 @@
         }
 
         // Load metrics on page load
+        // Use fallback data immediately, then try to fetch fresh data
+        metricsData = fallbackData;
+        renderDashboard();
+        
+        // Also try to fetch fresh data
         loadMetrics();
     </script>
 </body>
