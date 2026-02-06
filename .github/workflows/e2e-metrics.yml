@@ -42,14 +42,19 @@ jobs:
 
       - name: Determine Testing Stage
         id: stage
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TYPE: ${{ github.event.workflow_run.event }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          DISPATCH_STAGE: ${{ github.event.inputs.stage }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            STAGE="${{ github.event.inputs.stage }}"
-          elif [ "${{ github.event.workflow_run.event }}" == "schedule" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            STAGE="$DISPATCH_STAGE"
+          elif [ "$EVENT_TYPE" = "schedule" ]; then
             STAGE="scheduled"
-          elif [ "${{ github.event.workflow_run.event }}" == "pull_request" ]; then
+          elif [ "$EVENT_TYPE" = "pull_request" ]; then
             STAGE="pre-checkin"
-          elif [ "${{ github.event.workflow_run.head_branch }}" == "main" ]; then
+          elif [ "$HEAD_BRANCH" = "main" ]; then
             STAGE="post-checkin"
           else
             STAGE="pre-checkin"
@@ -83,13 +88,29 @@ jobs:
       - name: Process Test Results
         id: process
         shell: pwsh
+        env:
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CURRENT_SHA: ${{ github.sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          CURRENT_REF: ${{ github.ref_name }}
+          ACTOR_LOGIN: ${{ github.event.workflow_run.actor.login }}
+          CURRENT_ACTOR: ${{ github.actor }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          CURRENT_WORKFLOW: ${{ github.workflow }}
+          STAGE: ${{ steps.stage.outputs.stage }}
         run: |
           $scriptsPath = "./scripts/e2e"
           $artifactsPath = "./artifacts"
           $metricsDir = "./docs/metrics/raw"
           $historyFile = "./docs/metrics/history.json"
-          $stage = "${{ steps.stage.outputs.stage }}"
-          $runId = "${{ github.event.workflow_run.id || github.run_id }}"
+          $stage = $env:STAGE
+          $runId = if ($env:WORKFLOW_RUN_ID) { $env:WORKFLOW_RUN_ID } else { $env:CURRENT_RUN_ID }
+          $commitSha = if ($env:HEAD_SHA) { $env:HEAD_SHA } else { $env:CURRENT_SHA }
+          $branch = if ($env:HEAD_BRANCH) { $env:HEAD_BRANCH } else { $env:CURRENT_REF }
+          $actor = if ($env:ACTOR_LOGIN) { $env:ACTOR_LOGIN } else { $env:CURRENT_ACTOR }
+          $workflow = if ($env:WORKFLOW_NAME) { $env:WORKFLOW_NAME } else { $env:CURRENT_WORKFLOW }
           
           # Create metrics directory
           New-Item -ItemType Directory -Path $metricsDir -Force | Out-Null
@@ -106,10 +127,10 @@ jobs:
               runId = $runId
               sampleName = "unknown"
               timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-              commitSha = "${{ github.event.workflow_run.head_sha || github.sha }}"
-              branch = "${{ github.event.workflow_run.head_branch || github.ref_name }}"
-              actor = "${{ github.event.workflow_run.actor.login || github.actor }}"
-              workflow = "${{ github.event.workflow_run.name || github.workflow }}"
+              commitSha = $commitSha
+              branch = $branch
+              actor = $actor
+              workflow = $workflow
               stage = $stage
               testResults = @{
                 status = "no-results"
@@ -150,8 +171,8 @@ jobs:
                 -Stage $stage `
                 -OutputPath $metricsFile `
                 -RunId $runId `
-                -CommitSha "${{ github.event.workflow_run.head_sha || github.sha }}" `
-                -Branch "${{ github.event.workflow_run.head_branch || github.ref_name }}"
+                -CommitSha $commitSha `
+                -Branch $branch
             }
           }
           
