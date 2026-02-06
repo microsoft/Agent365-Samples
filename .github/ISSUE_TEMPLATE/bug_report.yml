@@ -1,0 +1,87 @@
+name: Bug report
+description: Something is not working correctly.
+labels: "S: needs triage, type: bug"
+
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Hi there!
+
+        We'd appreciate it if you could search on Agent365-Samples' existing issues prior to filing
+        a bug report.
+
+        We get a lot of duplicate tickets and have limited maintainer capacity to triage
+        them. Thanks!
+
+  - type: textarea
+    attributes:
+      label: Description
+      description: >-
+        A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      description: >-
+        A clear and concise description of what you expected to happen.
+
+  - type: input
+    attributes:
+      label: SDK Version
+      description: e.g., 1.0.0
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Language/Runtime
+      description: e.g., .NET 8, Python 3.11, Node.js 20
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: OS
+      description: e.g., Windows 11, macOS 14, Ubuntu 22.04
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: How to Reproduce
+      description: Please provide steps to reproduce this bug.
+      placeholder: |
+        1. Go to '...'
+        2. Run '...'
+        3. An error occurs.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Output
+      description: >-
+        Provide the output of the steps above, including the commands
+        themselves and any error messages/traceback.
+
+        If you want to present output from multiple commands, please prefix
+        the line containing the command with `$ `. Please also ensure that
+        the "How to reproduce" section contains matching instructions for
+        reproducing this.
+
+  - type: textarea
+    attributes:
+      label: Screenshots
+      description: >-
+        If applicable, add screenshots to help explain your problem.
+
+  - type: checkboxes
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: >-
+            I agree to follow the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+          required: true
