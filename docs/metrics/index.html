@@ -697,27 +697,81 @@
             </table>
         </div>
 
-        <!-- SDK Version Tracking Table -->
+        <!-- SDK Version Tracking Tables by Language -->
         <div class="sdk-section">
             <h2>📦 Agent 365 SDK Version Validation</h2>
-            <p style="color: var(--text-secondary); margin-bottom: 15px;">
-                Tracking Agent 365 SDK packages (<code>microsoft-agents-*</code>) used in E2E tests to catch compatibility issues early
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                Tracking Agent 365 SDK packages used in E2E tests to catch compatibility issues early
             </p>
-            <table id="sdkTable">
-                <thead>
-                    <tr>
-                        <th>SDK Package</th>
-                        <th>Installed</th>
-                        <th>Latest Available</th>
-                        <th>Test Runs</th>
-                        <th>Bugs Caught</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody id="sdkTableBody">
-                    <!-- Populated by JS -->
-                </tbody>
-            </table>
+            
+            <!-- Node.js SDK Packages -->
+            <div class="language-sdk-section">
+                <h3 style="color: var(--accent-green); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟢</span> Node.js Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">@microsoft/agents-*</code>
+                </h3>
+                <table id="sdkTableNodejs">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyNodejs">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- .NET SDK Packages -->
+            <div class="language-sdk-section" style="margin-top: 25px;">
+                <h3 style="color: var(--accent-purple); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟣</span> .NET Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">Microsoft.Agents.*</code>
+                </h3>
+                <table id="sdkTableDotnet">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyDotnet">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Python SDK Packages -->
+            <div class="language-sdk-section" style="margin-top: 25px;">
+                <h3 style="color: var(--accent-yellow); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟡</span> Python Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">microsoft-agents-*</code>
+                </h3>
+                <table id="sdkTablePython">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyPython">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Recent SDK Issues Caught -->
@@ -1001,6 +1055,21 @@
             return a365Patterns.some(p => pkg.toLowerCase().includes(p));
         }
 
+        // Helper to detect package language/platform
+        function getPackageLanguage(pkg) {
+            const pkgLower = pkg.toLowerCase();
+            // Node.js: @microsoft/agents-* or scoped npm packages
+            if (pkgLower.startsWith('@microsoft/agents')) return 'nodejs';
+            // .NET: Microsoft.Agents.* (PascalCase NuGet convention)
+            if (pkg.startsWith('Microsoft.Agents.')) return 'dotnet';
+            // Python: microsoft-agents-* (lowercase with hyphens, pip convention)
+            if (pkgLower.startsWith('microsoft-agents-')) return 'python';
+            // Fallback based on common patterns
+            if (pkgLower.includes('.')) return 'dotnet'; // NuGet uses dots
+            if (pkgLower.includes('-')) return 'python'; // pip uses hyphens
+            return 'unknown';
+        }
+
         function renderSdkListForStage(stage, elementId) {
             const container = document.getElementById(elementId);
             
@@ -1170,53 +1239,25 @@
         }
 
         function renderSdkTable() {
-            const tbody = document.getElementById('sdkTableBody');
+            // Aggregate SDK version stats by language - ONLY Agent 365 SDK packages
+            const sdkStatsByLang = { nodejs: {}, dotnet: {}, python: {} };
             
-            // Aggregate SDK version stats - ONLY Agent 365 SDK packages
-            const sdkStats = {};
             metricsData.entries.forEach(entry => {
                 if (entry.sdkVersions) {
                     Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
                         // Only include Agent 365 SDK packages
                         if (!isAgent365Package(pkg)) return;
                         
+                        const lang = getPackageLanguage(pkg);
+                        if (!sdkStatsByLang[lang]) sdkStatsByLang[lang] = {};
+                        
                         const key = `${pkg}|${version}`;
-                        if (!sdkStats[key]) {
-                            sdkStats[key] = { pkg, version, runs: 0, passed: 0, failed: 0 };
+                        if (!sdkStatsByLang[lang][key]) {
+                            sdkStatsByLang[lang][key] = { pkg, version, runs: 0, passed: 0, failed: 0 };
                         }
-                        sdkStats[key].runs++;
-                        sdkStats[key].passed += entry.testResults.passed;
-                        sdkStats[key].failed += entry.testResults.failed;
-                    });
-                }
-            });
-
-            const rows = Object.values(sdkStats);
-            
-            if (rows.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 40px;">
-                            SDK version data will appear after E2E tests run
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
-
-            // Get SDK validation data from most recent entries
-            const sdkValidation = {};
-            metricsData.entries.forEach(entry => {
-                if (entry.sdkValidation && entry.sdkValidation.packages) {
-                    entry.sdkValidation.packages.forEach(pkg => {
-                        if (!sdkValidation[pkg.package] || entry.timestamp > sdkValidation[pkg.package].timestamp) {
-                            sdkValidation[pkg.package] = {
-                                latest: pkg.latest,
-                                isUpToDate: pkg.isUpToDate,
-                                isPreRelease: pkg.isPreRelease,
-                                timestamp: entry.timestamp
-                            };
-                        }
+                        sdkStatsByLang[lang][key].runs++;
+                        sdkStatsByLang[lang][key].passed += entry.testResults.passed;
+                        sdkStatsByLang[lang][key].failed += entry.testResults.failed;
                     });
                 }
             });
@@ -1235,43 +1276,65 @@
                 }
             });
 
-            tbody.innerHTML = rows.map(sdk => {
-                const key = `${sdk.pkg}|${sdk.version}`;
-                const bugs = sdkBugs[key] || [];
-                const bugsCaught = bugs.length;
-                const isPreRelease = sdk.version.includes('preview') || sdk.version.includes('alpha') || sdk.version.includes('beta');
+            // Helper to render a single language table
+            function renderLanguageTable(lang, tbodyId, emptyMessage) {
+                const tbody = document.getElementById(tbodyId);
+                const rows = Object.values(sdkStatsByLang[lang] || {});
                 
-                // Determine status
-                let statusBadge, statusText;
-                if (bugsCaught > 0) {
-                    statusBadge = 'failed';
-                    statusText = `🐛 ${bugsCaught} bugs`;
-                } else if (isPreRelease) {
-                    statusBadge = 'prerelease';
-                    statusText = '🔬 Pre-release';
-                } else {
-                    statusBadge = 'passed';
-                    statusText = '✅ Current';
+                if (rows.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 30px;">
+                                ${emptyMessage}
+                            </td>
+                        </tr>
+                    `;
+                    return;
                 }
-                
-                const preReleaseBadge = isPreRelease ? '<span class="prerelease-badge">PRE</span>' : '';
-                
-                // Make bugs clickable if there are bugs
-                const bugsCell = bugsCaught > 0 
-                    ? `<a href="#bugList" class="bug-link" title="${bugs.map(b => b.testName).join(', ')}" style="color: var(--accent-red); cursor: pointer; text-decoration: underline;">${bugsCaught}</a>`
-                    : `<span style="color: var(--accent-green)">0</span>`;
-                
-                return `
-                    <tr>
-                        <td><code>${sdk.pkg}</code></td>
-                        <td><code>${sdk.version}</code>${preReleaseBadge}</td>
-                        <td><code>${sdk.version}</code></td>
-                        <td>${sdk.runs}</td>
-                        <td>${bugsCell}</td>
-                        <td><span class="status-badge ${statusBadge}">${statusText}</span></td>
-                    </tr>
-                `;
-            }).join('');
+
+                tbody.innerHTML = rows.map(sdk => {
+                    const key = `${sdk.pkg}|${sdk.version}`;
+                    const bugs = sdkBugs[key] || [];
+                    const bugsCaught = bugs.length;
+                    const isPreRelease = sdk.version.includes('preview') || sdk.version.includes('alpha') || sdk.version.includes('beta');
+                    
+                    // Determine status
+                    let statusBadge, statusText;
+                    if (bugsCaught > 0) {
+                        statusBadge = 'failed';
+                        statusText = `🐛 ${bugsCaught} bugs`;
+                    } else if (isPreRelease) {
+                        statusBadge = 'prerelease';
+                        statusText = '🔬 Pre-release';
+                    } else {
+                        statusBadge = 'passed';
+                        statusText = '✅ Current';
+                    }
+                    
+                    const preReleaseBadge = isPreRelease ? '<span class="prerelease-badge">PRE</span>' : '';
+                    
+                    // Make bugs clickable if there are bugs
+                    const bugsCell = bugsCaught > 0 
+                        ? `<a href="#bugList" class="bug-link" title="${bugs.map(b => b.testName).join(', ')}" style="color: var(--accent-red); cursor: pointer; text-decoration: underline;">${bugsCaught}</a>`
+                        : `<span style="color: var(--accent-green)">0</span>`;
+                    
+                    return `
+                        <tr>
+                            <td><code>${sdk.pkg}</code></td>
+                            <td><code>${sdk.version}</code>${preReleaseBadge}</td>
+                            <td><code>${sdk.version}</code></td>
+                            <td>${sdk.runs}</td>
+                            <td>${bugsCell}</td>
+                            <td><span class="status-badge ${statusBadge}">${statusText}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Render each language table
+            renderLanguageTable('nodejs', 'sdkTableBodyNodejs', 'No Node.js SDK packages detected yet');
+            renderLanguageTable('dotnet', 'sdkTableBodyDotnet', 'No .NET SDK packages detected yet');
+            renderLanguageTable('python', 'sdkTableBodyPython', 'No Python SDK packages detected yet');
         }
 
         function renderSampleTable() {
