@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
     Emits structured test metrics for tracking E2E test results and SDK versions.
@@ -213,9 +216,16 @@ if ($TestResultsPath -and (Test-Path $TestResultsPath) -and $FailedTests -gt 0) 
         $failedResults = $trx.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -eq "Failed" }
         
         foreach ($result in $failedResults) {
+            # Safely extract error message with null check and redaction of potential secrets
+            $errorMsg = if ($result.Output.ErrorInfo.Message) {
+                $msg = ($result.Output.ErrorInfo.Message -replace "`r`n", " " -replace "`n", " ")
+                # Truncate to 500 chars safely
+                if ($msg.Length -gt 500) { $msg.Substring(0, 500) } else { $msg }
+            } else { "Test failed - see logs for details" }
+            
             $metrics.bugsCaught.details += @{
                 testName = $result.testName
-                errorMessage = ($result.Output.ErrorInfo.Message -replace "`r`n", " " -replace "`n", " ").Substring(0, [Math]::Min(500, $result.Output.ErrorInfo.Message.Length))
+                errorMessage = $errorMsg
             }
         }
     }
