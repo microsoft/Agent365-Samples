@@ -8,7 +8,7 @@
     "description":
     {
         "short": "n8n Sample Agent",
-        "full": "This sample demonstrates how to build an agent using n8n's built-in Microsoft Agent 365 node, with observability, notifications, and MCP tools included."
+        "full": "This sample demonstrates how to build an agent using n8n's built-in Microsoft Agent 365 node."
     },
     "icons": {
         "outline": "outline.png",
