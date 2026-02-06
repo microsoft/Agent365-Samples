@@ -26,6 +26,21 @@
             box-sizing: border-box;
         }
 
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        @keyframes countUp {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background-color: var(--bg-primary);
@@ -41,14 +56,20 @@
 
         header {
             text-align: center;
-            padding: 30px 0;
+            padding: 40px 0;
             border-bottom: 1px solid var(--border-color);
             margin-bottom: 30px;
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+            animation: fadeInUp 0.6s ease-out;
         }
 
         header h1 {
             font-size: 2.5rem;
             margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
         header p {
@@ -75,6 +96,13 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 20px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         .card h3 {
@@ -116,7 +144,24 @@
             padding: 25px;
             position: relative;
             overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
         }
+
+        .stage-card:nth-child(1) { animation-delay: 0.1s; }
+        .stage-card:nth-child(2) { animation-delay: 0.2s; }
+        .stage-card:nth-child(3) { animation-delay: 0.3s; }
+        .stage-card:nth-child(4) { animation-delay: 0.4s; }
+
+        .stage-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .stage-card.pre-release:hover { border-color: var(--accent-blue); }
+        .stage-card.pre-checkin:hover { border-color: var(--accent-green); }
+        .stage-card.post-checkin:hover { border-color: var(--accent-yellow); }
+        .stage-card.release:hover { border-color: var(--accent-red); }
 
         .stage-card::before {
             content: '';
@@ -194,6 +239,13 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 20px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
+        }
+
+        .chart-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         .chart-card h3 {
@@ -228,6 +280,14 @@
             padding: 15px;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
+        }
+
+        tbody tr {
+            transition: background-color 0.15s ease;
+        }
+
+        tbody tr:hover {
+            background-color: var(--bg-tertiary);
         }
 
         th {
@@ -458,11 +518,54 @@
         /* Footer */
         footer {
             text-align: center;
-            padding: 30px;
+            padding: 40px 30px;
             color: var(--text-secondary);
             border-top: 1px solid var(--border-color);
             margin-top: 40px;
+            background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
         }
+
+        footer p {
+            margin: 5px 0;
+        }
+
+        footer .footer-links {
+            margin-top: 15px;
+        }
+
+        footer .footer-links a {
+            color: var(--accent-blue);
+            text-decoration: none;
+            margin: 0 15px;
+            transition: color 0.2s;
+        }
+
+        footer .footer-links a:hover {
+            color: var(--accent-purple);
+            text-decoration: underline;
+        }
+
+        /* Live Status Indicator */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 15px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status-dot.live { background: var(--accent-green); }
+        .status-dot.stale { background: var(--accent-yellow); }
 
         /* Value Proposition */
         .value-prop {
@@ -498,6 +601,10 @@
             <h1>🛡️ Agent 365 SDK Integration Testing</h1>
             <p>Catching SDK issues before they reach production</p>
             <div class="last-updated" id="lastUpdated">Loading...</div>
+            <div class="status-indicator">
+                <span class="status-dot live" id="statusDot"></span>
+                <span id="statusText">Live data</span>
+            </div>
         </header>
 
         <!-- Value Proposition -->
@@ -655,8 +762,13 @@
         </div>
 
         <footer>
-            <p>Agent 365 SDK Integration Testing Dashboard</p>
+            <p><strong>Agent 365 SDK Integration Testing Dashboard</strong></p>
             <p>Automated E2E testing ensures SDK compatibility across all sample implementations</p>
+            <div class="footer-links">
+                <a href="https://github.com/microsoft/Agent365-Samples/actions" target="_blank">📋 View All Runs</a>
+                <a href="https://github.com/microsoft/Agent365-Samples/issues?q=is%3Aissue+label%3Ae2e-failure" target="_blank">🐛 E2E Issues</a>
+                <a href="https://github.com/microsoft/Agent365-Samples" target="_blank">📂 Repository</a>
+            </div>
         </footer>
     </div>
 
@@ -690,23 +802,56 @@
             }
         }
 
+        // Animate counter from 0 to target value
+        function animateCounter(elementId, target) {
+            const element = document.getElementById(elementId);
+            const duration = 1000;
+            const steps = 30;
+            const stepDuration = duration / steps;
+            let current = 0;
+            const increment = target / steps;
+            
+            const timer = setInterval(() => {
+                current += increment;
+                if (current >= target) {
+                    element.textContent = target.toLocaleString();
+                    clearInterval(timer);
+                } else {
+                    element.textContent = Math.floor(current).toLocaleString();
+                }
+            }, stepDuration);
+        }
+
         function renderDashboard() {
             if (!metricsData) return;
 
-            // Update last updated
+            // Update last updated with status indicator
+            const lastUpdatedDate = new Date(metricsData.lastUpdated);
+            const now = new Date();
+            const hoursSinceUpdate = (now - lastUpdatedDate) / (1000 * 60 * 60);
+            
             document.getElementById('lastUpdated').textContent = 
-                `Last updated: ${new Date(metricsData.lastUpdated).toLocaleString()}`;
+                `Last updated: ${lastUpdatedDate.toLocaleString()}`;
+            
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (hoursSinceUpdate < 24) {
+                statusDot.className = 'status-dot live';
+                statusText.textContent = 'Live data';
+            } else {
+                statusDot.className = 'status-dot stale';
+                statusText.textContent = `Updated ${Math.floor(hoursSinceUpdate / 24)}d ago`;
+            }
 
-            // Update total bugs caught
-            document.getElementById('totalBugsCaught').textContent = 
-                metricsData.summary.totalBugsCaught.toLocaleString();
+            // Update total bugs caught with animation
+            animateCounter('totalBugsCaught', metricsData.summary.totalBugsCaught);
 
             // Update stage cards
             const stages = metricsData.summary.byStage;
-            document.getElementById('preReleaseBugs').textContent = stages['pre-release']?.bugsCaught || 0;
-            document.getElementById('preCheckinBugs').textContent = stages['pre-checkin']?.bugsCaught || 0;
-            document.getElementById('postCheckinBugs').textContent = stages['post-checkin']?.bugsCaught || 0;
-            document.getElementById('releaseBugs').textContent = stages['release']?.bugsCaught || 0;
+            animateCounter('preReleaseBugs', stages['pre-release']?.bugsCaught || 0);
+            animateCounter('preCheckinBugs', stages['pre-checkin']?.bugsCaught || 0);
+            animateCounter('postCheckinBugs', stages['post-checkin']?.bugsCaught || 0);
+            animateCounter('releaseBugs', stages['release']?.bugsCaught || 0);
 
             // Update SDK version lists for each stage
             renderSdkListForStage('pre-release', 'preReleaseSdkList');
