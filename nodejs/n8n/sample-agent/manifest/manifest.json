@@ -8,7 +8,7 @@
     "description":
     {
         "short": "n8n Sample Agent",
-        "full": "This sample demonstrates how to build an agent using n8n in Node.js with the Microsoft Agent 365 SDK."
+        "full": "This sample demonstrates how to build an agent using n8n's built-in Microsoft Agent 365 node, with observability, notifications, and MCP tools included."
     },
     "icons": {
         "outline": "outline.png",
