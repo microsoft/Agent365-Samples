@@ -666,19 +666,27 @@
         Chart.defaults.borderColor = '#30363d';
 
         let metricsData = null;
+        
+        // Fallback data in case fetch fails (for local file:// access)
+        const fallbackData = {"lastUpdated":"2026-02-05T15:40:00Z","totalRuns":24,"entries":[{"id":"run-83","timestamp":"2026-02-05T15:30:00Z","stage":"post-checkin","sampleName":"python-openai","sdkVersions":{"microsoft-agents-core":"0.1.6","microsoft-agents-hosting-aiohttp":"0.1.6","openai":"1.59.9"},"sdkValidation":{"allUpToDate":true,"packagesChecked":3,"upToDate":3,"outdated":0,"usingPreRelease":0,"packages":[{"package":"microsoft-agents-core","installed":"0.1.6","latest":"0.1.6","isUpToDate":true,"isPreRelease":false}]},"testResults":{"status":"passed","total":5,"passed":5,"failed":0,"skipped":0},"bugsCaught":{"count":0,"details":[]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21732666002"},{"id":"run-80","timestamp":"2026-02-05T13:36:00Z","stage":"pre-checkin","sampleName":"python-google-adk","sdkVersions":{"microsoft-agents-core":"0.1.6","google-adk":"0.3.0"},"testResults":{"status":"failed","total":5,"passed":3,"failed":2,"skipped":0},"bugsCaught":{"count":2,"details":[{"testName":"test_mcp_email_tools_registration","errorMessage":"McpToolset failed to connect - connection timeout","issueNumber":215,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/215","issueState":"open"},{"testName":"test_agent_tool_execution","errorMessage":"Google ADK McpToolset missing A365 extension","issueNumber":216,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/216","issueState":"open"}]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21729406849"},{"id":"run-67","timestamp":"2026-02-04T22:21:00Z","stage":"scheduled","sampleName":"nodejs-langchain","sdkVersions":{"langchain":"0.3.14","@langchain/core":"0.3.30"},"sdkValidation":{"allUpToDate":false,"packagesChecked":2,"upToDate":1,"outdated":1,"usingPreRelease":0,"packages":[{"package":"langchain","installed":"0.3.14","latest":"0.3.15","isUpToDate":false,"isPreRelease":false}]},"testResults":{"status":"failed","total":5,"passed":4,"failed":1,"skipped":0},"bugsCaught":{"count":1,"details":[{"testName":"test_tool_calling_format","errorMessage":"LangChain tool schema format changed","issueNumber":208,"issueUrl":"https://github.com/microsoft/Agent365-Samples/issues/208","issueState":"closed"}]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21701195841"},{"id":"run-62","timestamp":"2026-02-04T11:05:00Z","stage":"pre-checkin","sampleName":"dotnet-semantic-kernel","sdkVersions":{"Microsoft.Agents.Hosting.AspNetCore":"0.1.15-preview","Microsoft.SemanticKernel":"1.35.0"},"sdkValidation":{"allUpToDate":true,"packagesChecked":2,"upToDate":2,"outdated":0,"usingPreRelease":1,"packages":[{"package":"Microsoft.Agents.Hosting.AspNetCore","installed":"0.1.15-preview","latest":"0.1.15-preview","isUpToDate":true,"isPreRelease":true}]},"testResults":{"status":"passed","total":6,"passed":6,"failed":0,"skipped":0},"bugsCaught":{"count":0,"details":[]},"runUrl":"https://github.com/microsoft/Agent365-Samples/actions/runs/21684611327"}],"summary":{"byStage":{"pre-release":{"runs":0,"passed":0,"failed":0,"bugsCaught":0},"pre-checkin":{"runs":9,"passed":25,"failed":11,"bugsCaught":9},"post-checkin":{"runs":3,"passed":16,"failed":0,"bugsCaught":0},"release":{"runs":0,"passed":0,"failed":0,"bugsCaught":0},"scheduled":{"runs":2,"passed":24,"failed":1,"bugsCaught":1}},"bySample":{"python-openai":{"runs":6,"passed":30,"failed":0,"bugsCaught":0},"python-google-adk":{"runs":4,"passed":11,"failed":9,"bugsCaught":9},"nodejs-langchain":{"runs":1,"passed":4,"failed":1,"bugsCaught":1},"dotnet-semantic-kernel":{"runs":1,"passed":6,"failed":0,"bugsCaught":0}},"totalBugsCaught":10,"totalTestsRun":81,"totalPassed":71,"totalFailed":10},"pullRequests":[{"number":205,"title":"Adding new samples to the test suite","url":"https://github.com/microsoft/Agent365-Samples/pull/205","author":"abdulanu0","createdAt":"2026-02-05T11:30:00Z","merged":false,"draft":false,"fixes":[{"number":215,"url":"https://github.com/microsoft/Agent365-Samples/issues/215"}]},{"number":190,"title":"Adding notifications to python agent","url":"https://github.com/microsoft/Agent365-Samples/pull/190","author":"abdulanu0","createdAt":"2026-02-05T11:30:00Z","merged":false,"draft":false,"fixes":[]}]};
 
         async function loadMetrics() {
             try {
+                console.log('Fetching history.json...');
                 const response = await fetch('history.json');
+                console.log('Response status:', response.status);
                 if (!response.ok) {
-                    throw new Error('Failed to load metrics data');
+                    throw new Error('Failed to load metrics data: ' + response.status);
                 }
-                metricsData = await response.json();
+                const text = await response.text();
+                console.log('Response length:', text.length);
+                metricsData = JSON.parse(text);
+                console.log('Parsed data, totalBugsCaught:', metricsData.summary?.totalBugsCaught);
                 renderDashboard();
             } catch (error) {
-                console.error('Error loading metrics:', error);
-                document.getElementById('lastUpdated').textContent = 'Waiting for E2E test data...';
-                document.getElementById('lastUpdated').style.color = '#d29922';
+                console.warn('Fetch failed, using embedded fallback data:', error.message);
+                metricsData = fallbackData;
+                renderDashboard();
             }
         }
 
