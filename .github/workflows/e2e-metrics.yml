@@ -1,5 +1,7 @@
 # E2E Test Metrics Collection Workflow
 # This workflow runs after E2E tests complete to collect metrics and update the dashboard
+# NOTE: This workflow requires `contents: write` to commit generated E2E metrics.
+# Workflow steps only update metrics-related files (docs/metrics/).
 
 name: E2E Metrics Collection
 
@@ -23,6 +25,11 @@ on:
           - post-checkin
           - release
           - scheduled
+
+# Prevent concurrent metrics updates to avoid merge conflicts
+concurrency:
+  group: metrics-update
+  cancel-in-progress: false
 
 permissions:
   contents: write

@@ -30,7 +30,7 @@ param(
     [string]$MetricsFile,
 
     [Parameter(Mandatory = $false)]
-    [string]$Repository = "microsoft/Agent365-Samples",
+    [string]$Repository = $(if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "microsoft/Agent365-Samples" }),
 
     [Parameter(Mandatory = $false)]
     [string[]]$Labels = @("e2e-failure", "automated"),
@@ -187,6 +187,13 @@ function New-GitHubIssue {
             --body-file $bodyFile `
             --label ($IssueData.labels -join ",") 2>&1
         
+        # Check for gh CLI errors
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: gh issue create failed with exit code $LASTEXITCODE" -ForegroundColor Red
+            Write-Host "Output: $result" -ForegroundColor Yellow
+            return $null
+        }
+        
         # Parse issue URL from result
         if ($result -match "https://github.com/.+/issues/(\d+)") {
             $issueNumber = $Matches[1]
@@ -196,7 +203,7 @@ function New-GitHubIssue {
             }
         }
         
-        Write-Host "Warning: Could not parse issue URL from: $result" -ForegroundColor Yellow
+        Write-Host "Error: Failed to create issue. Could not parse URL from output: $result" -ForegroundColor Red
         return $null
     }
     catch {
@@ -204,7 +211,12 @@ function New-GitHubIssue {
         return $null
     }
     finally {
-        Remove-Item $bodyFile -Force -ErrorAction SilentlyContinue
+        try {
+            Remove-Item $bodyFile -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Host "Warning: Could not clean up temp file $bodyFile : $_" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -289,7 +301,7 @@ $sdkInfo
 
 ---
 *This issue was automatically created by the E2E test pipeline.*
-*Dashboard: [View Metrics](https://microsoft.github.io/Agent365-Samples/metrics/)*
+*Dashboard: [View Metrics]($(if ($env:METRICS_DASHBOARD_URL) { $env:METRICS_DASHBOARD_URL } else { 'https://microsoft.github.io/Agent365-Samples/metrics/' }))*
 "@
 
     $issueData = @{

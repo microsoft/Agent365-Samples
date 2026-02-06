@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 <#
 .SYNOPSIS
     Aggregates individual test metrics into a consolidated metrics history file.
@@ -60,8 +63,11 @@ $history = @{
 if (Test-Path $HistoryFile) {
     try {
         $existingHistory = Get-Content $HistoryFile -Raw | ConvertFrom-Json -AsHashtable
-        if ($existingHistory.entries) {
+        # Validate parsed JSON has expected properties before accessing
+        if ($existingHistory -and $existingHistory.entries) {
             $history.entries = $existingHistory.entries
+        }
+        if ($existingHistory -and $existingHistory.summary) {
             $history.summary = $existingHistory.summary
         }
         Write-Host "Loaded existing history with $($history.entries.Count) entries" -ForegroundColor Green

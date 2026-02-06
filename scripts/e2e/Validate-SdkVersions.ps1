@@ -199,7 +199,7 @@ function Get-InstalledVersions {
                 foreach ($line in $lines) {
                     if ($line -match '^([a-zA-Z0-9_-]+)\s*([=<>!~]+)?\s*([\d.a-zA-Z-]+)?') {
                         $pkgName = $Matches[1]
-                        $version = if ($Matches[3]) { $Matches[3] } else { "not-pinned" }
+                        $version = if ($Matches.Count -ge 4 -and $Matches[3]) { $Matches[3] } else { "not-pinned" }
                         $versions[$pkgName] = $version
                     }
                 }
@@ -302,6 +302,10 @@ foreach ($pkgName in $trackedPackages) {
     }
     
     if ($latest) {
+        # Note: This uses simple string equality for version comparison.
+        # For semantic versioning with pre-release identifiers, a more robust
+        # comparison would be needed, but equality check suffices for our use case
+        # of detecting when installed version matches latest available.
         $isUpToDate = ($installed -eq $latest) -or ($installed -eq "not-pinned")
         $isPreRelease = $latest -match '(alpha|beta|preview|pre|rc|dev|a\d|b\d|-)'
         

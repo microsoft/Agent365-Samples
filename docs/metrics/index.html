@@ -618,7 +618,7 @@
         <!-- Stage Cards - Main Focus -->
         <div class="stage-cards">
             <div class="stage-card pre-release">
-                <h3>🔬 Pre-Release Testing</h3>
+                <h3><span role="img" aria-label="microscope">🔬</span> Pre-Release Testing</h3>
                 <div class="bugs-caught" id="preReleaseBugs">0</div>
                 <div class="description">Issues caught testing pre-release Agent 365 SDK versions</div>
                 <div class="sdk-versions">
@@ -661,15 +661,15 @@
         <!-- Charts -->
         <div class="charts-section">
             <div class="chart-card">
-                <h3>📊 Bugs Caught by Testing Stage</h3>
+                <h3><span role="img" aria-label="chart">📊</span> Bugs Caught by Testing Stage</h3>
                 <div class="chart-container">
-                    <canvas id="bugsByStageChart"></canvas>
+                    <canvas id="bugsByStageChart" role="img" aria-label="Bar chart showing number of SDK issues caught at each testing stage"></canvas>
                 </div>
             </div>
             <div class="chart-card">
-                <h3>📦 SDK Test Results by Package</h3>
+                <h3><span role="img" aria-label="package">📦</span> SDK Test Results by Package</h3>
                 <div class="chart-container">
-                    <canvas id="sdkVersionChart"></canvas>
+                    <canvas id="sdkVersionChart" role="img" aria-label="Chart showing SDK test results by package and version"></canvas>
                 </div>
             </div>
         </div>
@@ -834,6 +834,17 @@
         // Chart.js default styling
         Chart.defaults.color = '#8b949e';
         Chart.defaults.borderColor = '#30363d';
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return String(unsafe)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
 
         let metricsData = null;
         
@@ -1003,16 +1014,20 @@
             });
 
             // Update last updated with status indicator
-            const lastUpdatedDate = new Date(metricsData.lastUpdated);
+            // Handle null lastUpdated gracefully
+            const lastUpdatedDate = metricsData.lastUpdated ? new Date(metricsData.lastUpdated) : null;
             const now = new Date();
-            const hoursSinceUpdate = (now - lastUpdatedDate) / (1000 * 60 * 60);
+            const hoursSinceUpdate = lastUpdatedDate ? (now - lastUpdatedDate) / (1000 * 60 * 60) : Infinity;
             
             document.getElementById('lastUpdated').textContent = 
-                `Last updated: ${lastUpdatedDate.toLocaleString()}`;
+                lastUpdatedDate ? `Last updated: ${lastUpdatedDate.toLocaleString()}` : 'Awaiting first E2E run';
             
             const statusDot = document.getElementById('statusDot');
             const statusText = document.getElementById('statusText');
-            if (hoursSinceUpdate < 24) {
+            if (!lastUpdatedDate) {
+                statusDot.className = 'status-dot stale';
+                statusText.textContent = 'No data yet';
+            } else if (hoursSinceUpdate < 24) {
                 statusDot.className = 'status-dot live';
                 statusText.textContent = 'Live data';
             } else {
@@ -1438,11 +1453,11 @@
                     return `
                     <div class="bug-item">
                         <div class="bug-header">
-                            <span class="bug-stage">${getStageLabel(entry.stage)} • ${entry.sampleName}</span>
-                            <span class="bug-sdk">${sdkInfo}</span>
+                            <span class="bug-stage">${getStageLabel(entry.stage)} • ${escapeHtml(entry.sampleName)}</span>
+                            <span class="bug-sdk">${escapeHtml(sdkInfo)}</span>
                         </div>
-                        <div class="bug-test">${bug.testName} ${issueLink}</div>
-                        <div class="bug-error">${bug.errorMessage || 'Test failed'}</div>
+                        <div class="bug-test">${escapeHtml(bug.testName)} ${issueLink}</div>
+                        <div class="bug-error">${escapeHtml(bug.errorMessage) || 'Test failed'}</div>
                         <div style="margin-top: 8px;">${runLink}</div>
                     </div>
                 `;
@@ -1598,20 +1613,20 @@
                 
                 // Render linked issues this PR fixes
                 const fixesLinks = pr.fixes && pr.fixes.length > 0
-                    ? pr.fixes.map(i => `<a href="${i.url}" class="issue-link closed" target="_blank">#${i.number}</a>`).join('')
+                    ? pr.fixes.map(i => `<a href="${escapeHtml(i.url)}" class="issue-link closed" target="_blank">#${i.number}</a>`).join('')
                     : '';
                 
                 return `
                     <div class="pr-item ${stateClass}">
                         <div class="pr-header">
-                            <a href="${pr.url}" class="pr-title" target="_blank">
-                                ${stateIcon} ${pr.title}
+                            <a href="${escapeHtml(pr.url)}" class="pr-title" target="_blank">
+                                ${stateIcon} ${escapeHtml(pr.title)}
                             </a>
                             <span class="status-badge ${stateClass}">${pr.merged ? 'Merged' : pr.draft ? 'Draft' : 'Open'}</span>
                         </div>
                         <div class="pr-meta">
                             <span>📅 ${new Date(pr.createdAt).toLocaleDateString()}</span>
-                            <span>👤 ${pr.author}</span>
+                            <span>👤 ${escapeHtml(pr.author)}</span>
                             <span>🏷️ #${pr.number}</span>
                         </div>
                         ${fixesLinks ? `<div class="pr-fixes">Fixes: ${fixesLinks}</div>` : ''}
