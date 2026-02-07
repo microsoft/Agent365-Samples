@@ -1,0 +1,74 @@
+{
+  "managedIdentityPrincipalId": null,
+  "agentBlueprintId": "1e0816a0-498f-4484-a34f-7b249afa2289",
+  "agentBlueprintObjectId": "1e0816a0-498f-4484-a34f-7b249afa2289",
+  "agentBlueprintServicePrincipalObjectId": "195b59f8-10a4-4fd2-983f-c6265e293cb2",
+  "AgenticAppId": null,
+  "AgenticUserId": null,
+  "agentBlueprintClientSecret": "AQAAANCMnd8BFdERjHoAwE/Cl\u002BsBAAAAhCZw/0UI6UaJcBldHLj3twAAAAACAAAAAAAQZgAAAAEAACAAAACusYdGE0HG\u002BsN5MZU5rJ69U23LW33CXn1YUF/UMrtAigAAAAAOgAAAAAIAACAAAADhesMZaTJHnpicfWDjzU5XzdfglSoLUYo5ES7Lk0aeNDAAAADcGY5bMCQ/3oSZMmq6\u002BySEIxOfFrwqRqMT9RC0X5o10oUdzLON\u002Bh\u002BQtCJNx34sWmFAAAAACV/m0q6kvph1//3z\u002BSRAeibKIcMays1OvXJY5EEcVwfL/dZaaU\u002B6yS4/jHL3GB06RWD8ISw9vNYtRyMm0Snjpw==",
+  "agentBlueprintClientSecretProtected": true,
+  "botId": "1e0816a0-498f-4484-a34f-7b249afa2289",
+  "botMsaAppId": "1e0816a0-498f-4484-a34f-7b249afa2289",
+  "botMessagingEndpoint": "https://testagentmcp-webapp.azurewebsites.net/api/messages",
+  "resourceConsents": [
+    {
+      "resourceName": "Microsoft Graph",
+      "resourceAppId": "00000003-0000-0000-c000-000000000000",
+      "consentGranted": true,
+      "consentTimestamp": "2026-02-04T23:38:52.0135728Z",
+      "scopes": [
+        "Mail.ReadWrite",
+        "Mail.Send",
+        "Chat.ReadWrite",
+        "User.Read.All",
+        "Sites.Read.All"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Agent 365 Tools",
+      "resourceAppId": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1",
+      "consentGranted": true,
+      "consentTimestamp": "2026-02-04T23:39:11.4671499Z",
+      "scopes": [
+        "McpServers.Calendar.All",
+        "McpServers.Mail.All",
+        "McpServersMetadata.Read.All"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Messaging Bot API",
+      "resourceAppId": "5a807f24-c9de-44ee-a3a7-329e88a00ffc",
+      "consentGranted": true,
+      "consentTimestamp": "2026-02-04T23:39:13.3584027Z",
+      "scopes": [
+        "Authorization.ReadWrite",
+        "user_impersonation"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Observability API",
+      "resourceAppId": "9b975845-388f-4429-889e-eab1ef63949c",
+      "consentGranted": true,
+      "consentTimestamp": "2026-02-04T23:39:15.2248581Z",
+      "scopes": [
+        "user_impersonation"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    }
+  ],
+  "deploymentLastTimestamp": null,
+  "deploymentLastStatus": null,
+  "deploymentLastCommitHash": null,
+  "deploymentLastBuildId": null,
+  "lastUpdated": "2026-02-04T23:39:15.2250782Z",
+  "cliVersion": "1.1.48.44627",
+  "completed": true,
+  "completedAt": "2026-02-04T23:39:07.5318685Z"
+}

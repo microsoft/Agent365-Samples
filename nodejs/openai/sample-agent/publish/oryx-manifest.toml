@@ -1,0 +1,7 @@
+[build]
+platform = "nodejs"
+version = "24"
+build-command = "npm run build"
+
+[run]
+command = "node dist/index.js"

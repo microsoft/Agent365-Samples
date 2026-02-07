@@ -1,0 +1,20 @@
+{
+  "tenantId": "0e1dc4a7-d92e-4dc0-bae4-68a67aa7e430",
+  "subscriptionId": "036fbe85-4135-4d07-931d-20ead1cbaf53",
+  "resourceGroup": "rg-diana-1786",
+  "location": "centralus",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "76466750-1d96-4580-8b07-78ee2fb9c6a7",
+  "appServicePlanName": "dianamb-agent365-plan",
+  "appServicePlanSku": "B1",
+  "webAppName": "testagentmcp-webapp",
+  "agentIdentityDisplayName": "TestAgentMcp Identity",
+  "agentBlueprintDisplayName": "TestAgentMcp Blueprint",
+  "agentUserPrincipalName": "UPN.testagentmcp@zavasdfv2.onmicrosoft.com",
+  "agentUserDisplayName": "TestAgentMcp Agent User",
+  "managerEmail": "diana@zavasdfv2.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "C:\\Repos\\Agent365-Samples\\nodejs\\openai\\sample-agent",
+  "agentDescription": "TestAgentMcp - Agent 365 Agent"
+}
