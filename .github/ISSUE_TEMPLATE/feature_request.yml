@@ -1,0 +1,66 @@
+name: Feature request
+description: Suggest an idea for this project.
+labels: "S: needs triage, type: feature"
+
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Hi there!
+
+        Thanks for taking the time to suggest a new feature! Please search existing
+        issues first to make sure this hasn't already been requested.
+
+  - type: textarea
+    attributes:
+      label: Is your feature request related to a problem?
+      description: >-
+        A clear and concise description of what the problem is.
+      placeholder: "Ex. When I try X [...]"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Priority
+      description: What priority would you assign to this feature?
+      options:
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Describe the solution you'd like
+      description: >-
+        A clear and concise description of what you want to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Describe alternatives you've considered
+      description: >-
+        A clear and concise description of any alternative solutions or features you've considered.
+
+  - type: textarea
+    attributes:
+      label: Available workarounds
+      description: >-
+        Are there any available workarounds in case this feature does not get picked up?
+
+  - type: textarea
+    attributes:
+      label: Additional context
+      description: >-
+        Add any other context or screenshots about the feature request here.
+
+  - type: checkboxes
+    attributes:
+      label: Code of Conduct
+      options:
+        - label: >-
+            I agree to follow the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+          required: true
