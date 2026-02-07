@@ -172,6 +172,12 @@ $scriptLines = @(
 
 # Add runtime-specific pre-flight checks
 if ($Runtime -eq "python") {
+    # Extract the Python module name from the start command (e.g., "uv run python main.py" -> "main")
+    $pythonModule = "main"
+    if ($StartCommand -match "python\s+(\w+)\.py") {
+        $pythonModule = $matches[1]
+    }
+    
     $scriptLines += @(
         "Write-Host 'Checking Python environment...'"
         "uv run python --version"
@@ -179,9 +185,9 @@ if ($Runtime -eq "python") {
         "uv run pip list | Select-Object -First 20"
         "Write-Host ''"
         "Write-Host 'Testing Python can import main script...'"
-        "uv run python -c `"import start_with_generic_host; print('Import OK')`""
+        "uv run python -c `"import $pythonModule; print('Import OK')`""
         "if (`$LASTEXITCODE -ne 0) {"
-        "    Write-Host 'ERROR: Failed to import start_with_generic_host.py' -ForegroundColor Red"
+        "    Write-Host 'ERROR: Failed to import $pythonModule.py' -ForegroundColor Red"
         "    exit 1"
         "}"
     )

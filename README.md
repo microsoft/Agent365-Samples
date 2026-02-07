@@ -12,6 +12,8 @@ This repository contains sample agents and prompts for building with the Microso
 | Sample | Status |
 |--------|--------|
 | Python OpenAI | [![Python OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-openai.yml) |
+| Python Agent Framework | [![Python AF](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-agent-framework.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-agent-framework.yml) |
+| Python Google ADK | [![Python Google ADK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-google-adk.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-google-adk.yml) |
 | Node.js OpenAI | [![Node.js OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-openai.yml) |
 | Node.js LangChain | [![Node.js LangChain](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-langchain.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-langchain.yml) |
 | .NET Semantic Kernel | [![.NET SK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-dotnet-semantic-kernel.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-dotnet-semantic-kernel.yml) |

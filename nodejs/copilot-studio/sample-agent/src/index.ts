@@ -16,6 +16,12 @@ const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {
 
 const server: Express = express()
 server.use(express.json())
+
+// Health endpoint - before auth middleware so it's always accessible
+server.get('/api/health', (_req, res: Response) => {
+  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
 server.use(authorizeJWT(authConfig))
 
 server.post('/api/messages', (req: Request, res: Response) => {
