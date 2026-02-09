@@ -47,6 +47,14 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Checkout Metrics Repository
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/Agent365-metrics
+          ref: main
+          path: metrics-repo
+          token: ${{ secrets.METRICS_REPO_TOKEN }}
+
       - name: Determine Testing Stage
         id: stage
         env:
@@ -110,8 +118,8 @@ jobs:
         run: |
           $scriptsPath = "./scripts/e2e"
           $artifactsPath = "./artifacts"
-          $metricsDir = "./docs/metrics/raw"
-          $historyFile = "./docs/metrics/history.json"
+          $metricsDir = "./metrics-repo/docs/raw"
+          $historyFile = "./metrics-repo/docs/history.json"
           $stage = $env:STAGE
           $runId = if ($env:WORKFLOW_RUN_ID) { $env:WORKFLOW_RUN_ID } else { $env:CURRENT_RUN_ID }
           $commitSha = if ($env:HEAD_SHA) { $env:HEAD_SHA } else { $env:CURRENT_SHA }
@@ -210,11 +218,12 @@ jobs:
 
       - name: Commit Metrics Update
         if: steps.process.outputs.metrics_updated == 'true'
+        working-directory: metrics-repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add docs/metrics/history.json
+          git add docs/history.json
           
           # Check if there are changes to commit
           if git diff --staged --quiet; then
@@ -222,7 +231,7 @@ jobs:
           else
             git commit -m "📊 Update E2E test metrics [skip ci]"
             git push origin main
-            echo "✅ Metrics committed and pushed"
+            echo "✅ Metrics committed and pushed to Agent365-metrics"
           fi
 
       - name: Create GitHub Issues for Failures
@@ -249,4 +258,4 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Testing Stage: **${{ steps.stage.outputs.stage }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "View the [Metrics Dashboard](https://microsoft.github.io/Agent365-Samples/metrics/) for detailed statistics." >> $GITHUB_STEP_SUMMARY
+          echo "View the [E2E Testing Dashboard](https://agent365-metrics-dashboard.azurewebsites.net/api/e2e-dashboard) for detailed statistics." >> $GITHUB_STEP_SUMMARY
