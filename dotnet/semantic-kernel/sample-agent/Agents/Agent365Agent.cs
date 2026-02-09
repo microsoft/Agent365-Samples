@@ -98,11 +98,12 @@ public class Agent365Agent
 
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-            // Get the local client name from configuration (if configured for local MCP discovery)
+            // Get the client name from configuration for local MCP discovery
+            // This should match the client name used when registering LocaProto
             var localClientName = configuration["LocalMcp:ClientName"];
 
             // Add MCP servers (email, calendar, local file system, etc.) via ATG
-            // If localClientName is provided, also discovers local Windows MCP servers dynamically
+            // If localClientName is provided, also discovers local Windows MCP servers
             await toolService.AddToolServersWithLocalDiscoveryAsync(
                 kernel, 
                 userAuthorization, 
