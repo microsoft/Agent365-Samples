@@ -21,4 +21,4 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: always
-          deny-licenses: GPL-3.0, AGPL-3.0
+          deny-licenses: GPL-3.0-only, AGPL-3.0-only
