@@ -71,16 +71,14 @@ class MyAgent(AgentApplication):
         )
 
         self.agent = agent
-        # Auth handler name - defaults to empty (no auth handler) for E2E tests
-        # Set AUTH_HANDLER_NAME=AGENTIC for production agentic auth
-        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        self.auth_handler_name = "AGENTIC"
         self.agent_notification = AgentNotification(self)
 
         self._setup_handlers()
 
     def _setup_handlers(self):
         """Set up activity handlers for the agent."""
-        auth_handlers = [self.auth_handler_name] if self.auth_handler_name else None
+        auth_handlers = [self.auth_handler_name]
 
         @self.conversation_update("membersAdded")
         async def help_handler(context: TurnContext, _: TurnState):

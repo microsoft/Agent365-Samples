@@ -52,13 +52,8 @@ def start_server(agent_app: AgentApplication):
     if (auth_config and isProduction):
         middlewares.append(jwt_authorization_middleware)
 
-    # Health endpoint
-    async def health(_req: Request) -> Response:
-        return Response(text='{"status": "healthy"}', content_type='application/json')
-
     # Configure App
     app = Application(middlewares=middlewares)
-    app.router.add_get("/api/health", health)
     app.router.add_post("/api/messages", entry_point)
     app["agent_configuration"] = auth_config
 

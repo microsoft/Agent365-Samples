@@ -67,11 +67,6 @@ class McpToolRegistrationService:
 
         self._logger.info(f"Loaded {len(mcp_server_configs)} MCP server configurations")
 
-        # If no MCP servers configured, return the original agent
-        if not mcp_server_configs:
-            self._logger.info("No MCP servers configured, returning agent without MCP tools")
-            return agent
-
         # Convert MCP server configs to MCPServerInfo objects
         mcp_servers_info = []
         mcp_server_headers = {
@@ -79,24 +74,14 @@ class McpToolRegistrationService:
         }
 
         for server_config in mcp_server_configs:
-            try:
-                self._logger.info(f"Adding MCP server: {server_config.mcp_server_name} at {server_config.url}")
-                server_info = McpToolset(
-                    connection_params=StreamableHTTPConnectionParams(
-                        url=server_config.url,
-                        headers=mcp_server_headers
-                    )
+            server_info = McpToolset(
+                connection_params=StreamableHTTPConnectionParams(
+                    url=server_config.mcp_server_unique_name,
+                    headers=mcp_server_headers
                 )
-                mcp_servers_info.append(server_info)
-            except Exception as e:
-                self._logger.error(f"Failed to add MCP server {server_config.mcp_server_name}: {e}")
-                # Continue with other servers if one fails
-                continue
+            )
 
-        # If no MCP servers could be added, return the original agent
-        if not mcp_servers_info:
-            self._logger.warning("No MCP servers could be added, returning agent without MCP tools")
-            return agent
+            mcp_servers_info.append(server_info)
 
         all_tools = agent.tools + mcp_servers_info
 
@@ -104,6 +89,5 @@ class McpToolRegistrationService:
             name=agent.name,
             model=agent.model,
             description=agent.description,
-            instruction=agent.instruction,
             tools=all_tools,
         )
