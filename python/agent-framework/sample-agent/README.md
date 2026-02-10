@@ -61,7 +61,13 @@ This sample binds to `0.0.0.0` (all network interfaces) instead of `localhost`. 
 ### Build and run with Docker
 
 ```bash
+# Navigate to the sample directory first
+cd python/agent-framework/sample-agent
+
+# Build the container image
 docker build -t python-agent .
+
+# Run with required environment variables
 docker run -p 3978:3978 \
   -e AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com/ \
   -e AZURE_OPENAI_API_KEY=your-key \
@@ -72,17 +78,32 @@ docker run -p 3978:3978 \
 ### Azure Container Apps
 
 ```bash
+# Navigate to the sample directory
+cd python/agent-framework/sample-agent
+
+# Ensure you're logged in to Azure CLI
+az login
+az account set --subscription <your-subscription-id>
+
 # Build and push to Azure Container Registry
 az acr build --registry <your-acr> --image python-agent:latest .
 
-# Create Container App
+# Create Container App with required environment variables
 az containerapp create \
   --name python-agent \
   --resource-group <your-rg> \
   --environment <your-env> \
   --image <your-acr>.azurecr.io/python-agent:latest \
   --target-port 3978 \
-  --ingress external
+  --ingress external \
+  --env-vars \
+    AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com/ \
+    AZURE_OPENAI_API_KEY=secretref:openai-key \
+    AZURE_OPENAI_DEPLOYMENT=gpt-4o
+
+# Note: For production, use Azure Container Apps secrets for API keys:
+# az containerapp secret set --name python-agent --resource-group <your-rg> \
+#   --secrets openai-key=<your-actual-api-key>
 ```
 
 ## Support
