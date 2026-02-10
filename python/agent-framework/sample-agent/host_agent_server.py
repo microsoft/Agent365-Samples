@@ -332,12 +332,12 @@ class GenericAgentHost:
         print(f"🏢 {self.agent_class.__name__}")
         print("=" * 80)
         print(f"🔒 Auth: {'Enabled' if auth_configuration else 'Anonymous'}")
-        print(f"🚀 Server: localhost:{port}")
+        print(f"🚀 Server: 0.0.0.0:{port}")
         print(f"📚 Endpoint: http://localhost:{port}/api/messages")
         print(f"❤️  Health: http://localhost:{port}/api/health\n")
 
         try:
-            run_app(app, host="localhost", port=port, handle_signals=True)
+            run_app(app, host="0.0.0.0", port=port, handle_signals=True)
         except KeyboardInterrupt:
             print("\n👋 Server stopped")
 

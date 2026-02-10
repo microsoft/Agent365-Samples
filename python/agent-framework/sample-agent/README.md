@@ -24,6 +24,67 @@ To set up and test this agent, refer to the [Configure Agent Testing](https://le
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
 
+## Container Deployment
+
+Container deployment is the recommended approach for production Agent 365 workloads. Here's why:
+
+### Why Container Deployment?
+
+**Production Readiness**
+- **Consistency**: Containers ensure identical behavior across development, staging, and production environments, eliminating "works on my machine" issues
+- **Isolation**: Each agent runs in its own isolated environment with explicit dependencies, preventing conflicts with other services
+- **Scalability**: Container orchestrators (Kubernetes, Azure Container Apps) can automatically scale agent instances based on demand
+
+**Azure Integration**
+- **Azure Container Apps**: Purpose-built for microservices and agents with built-in autoscaling, managed certificates, and seamless Azure service integration
+- **Azure Kubernetes Service (AKS)**: Enterprise-grade orchestration for complex multi-agent deployments
+- **Azure Container Registry**: Private registry for secure image storage with geo-replication
+
+**Operational Benefits**
+- **Health Checks**: Container runtimes monitor `/api/health` to automatically restart unhealthy agents
+- **Rolling Updates**: Deploy new versions with zero downtime using blue-green or canary strategies
+- **Resource Limits**: Define CPU/memory boundaries to prevent runaway processes
+
+### Network Binding Fix
+
+This sample binds to `0.0.0.0` (all network interfaces) instead of `localhost`. This is **required** for container deployments because:
+
+- `localhost` (127.0.0.1) only accepts connections from inside the container
+- External traffic (Bot Framework messages, health checks) comes from outside the container network
+- Binding to `0.0.0.0` allows the agent to receive requests on any network interface
+
+**Symptoms if using localhost in containers:**
+- Container starts but health checks fail with "Connection refused"
+- Agent works locally but fails when deployed to Docker/Kubernetes/Container Apps
+- Bot Framework cannot reach the `/api/messages` endpoint
+
+### Build and run with Docker
+
+```bash
+docker build -t python-agent .
+docker run -p 3978:3978 \
+  -e AZURE_OPENAI_ENDPOINT=https://your-endpoint.openai.azure.com/ \
+  -e AZURE_OPENAI_API_KEY=your-key \
+  -e AZURE_OPENAI_DEPLOYMENT=gpt-4o \
+  python-agent
+```
+
+### Azure Container Apps
+
+```bash
+# Build and push to Azure Container Registry
+az acr build --registry <your-acr> --image python-agent:latest .
+
+# Create Container App
+az containerapp create \
+  --name python-agent \
+  --resource-group <your-rg> \
+  --environment <your-env> \
+  --image <your-acr>.azurecr.io/python-agent:latest \
+  --target-port 3978 \
+  --ingress external
+```
+
 ## Support
 
 For issues, questions, or feedback:
