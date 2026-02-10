@@ -412,7 +412,6 @@ npm run watch
 - [Claude Sample Design](../claude/sample-agent/docs/design.md)
 - [Devin Sample Design](../devin/sample-agent/docs/design.md)
 - [LangChain Sample Design](../langchain/sample-agent/docs/design.md)
-- [N8N Sample Design](../n8n/sample-agent/docs/design.md)
 - [OpenAI Sample Design](../openai/sample-agent/docs/design.md)
 - [Perplexity Sample Design](../perplexity/sample-agent/docs/design.md)
 - [Vercel SDK Sample Design](../vercel-sdk/sample-agent/docs/design.md)
