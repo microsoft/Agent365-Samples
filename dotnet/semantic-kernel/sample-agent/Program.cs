@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Agent365SemanticKernelSampleAgent.Agents;
+using Agent365SemanticKernelSampleAgent.Extensions;
 using Agent365SemanticKernelSampleAgent.telemetry;
 using Microsoft.Agents.A365.Observability;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
@@ -32,6 +33,9 @@ if (builder.Environment.IsDevelopment())
 }
 
 builder.Services.AddHttpClient();
+
+// Register Trigger Evaluation services for personalized notification handling
+builder.Services.AddTriggerEvaluation(builder.Configuration);
 
 // Register Semantic Kernel
 builder.Services.AddKernel();

@@ -188,8 +188,37 @@ public class Agent365Agent
             {
                 if (!string.IsNullOrEmpty(response.Content))
                 {
-                    var jsonNode = JsonNode.Parse(response.Content);
-                    context?.StreamingResponse.QueueTextChunk(jsonNode!["content"]!.ToString());
+                    // Try to parse as JSON and extract content, handle different response formats
+                    try
+                    {
+                        var jsonNode = JsonNode.Parse(response.Content);
+
+                        // Check if this is a trigger evaluation response - don't stream these to user
+                        var isActiveNode = jsonNode?["isActive"];
+                        if (isActiveNode != null)
+                        {
+                            // Trigger evaluation response - don't stream, just collect
+                            // The caller will parse this for internal processing
+                        }
+                        else
+                        {
+                            var contentNode = jsonNode?["content"];
+                            if (contentNode != null)
+                            {
+                                context?.StreamingResponse.QueueTextChunk(contentNode.ToString());
+                            }
+                            else
+                            {
+                                // Not standard format - stream raw content
+                                context?.StreamingResponse.QueueTextChunk(response.Content);
+                            }
+                        }
+                    }
+                    catch (JsonException)
+                    {
+                        // Not valid JSON - stream raw content
+                        context?.StreamingResponse.QueueTextChunk(response.Content);
+                    }
                 }
 
                 chatHistory.Add(response);
@@ -201,12 +230,40 @@ public class Agent365Agent
             {
                 string resultContent = sb.ToString();
                 var jsonNode = JsonNode.Parse(resultContent);
-                Agent365AgentResponse result = new()
+
+                // Check if this is a trigger evaluation response (internal use only, not user-facing)
+                var isActiveNode = jsonNode?["isActive"];
+                if (isActiveNode != null)
                 {
-                    Content = jsonNode!["content"]!.ToString(),
-                    ContentType = Enum.Parse<Agent365AgentResponseContentType>(jsonNode["contentType"]!.ToString(), true)
+                    // This is a trigger evaluation response - return for internal processing
+                    // The caller will parse this, it should NOT be shown to the user
+                    return new Agent365AgentResponse
+                    {
+                        Content = resultContent,
+                        ContentType = Agent365AgentResponseContentType.Text
+                    };
+                }
+
+                // Check if this is a standard response format with content/contentType
+                var contentNode = jsonNode?["content"];
+                var contentTypeNode = jsonNode?["contentType"];
+
+                if (contentNode != null && contentTypeNode != null)
+                {
+                    Agent365AgentResponse result = new()
+                    {
+                        Content = contentNode.ToString(),
+                        ContentType = Enum.Parse<Agent365AgentResponseContentType>(contentTypeNode.ToString(), true)
+                    };
+                    return result;
+                }
+
+                // Unknown format - return raw content
+                return new Agent365AgentResponse
+                {
+                    Content = resultContent,
+                    ContentType = Agent365AgentResponseContentType.Text
                 };
-                return result;
             }
             catch (Exception je)
             {

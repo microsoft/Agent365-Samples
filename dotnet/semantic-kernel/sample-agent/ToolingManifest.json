@@ -1,6 +1,9 @@
 {
 	"mcpServers": [
 		{
+			"mcpServerName": "mcp_TaskPersonalizationServer"
+		},
+		{
 			"mcpServerName": "mcp_MailTools"
 		}
 	]
