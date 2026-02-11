@@ -1,7 +1,9 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 # E2E Test Metrics Collection Workflow
 # This workflow runs after E2E tests complete to collect metrics and update the dashboard
-# NOTE: This workflow requires `contents: write` to commit generated E2E metrics.
-# Workflow steps only update metrics-related files (docs/metrics/).
+# Uses GitHub API to fetch workflow run job statuses (no artifacts needed)
 
 name: E2E Metrics Collection
 
@@ -14,17 +16,10 @@ on:
   # Allow manual trigger for testing
   workflow_dispatch:
     inputs:
-      stage:
-        description: 'Testing stage'
-        required: true
-        default: 'scheduled'
-        type: choice
-        options:
-          - pre-release
-          - pre-checkin
-          - post-checkin
-          - release
-          - scheduled
+      run_id:
+        description: 'Workflow run ID to collect metrics from (optional)'
+        required: false
+        type: string
 
 # Prevent concurrent metrics updates to avoid merge conflicts
 concurrency:
@@ -32,230 +27,226 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
   actions: read
-  issues: write
 
 jobs:
   collect-metrics:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 0
-
       - name: Checkout Metrics Repository
         uses: actions/checkout@v4
         with:
           repository: microsoft/Agent365-metrics
           ref: main
-          path: metrics-repo
           token: ${{ secrets.METRICS_REPO_TOKEN }}
 
-      - name: Determine Testing Stage
-        id: stage
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_TYPE: ${{ github.event.workflow_run.event }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          DISPATCH_STAGE: ${{ github.event.inputs.stage }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            STAGE="$DISPATCH_STAGE"
-          elif [ "$EVENT_TYPE" = "schedule" ]; then
-            STAGE="scheduled"
-          elif [ "$EVENT_TYPE" = "pull_request" ]; then
-            STAGE="pre-checkin"
-          elif [ "$HEAD_BRANCH" = "main" ]; then
-            STAGE="post-checkin"
-          else
-            STAGE="pre-checkin"
-          fi
-          echo "stage=$STAGE" >> $GITHUB_OUTPUT
-          echo "Testing stage: $STAGE"
-
-      - name: Download E2E Test Artifacts
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+      - name: Fetch E2E Test Results from Workflow Run
+        id: results
+        uses: actions/github-script@v7
         with:
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: ./artifacts
-        continue-on-error: true
-
-      - name: List Downloaded Artifacts
-        run: |
-          echo "=== Downloaded Artifacts ==="
-          find ./artifacts -type f -name "*.trx" 2>/dev/null || echo "No TRX files found"
-          find ./artifacts -type f -name "*.json" 2>/dev/null || echo "No JSON files found"
-
-      - name: Extract SDK Versions from Workflow Run
-        id: sdk-versions
-        if: github.event_name == 'workflow_run'
-        run: |
-          # SDK versions are logged in workflow summaries
-          # For now, we'll extract from artifacts if available
-          echo "sdk_versions={}" >> $GITHUB_OUTPUT
-
-      - name: Process Test Results
-        id: process
-        shell: pwsh
-        env:
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          CURRENT_SHA: ${{ github.sha }}
-          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-          CURRENT_REF: ${{ github.ref_name }}
-          ACTOR_LOGIN: ${{ github.event.workflow_run.actor.login }}
-          CURRENT_ACTOR: ${{ github.actor }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          CURRENT_WORKFLOW: ${{ github.workflow }}
-          STAGE: ${{ steps.stage.outputs.stage }}
-        run: |
-          $scriptsPath = "./scripts/e2e"
-          $artifactsPath = "./artifacts"
-          $metricsDir = "./metrics-repo/docs/raw"
-          $historyFile = "./metrics-repo/docs/history.json"
-          $stage = $env:STAGE
-          $runId = if ($env:WORKFLOW_RUN_ID) { $env:WORKFLOW_RUN_ID } else { $env:CURRENT_RUN_ID }
-          $commitSha = if ($env:HEAD_SHA) { $env:HEAD_SHA } else { $env:CURRENT_SHA }
-          $branch = if ($env:HEAD_BRANCH) { $env:HEAD_BRANCH } else { $env:CURRENT_REF }
-          $actor = if ($env:ACTOR_LOGIN) { $env:ACTOR_LOGIN } else { $env:CURRENT_ACTOR }
-          $workflow = if ($env:WORKFLOW_NAME) { $env:WORKFLOW_NAME } else { $env:CURRENT_WORKFLOW }
-          
-          # Create metrics directory
-          New-Item -ItemType Directory -Path $metricsDir -Force | Out-Null
-          
-          # Find all test result files
-          $trxFiles = Get-ChildItem -Path $artifactsPath -Filter "*.trx" -Recurse -ErrorAction SilentlyContinue
-          
-          if ($trxFiles.Count -eq 0) {
-            Write-Host "No TRX files found in artifacts" -ForegroundColor Yellow
+          script: |
+            // Get the workflow run ID
+            let runId;
+            if (context.eventName === 'workflow_run') {
+              runId = context.payload.workflow_run.id;
+            } else if (context.payload.inputs && context.payload.inputs.run_id) {
+              runId = parseInt(context.payload.inputs.run_id);
+            } else {
+              core.setFailed('No workflow run ID available');
+              return;
+            }
             
-            # Create a placeholder metric for the run
-            $metrics = @{
-              id = "$runId-no-results"
-              runId = $runId
-              sampleName = "unknown"
-              timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-              commitSha = $commitSha
-              branch = $branch
-              actor = $actor
-              workflow = $workflow
-              stage = $stage
-              testResults = @{
-                status = "no-results"
-                passed = 0
-                failed = 0
-                skipped = 0
-                total = 0
+            console.log(`Fetching results for workflow run: ${runId}`);
+            
+            // Get the workflow run details
+            const { data: workflowRun } = await github.rest.actions.getWorkflowRun({
+              owner: 'microsoft',
+              repo: 'Agent365-Samples',
+              run_id: runId
+            });
+            
+            console.log(`Workflow: ${workflowRun.name}`);
+            console.log(`Status: ${workflowRun.status}`);
+            console.log(`Conclusion: ${workflowRun.conclusion}`);
+            console.log(`Branch: ${workflowRun.head_branch}`);
+            console.log(`Commit: ${workflowRun.head_sha}`);
+            
+            // Get all jobs for the workflow run
+            const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: 'microsoft',
+              repo: 'Agent365-Samples',
+              run_id: runId
+            });
+            
+            // Map job names to sample names
+            const sampleMapping = {
+              'Python OpenAI E2E': 'python-openai',
+              'Python Agent Framework E2E': 'python-af',
+              'Node.js OpenAI E2E': 'nodejs-openai',
+              'Node.js LangChain E2E': 'nodejs-langchain',
+              '.NET Semantic Kernel E2E': 'dotnet-sk',
+              '.NET Agent Framework E2E': 'dotnet-af'
+            };
+            
+            // Determine testing stage
+            let stage = 'scheduled';
+            if (workflowRun.event === 'pull_request') {
+              stage = 'pre-checkin';
+            } else if (workflowRun.event === 'push' && workflowRun.head_branch === 'main') {
+              stage = 'post-checkin';
+            } else if (workflowRun.event === 'schedule') {
+              stage = 'scheduled';
+            }
+            
+            // Create one entry per sample (matches dashboard format)
+            const entries = [];
+            let passedCount = 0;
+            let failedCount = 0;
+            
+            for (const job of jobsData.jobs) {
+              const sampleName = sampleMapping[job.name];
+              if (!sampleName) {
+                console.log(`Skipping job: ${job.name} (not a sample job)`);
+                continue;
               }
-              sdkVersions = @{}
-              bugsCaught = @{
-                count = 0
-                stage = $stage
-                details = @()
-              }
+              
+              const passed = job.conclusion === 'success';
+              const failed = job.conclusion === 'failure';
+              
+              if (passed) passedCount++;
+              if (failed) failedCount++;
+              
+              // Create entry in dashboard-expected format
+              const entry = {
+                id: `run-${runId}-${sampleName}`,
+                timestamp: workflowRun.created_at,
+                stage: stage,
+                sampleName: sampleName,
+                sdkVersions: {}, // SDK versions not available from API
+                testResults: {
+                  status: passed ? 'passed' : (failed ? 'failed' : 'skipped'),
+                  total: 1,
+                  passed: passed ? 1 : 0,
+                  failed: failed ? 1 : 0,
+                  skipped: (!passed && !failed) ? 1 : 0
+                },
+                bugsCaught: {
+                  count: 0,
+                  details: []
+                },
+                runUrl: workflowRun.html_url
+              };
+              
+              entries.push(entry);
+              console.log(`${sampleName}: ${job.conclusion}`);
             }
             
-            $metricsFile = Join-Path $metricsDir "$runId-no-results.json"
-            $metrics | ConvertTo-Json -Depth 10 | Out-File $metricsFile -Encoding UTF8
-            Write-Host "Created placeholder metrics file"
-          }
-          else {
-            Write-Host "Found $($trxFiles.Count) TRX files" -ForegroundColor Green
+            // Write entries to file
+            const fs = require('fs');
+            fs.writeFileSync('new-entries.json', JSON.stringify(entries, null, 2));
             
-            foreach ($trxFile in $trxFiles) {
-              # Extract sample name from path
-              $pathParts = $trxFile.DirectoryName -split '[/\\]'
-              $sampleName = ($pathParts | Where-Object { $_ -match "(python|nodejs|dotnet)" }) -join "-"
-              if (-not $sampleName) { $sampleName = "unknown" }
-              
-              Write-Host "Processing: $($trxFile.Name) for sample: $sampleName" -ForegroundColor Cyan
-              
-              # Emit metrics for this test result
-              $metricsFile = Join-Path $metricsDir "$runId-$sampleName.json"
-              
-              & "$scriptsPath/Emit-TestMetrics.ps1" `
-                -SampleName $sampleName `
-                -TestResultsPath $trxFile.FullName `
-                -Stage $stage `
-                -OutputPath $metricsFile `
-                -RunId $runId `
-                -CommitSha $commitSha `
-                -Branch $branch
-            }
-          }
-          
-          # Aggregate all metrics
-          Write-Host "Aggregating metrics..." -ForegroundColor Cyan
-          & "$scriptsPath/Aggregate-Metrics.ps1" `
-            -MetricsDir $metricsDir `
-            -HistoryFile $historyFile
-          
-          # Output metrics updated flag
-          echo "metrics_updated=true" >> $env:GITHUB_OUTPUT
-          
-          # Check for failures that need GitHub issues
-          $rawFiles = Get-ChildItem -Path $metricsDir -Filter "*.json" -ErrorAction SilentlyContinue
-          $hasFailures = $false
-          foreach ($file in $rawFiles) {
-            $data = Get-Content $file.FullName | ConvertFrom-Json
-            if ($data.testResults.failed -gt 0) {
-              $hasFailures = $true
-              echo "has_failures=true" >> $env:GITHUB_OUTPUT
-              echo "failed_metrics_file=$($file.FullName)" >> $env:GITHUB_OUTPUT
-              break
-            }
-          }
-          
-          # Clean up raw metrics (they're now in history)
-          Remove-Item -Path $metricsDir -Recurse -Force -ErrorAction SilentlyContinue
+            core.setOutput('run_id', runId);
+            core.setOutput('conclusion', workflowRun.conclusion);
+            core.setOutput('passed', passedCount);
+            core.setOutput('failed', failedCount);
+            core.setOutput('stage', stage);
+            core.setOutput('branch', workflowRun.head_branch);
+            core.setOutput('entry_count', entries.length);
+            
+            console.log(`\n=== Created ${entries.length} entries ===`);
 
-      - name: Commit Metrics Update
-        if: steps.process.outputs.metrics_updated == 'true'
-        working-directory: metrics-repo
+      - name: Update History File
+        id: update
+        run: |
+          HISTORY_FILE="docs/history.json"
+          NEW_ENTRIES_FILE="new-entries.json"
+          
+          echo "=== Updating history file ==="
+          
+          # Read the new entries
+          NEW_ENTRIES=$(cat "$NEW_ENTRIES_FILE")
+          ENTRY_COUNT=$(echo "$NEW_ENTRIES" | jq 'length')
+          echo "New entries to add: $ENTRY_COUNT"
+          
+          # Read existing history or create new one
+          if [ -f "$HISTORY_FILE" ]; then
+            HISTORY=$(cat "$HISTORY_FILE")
+          else
+            HISTORY='{"lastUpdated":null,"totalRuns":0,"entries":[],"summary":{},"pullRequests":[]}'
+          fi
+          
+          # Get run ID from first entry to check for duplicates
+          RUN_ID="${{ steps.results.outputs.run_id }}"
+          
+          # Remove any existing entries from this run (by matching run-XXXX- prefix in id)
+          HISTORY=$(echo "$HISTORY" | jq --arg runId "run-${RUN_ID}-" '
+            .entries = [.entries[] | select(.id | startswith($runId) | not)]
+          ')
+          
+          # Add new entries at the beginning
+          HISTORY=$(echo "$HISTORY" | jq --argjson newEntries "$NEW_ENTRIES" '
+            .entries = $newEntries + .entries
+          ')
+          
+          # Update metadata
+          TOTAL_RUNS=$(echo "$HISTORY" | jq '.entries | length')
+          LAST_UPDATED=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Calculate summary stats
+          PASSED=$(echo "$HISTORY" | jq '[.entries[].testResults.passed] | add // 0')
+          FAILED=$(echo "$HISTORY" | jq '[.entries[].testResults.failed] | add // 0')
+          TOTAL=$((PASSED + FAILED))
+          if [ "$TOTAL" -gt 0 ]; then
+            PASS_RATE=$((PASSED * 100 / TOTAL))
+          else
+            PASS_RATE=0
+          fi
+          
+          HISTORY=$(echo "$HISTORY" | jq --arg updated "$LAST_UPDATED" --argjson total "$TOTAL_RUNS" --argjson passRate "$PASS_RATE" '
+            .lastUpdated = $updated |
+            .totalRuns = $total |
+            .summary.passRate = $passRate
+          ')
+          
+          # Keep only last 200 entries to prevent file from growing too large
+          HISTORY=$(echo "$HISTORY" | jq '.entries = .entries[:200]')
+          
+          # Write updated history
+          echo "$HISTORY" | jq '.' > "$HISTORY_FILE"
+          
+          echo "✅ History file updated"
+          echo "Total entries: $TOTAL_RUNS"
+          echo "Pass rate: $PASS_RATE%"
+          
+          # Check if there are changes
+          git diff --quiet "$HISTORY_FILE" && echo "has_changes=false" >> $GITHUB_OUTPUT || echo "has_changes=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and Push Metrics
+        if: steps.update.outputs.has_changes == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
           git add docs/history.json
+          git commit -m "📊 Update E2E metrics for run #${{ steps.results.outputs.run_id }} [skip ci]"
+          git push origin main
           
-          # Check if there are changes to commit
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "📊 Update E2E test metrics [skip ci]"
-            git push origin main
-            echo "✅ Metrics committed and pushed to Agent365-metrics"
-          fi
+          echo "✅ Metrics committed and pushed to Agent365-metrics"
 
-      - name: Create GitHub Issues for Failures
-        if: steps.process.outputs.has_failures == 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate Summary
         run: |
-          $scriptsPath = "./scripts/e2e"
-          $metricsFile = "${{ steps.process.outputs.failed_metrics_file }}"
-          
-          if (Test-Path $metricsFile) {
-            Write-Host "Creating GitHub issues for failures..." -ForegroundColor Cyan
-            & "$scriptsPath/Create-GitHubIssue.ps1" `
-              -MetricsFile $metricsFile `
-              -Repository "${{ github.repository }}"
-          } else {
-            Write-Host "No metrics file found for issue creation" -ForegroundColor Yellow
-          }
-
-      - name: Generate Metrics Summary
-        run: |
-          echo "## 📊 E2E Test Metrics Updated" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 E2E Test Metrics Collected" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Testing Stage: **${{ steps.stage.outputs.stage }}**" >> $GITHUB_STEP_SUMMARY
+          echo "**Run ID:** ${{ steps.results.outputs.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ steps.results.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Stage:** ${{ steps.results.outputs.stage }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Result:** ${{ steps.results.outputs.conclusion }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | ${{ steps.results.outputs.passed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | ${{ steps.results.outputs.failed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📝 Entries | ${{ steps.results.outputs.entry_count }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "View the [E2E Testing Dashboard](https://agent365-metrics-dashboard.azurewebsites.net/api/e2e-dashboard) for detailed statistics." >> $GITHUB_STEP_SUMMARY
