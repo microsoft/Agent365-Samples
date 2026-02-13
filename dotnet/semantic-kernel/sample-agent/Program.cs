@@ -5,8 +5,10 @@ using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
 using Microsoft.Agents.A365.Observability;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
+using Microsoft.Agents.A365.Observability.Hosting;
 using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
+using Microsoft.Agents.A365.Tooling.LocalMcp.Extensions;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Hosting.AspNetCore;
@@ -19,12 +21,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.SemanticKernel;
 using System.Threading;
-
+using System.Threading.Tasks;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 // Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
- builder.ConfigureOpenTelemetry();
+builder.ConfigureOpenTelemetry();
 
 if (builder.Environment.IsDevelopment())
 {
@@ -43,12 +45,6 @@ if (builder.Configuration.GetSection("AIServices").GetValue<bool>("UseAzureOpenA
         deploymentName: builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("DeploymentName")!,
         endpoint: builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("Endpoint")!,
         apiKey: builder.Configuration.GetSection("AIServices:AzureOpenAI").GetValue<string>("ApiKey")!);
-
-    //Use the Azure CLI (for local) or Managed Identity (for Azure running app) to authenticate to the Azure OpenAI service
-    //credentials: new ChainedTokenCredential(
-    //   new AzureCliCredential(),
-    //   new ManagedIdentityCredential()
-    //));
 }
 else
 {
@@ -66,25 +62,41 @@ builder.AddA365Tracing(config =>
     config.WithSemanticKernel();
 });
 
-
 // Add AgentApplicationOptions from appsettings section "AgentApplication".
 builder.AddAgentApplicationOptions();
 
-// Add the AgentApplication, which contains the logic for responding to
-// user messages.
+// Add the AgentApplication, which contains the logic for responding to user messages.
 builder.AddAgent<MyAgent>();
 
-// Register IStorage.  For development, MemoryStorage is suitable.
+// Register IStorage. For development, MemoryStorage is suitable.
 // For production Agents, persisted storage should be used so
 // that state survives Agent restarts, and operates correctly
 // in a cluster of Agent instances.
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
+// Register MCP Tool services for cloud MCP servers (ATG)
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 
+// Register Local MCP scope validator for access control on local MCP servers
+// This validates that admin has granted consent for local MCP server scopes
+// before allowing invocation (similar to how remote MCP servers validate via token)
+builder.Services.AddSingleton<ILocalMcpScopeValidator, LocalMcpScopeValidator>();
+
+// Add Local MCP Proxy for Windows desktop MCP servers via WNS
+// This enables the agent to discover and call local MCP tools on the user's Windows machine
+// Configuration is read from appsettings.json sections: WnsConfiguration and LocalMcpProxy
+//
+// By default, in-memory storage is used (suitable for development only).
+// For production, configure a persistent storage backend:
+//   .UseCustomStorage<CosmosDbSessionManager>()   - For multi-region
+//   .UseCustomStorage<RedisSessionManager>()      - For horizontal scaling
+//   .UseCustomStorage(sp => new MyStorage(...))   - For custom implementations
+builder.Services.AddLocalMcpProxy(builder.Configuration);
+// TODO: For production, add: .UseCustomStorage<YourProductionSessionManager>();
+
 // Configure the HTTP request pipeline.
-// Add AspNet token validation for Azure Bot Service and Entra.  Authentication is configured in the appsettings.json "TokenValidation" section.
+// Add AspNet token validation for Azure Bot Service and Entra.
 builder.Services.AddControllers();
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
@@ -96,8 +108,12 @@ WebApplication app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Enable Local MCP Proxy endpoints (WebSocket, WNS registration, discovery, etc.)
+// This adds: /api/channels/register, /api/notify/{client}, /ws/mcp/{session}, /api/mcp/{session}, etc.
+app.UseLocalMcpProxy();
+
 // This receives incoming messages from Azure Bot Service or other SDK Agents
-var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
+app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
     await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
@@ -105,16 +121,13 @@ var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, Htt
     }).ConfigureAwait(false);
 });
 
-// Health check endpoint for CI/CD pipelines and monitoring
-app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp = System.DateTime.UtcNow }));
-
 if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
     app.MapGet("/", () => "Agent 365 Semantic Kernel Example Agent");
     app.UseDeveloperExceptionPage();
     app.MapControllers().AllowAnonymous();
 
-    // Hard coded for brevity and ease of testing. 
+    // Hard coded for brevity and ease of testing.
     // In production, this should be set in configuration.
     app.Urls.Add($"http://localhost:3978");
 }
@@ -122,4 +135,5 @@ else
 {
     app.MapControllers();
 }
+
 app.Run();

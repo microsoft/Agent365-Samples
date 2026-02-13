@@ -232,3 +232,38 @@ src/samples/ModelContextProtocol/GitHubMCPServer/Properties/ServiceDependencies/
 
 # Agent SDK generated files
 *.transcript
+
+# Log and debug files
+*.zip
+*.txt
+webapp-logs*/
+logs*/
+latest_logs/
+newest_logs/
+*-logs/
+*-logs*/
+mcp-tool-logs*.txt
+portal-logs.txt
+webapp-config.json
+
+# Development docs (not for commit)
+*-GUIDE.md
+*-FIX.md
+*-SUMMARY.md
+*-REFERENCE.md
+*-COMPARISON.md
+*-ANALYSIS.md
+LOCAL_MCP*.md
+PROTOCOL_*.md
+ATG-*.html
+ATG-*.docx
+
+# Azure deploy artifacts
+.azure/
+publish.zip
+deploy*.zip
+app.zip
+manifest/
+
+# ProtoSite (experimental)
+../../../ProtoSite/
