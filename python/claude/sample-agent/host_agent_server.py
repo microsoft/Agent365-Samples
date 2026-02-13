@@ -459,7 +459,12 @@ class GenericAgentHost:
         
         # Host configuration - 0.0.0.0 for Azure, localhost for local dev
         # Azure App Service requires binding to 0.0.0.0 for health probes to work
-        host = environ.get("HOST", "0.0.0.0")
+        if "HOST" in environ:
+            host = environ["HOST"]
+        elif environ.get("WEBSITE_INSTANCE_ID"):
+            host = "0.0.0.0"
+        else:
+            host = "localhost"
 
         # Simple port availability check (only for local dev)
         if host == "localhost" or host == "127.0.0.1":

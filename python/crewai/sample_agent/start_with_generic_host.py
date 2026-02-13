@@ -18,7 +18,7 @@ try:
     import pysqlite3  # type: ignore
 
     sys.modules["sqlite3"] = pysqlite3
-except Exception:
+except (ImportError, ModuleNotFoundError):
     # Fall back to built-in sqlite3; may fail if version is too old
     pass
 

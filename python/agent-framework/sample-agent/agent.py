@@ -37,7 +37,10 @@ logger = logging.getLogger(__name__)
 # <DependencyImports>
 
 # AgentFramework SDK
-from agent_framework import ChatAgent
+try:
+    from agent_framework import ChatAgent
+except ImportError:
+    from agent_framework._agents import ChatAgent
 from agent_framework.azure import AzureOpenAIChatClient
 
 # Agent Interface
