@@ -1,0 +1,82 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: Python Claude Sample - Build Validation
+
+on:
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  contents: read
+  
+jobs:
+  build-and-validate:
+    name: Build and Validate Claude Sample
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python/claude/sample-agent
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --pre -e .
+    
+    - name: Check Python syntax
+      run: |
+        python -m py_compile agent.py
+        python -m py_compile host_agent_server.py
+        python -m py_compile start_with_generic_host.py
+        python -m py_compile agent_interface.py
+        python -m py_compile local_authentication_options.py
+        python -m py_compile token_cache.py
+        python -m py_compile observability_config.py
+        python -m py_compile turn_context_utils.py
+        python -m py_compile mcp_tool_registration_service.py
+    
+    - name: Validate pyproject.toml
+      run: |
+        if [ ! -f "pyproject.toml" ]; then
+          echo "pyproject.toml not found"
+          exit 1
+        fi
+        python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))" 2>/dev/null || python -c "import tomli; tomli.load(open('pyproject.toml', 'rb'))"
+    
+    - name: Check for required files
+      run: |
+        required_files=("README.md" "AGENT-CODE-WALKTHROUGH.md" ".env.template" "ToolingManifest.json")
+        for file in "${required_files[@]}"; do
+          if [ ! -f "$file" ]; then
+            echo "Required file $file not found"
+            exit 1
+          fi
+        done
+    
+    - name: Validate imports
+      continue-on-error: true
+      run: |
+        python -c "
+        import sys
+        sys.path.insert(0, '.')
+        try:
+            import agent_interface
+            import local_authentication_options
+            import token_cache
+          import observability_config
+          import turn_context_utils
+          import mcp_tool_registration_service
+            print('✅ All imports validated successfully')
+        except ImportError as e:
+            print(f'❌ Import validation failed: {e}')
+            sys.exit(1)
+        "

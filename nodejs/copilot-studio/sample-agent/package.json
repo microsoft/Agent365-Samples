@@ -1,0 +1,41 @@
+{
+  "name": "copilot-studio-sample",
+  "version": "2026.1.21",
+  "description": "Sample agent integrating Microsoft Copilot Studio with Microsoft 365 Agents SDK and Microsoft Agent 365 SDK",
+  "main": "src/index.ts",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "test-tool": "agentsplayground",
+    "build": "tsc"
+  },
+  "keywords": [
+    "copilot-studio",
+    "microsoft-365",
+    "agent",
+    "ai",
+    "low-code"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-observability-hosting": "^0.1.0-preview.64",
+    "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
+    "@microsoft/agents-activity": "^1.2.2",
+    "@microsoft/agents-copilotstudio-client": "^1.2.2",
+    "@microsoft/agents-hosting": "^1.2.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@microsoft/m365agentsplayground": "^0.2.22",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "nodemon": "^3.1.10",
+    "rimraf": "^5.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}

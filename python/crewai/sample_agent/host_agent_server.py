@@ -1,16 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+
 """
 Generic Agent Host Server for CrewAI wrapper.
 
+Features:
+- Microsoft 365 Agents SDK hosting
+- Observability with BaggageBuilder and InvokeAgentScope
+- Notification handling (Email, Word @mentions, etc.)
+- MCP tooling support
 """
 
 import logging
 import socket
+import os
 from os import environ
 
 from agent_interface import AgentInterface, check_agent_inheritance
-from aiohttp.web import Application, Request, Response, json_response, run_app
+from aiohttp.web import Application, Request as AiohttpRequest, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
 from microsoft_agents.activity import load_configuration_from_env
@@ -31,15 +38,40 @@ from microsoft_agents.hosting.core import (
     TurnState,
 )
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+from microsoft_agents_a365.observability.core import InvokeAgentScope
+from microsoft_agents_a365.observability.core.config import configure as configure_observability
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
-from token_cache import cache_agentic_token
+
+# Notifications imports
+from microsoft_agents_a365.notifications.agent_notification import (
+    AgentNotification,
+    AgentNotificationActivity,
+    ChannelId,
+)
+from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
+
+from turn_context_utils import (
+    extract_turn_context_details,
+    create_invoke_agent_details,
+    create_caller_details,
+    create_tenant_details,
+    create_request,
+)
+from token_cache import cache_agentic_token, get_cached_agentic_token
+from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
 
 # Configure logging
+logging.basicConfig(level=logging.INFO)
+
 ms_agents_logger = logging.getLogger("microsoft_agents")
 ms_agents_logger.addHandler(logging.StreamHandler())
 ms_agents_logger.setLevel(logging.INFO)
+
+# Enable observability SDK logging to see exporter warnings
+observability_logger = logging.getLogger("microsoft_agents_a365.observability")
+observability_logger.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +87,15 @@ class GenericAgentHost:
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
 
-        self.auth_handler_name = "AGENTIC"
+        self.auth_handler_name = os.getenv("AGENT_AUTH_HANDLER_NAME", "AGENTIC")
 
         self.agent_class = agent_class
         self.agent_args = agent_args
         self.agent_kwargs = agent_kwargs
         self.agent_instance = None
+
+        # Determine auth mode early (check if credentials are configured)
+        self.auth_configured = self._is_auth_configured()
 
         # Microsoft Agents SDK components
         self.storage = MemoryStorage()
@@ -76,8 +111,42 @@ class GenericAgentHost:
             **agents_sdk_config,
         )
 
+        # Initialize notification support
+        self.agent_notification = AgentNotification(self.agent_app)
+        logger.info("✅ Notification support initialized (handlers will be registered)")
+
         # Setup message handlers
         self._setup_handlers()
+
+    def _extract_conversation_item_link(self, activity):
+        """Extract conversation item link from various activity sources."""
+        # 1) Outlook / Word / Loop / SharePoint notifications
+        try:
+            link = activity.value.get("resource", {}).get("webUrl")
+            if link:
+                return link
+        except Exception:
+            pass
+
+        # 2) Teams-based interactions
+        try:
+            for entity in activity.entities or []:
+                link = (
+                    entity.get("conversationItemLink") or
+                    entity.get("link")
+                )
+                if link:
+                    return link
+        except Exception:
+            pass
+
+        # 3) Teams channelData
+        try:
+            return activity.channel_data.get("clientInfo", {}).get("conversationItemLink")
+        except Exception:
+            pass
+
+        return None
 
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers."""
@@ -96,33 +165,41 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
-        handler = [self.auth_handler_name]
+        # Only use auth handlers when authentication is configured
+        handler = [self.auth_handler_name] if self.auth_configured else None
 
         @self.agent_app.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent."""
             try:
-                tenant_id = context.activity.recipient.tenant_id
-                agent_id = context.activity.recipient.agentic_app_id
+                # Extract context from turn using shared utility
+                ctx_details = extract_turn_context_details(context)
 
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).correlation_id(ctx_details.correlation_id).build():
                     if not self.agent_instance:
                         error_msg = "ERROR Sorry, the agent is not available."
                         logger.error(error_msg)
                         await context.send_activity(error_msg)
                         return
 
-                    exaau_token = await self.agent_app.auth.exchange_token(
-                        context,
-                        scopes=get_observability_authentication_scope(),
-                        auth_handler_id=self.auth_handler_name,
-                    )
-
-                    cache_agentic_token(
-                        tenant_id,
-                        agent_id,
-                        exaau_token.token,
-                    )
+                    # Only perform token registration when authentication is configured
+                    if self.auth_configured:
+                        # Exchange token and cache for sync token_resolver access
+                        try:
+                            exaau_token = await self.agent_app.auth.exchange_token(
+                                context,
+                                scopes=get_observability_authentication_scope(),
+                                auth_handler_id=self.auth_handler_name,
+                            )
+                            cache_agentic_token(
+                                ctx_details.tenant_id,
+                                ctx_details.agent_id,
+                                exaau_token.token,
+                            )
+                        except Exception as e:
+                            logger.debug(f"Token exchange skipped: {e}")
+                    else:
+                        logger.debug("Skipping token registration in anonymous mode")
 
                     user_message = context.activity.text or ""
                     logger.info("Processing message: '%s'", user_message)
@@ -130,9 +207,28 @@ class GenericAgentHost:
                     if not user_message.strip() or user_message.strip() == "/help":
                         return
 
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
+                    # Create observability details using shared utility
+                    invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                    caller_details = create_caller_details(ctx_details)
+                    tenant_details = create_tenant_details(ctx_details)
+                    request = create_request(ctx_details, user_message)
+
+                    # Wrap the agent invocation with InvokeAgentScope
+                    with InvokeAgentScope.start(
+                        invoke_agent_details=invoke_details,
+                        tenant_details=tenant_details,
+                        request=request,
+                        caller_details=caller_details,
+                    ) as invoke_scope:
+                        if hasattr(invoke_scope, 'record_input_messages'):
+                            invoke_scope.record_input_messages([user_message])
+
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+
+                        if hasattr(invoke_scope, 'record_output_messages'):
+                            invoke_scope.record_output_messages([response])
 
                     logger.info("Sending response: '%s'", response[:100] if len(response) > 100 else response)
                     await context.send_activity(response)
@@ -141,6 +237,138 @@ class GenericAgentHost:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"
                 logger.error("Error processing message: %s", e)
                 await context.send_activity(error_msg)
+
+        # Register notification handler
+        # Shared notification handler logic
+        async def handle_notification_common(
+            context: TurnContext,
+            state: TurnState,
+            notification_activity: AgentNotificationActivity,
+        ):
+            """Common notification handler for both 'agents' and 'msteams' channels"""
+            try:
+                logger.info(f"🔔 Notification received! Type: {context.activity.type}, Channel: {context.activity.channel_id if hasattr(context.activity, 'channel_id') else 'None'}")
+
+                result = await self._validate_agent_and_setup_context(context)
+                if result is None:
+                    return
+                tenant_id, agent_id = result
+
+                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                    await self._handle_notification_with_agent(
+                        context, notification_activity
+                    )
+
+            except Exception as e:
+                logger.error(f"❌ Notification error: {e}")
+                await context.send_activity(
+                    f"Sorry, I encountered an error processing the notification: {str(e)}"
+                )
+
+        # Register a single handler for both 'agents' (production) and 'msteams' (testing) channels
+        # by applying the on_agent_notification decorator twice to the same function. This avoids
+        # duplicated handler implementations while still explicitly registering per channel.
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="agents", sub_channel="*"),
+        )
+        @self.agent_notification.on_agent_notification(
+            channel_id=ChannelId(channel="msteams", sub_channel="*"),
+        )
+        async def on_notification_agents_and_msteams(
+            context: TurnContext,
+            state: TurnState,
+            notification_activity: AgentNotificationActivity,
+        ):
+            """Handle notifications from both 'agents' (production) and 'msteams' (testing) channels"""
+            await handle_notification_common(context, state, notification_activity)
+
+        logger.info("✅ Notification handler registered for 'agents' and 'msteams' channels")
+
+    async def _handle_notification_with_agent(
+        self, context: TurnContext, notification_activity: AgentNotificationActivity
+    ):
+        """
+        Handle notification with the agent instance.
+
+        Args:
+            context: Turn context
+            notification_activity: The notification activity to process
+        """
+        logger.info(f"📬 {notification_activity.notification_type}")
+
+        # Check if agent supports notifications
+        if not hasattr(self.agent_instance, "handle_agent_notification_activity"):
+            logger.warning("⚠️ Agent doesn't support notifications")
+            await context.send_activity(
+                "This agent doesn't support notification handling yet."
+            )
+            return
+
+        # Process the notification with the agent
+        response = await self.agent_instance.handle_agent_notification_activity(
+            notification_activity, self.agent_app.auth, context
+        )
+
+        # For email notifications, wrap response in EmailResponse entity
+        if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
+            response_activity = EmailResponse.create_email_response_activity(response)
+            await context.send_activity(response_activity)
+            return
+
+        # Send the response for other notification types
+        await context.send_activity(response)
+
+    async def _validate_agent_and_setup_context(self, context: TurnContext):
+        """
+        Validate agent availability and setup observability context.
+
+        Args:
+            context: Turn context from M365 SDK
+
+        Returns:
+            Tuple of (tenant_id, agent_id) if successful, None if validation fails
+        """
+        # Extract tenant and agent IDs
+        tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
+        agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
+
+        # Ensure agent is available
+        if not self.agent_instance:
+            logger.error("Agent not available")
+            await context.send_activity("❌ Sorry, the agent is not available.")
+            return None
+
+        # Setup observability token if available
+        if tenant_id and agent_id:
+            await self._setup_observability_token(context, tenant_id, agent_id)
+
+        return tenant_id, agent_id
+
+    async def _setup_observability_token(
+        self, context: TurnContext, tenant_id: str, agent_id: str
+    ):
+        """
+        Cache observability token for Agent365 exporter.
+
+        Args:
+            context: Turn context
+            tenant_id: Tenant identifier
+            agent_id: Agent identifier
+        """
+        if not self.auth_configured:
+            return
+
+        try:
+            # Exchange token and cache for sync token_resolver access
+            exaau_token = await self.agent_app.auth.exchange_token(
+                context,
+                scopes=get_observability_authentication_scope(),
+                auth_handler_id=self.auth_handler_name,
+            )
+            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
+            logger.debug(f"✅ Cached observability token for {tenant_id}:{agent_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def initialize_agent(self):
         """Initialize the hosted agent instance."""
@@ -186,7 +414,7 @@ class GenericAgentHost:
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         """Start the server using Microsoft Agents SDK."""
 
-        async def entry_point(req: Request) -> Response:
+        async def entry_point(req: AiohttpRequest) -> Response:
             agent: AgentApplication = req.app["agent_app"]
             adapter: CloudAdapter = req.app["adapter"]
             return await start_agent_process(req, agent, adapter)
@@ -194,7 +422,7 @@ class GenericAgentHost:
         async def init_app(app):
             await self.initialize_agent()
 
-        async def health(_req: Request) -> Response:
+        async def health(_req: AiohttpRequest) -> Response:
             status = {
                 "status": "ok",
                 "agent_type": self.agent_class.__name__,
@@ -279,11 +507,71 @@ class GenericAgentHost:
             except Exception as e:
                 logger.error("Error during agent cleanup: %s", e)
 
+    def _is_auth_configured(self) -> bool:
+        """Check if authentication environment variables are configured."""
+        client_id = environ.get("CLIENT_ID")
+        tenant_id = environ.get("TENANT_ID")
+        client_secret = environ.get("CLIENT_SECRET")
+        return bool(client_id and tenant_id and client_secret)
+
 
 def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs):
     """Convenience function to create and run a generic agent host."""
     if not check_agent_inheritance(agent_class):
         raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
+
+    # Configure observability if not already configured (e.g., by start_with_generic_host.py)
+    # Note: Early configuration in start_with_generic_host.py is preferred to avoid
+    # CrewAI's TracerProvider being set up before ours
+    enable_observability = os.getenv("ENABLE_OBSERVABILITY", "true").lower() in ("true", "1", "yes")
+    if enable_observability:
+        from opentelemetry import trace as otel_trace
+        existing_provider = otel_trace.get_tracer_provider()
+        provider_type = type(existing_provider).__name__
+        
+        # Check if observability was already configured with our service name
+        is_already_configured = False
+        if hasattr(existing_provider, 'resource'):
+            resource_attrs = dict(existing_provider.resource.attributes)
+            service_name = resource_attrs.get('service.name', '')
+            # If service name contains our identifier, skip reconfiguration
+            if DEFAULT_SERVICE_NAME.split('-')[0] in service_name.lower() or 'agent365' in service_name.lower():
+                is_already_configured = True
+                logger.info(f"✅ Observability already configured: {service_name}")
+        
+        if not is_already_configured:
+            service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", DEFAULT_SERVICE_NAME)
+            service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", DEFAULT_SERVICE_NAMESPACE)
+            
+            # Token resolver for observability exporter (must be sync)
+            def token_resolver(agent_id: str, tenant_id: str) -> str | None:
+                """Resolve authentication token for observability exporter"""
+                token = get_cached_agentic_token(tenant_id, agent_id)
+                if token:
+                    logger.debug(f"Token resolver: found cached token for {agent_id}:{tenant_id}")
+                else:
+                    logger.debug(f"Token resolver: no cached token for {agent_id}:{tenant_id}")
+                return token
+            
+            try:
+                logger.info(f"🔍 Existing TracerProvider: {provider_type}")
+                if hasattr(existing_provider, 'resource'):
+                    logger.info(f"🔍 Existing resource: {existing_provider.resource.attributes}")
+                
+                configure_observability(
+                    service_name=service_name,
+                    service_namespace=service_namespace,
+                    token_resolver=token_resolver,
+                    cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
+                )
+                print("✅ Observability configured")
+                logger.info(f"✅ Observability configured: {service_name} ({service_namespace})")
+            except Exception as e:
+                print(f"⚠️ Failed to configure observability: {e}")
+                logger.warning(f"⚠️ Failed to configure observability: {e}")
+    else:
+        print("ℹ️ Observability disabled (ENABLE_OBSERVABILITY=false)")
+        logger.info("ℹ️ Observability disabled (ENABLE_OBSERVABILITY=false)")
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
     auth_config = host.create_auth_configuration()

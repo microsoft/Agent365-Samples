@@ -21,5 +21,23 @@
       "scope": "McpServers.OneDriveSharepoint.All",
       "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
     }
+  ],
+  "localMcpServers": [
+    {
+      "mcpServerName": "LocalFileMcpServer",
+      "scope": "Local.FileMcpServer",
+      "audience": "68dd8e04-eb8e-42a2-be6a-ebedc63f5ee0",
+      "transportType": "wns",
+      "description": "Local file operations on Intune-managed devices",
+      "serverIdPattern": "file-mcp-server"
+    },
+    {
+      "mcpServerName": "LocalSettingsMcpServer",
+      "scope": "Local.SettingsMcpServer",
+      "audience": "68dd8e04-eb8e-42a2-be6a-ebedc63f5ee0",
+      "transportType": "wns",
+      "description": "Local settings access on Intune-managed devices",
+      "serverIdPattern": "settings-mcp-server"
+    }
   ]
 }

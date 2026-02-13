@@ -16,7 +16,14 @@ class CrewAgent():
     tasks: List[Task]
 
     def __init__(self, mcps: Optional[list] = None):
-        self.mcps = mcps or []
+        """
+        Initialize CrewAgent with optional MCP tools.
+        
+        Args:
+            mcps: List of observable MCP tool wrappers (CrewAI BaseTool instances)
+                  These are tools with ExecuteToolScope observability, not raw MCP configs.
+        """
+        self.mcp_tools = mcps or []
 
     # Learn more about YAML configuration files here:
     # Agents: https://docs.crewai.com/concepts/agents#yaml-configuration-recommended
@@ -27,19 +34,21 @@ class CrewAgent():
     @agent
     def weather_checker(self) -> Agent:
         from crew_agent.tools.custom_tool import WeatherTool
+        # Combine built-in tools with observable MCP tools
+        all_tools = [WeatherTool()] + self.mcp_tools
         return Agent(
             config=self.agents_config['weather_checker'], # type: ignore[index]
-            tools=[WeatherTool()],
+            tools=all_tools,
             verbose=True,
-            mcps=self.mcps
         )
 
     @agent
     def driving_safety_advisor(self) -> Agent:
+        # Pass observable MCP tools with ExecuteToolScope tracing
         return Agent(
             config=self.agents_config['driving_safety_advisor'], # type: ignore[index]
+            tools=self.mcp_tools,
             verbose=True,
-            mcps=self.mcps,
         )
 
     # To learn more about structured task outputs,

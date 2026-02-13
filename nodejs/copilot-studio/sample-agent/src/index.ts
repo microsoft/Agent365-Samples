@@ -1,0 +1,46 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+// It is important to load environment variables before importing other modules
+import { configDotenv } from 'dotenv';
+
+configDotenv();
+
+import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
+import express, { Response, Express } from 'express'
+import { agentApplication } from './agent';
+
+// Use request validation middleware only if hosting publicly
+const isProduction = Boolean(process.env.WEBSITE_SITE_NAME) || process.env.NODE_ENV === 'production';
+const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {};
+
+const server: Express = express()
+server.use(express.json())
+
+// Health endpoint - before auth middleware so it's always accessible
+server.get('/api/health', (_req, res: Response) => {
+  res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+server.use(authorizeJWT(authConfig))
+
+server.post('/api/messages', (req: Request, res: Response) => {
+  const adapter = agentApplication.adapter as CloudAdapter;
+  adapter.process(req, res, async (context) => {
+    await agentApplication.run(context)
+  })
+})
+
+const port = process.env.PORT ? parseInt(process.env.PORT) : 3978;
+const host = isProduction ? '0.0.0.0' : '127.0.0.1';
+server.listen(port, host, async () => {
+  console.log(`\nCopilot Studio Agent listening on http://${host}:${port}`);
+  console.log(`AppId: ${authConfig.clientId || 'not configured'}`);
+  console.log(`Debug: ${process.env.DEBUG || 'disabled'}`);
+}).on('error', async (err: unknown) => {
+  console.error('Server error:', err);
+  process.exit(1);
+}).on('close', async () => {
+  console.log('Server closed');
+  process.exit(0);
+});

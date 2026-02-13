@@ -1,0 +1,92 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI Orchestrator
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  # .NET Jobs - Call existing workflows
+  dotnet-agentframework:
+    name: .NET Agent Framework
+    uses: ./.github/workflows/ci-dotnet-agentframework-sampleagent.yml
+
+  dotnet-semantickernel:
+    name: .NET Semantic Kernel
+    uses: ./.github/workflows/ci-dotnet-semantickernel-sampleagent.yml
+
+  # Node.js Jobs - Call existing workflows
+  nodejs-claude:
+    name: Node.js Claude
+    uses: ./.github/workflows/ci-nodejs-claude-sampleagent.yml
+
+  nodejs-langchain:
+    name: Node.js LangChain
+    uses: ./.github/workflows/ci-nodejs-langchain-sampleagent.yml
+
+  nodejs-openai:
+    name: Node.js OpenAI
+    uses: ./.github/workflows/ci-nodejs-openai-sampleagent.yml
+
+  nodejs-vercelsdk:
+    name: Node.js Vercel SDK
+    uses: ./.github/workflows/ci-nodejs-vercelsdk-sampleagent.yml
+
+  # Python Jobs - Call existing workflows
+  python-agentframework:
+    name: Python Agent Framework
+    uses: ./.github/workflows/ci-python-agentframework-sampleagent.yml
+
+  python-googleadk:
+    name: Python Google ADK
+    uses: ./.github/workflows/ci-python-googleadk-sampleagent.yml
+
+  python-openai:
+    name: Python OpenAI
+    uses: ./.github/workflows/ci-python-openai-sampleagent.yml
+
+  python-claude:
+    name: Python Claude
+    uses: ./.github/workflows/python-claude-sample.yml
+
+  # Final status check - ALWAYS runs and reports success
+  # This is the ONLY check you need to mark as "Required" in branch protection
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs:
+      - dotnet-agentframework
+      - dotnet-semantickernel
+      - nodejs-claude
+      - nodejs-langchain
+      - nodejs-openai
+      - nodejs-vercelsdk
+      - python-agentframework
+      - python-googleadk
+      - python-openai
+      - python-claude
+    if: always()
+    steps:
+      - name: Check CI Status
+        run: |
+          echo "Checking CI job results..."
+          
+          # Get all job results (skipped jobs are fine, failed jobs are not)
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
+          
+          echo "Job results: $results"
+          
+          # Check if any job failed or was cancelled
+          if echo "$results" | grep -qE "failure|cancelled"; then
+            echo "❌ One or more CI jobs failed or were cancelled"
+            exit 1
+          fi
+          
+          echo "✅ All CI jobs passed"

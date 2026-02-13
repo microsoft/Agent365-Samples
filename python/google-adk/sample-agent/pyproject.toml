@@ -35,6 +35,7 @@ dependencies = [
     # Microsoft Agent 365 SDK packages
     "microsoft_agents_a365_tooling >= 0.1.0",
     "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
 ]
 requires-python = ">=3.11"
 
@@ -44,6 +45,11 @@ requires-python = ">=3.11"
 name = "pypi"
 url = "https://pypi.org/simple"
 default = true
+
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv]
+prerelease = "allow"
 
 [project.optional-dependencies]
 dev = [

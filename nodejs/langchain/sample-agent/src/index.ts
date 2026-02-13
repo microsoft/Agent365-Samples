@@ -13,6 +13,15 @@ const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {
 
 const server: Express = express()
 server.use(express.json())
+
+// Health endpoint - placed BEFORE auth middleware so it doesn't require authentication
+server.get('/api/health', (req, res: Response) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 server.use(authorizeJWT(authConfig))
 
 server.post('/api/messages', (req: Request, res: Response) => {
@@ -22,11 +31,11 @@ server.post('/api/messages', (req: Request, res: Response) => {
   })
 })
 
-const port = 3978
+const port = Number(process.env.PORT) || 3978
 const host = isProduction ? '0.0.0.0' : '127.0.0.1';
 server.listen(port, host, async () => {
   console.log(`\nServer listening on http://${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
-}).on('error', async (err) => {
+}).on('error', async (err: unknown) => {
   console.error(err);
   process.exit(1);
 }).on('close', async () => {

@@ -78,6 +78,11 @@ builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 
+// Register Local MCP scope validator for access control on local MCP servers
+// This validates that admin has granted consent for local MCP server scopes
+// before allowing invocation (similar to how remote MCP servers validate via token)
+builder.Services.AddSingleton<ILocalMcpScopeValidator, LocalMcpScopeValidator>();
+
 // Add Local MCP Proxy for Windows desktop MCP servers via WNS
 // This enables the agent to discover and call local MCP tools on the user's Windows machine
 // Configuration is read from appsettings.json sections: WnsConfiguration and LocalMcpProxy
