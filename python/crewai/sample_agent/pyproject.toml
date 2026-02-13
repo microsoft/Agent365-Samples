@@ -6,24 +6,25 @@ authors = [{ name = "Microsoft", email = "support@microsoft.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "crewai[azure-ai-inference,tools]==1.4.1",
+    "pysqlite3-binary>=0.5.2",
     "tavily-python>=0.3.0",
     "python-dotenv>=1.0.0",
     
     # Microsoft 365 Agents SDK - hosting and auth
-    "microsoft-agents-hosting-aiohttp",
-    "microsoft-agents-hosting-core",
-    "microsoft-agents-authentication-msal",
-    "microsoft-agents-activity",
+    "microsoft-agents-hosting-aiohttp>=0.7.0",
+    "microsoft-agents-hosting-core>=0.7.0",
+    "microsoft-agents-authentication-msal>=0.7.0",
+    "microsoft-agents-activity>=0.7.0",
     
     # Core hosting deps
     "aiohttp",
     
-    # Microsoft Agent 365 SDK packages
-    "microsoft_agents_a365_tooling >= 0.1.0",
-    "microsoft_agents_a365_observability_core >= 0.1.0",
-    "microsoft-agents-a365-observability-hosting>=0.2.0",
-    "microsoft_agents_a365_notifications >= 0.1.0",
-    "microsoft_agents_a365_runtime >= 0.1.0",
+    # Agent 365 packages (use stable versions from PyPI)
+    "microsoft-agents-a365-tooling>=0.1.0",
+    "microsoft-agents-a365-observability-core>=0.1.0",
+    "microsoft-agents-a365-observability-hosting>=0.1.0",
+    "microsoft_agents_a365_notifications>=0.1.0",
+    "microsoft_agents_a365_runtime>=0.1.0",
     "wrapt>=2.0.1",
 ]
 

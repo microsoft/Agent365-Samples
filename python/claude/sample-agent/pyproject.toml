@@ -7,20 +7,17 @@ dependencies = [
     "claude-agent-sdk>=0.1.0",
     
     # Microsoft Agents SDK - Official packages for hosting and integration
-    "microsoft-agents-hosting-aiohttp",
-    "microsoft-agents-hosting-core",
-    "microsoft-agents-authentication-msal",
-    "microsoft-agents-activity",
+    "microsoft-agents-hosting-aiohttp>=0.7.0",
+    "microsoft-agents-hosting-core>=0.7.0",
+    "microsoft-agents-authentication-msal>=0.7.0",
+    "microsoft-agents-activity>=0.7.0",
     
-    # Agent 365 Observability
+    # Agent 365 packages (use stable versions from PyPI)
     "microsoft-agents-a365-observability-core>=0.1.0",
-    "microsoft-agents-a365-observability-hosting>=0.2.0",
-    
-    # Agent 365 Notifications (Email, Word @mentions, etc.)
-    "microsoft_agents_a365_notifications >= 0.1.0",
-
-    # Agent 365 Tooling (MCP)
+    "microsoft-agents-a365-observability-hosting>=0.1.0",
+    "microsoft_agents_a365_notifications>=0.1.0",
     "microsoft-agents-a365-tooling>=0.1.0",
+    "microsoft_agents_a365_runtime>=0.1.0",
     
     # Core dependencies
     "python-dotenv",
@@ -30,10 +27,6 @@ dependencies = [
     # Additional utilities
     "typing-extensions>=4.0.0",
     "wrapt>=1.15.0",
-
-    # Local packages from local index
-    # - Update package versions to match your built wheels
-    "microsoft_agents_a365_runtime >= 0.1.0",
 ]
 requires-python = ">=3.11"
 
@@ -43,10 +36,6 @@ requires-python = ">=3.11"
 name = "pypi"
 url = "https://pypi.org/simple"
 default = true
-
-[[tool.uv.index]]
-name = "microsoft_agent365"
-url = "../../../dist"
 
 [build-system]
 requires = ["hatchling"]
@@ -59,7 +48,9 @@ packages = ["."]
 # This ensures we always get the latest features and fixes
 [tool.uv]
 prerelease = "allow"
-dev-dependencies = [
+
+[dependency-groups]
+dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "ruff>=0.1.0",

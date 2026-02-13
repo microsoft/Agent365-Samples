@@ -82,6 +82,15 @@ class GenericAgentHost:
         # Check that the agent inherits from AgentInterface
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
+        
+        # Auth handler name can be configured via environment
+        # Defaults to empty (no auth handler) - set AUTH_HANDLER_NAME=AGENTIC for production agentic auth
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
+            logger.info(f"🔐 Using auth handler: {self.auth_handler_name}")
+        else:
+            logger.info("🔓 No auth handler configured (AUTH_HANDLER_NAME not set)")
+
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -112,6 +121,12 @@ class GenericAgentHost:
     def _setup_handlers(self):
         """Setup the Microsoft Agents SDK message handlers"""
 
+        
+        # Configure auth handlers - only required when auth_handler_name is set
+        handler_config = (
+            {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
+        )
+
         async def help_handler(context: TurnContext, _: TurnState):
             """Handle help requests and member additions"""
             welcome_message = (
@@ -124,10 +139,10 @@ class GenericAgentHost:
             logger.info("📨 Sent help/welcome message")
 
         # Register handlers
-        self.agent_app.conversation_update("membersAdded")(help_handler)
-        self.agent_app.message("/help")(help_handler)
+        self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
+        self.agent_app.message("/help", **handler_config)(help_handler)
 
-        @self.agent_app.activity("message")
+        @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
             try:
@@ -152,7 +167,7 @@ class GenericAgentHost:
                 # Process with the hosted agent
                 logger.info(f"🤖 Processing with {self.agent_class.__name__}...")
                 response = await self.agent_instance.process_user_message(
-                    user_message, self.agent_app.auth, context
+                    user_message, self.agent_app.auth, context, self.auth_handler_name
                 )
 
                 # Send response back
@@ -203,6 +218,7 @@ class GenericAgentHost:
         # Register for 'agents' channel (production - Outlook, Teams notifications)
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
+            **handler_config,
         )
         async def on_notification_agents(
             context: TurnContext,
@@ -215,6 +231,7 @@ class GenericAgentHost:
         # Register for 'msteams' channel (testing - Agents Playground)
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="msteams", sub_channel="*"),
+            **handler_config,
         )
         async def on_notification_msteams(
             context: TurnContext,
@@ -248,7 +265,7 @@ class GenericAgentHost:
 
         # Process the notification with the agent
         response = await self.agent_instance.handle_agent_notification_activity(
-            notification_activity, self.agent_app.auth, context
+            notification_activity, self.agent_app.auth, context, self.auth_handler_name
         )
         
         # For email notifications, wrap response in EmailResponse entity
@@ -304,10 +321,15 @@ class GenericAgentHost:
             from microsoft_agents_a365.runtime.environment_utils import (
                 get_observability_authentication_scope,
             )
+
+            exchange_kwargs = {}
+            if self.auth_handler_name:
+                exchange_kwargs["auth_handler_id"] = self.auth_handler_name
             
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
+                **exchange_kwargs,
             )
             cache_agentic_token(tenant_id, agent_id, exaau_token.token)
             logger.debug(f"✅ Cached observability token for {tenant_id}:{agent_id}")
@@ -385,7 +407,17 @@ class GenericAgentHost:
         # Build middleware list
         middlewares = []
         if auth_configuration:
-            middlewares.append(jwt_authorization_middleware)
+            # Wrap the JWT middleware to skip auth for health/robots endpoints
+            @web_middleware
+            async def auth_with_exclusions(request, handler):
+                # Skip auth for health checks and robots.txt
+                path = request.path.lower()
+                if path in ['/api/health', '/robots933456.txt', '/']:
+                    return await handler(request)
+                # Apply JWT auth for all other routes
+                return await jwt_authorization_middleware(request, handler)
+            
+            middlewares.append(auth_with_exclusions)
 
         # Anonymous claims middleware
         @web_middleware
@@ -421,18 +453,23 @@ class GenericAgentHost:
 
         app.on_startup.append(init_app)
 
-        # Port configuration
+        # Port configuration - Azure sets PORT=8000, locally defaults to 3978
         desired_port = int(environ.get("PORT", 3978))
         port = desired_port
+        
+        # Host configuration - 0.0.0.0 for Azure, localhost for local dev
+        # Azure App Service requires binding to 0.0.0.0 for health probes to work
+        host = environ.get("HOST", "0.0.0.0")
 
-        # Simple port availability check
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(0.5)
-            if s.connect_ex(("127.0.0.1", desired_port)) == 0:
-                logger.warning(
-                    f"⚠️ Port {desired_port} already in use. Attempting {desired_port + 1}."
-                )
-                port = desired_port + 1
+        # Simple port availability check (only for local dev)
+        if host == "localhost" or host == "127.0.0.1":
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.5)
+                if s.connect_ex(("127.0.0.1", desired_port)) == 0:
+                    logger.warning(
+                        f"⚠️ Port {desired_port} already in use. Attempting {desired_port + 1}."
+                    )
+                    port = desired_port + 1
 
         print("=" * 80)
         print(f"🏢 Generic Agent Host - {self.agent_class.__name__}")
@@ -442,13 +479,13 @@ class GenericAgentHost:
         print("🎯 Compatible with Agents Playground")
         if port != desired_port:
             print(f"⚠️ Requested port {desired_port} busy; using fallback {port}")
-        print(f"\n🚀 Starting server on localhost:{port}")
-        print(f"📚 Bot Framework endpoint: http://localhost:{port}/api/messages")
-        print(f"❤️ Health: http://localhost:{port}/api/health")
+        print(f"\n🚀 Starting server on {host}:{port}")
+        print(f"📚 Bot Framework endpoint: http://{host}:{port}/api/messages")
+        print(f"❤️ Health: http://{host}:{port}/api/health")
         print("🎯 Ready for testing!\n")
 
         try:
-            run_app(app, host="localhost", port=port)
+            run_app(app, host=host, port=port)
         except KeyboardInterrupt:
             print("\n👋 Server stopped")
         except Exception as error:
