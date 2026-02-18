@@ -11,6 +11,17 @@ to prevent CrewAI from setting up its own TracerProvider.
 import sys
 import os
 
+# -----------------------------------------------------------------------------
+# Ensure ChromaDB has a compatible sqlite3 (App Service images can be too old)
+# -----------------------------------------------------------------------------
+try:
+    import pysqlite3  # type: ignore
+
+    sys.modules["sqlite3"] = pysqlite3
+except (ImportError, ModuleNotFoundError):
+    # Fall back to built-in sqlite3; may fail if version is too old
+    pass
+
 from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
 
 # ============================================================
