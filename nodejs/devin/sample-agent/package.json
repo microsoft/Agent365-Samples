@@ -23,6 +23,8 @@
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.20",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2", 
+    "@types/express": "^5.0.6", 
+    "@types/node": "^25.2.3" 
   }
 }
