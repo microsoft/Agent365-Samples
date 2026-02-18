@@ -291,7 +291,17 @@ class GenericAgentHost:
 
         middlewares = []
         if auth_configuration:
-            middlewares.append(jwt_authorization_middleware)
+
+            @web_middleware
+            async def jwt_with_health_bypass(request, handler):
+                # Skip JWT validation for health endpoint so that container
+                # orchestrators (Azure Container Apps, Kubernetes, App Service)
+                # can reach /api/health without a bearer token.
+                if request.path == "/api/health":
+                    return await handler(request)
+                return await jwt_authorization_middleware(request, handler)
+
+            middlewares.append(jwt_with_health_bypass)
 
         @web_middleware
         async def anonymous_claims(request, handler):
