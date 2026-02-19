@@ -37,6 +37,28 @@ logger = logging.getLogger(__name__)
 # <DependencyImports>
 
 # AgentFramework SDK
+# -----------------------------------------------------------------------------
+# TEMPORARY COMPATIBILITY WORKAROUND (NOT A LONG-TERM SOLUTION)
+#
+# Context:
+# - Recent versions of agent-framework-core no longer export `ChatAgent`.
+# - This sample / tooling extension currently imports and/or expects `ChatAgent`.
+#
+# What this does:
+# - Provides a short-term compatibility so the sample can run until upstream
+#   packages are updated.
+#
+# Why it's temporary:
+# - Monkey-patching is fragile and can break with import order or
+#   future package changes.
+#
+# Removal plan:
+# - Remove this block once either:
+#   (1) agent-framework-core exports ChatAgent again, OR
+#   (2) microsoft_agents_a365_tooling_extensions_agentframework is updated to use `Agent`
+#       (or a stable interface) instead of ChatAgent.
+#
+# -----------------------------------------------------------------------------
 import agent_framework as _af
 from agent_framework import Agent as ChatAgent
 _af.ChatAgent = ChatAgent
