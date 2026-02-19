@@ -100,7 +100,7 @@ class OpenAIAgentWithMCP(AgentInterface):
             self.openai_client = AsyncAzureOpenAI(
                 azure_endpoint=endpoint,
                 api_key=api_key,
-                api_version="2025-01-01-preview",
+                api_version="2024-12-01-preview",
             )
             # Use Azure deployment name for Azure OpenAI
             model_name = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
