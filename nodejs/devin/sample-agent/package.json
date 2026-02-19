@@ -19,10 +19,13 @@
     "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
     "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
     "@microsoft/agents-hosting": "^1.0.15",
-    "uuid": "^13.0.0"
+    "uuid": "^13.0.0",
+    "express": "^5.1.0"
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.20",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2", 
+    "@types/express": "^5.0.6", 
+    "@types/node": "^25.2.3" 
   }
 }
