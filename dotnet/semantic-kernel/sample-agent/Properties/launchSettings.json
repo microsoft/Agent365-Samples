@@ -13,7 +13,8 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "BEARER_TOKEN": ""
+        "BEARER_TOKEN": "",
+        "MCP_PLATFORM_ENDPOINT": "http://localhost:52857" //"https://test.agent365.svc.cloud.dev.microsoft" // ATG - Mail and all other
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }
