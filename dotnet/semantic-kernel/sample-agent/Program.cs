@@ -7,9 +7,8 @@ using Microsoft.Agents.A365.Observability;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
 using Microsoft.Agents.A365.Observability.Hosting;
 using Microsoft.Agents.A365.Observability.Runtime;
-using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
+using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Extensions;
 using Microsoft.Agents.A365.Tooling.LocalMcp.Extensions;
-using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
@@ -74,14 +73,8 @@ builder.AddAgent<MyAgent>();
 // in a cluster of Agent instances.
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
-// Register MCP Tool services for cloud MCP servers (ATG)
-builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
-builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
-
-// Register Local MCP scope validator for access control on local MCP servers
-// This validates that admin has granted consent for local MCP server scopes
-// before allowing invocation (similar to how remote MCP servers validate via token)
-builder.Services.AddSingleton<ILocalMcpScopeValidator, LocalMcpScopeValidator>();
+// Register MCP Tool services (ATG, policy enforcement, scope validation)
+builder.Services.AddMcpServices();
 
 // Add Local MCP Proxy for Windows desktop MCP servers via WNS
 // This enables the agent to discover and call local MCP tools on the user's Windows machine
