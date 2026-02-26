@@ -1,0 +1,138 @@
+{
+  "base_url": "https://learn.microsoft.com/en-us/microsoft-agent-365",
+  "documentation": [
+    {
+      "id": "overview",
+      "title": "Microsoft Agent 365 Overview",
+      "url": "/overview",
+      "keywords": ["overview", "what is", "introduction", "getting started", "benefits", "features", "prerequisites", "enable", "admin center", "frontier"]
+    },
+    {
+      "id": "sdk-overview",
+      "title": "Agent 365 SDK Overview",
+      "url": "/developer/agent-365-sdk",
+      "keywords": ["sdk", "packages", "python", "javascript", "dotnet", ".net", "npm", "pypi", "nuget", "install", "agent framework", "blueprint"]
+    },
+    {
+      "id": "cli",
+      "title": "Agent 365 CLI",
+      "url": "/developer/agent-365-cli",
+      "keywords": ["cli", "command line", "a365", "dotnet tool", "install cli", "commands", "deploy", "publish", "config"]
+    },
+    {
+      "id": "dev-lifecycle",
+      "title": "Agent 365 Development Lifecycle",
+      "url": "/developer/a365-dev-lifecycle",
+      "keywords": ["lifecycle", "development", "build", "deploy", "publish", "blueprint", "create agent", "setup", "steps"]
+    },
+    {
+      "id": "tooling-servers",
+      "title": "Tooling Servers Overview",
+      "url": "/tooling-servers-overview",
+      "keywords": ["mcp", "mcp servers", "tooling", "tools", "mail", "calendar", "teams", "sharepoint", "word", "dataverse", "governance", "catalog"]
+    },
+    {
+      "id": "tooling",
+      "title": "Add and Manage Tools",
+      "url": "/developer/tooling",
+      "keywords": ["tooling", "mcp", "manifest", "toolingmanifest", "add tools", "configure tools", "mock server", "mcp_mailtools"]
+    },
+    {
+      "id": "observability",
+      "title": "Agent Observability",
+      "url": "/developer/observability",
+      "keywords": ["observability", "telemetry", "opentelemetry", "tracing", "logging", "monitoring", "instrumentation", "baggage", "spans"]
+    },
+    {
+      "id": "notifications",
+      "title": "Notify Agents",
+      "url": "/developer/notification",
+      "keywords": ["notifications", "email", "word comments", "excel", "powerpoint", "lifecycle events", "handlers", "on_email", "on_word"]
+    },
+    {
+      "id": "testing",
+      "title": "Test Agents",
+      "url": "/developer/testing",
+      "keywords": ["testing", "test", "agents playground", "debug", "local", "bearer token", "agentic auth", "environment", "troubleshoot"]
+    },
+    {
+      "id": "onboard",
+      "title": "Discover, Create, and Onboard an Agent",
+      "url": "/onboard",
+      "keywords": ["onboard", "onboarding", "create agent", "discover", "templates", "admin approval", "teams", "organization chart"]
+    },
+    {
+      "id": "identity",
+      "title": "Agent Identity",
+      "url": "/admin/capabilities-entra",
+      "keywords": ["identity", "entra", "authentication", "agent id", "service principal", "permissions", "oauth", "scopes"]
+    },
+    {
+      "id": "security",
+      "title": "Data Security",
+      "url": "/admin/data-security",
+      "keywords": ["security", "data", "compliance", "purview", "policies", "protection", "governance"]
+    },
+    {
+      "id": "threat-protection",
+      "title": "Threat Protection",
+      "url": "/admin/threat-protection",
+      "keywords": ["threat", "defender", "security", "attacks", "protection", "monitoring"]
+    },
+    {
+      "id": "monitor",
+      "title": "Monitor Agents",
+      "url": "/admin/monitor-agents",
+      "keywords": ["monitor", "admin", "activity", "logs", "audit", "admin center"]
+    },
+    {
+      "id": "use-agents",
+      "title": "Use and Collaborate with Agents",
+      "url": "/use",
+      "keywords": ["use", "collaborate", "teams", "chat", "interact", "mention", "conversation"]
+    },
+    {
+      "id": "deploy-azure",
+      "title": "Deploy Agent to Azure",
+      "url": "/developer/deploy-agent-azure",
+      "keywords": ["deploy", "azure", "web app", "hosting", "cloud", "production"]
+    },
+    {
+      "id": "mcp-mail",
+      "title": "MCP Mail Server Reference",
+      "url": "/mcp-server-reference/mcp-mail",
+      "keywords": ["mail", "email", "outlook", "send email", "read email", "mailbox", "mcp_mailtools"]
+    },
+    {
+      "id": "mcp-calendar",
+      "title": "MCP Calendar Server Reference",
+      "url": "/mcp-server-reference/mcp-calendar",
+      "keywords": ["calendar", "events", "meetings", "schedule", "outlook calendar", "mcp_calendartools"]
+    },
+    {
+      "id": "mcp-teams",
+      "title": "MCP Teams Server Reference",
+      "url": "/mcp-server-reference/mcp-teams",
+      "keywords": ["teams", "chat", "channels", "messages", "mcp_teamtools"]
+    },
+    {
+      "id": "mcp-sharepoint",
+      "title": "MCP SharePoint Server Reference",
+      "url": "/mcp-server-reference/mcp-sharepoint",
+      "keywords": ["sharepoint", "onedrive", "files", "documents", "lists", "sites"]
+    },
+    {
+      "id": "mcp-word",
+      "title": "MCP Word Server Reference",
+      "url": "/mcp-server-reference/mcp-word",
+      "keywords": ["word", "documents", "comments", "docx", "mcp_wordtools"]
+    },
+    {
+      "id": "samples",
+      "title": "Agent 365 Samples Repository",
+      "url": "https://github.com/microsoft/Agent365-Samples",
+      "keywords": ["samples", "examples", "github", "code", "openai", "langchain", "semantic kernel", "python", "nodejs", "dotnet"],
+      "is_external": true
+    }
+  ]
+}
