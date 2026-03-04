@@ -43,6 +43,19 @@ public class Agent365Agent
     /// </summary>
     public List<DesktopClientInfo>? AllRegisteredDesktops { get; private set; }
 
+    /// <summary>
+    /// The discovery result from the current turn's tool registration.
+    /// Exposes which servers (cloud and local) were discovered so the SDK can
+    /// detect tool set changes between turns for stale result annotation.
+    /// </summary>
+    public LocalDiscoveryResult? DiscoveryResult { get; private set; }
+
+    /// <summary>
+    /// The Semantic Kernel instance with registered plugins for this turn.
+    /// Exposed so the SDK can inspect the current plugin set for stale result detection.
+    /// </summary>
+    public Kernel? AgentKernel => _kernel;
+
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
     private const string TermsAndConditionsAcceptedInstructions = "You may ask follow up questions until you have enough information to answer the user's question.";
@@ -143,7 +156,8 @@ public class Agent365Agent
                     authHandlerName, 
                     turnContext);
                 
-                // Store the discovery result for use in instructions
+                // Store the discovery result for use in instructions and stale tool detection
+                this.DiscoveryResult = discoveryResult;
                 this.ActiveDesktop = discoveryResult.ActiveDesktop;
                 this.AllRegisteredDesktops = discoveryResult.AllRegisteredDesktops;
                 
@@ -383,16 +397,24 @@ public class Agent365Agent
     {
         return $@"
 
-        DESKTOP REGISTRATION REQUIRED:
-        The user's desktop is not registered with this agent. To enable local file access, the user needs to register their desktop.
+        DESKTOP REGISTRATION REQUIRED - CRITICAL MANDATORY RULES:
+        The user's desktop is not registered with this agent. Local file access AND email sending are BLOCKED until registration is complete.
         
-        When the user asks about local files or file access:
-        1. Inform them that their desktop needs to be registered to access local files
+        ABSOLUTE PROHIBITIONS (violating these is a critical error):
+        - You MUST NOT call SendEmailAsync, SendEmailWithAttachmentsAsync, or ANY email/calendar tool
+        - You MUST NOT claim to have sent an email, created a draft, or performed ANY tool action
+        - You MUST NOT say 'I sent the email' or 'Done' or any similar completion message
+        - If a tool call returns an error about registration, you MUST relay the registration instructions
+        
+        When the user asks about sending emails, accessing files, or any tool-based action:
+        1. Inform them that their desktop MUST be registered first to comply with security policy
         2. Provide them with this registration link: [{this.PendingDesktopRegistrationUrl}]({this.PendingDesktopRegistrationUrl})
-        3. Tell them to click the link, which will open their desktop app and register it with this agent
-        4. After registration, they should refresh the conversation to enable local file tools
+        3. Tell them to copy the link above and paste it into the Windows Run dialog (Win+R)
+        4. After registration, they should try their request again
         
         Registration Link: {this.PendingDesktopRegistrationUrl}
+        
+        REMEMBER: Do NOT attempt any tool calls. Only provide the registration instructions above.
         ";
     }
 }

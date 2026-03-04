@@ -317,6 +317,15 @@ public class MyAgent : AgentApplication
         {
             ChatHistory chatHistory = turnState.GetValue("conversation.chatHistory", () => new ChatHistory());
 
+            // Detect tool set changes between turns and annotate stale results in chat history.
+            // This is handled by the SDK — we just pass the tracker (persisted per-conversation in turn state)
+            // so the SDK can compare previous vs current tool availability and inject a system message if needed.
+            if (agent365Agent.DiscoveryResult != null && agent365Agent.AgentKernel != null)
+            {
+                var tracker = turnState.GetValue(ToolAvailabilityTracker.TurnStateKey, () => new ToolAvailabilityTracker());
+                _toolsService.AnnotateStaleToolResults(chatHistory, agent365Agent.DiscoveryResult, agent365Agent.AgentKernel, tracker);
+            }
+
             // Invoke the Agent365Agent to process the message
             Agent365AgentResponse response = await agent365Agent.InvokeAgentAsync(turnContext.Activity.Text, chatHistory, turnContext);
         }
