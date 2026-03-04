@@ -21,6 +21,40 @@ For comprehensive documentation and guidance on building agents with the Microso
 - OpenWeather Credentials (if using the OpenWeather Tool) 
     - see: https://openweathermap.org/price - You will need to create a free account to get an API key (its at the bottom of the page).
 
+## Working with User Identity
+
+Agents often need to identify who they are talking to in order to personalize responses, perform housekeeping (e.g., loading user preferences, logging activity), or call external services on behalf of the user.
+
+### Basic identity from the activity payload
+
+On every incoming message, the A365 platform populates `Activity.From` with basic user information. This is always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every turn in `OnMessageAsync` ([MyAgent.cs](Agent/MyAgent.cs)):
+
+```csharp
+var fromAccount = turnContext.Activity.From;
+_logger?.LogInformation(
+    "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+    fromAccount?.Name, fromAccount?.Id, fromAccount?.AadObjectId);
+```
+
+### Extended profile from Microsoft Graph
+
+Fields like email address, job title, and department are not included in the activity payload. These can be retrieved from Microsoft Graph using the access token already acquired by the turn's auth handler.
+
+The `CurrentUserTool` ([Tools/CurrentUserTool.cs](Tools/CurrentUserTool.cs)) demonstrates both patterns and exposes them as LLM-callable tools:
+
+- **`GetCurrentUser()`** — returns `UserId`, `DisplayName`, and `AadObjectId` from the activity. No token needed.
+- **`GetCurrentUserExtendedProfileAsync()`** — calls `GET /me` on Microsoft Graph and returns the full profile. Reuses the auth token already acquired for the turn.
+
+**Token note:** `GET /me` requires a **delegated (user-context) token** with `User.Read` scope. Agents using app-only (client credentials) tokens will receive a 403 — use `GET /users/{AadObjectId}` instead, where `AadObjectId` comes from `GetCurrentUser()`. Do not call `/me` in the hot path just to retrieve the display name; `Activity.From.Name` is sufficient and requires no API call.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
