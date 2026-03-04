@@ -1,0 +1,32 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vDevPreview/MicrosoftTeams.schema.json",
+    "id": "<<TEAMS_APP_ID>>",
+    "name": {
+        "short": "Sales Campaign Orchestrator",
+        "full": "Multi-Agent Sales Campaign Orchestrator"
+    },
+    "description": {
+        "short": "Orchestrates a multi-agent sales campaign pipeline with A365 telemetry.",
+        "full": "A multi-agent orchestrator that drives a sales campaign through Planner, Executor, and Reviewer agents. Demonstrates embodied agent-to-agent communication with full A365 observability span tree."
+    },
+    "icons": {
+        "outline": "outline.png",
+        "color": "color.png"
+    },
+    "accentColor": "#07687d",
+    "version": "1.0.0",
+    "manifestVersion": "devPreview",
+    "developer": {
+        "name": "Agent Developer",
+        "mpnId": "",
+        "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518021",
+        "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518021",
+        "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+    },
+    "agenticUserTemplates": [
+        {
+            "id": "<<AGENTIC_USER_TEMPLATE_ID>>",
+            "file": "agenticUserTemplateManifest.json"
+        }
+    ]
+}
