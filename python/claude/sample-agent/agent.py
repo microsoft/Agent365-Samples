@@ -139,6 +139,8 @@ class ClaudeAgent(AgentInterface):
         # =====================================================================
         self.system_prompt = """You are a Calendar Scheduling Assistant for Microsoft 365.
 
+The user's name is {user_name}. Use their name naturally where appropriate — for example when greeting them or making responses feel personal. Do not overuse it.
+
 Your capabilities:
 - Schedule, reschedule, and cancel meetings using the Calendar MCP tools
 - Check calendar availability for users
@@ -308,7 +310,17 @@ Guidelines:
         
         # Extract context details using shared utility (similar to CrewAI pattern)
         ctx_details = extract_turn_context_details(context)
-        
+
+        # Log the user identity from activity.from_property — set by the A365 platform on every message.
+        logger.info(
+            "Turn received from user — DisplayName: '%s', UserId: '%s', AadObjectId: '%s'",
+            ctx_details.caller_name or "(unknown)",
+            ctx_details.caller_id or "(unknown)",
+            ctx_details.caller_aad_object_id or "(none)",
+        )
+        display_name = ctx_details.caller_name or "unknown"
+        personalized_system_prompt = self.system_prompt.replace("{user_name}", display_name)
+
         try:
             logger.info(f"📨 Processing message: {message[:100]}...")
             
@@ -373,6 +385,7 @@ Guidelines:
                             logger.info(f"📋 MCP tools available: {mcp_allowed_tools}")
                             client_options = ClaudeAgentOptions(
                                 model=self.claude_options.model,
+                                system_prompt=personalized_system_prompt,
                                 max_thinking_tokens=self.claude_options.max_thinking_tokens,
                                 allowed_tools=all_allowed_tools,
                                 mcp_servers=mcp_servers,  # Pass MCP servers so Claude knows about tools
@@ -380,7 +393,14 @@ Guidelines:
                                 continue_conversation=self.claude_options.continue_conversation,
                             )
                         else:
-                            client_options = self.claude_options
+                            client_options = ClaudeAgentOptions(
+                                model=self.claude_options.model,
+                                system_prompt=personalized_system_prompt,
+                                max_thinking_tokens=self.claude_options.max_thinking_tokens,
+                                allowed_tools=all_allowed_tools,
+                                permission_mode=self.claude_options.permission_mode,
+                                continue_conversation=self.claude_options.continue_conversation,
+                            )
                         
                         # Create a new client for this conversation with MCP servers
                         async with ClaudeSDKClient(client_options) as client:

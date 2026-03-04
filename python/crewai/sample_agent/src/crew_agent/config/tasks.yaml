@@ -35,7 +35,7 @@ driving_safety_task:
     Combine both into a single comprehensive email. Do NOT send multiple emails.
     Use the SendEmailWithAttachmentsAsync tool to send the email directly (do NOT use draft tools).
   expected_output: >
-    A clear safety assessment stating whether it's safe to drive with summer
+    A clear safety assessment for {user_name} stating whether it's safe to drive with summer
     tires in the current weather conditions, along with specific reasons and any
     recommendations or warnings. Format as a clear decision with supporting details.
     If an email was requested, confirm it was sent (only once, with combined content).
