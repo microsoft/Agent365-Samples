@@ -30,8 +30,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         The user's name is {userName}. Use their name naturally where appropriate — for example when greeting them, confirming actions, or making responses feel personal. Do not overuse it.
 
-        For richer user profile information (email, job title, department), use {{CurrentUserTool.GetCurrentUserExtendedProfileAsync}}.
-
         For questions about yourself, you should use the one of the tools: {{mcp_graph_getMyProfile}}, {{mcp_graph_getUserProfile}}, {{mcp_graph_getMyManager}}, {{mcp_graph_getUsersManager}}.
 
         If you are working with weather information, the following instructions apply:
@@ -143,7 +141,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
             // Log the user identity from Activity.From — set by the A365 platform on every message.
-            // See Tools/CurrentUserTool.cs for how to expose these fields as LLM-callable tools.
             var fromAccount = turnContext.Activity.From;
             _logger?.LogInformation(
                 "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
@@ -228,8 +225,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             AssertionHelpers.ThrowIfNull(context, nameof(context));
             AssertionHelpers.ThrowIfNull(_chatClient!, nameof(_chatClient));
 
-            // Acquire the access token once for this turn.
-            // The same token is reused for CurrentUserTool (Graph calls) and MCP tool loading.
+            // Acquire the access token once for this turn — used for MCP tool loading.
             string? accessToken = null;
             string? agentId = null;
             if (!string.IsNullOrEmpty(authHandlerName))
@@ -254,10 +250,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger?.LogWarning("Access token was acquired but agent identity could not be resolved. MCP tools will not be loaded.");
             }
 
-            // Use Activity.From.Name as the user's display name.
-            // This is always available with no API call and reflects the name the channel provides
-            // (typically the user's AAD display name in Teams and agentic flows).
-            // For extended profile data (email, job title, etc.) use CurrentUserTool.GetCurrentUserExtendedProfileAsync.
+            // Activity.From.Name is always available — no API call needed.
             var displayName = context.Activity.From?.Name;
 
             // Create the local tools:
@@ -266,13 +259,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             toolList.Add(AIFunctionFactory.Create(DateTimeFunctionTool.getDate));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetCurrentWeatherForLocation));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLocation));
-
-            // Register the user identity tool.
-            // GetCurrentUser() reads from Activity.From — no API call.
-            // GetCurrentUserExtendedProfileAsync() calls Graph /me using the already-acquired token.
-            var currentUserTool = new CurrentUserTool(context, accessToken, _logger);
-            toolList.Add(AIFunctionFactory.Create(currentUserTool.GetCurrentUser));
-            toolList.Add(AIFunctionFactory.Create(currentUserTool.GetCurrentUserExtendedProfileAsync));
 
             if (toolService != null && !string.IsNullOrEmpty(agentId))
             {
