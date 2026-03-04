@@ -42,8 +42,18 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         Otherwise you should use the tools available to you to help answer the user's questions.
         """;
 
-        private static string GetAgentInstructions(string? userName) =>
-            AgentInstructionsTemplate.Replace("{userName}", string.IsNullOrEmpty(userName) ? "unknown" : userName, StringComparison.Ordinal);
+        private static string GetAgentInstructions(string? userName)
+        {
+            // Sanitize the display name before injecting into the system prompt to prevent prompt injection.
+            // Activity.From.Name is channel-provided and therefore untrusted user-controlled text.
+            string safe = string.IsNullOrWhiteSpace(userName) ? "unknown" : userName.Trim();
+            // Strip control characters (newlines, tabs, etc.) that could break prompt structure
+            safe = System.Text.RegularExpressions.Regex.Replace(safe, @"[\p{Cc}\p{Cf}]", " ").Trim();
+            // Enforce a reasonable max length
+            if (safe.Length > 64) safe = safe[..64].TrimEnd();
+            if (string.IsNullOrWhiteSpace(safe)) safe = "unknown";
+            return AgentInstructionsTemplate.Replace("{userName}", safe, StringComparison.Ordinal);
+        }
 
         private readonly IChatClient? _chatClient = null;
         private readonly IConfiguration? _configuration = null;
@@ -142,7 +152,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         {
             // Log the user identity from Activity.From — set by the A365 platform on every message.
             var fromAccount = turnContext.Activity.From;
-            _logger?.LogInformation(
+            _logger?.LogDebug(
                 "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
                 fromAccount?.Name ?? "(unknown)",
                 fromAccount?.Id ?? "(unknown)",

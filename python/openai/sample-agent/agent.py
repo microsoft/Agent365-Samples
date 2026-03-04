@@ -128,10 +128,6 @@ class OpenAIAgentWithMCP(AgentInterface):
             mcp_servers=self.mcp_servers,
         )
 
-        # Setup OpenAI Agents instrumentation (handled in _setup_observability)
-        # Instrumentation is automatically configured during observability setup
-        pass
-
     _INSTRUCTIONS_TEMPLATE = """
 You are a helpful AI assistant with access to external tools through MCP servers.
 When a user asks for any action, use the appropriate tools to provide accurate and helpful responses.
