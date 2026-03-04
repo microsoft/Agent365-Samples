@@ -41,6 +41,10 @@ export class A365Agent extends AgentApplication<TurnState> {
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     const userMessage = turnContext.activity.text?.trim() || '';
 
+    const from = turnContext.activity?.from;
+    console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+    const displayName = from?.name ?? 'unknown';
+
     if (!userMessage) {
       await turnContext.sendActivity('Please send me a message and I\'ll help you!');
       return;
@@ -59,7 +63,7 @@ export class A365Agent extends AgentApplication<TurnState> {
     try {
       await baggageScope.run(async () => {
         try {
-          const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, turnContext);
+          const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, turnContext, displayName);
           const response = await client.invokeInferenceScope(userMessage);
           await turnContext.sendActivity(response);
         } catch (error) {

@@ -68,15 +68,15 @@ openAIAgentsTraceInstrumentor.enable();
 
 const toolService = new McpToolRegistrationService();
 
-export async function getClient(authorization: Authorization, authHandlerName: string, turnContext: TurnContext): Promise<Client> {
+export async function getClient(authorization: Authorization, authHandlerName: string, turnContext: TurnContext, displayName = 'unknown'): Promise<Client> {
   const modelName = getModelName();
   console.log(`[Client] Creating agent with model: ${modelName} (Azure: ${isAzureOpenAI()})`);
-  
+
   const agent = new Agent({
       // You can customize the agent configuration here if needed
       name: 'OpenAI Agent',
       model: modelName,
-      instructions: `You are a helpful assistant with access to tools provided by MCP (Model Context Protocol) servers.
+      instructions: `You are a helpful assistant with access to tools provided by MCP (Model Context Protocol) servers. The user's name is ${displayName}.
 
 When users ask about your MCP servers, tools, or capabilities, use introspection to list the tools you have available. You can see all the tools registered to you and should report them accurately when asked.
 

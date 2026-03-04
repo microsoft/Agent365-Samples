@@ -53,6 +53,9 @@ export class MyAgent extends AgentApplication<TurnState> {
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     const userMessage = turnContext.activity.text?.trim() || '';
 
+    const from = turnContext.activity?.from;
+    console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+
     if (!userMessage) {
       await turnContext.sendActivity('Please send me a message and I\'ll forward it to Copilot Studio!');
       return;
