@@ -21,12 +21,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 {
     public class MyAgent : AgentApplication
     {
-        private static string GetAgentWelcomeMessage(string? userName, string? agentName)
-        {
-            var greeting = string.IsNullOrEmpty(userName) ? "Hello!" : $"Hello {userName}!";
-            var identity = string.IsNullOrEmpty(agentName) ? string.Empty : $" This is {agentName}.";
-            return $"{greeting}{identity} I can help you find information based on what I can access";
-        }
+        private const string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access.";
 
         // Non-interpolated raw string so {{ToolName}} placeholders are preserved as literal text.
         // {userName} is the only dynamic token and is injected via string.Replace in GetAgentInstructions.
@@ -128,16 +123,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 turnContext,
                 async () =>
             {
-                // Recipient.Name is the agent's display name (e.g., "ContosoHelpDeskAgent").
-                // For the user name, member.Name is preferred but may be null in agentic/Teams flows;
-                // fall back to Activity.From.Name, which is always set by the A365 platform.
-                var agentName = turnContext.Activity.Recipient.Name;
                 foreach (ChannelAccount member in turnContext.Activity.MembersAdded)
                 {
                     if (member.Id != turnContext.Activity.Recipient.Id)
                     {
-                        var userName = !string.IsNullOrEmpty(member.Name) ? member.Name : turnContext.Activity.From?.Name;
-                        await turnContext.SendActivityAsync(GetAgentWelcomeMessage(userName, agentName));
+                        await turnContext.SendActivityAsync(AgentWelcomeMessage);
                     }
                 }
             });
