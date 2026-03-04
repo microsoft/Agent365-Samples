@@ -236,7 +236,7 @@ else
 }
 ```
 
-### 7. Observability Integration
+### 8. Observability Integration
 
 ```csharp
 // Configure tracing
