@@ -110,7 +110,33 @@ class OpenAIAgentWithMCP(AgentInterface):
             await self.openai_client.close()
 ```
 
-### 3. Generic Host Server
+### 3. User Identity
+
+The A365 platform populates `activity.from_property` on every incoming message. Log it at message handler entry and inject the display name into LLM system instructions:
+
+```python
+async def process_user_message(
+    self, message: str, auth: Authorization,
+    auth_handler_name: str, context: TurnContext
+) -> str:
+    from_prop = context.activity.from_property
+    logger.info(
+        "Turn received from user — DisplayName: '%s', UserId: '%s', AadObjectId: '%s'",
+        getattr(from_prop, "name", None) or "(unknown)",
+        getattr(from_prop, "id", None) or "(unknown)",
+        getattr(from_prop, "aad_object_id", None) or "(none)",
+    )
+    display_name = getattr(from_prop, "name", None) or "unknown"
+    # Inject display_name into your LLM system prompt
+```
+
+| Field | Description |
+|---|---|
+| `from_property.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `from_property.name` | Display name as known to the channel |
+| `from_property.aad_object_id` | Azure AD Object ID — use this to call Microsoft Graph |
+
+### 4. Generic Host Server
 
 The generic host provides reusable hosting infrastructure:
 
@@ -149,7 +175,7 @@ class GenericAgentHost:
                 await context.send_activity(response)
 ```
 
-### 4. Observability Configuration
+### 5. Observability Configuration
 
 ```python
 def _setup_observability(self):
@@ -170,7 +196,7 @@ def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
     return cached_token
 ```
 
-### 5. MCP Server Setup
+### 6. MCP Server Setup
 
 ```python
 async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str,
@@ -198,7 +224,7 @@ async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str,
         logger.warning("No auth configured - running without MCP tools")
 ```
 
-### 6. Authentication Options
+### 7. Authentication Options
 
 ```python
 class LocalAuthenticationOptions:
@@ -215,7 +241,7 @@ class LocalAuthenticationOptions:
         )
 ```
 
-### 7. Token Caching
+### 8. Token Caching
 
 ```python
 # Global token cache
