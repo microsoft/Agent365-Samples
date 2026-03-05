@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { Experimental_Agent as Agent } from "ai";
 import { anthropic } from '@ai-sdk/anthropic';
 
