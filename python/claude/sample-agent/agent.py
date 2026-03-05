@@ -134,9 +134,30 @@ class ClaudeAgent(AgentInterface):
         if not api_key:
             raise EnvironmentError("Missing ANTHROPIC_API_KEY. Please set it before running.")
 
+        # =====================================================================
+        # SYSTEM PROMPT - Define your agent's behavior here
+        # =====================================================================
+        self.system_prompt = """You are a Calendar Scheduling Assistant for Microsoft 365.
+
+Your capabilities:
+- Schedule, reschedule, and cancel meetings using the Calendar MCP tools
+- Check calendar availability for users
+- Send meeting invitations via email using Mail MCP tools
+- Manage recurring meetings
+- Find optimal meeting times across multiple attendees
+
+Guidelines:
+- Always be helpful, professional, and concise
+- Confirm actions before making changes to calendars
+- When scheduling meetings, gather: title, attendees, date/time, duration
+- Use the MCP tools provided to interact with Microsoft 365 calendars and email
+- If you cannot complete a task, explain what additional information you need
+"""
+
         # Configure Claude options
         self.claude_options = ClaudeAgentOptions(
             model=model,
+            system_prompt=self.system_prompt,
             max_thinking_tokens=1024,
             allowed_tools=["WebSearch", "Read", "Write", "WebFetch"],
             permission_mode="acceptEdits",
@@ -224,19 +245,6 @@ class ClaudeAgent(AgentInterface):
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
             self.mcp_tools = []
-
-    async def call_mcp_tool(self, tool_name: str, arguments: dict) -> str:
-        """
-        Call an MCP tool by name and return the result.
-        
-        Args:
-            tool_name: Name of the tool to call
-            arguments: Tool arguments as a dictionary
-            
-        Returns:
-            The tool result as a string
-        """
-        return await self.mcp_service.call_tool(tool_name, arguments)
 
     def get_mcp_tool_names(self) -> list[str]:
         """
@@ -358,7 +366,8 @@ class ClaudeAgent(AgentInterface):
                         # Combine base allowed_tools with MCP tool names
                         all_allowed_tools = list(self.claude_options.allowed_tools) + mcp_allowed_tools
                         
-                        # Create client options with MCP servers included
+                        # Create client options WITH mcp_servers so Claude knows about MCP tools
+                        # Claude SDK will handle tool execution via SSE transport
                         if mcp_servers:
                             logger.info(f"📋 Registering {len(mcp_servers)} MCP server(s) with Claude")
                             logger.info(f"📋 MCP tools available: {mcp_allowed_tools}")
@@ -366,7 +375,7 @@ class ClaudeAgent(AgentInterface):
                                 model=self.claude_options.model,
                                 max_thinking_tokens=self.claude_options.max_thinking_tokens,
                                 allowed_tools=all_allowed_tools,
-                                mcp_servers=mcp_servers,  # MCP servers in Claude SDK format
+                                mcp_servers=mcp_servers,  # Pass MCP servers so Claude knows about tools
                                 permission_mode=self.claude_options.permission_mode,
                                 continue_conversation=self.claude_options.continue_conversation,
                             )
@@ -450,47 +459,10 @@ class ClaudeAgent(AgentInterface):
                                             }
                                             logger.info(f"📊 ExecuteToolScope started for: {tool_name} (id: {tool_call_id})")
                                             
-                                            # Check if this is an MCP tool - we need to execute it manually
-                                            # because Claude SDK doesn't properly support SSE-based MCP servers
-                                            if tool_name.startswith("mcp__"):
-                                                # Parse the MCP tool name: mcp__<server>__<tool>
-                                                parts = tool_name.split("__")
-                                                if len(parts) >= 3:
-                                                    actual_tool_name = "__".join(parts[2:])  # Handle tool names with __
-                                                    logger.info(f"📡 Manually executing MCP tool: {actual_tool_name}")
-                                                    
-                                                    try:
-                                                        # Execute MCP tool manually using our service
-                                                        result = await self.call_mcp_tool(actual_tool_name, tool_input)
-                                                        logger.info(f"✅ MCP tool result: {str(result)[:500]}...")
-                                                        
-                                                        # Record the response in the tool scope
-                                                        if tool_scope and hasattr(tool_scope, 'record_response'):
-                                                            tool_scope.record_response(str(result) if result else "")
-                                                        
-                                                        # Close the tool scope
-                                                        if tool_scope:
-                                                            tool_scope.__exit__(None, None, None)
-                                                            logger.info(f"📊 ExecuteToolScope closed for: {tool_name}")
-                                                        
-                                                        # Remove from active scopes since we handled it
-                                                        if tool_call_id in active_tool_scopes:
-                                                            del active_tool_scopes[tool_call_id]
-                                                        
-                                                        # Note: Don't add to response_parts - Claude will use the result
-                                                        # and generate its own response text
-                                                        
-                                                    except Exception as e:
-                                                        error_msg = f"MCP tool error: {str(e)}"
-                                                        logger.error(f"❌ {error_msg}")
-                                                        
-                                                        # Close scope with error
-                                                        if tool_scope:
-                                                            tool_scope.__exit__(type(e), e, e.__traceback__)
-                                                        if tool_call_id in active_tool_scopes:
-                                                            del active_tool_scopes[tool_call_id]
-                                                        
-                                                        response_parts.append(f"\n\n**Tool Error ({actual_tool_name}):**\n{error_msg}")
+                                            # NOTE: Claude SDK handles MCP tool execution automatically
+                                            # when mcp_servers is passed to ClaudeAgentOptions.
+                                            # We just track the scope here for observability.
+                                            # The actual tool result will come via ToolResultBlock.
                                         
                                         elif isinstance(block, ToolResultBlock):
                                             # Log tool results and close the scope
