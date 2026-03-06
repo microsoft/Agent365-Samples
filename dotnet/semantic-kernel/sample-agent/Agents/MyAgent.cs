@@ -68,6 +68,14 @@ public class MyAgent : AgentApplication
     /// <returns></returns>
     protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
+        // Log the user identity from Activity.From — set by the A365 platform on every message.
+        var fromAccount = turnContext.Activity.From;
+        _logger.LogInformation(
+            "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+            fromAccount?.Name ?? "(unknown)",
+            fromAccount?.Id ?? "(unknown)",
+            fromAccount?.AadObjectId ?? "(none)");
+
         string ObservabilityAuthHandlerName = "";
         string ToolAuthHandlerName = "";
         if (turnContext.IsAgenticRequest())

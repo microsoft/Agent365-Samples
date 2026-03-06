@@ -168,6 +168,9 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
 
     const userMessage = turnContext.activity.text?.trim() || "";
 
+    const from = turnContext.activity?.from;
+    console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+
     if (!userMessage) {
       await turnContext.sendActivity(
         "Please send me a message and I'll help you!"

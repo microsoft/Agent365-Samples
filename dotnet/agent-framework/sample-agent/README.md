@@ -21,6 +21,27 @@ For comprehensive documentation and guidance on building agents with the Microso
 - OpenWeather Credentials (if using the OpenWeather Tool) 
     - see: https://openweathermap.org/price - You will need to create a free account to get an API key (its at the bottom of the page).
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `Activity.From` with basic user information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every turn in `OnMessageAsync` ([MyAgent.cs](Agent/MyAgent.cs)) and injects `Activity.From.Name` into the LLM system instructions for personalized responses:
+
+```csharp
+var fromAccount = turnContext.Activity.From;
+_logger?.LogInformation(
+    "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+    fromAccount?.Name ?? "(unknown)",
+    fromAccount?.Id ?? "(unknown)",
+    fromAccount?.AadObjectId ?? "(none)");
+```
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
