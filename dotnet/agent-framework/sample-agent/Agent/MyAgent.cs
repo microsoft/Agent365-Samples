@@ -21,10 +21,14 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 {
     public class MyAgent : AgentApplication
     {
-        private readonly string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access";
+        private const string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access.";
 
-        private readonly string AgentInstructions = """
+        // Non-interpolated raw string so {{ToolName}} placeholders are preserved as literal text.
+        // {userName} is the only dynamic token and is injected via string.Replace in GetAgentInstructions.
+        private static readonly string AgentInstructionsTemplate = """
         You will speak like a friendly and professional virtual assistant.
+
+        The user's name is {userName}. Use their name naturally where appropriate — for example when greeting them, confirming actions, or making responses feel personal. Do not overuse it.
 
         For questions about yourself, you should use the one of the tools: {{mcp_graph_getMyProfile}}, {{mcp_graph_getUserProfile}}, {{mcp_graph_getMyManager}}, {{mcp_graph_getUsersManager}}.
 
@@ -37,6 +41,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         Otherwise you should use the tools available to you to help answer the user's questions.
         """;
+
+        private static string GetAgentInstructions(string? userName)
+        {
+            // Sanitize the display name before injecting into the system prompt to prevent prompt injection.
+            // Activity.From.Name is channel-provided and therefore untrusted user-controlled text.
+            string safe = string.IsNullOrWhiteSpace(userName) ? "unknown" : userName.Trim();
+            // Strip control characters (newlines, tabs, etc.) that could break prompt structure
+            safe = System.Text.RegularExpressions.Regex.Replace(safe, @"[\p{Cc}\p{Cf}]", " ").Trim();
+            // Enforce a reasonable max length
+            if (safe.Length > 64) safe = safe[..64].TrimEnd();
+            if (string.IsNullOrWhiteSpace(safe)) safe = "unknown";
+            return AgentInstructionsTemplate.Replace("{userName}", safe, StringComparison.Ordinal);
+        }
 
         private readonly IChatClient? _chatClient = null;
         private readonly IConfiguration? _configuration = null;
@@ -133,6 +150,14 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <returns></returns>
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
+            // Log the user identity from Activity.From — set by the A365 platform on every message.
+            var fromAccount = turnContext.Activity.From;
+            _logger?.LogDebug(
+                "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+                fromAccount?.Name ?? "(unknown)",
+                fromAccount?.Id ?? "(unknown)",
+                fromAccount?.AadObjectId ?? "(none)");
+
             // Select the appropriate auth handler based on request type
             // For agentic requests, use the agentic auth handler
             // For non-agentic requests, use OBO auth handler (supports bearer token or configured auth)
@@ -210,18 +235,42 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             AssertionHelpers.ThrowIfNull(context, nameof(context));
             AssertionHelpers.ThrowIfNull(_chatClient!, nameof(_chatClient));
 
-            // Create the local tools we want to register with the agent:
+            // Acquire the access token once for this turn — used for MCP tool loading.
+            string? accessToken = null;
+            string? agentId = null;
+            if (!string.IsNullOrEmpty(authHandlerName))
+            {
+                accessToken = await UserAuthorization.GetTurnTokenAsync(context, authHandlerName);
+                agentId = Utility.ResolveAgentIdentity(context, accessToken);
+            }
+            else if (TryGetBearerTokenForDevelopment(out var bearerToken))
+            {
+                _logger?.LogInformation("Using bearer token from environment. Length: {Length}", bearerToken?.Length ?? 0);
+                accessToken = bearerToken;
+                agentId = Utility.ResolveAgentIdentity(context, accessToken!);
+                _logger?.LogInformation("Resolved agentId: '{AgentId}'", agentId ?? "(null)");
+            }
+            else
+            {
+                _logger?.LogWarning("No auth handler or bearer token available. MCP tools will not be loaded.");
+            }
+
+            if (!string.IsNullOrEmpty(accessToken) && string.IsNullOrEmpty(agentId))
+            {
+                _logger?.LogWarning("Access token was acquired but agent identity could not be resolved. MCP tools will not be loaded.");
+            }
+
+            // Activity.From.Name is always available — no API call needed.
+            var displayName = context.Activity.From?.Name;
+
+            // Create the local tools:
             var toolList = new List<AITool>();
-
-            // Setup the local tool to be able to access the AgentSDK current context,UserAuthorization and other services can be accessed from here as well.
             WeatherLookupTool weatherLookupTool = new(context, _configuration!);
-
-            // Setup the tools for the agent:
             toolList.Add(AIFunctionFactory.Create(DateTimeFunctionTool.getDate));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetCurrentWeatherForLocation));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLocation));
 
-            if (toolService != null)
+            if (toolService != null && !string.IsNullOrEmpty(agentId))
             {
                 try
                 {
@@ -236,71 +285,32 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     }
                     else
                     {
-                        // Notify the user we are loading tools
                         await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-                        // Check if we have a valid auth handler or bearer token for MCP
-                        if (!string.IsNullOrEmpty(authHandlerName))
-                        {
-                            // Use auth handler (agentic flow)
-                            string? agentId = Utility.ResolveAgentIdentity(context, await UserAuthorization.GetTurnTokenAsync(context, authHandlerName));
-                            if (!string.IsNullOrEmpty(agentId))
-                            {
-                                var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, authHandlerName, context).ConfigureAwait(false);
+                        // For the bearer token (development) flow, pass the token as an override and
+                        // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
+                        var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
+                            ? authHandlerName
+                            : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
+                        var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
 
-                                if (a365Tools != null && a365Tools.Count > 0)
-                                {
-                                    toolList.AddRange(a365Tools);
-                                    _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
-                                }
-                            }
-                            else
-                            {
-                                _logger?.LogWarning("Could not resolve agent identity from auth handler token.");
-                            }
-                        }
-                        else if (TryGetBearerTokenForDevelopment(out var bearerToken))
-                        {
-                            // Use bearer token from environment (non-agentic/development flow)
-                            _logger?.LogInformation("Using bearer token from environment for MCP tools.");
-                            _logger?.LogInformation("Bearer token length: {Length}", bearerToken?.Length ?? 0);
-                            string? agentId = Utility.ResolveAgentIdentity(context, bearerToken!);
-                            _logger?.LogInformation("Resolved agentId: '{AgentId}'", agentId ?? "(null)");
-                            if (!string.IsNullOrEmpty(agentId))
-                            {
-                                // Pass bearer token as the last parameter (accessToken override)
-                                // Use OboAuthHandlerName for non-agentic requests, fall back to AgenticAuthHandlerName if not set
-                                var handlerForBearerToken = OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-                                var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForBearerToken, context, bearerToken).ConfigureAwait(false);
+                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
 
-                                if (a365Tools != null && a365Tools.Count > 0)
-                                {
-                                    toolList.AddRange(a365Tools);
-                                    _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
-                                }
-                            }
-                            else
-                            {
-                                _logger?.LogWarning("Could not resolve agent identity from bearer token.");
-                            }
-                        }
-                        else
+                        if (a365Tools != null && a365Tools.Count > 0)
                         {
-                            _logger?.LogWarning("No auth handler or bearer token available. MCP tools will not be loaded.");
+                            toolList.AddRange(a365Tools);
+                            _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    // Only allow graceful fallback in Development mode when SKIP_TOOLING_ON_ERRORS is explicitly enabled
                     if (ShouldSkipToolingOnErrors())
                     {
-                        // Graceful fallback: Log the error but continue without MCP tools
                         _logger?.LogWarning(ex, "Failed to register MCP tool servers. Continuing without MCP tools (SKIP_TOOLING_ON_ERRORS=true).");
                     }
                     else
                     {
-                        // In production or when SKIP_TOOLING_ON_ERRORS is not enabled, fail fast
                         _logger?.LogError(ex, "Failed to register MCP tool servers.");
                         throw;
                     }
@@ -314,11 +324,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 Tools = toolList
             };
 
-            // Create the chat Client passing in agent instructions and tools: 
+            // Create the chat Client passing in agent instructions and tools:
             return new ChatClientAgent(_chatClient!,
                     new ChatClientAgentOptions
                     {
-                        Instructions = AgentInstructions,
+                        Instructions = GetAgentInstructions(displayName),
                         ChatOptions = toolOptions,
                         ChatMessageStoreFactory = ctx =>
                         {

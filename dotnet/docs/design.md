@@ -189,7 +189,33 @@ var a365Tools = await toolService.GetMcpToolsAsync(
 toolList.AddRange(a365Tools);
 ```
 
-### 6. Authentication Flow
+### 6. User Identity
+
+The A365 platform populates `Activity.From` on every incoming message. Log it at message handler entry and inject the display name into LLM system instructions:
+
+```csharp
+protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState,
+                                          CancellationToken cancellationToken)
+{
+    var fromAccount = turnContext.Activity.From;
+    _logger.LogInformation(
+        "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+        fromAccount?.Name ?? "(unknown)",
+        fromAccount?.Id ?? "(unknown)",
+        fromAccount?.AadObjectId ?? "(none)");
+
+    var displayName = fromAccount?.Name ?? "unknown";
+    // Inject displayName into your LLM system prompt / agent instructions
+}
+```
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+### 7. Authentication Flow
 
 ```csharp
 // Check for bearer token (development)
@@ -210,7 +236,7 @@ else
 }
 ```
 
-### 7. Observability Integration
+### 8. Observability Integration
 
 ```csharp
 // Configure tracing

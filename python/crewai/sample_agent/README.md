@@ -63,6 +63,20 @@ AGENTIC_APP_ID=crewai-agent
 TAVILY_API_KEY=tvly-your-tavily-key
 ```
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `activity.from_property` with basic user
+information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `activity.from_property.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from_property.name` | Display name as known to the channel |
+| `activity.from_property.aad_object_id` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn and injects the display name
+into the LLM task instructions for personalized responses via the `{user_name}` input variable.
+
 ## Running the Agent
 
 ### Option 1: Run via Agent Runner (Standalone)

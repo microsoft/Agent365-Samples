@@ -18,6 +18,20 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Claude Agent SDK 0.1.1 or higher
 - Claude API credentials
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `activity.from` with basic user
+information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `activity.from.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from.name` | Display name as known to the channel |
+| `activity.from.aadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn and injects the display name
+into the LLM system instructions for personalized responses.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.

@@ -48,6 +48,18 @@ Simplified profile for early local development using bearer token authentication
 
 > **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop get-token`.
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `Activity.From` with basic user information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn and injects the display name into the LLM system instructions for personalized responses.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

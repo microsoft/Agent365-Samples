@@ -159,6 +159,15 @@ class CrewAIAgent(AgentInterface):
         """
         ctx_details = extract_turn_context_details(context)
 
+        # Log the user identity from activity.from_property — set by the A365 platform on every message.
+        logger.info(
+            "Turn received from user — DisplayName: '%s', UserId: '%s', AadObjectId: '%s'",
+            ctx_details.caller_name or "(unknown)",
+            ctx_details.caller_id or "(unknown)",
+            ctx_details.caller_aad_object_id or "(none)",
+        )
+        display_name = ctx_details.caller_name or "unknown"
+
         try:
             logger.info(f"Processing message: {message[:100]}...")
 
@@ -197,7 +206,7 @@ class CrewAIAgent(AgentInterface):
 
                         # Run CrewAI with InferenceScope
                         full_response = await self._run_crew_with_inference_scope(
-                            message, observable_mcp_tools, agent_details, tenant_details, request
+                            message, observable_mcp_tools, agent_details, tenant_details, request, display_name
                         )
 
                         if hasattr(invoke_scope, 'record_output_messages'):
@@ -216,7 +225,7 @@ class CrewAIAgent(AgentInterface):
             return f"Sorry, I encountered an error: {str(e)}"
 
     async def _run_crew_with_inference_scope(
-        self, message: str, observable_mcp_tools: list, agent_details, tenant_details, request
+        self, message: str, observable_mcp_tools: list, agent_details, tenant_details, request, user_name: str = "unknown"
     ) -> str:
         """Run CrewAI with InferenceScope for LLM call tracking."""
         inference_details = InferenceCallDetails(
@@ -240,6 +249,7 @@ class CrewAIAgent(AgentInterface):
                 True,
                 False,
                 observable_mcp_tools,
+                user_name,
             )
             logger.info("CrewAI completed")
 

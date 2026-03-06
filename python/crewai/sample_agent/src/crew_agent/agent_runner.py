@@ -39,6 +39,7 @@ def run_crew(
     return_result: bool = False,
     verbose: bool = True,
     mcps: Optional[list] = None,
+    user_name: str = "unknown",
 ) -> Optional[Any]:
     """
     Run the crew with the given location.
@@ -67,7 +68,8 @@ def run_crew(
     # Prepare inputs for the crew
     inputs: Dict[str, str] = {
         'location': location_to_use,
-        'current_year': str(datetime.now().year)
+        'current_year': str(datetime.now().year),
+        'user_name': user_name,
     }
     
     if verbose:

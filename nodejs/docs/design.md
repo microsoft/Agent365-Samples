@@ -138,7 +138,29 @@ export class MyAgent extends AgentApplication<TurnState> {
 export const agentApplication = new MyAgent();
 ```
 
-### 3. LLM Client (client.ts)
+### 3. User Identity
+
+The A365 platform populates `activity.from` on every incoming message. Log it at message handler entry and inject the display name into LLM system instructions:
+
+```typescript
+async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
+  const from = turnContext.activity?.from;
+  console.log(
+    `Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', ` +
+    `UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`
+  );
+  const displayName = from?.name ?? 'unknown';
+  // Pass displayName to getClient() or inject into system instructions
+}
+```
+
+| Field | Description |
+|---|---|
+| `activity.from.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from.name` | Display name as known to the channel |
+| `activity.from.aadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+### 4. LLM Client (client.ts)
 
 ```typescript
 import { Agent, run } from '@openai/agents';
@@ -219,7 +241,7 @@ class OpenAIClient implements Client {
 }
 ```
 
-### 4. Token Caching (token-cache.ts)
+### 5. Token Caching (token-cache.ts)
 
 ```typescript
 const tokenCache = new Map<string, string>();

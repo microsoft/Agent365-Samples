@@ -161,7 +161,23 @@ Agents can receive and process notifications from Agent 365:
 - **WPX Comments**: Handle Word document comments
 - **Custom Notifications**: Extensible notification types
 
-### 7. Graceful Degradation
+### 7. User Identity
+
+The A365 platform populates `Activity.From` on every incoming message with the user's basic
+information — no API calls or token acquisition required:
+
+| Field | C# | Python | TypeScript |
+|---|---|---|---|
+| Channel user ID | `Activity.From.Id` | `activity.from_property.id` | `activity.from.id` |
+| Display name | `Activity.From.Name` | `activity.from_property.name` | `activity.from.name` |
+| Azure AD Object ID | `Activity.From.AadObjectId` | `activity.from_property.aad_object_id` | `activity.from.aadObjectId` |
+
+**Pattern applied in every sample:**
+1. Log all three fields at `Information`/`info` level at message handler entry
+2. Inject the display name into LLM system instructions for personalized responses
+3. Use `AadObjectId` to call Microsoft Graph for extended profile data when needed
+
+### 8. Graceful Degradation
 
 All samples support graceful degradation when tools fail:
 
