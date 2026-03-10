@@ -115,18 +115,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Greet when members are added to the conversation
             OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
+            // Compute auth handler arrays once; reused for all agentic/OBO activity registrations below.
+            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? [AgenticAuthHandlerName] : Array.Empty<string>();
+            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : Array.Empty<string>();
+
             // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate).
             // Dual registration: agentic (A365 production) and non-agentic (Playground / WebChat).
-            var agenticInstallHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
-            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticInstallHandlers);
+            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
             OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: false);
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
             // Agentic requests use the agentic auth handler (if configured)
-            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
             // Non-agentic requests (Playground, WebChat) use OBO auth handler (if configured)
-            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? new[] { OboAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
         }
 
