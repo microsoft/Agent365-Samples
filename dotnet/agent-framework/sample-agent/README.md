@@ -54,11 +54,11 @@ When a user installs (hires) or uninstalls (removes) the agent, the A365 platfor
 ```csharp
 if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
 {
-    await turnContext.SendActivityAsync(MessageFactory.Text(AgentWelcomeMessage), cancellationToken);
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
 }
 else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
 {
-    await turnContext.SendActivityAsync(MessageFactory.Text("Goodbye! Feel free to add me back any time."), cancellationToken);
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
 }
 ```
 

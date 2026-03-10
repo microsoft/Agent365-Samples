@@ -22,6 +22,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
     public class MyAgent : AgentApplication
     {
         private const string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access.";
+        private const string AgentHireMessage = "Thank you for hiring me! Looking forward to assisting you in your professional journey!";
+        private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
         // Non-interpolated raw string so {{ToolName}} placeholders are preserved as literal text.
         // {userName} is the only dynamic token and is injected via string.Replace in GetAgentInstructions.
@@ -164,11 +166,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
                 if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
                 {
-                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentWelcomeMessage), cancellationToken);
+                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
                 }
                 else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
                 {
-                    await turnContext.SendActivityAsync(MessageFactory.Text("Goodbye! Feel free to add me back any time."), cancellationToken);
+                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
                 }
             });
         }
