@@ -7,6 +7,14 @@ This script demonstrates direct usage without complex imports.
 """
 
 import sys
+import logging
+
+
+from agent_framework.observability import configure_otel_providers
+from telemetry import configure_telemetry, instrument_libraries
+
+configure_telemetry()
+configure_otel_providers()
 
 try:
     from agent import AgentFrameworkAgent

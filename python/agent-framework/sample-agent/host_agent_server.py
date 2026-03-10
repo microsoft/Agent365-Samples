@@ -10,6 +10,10 @@ from os import environ
 
 from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
+
+from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
 from dotenv import load_dotenv
 from agent_interface import AgentInterface, check_agent_inheritance
 from microsoft_agents.activity import load_configuration_from_env
@@ -42,6 +46,10 @@ from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
 from token_cache import cache_agentic_token
+from agent_metrics import agent_metrics
+
+# AioHttpClientInstrumentor().instrument()
+# RequestsInstrumentor().instrument()
 
 # --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -71,6 +79,8 @@ def create_and_run_host(
         service_name="AgentFrameworkTracingWithAzureOpenAI",
         service_namespace="AgentFrameworkTesting",
     )
+    from telemetry import instrument_libraries
+    instrument_libraries()
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
     auth_config = host.create_auth_configuration()
@@ -88,7 +98,8 @@ class GenericAgentHost:
                 f"Agent class {agent_class.__name__} must inherit from AgentInterface"
             )
 
-        self.auth_handler_name = "AGENTIC"
+        # self.auth_handler_name = "AGENTIC"
+        self.auth_handler_name = "ME"
 
         self.agent_class = agent_class
         self.agent_args = agent_args
@@ -127,6 +138,8 @@ class GenericAgentHost:
 
     async def _validate_agent_and_setup_context(self, context: TurnContext):
         tenant_id = context.activity.recipient.tenant_id
+
+        # TODO -> fix 
         agent_id = context.activity.recipient.agentic_app_id
 
         if not self.agent_instance:
@@ -143,36 +156,39 @@ class GenericAgentHost:
         handler = [self.auth_handler_name]
 
         async def help_handler(context: TurnContext, _: TurnState):
-            await context.send_activity(
-                f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
-                "How can I help you today?"
-            )
+            with agent_metrics.agent_operation("help_handling", context):
+                await context.send_activity(
+                    f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
+                    "How can I help you today?"
+                )
 
         self.agent_app.conversation_update("membersAdded", auth_handlers=handler)(help_handler)
         self.agent_app.message("/help", auth_handlers=handler)(help_handler)
 
         @self.agent_app.activity("message", auth_handlers=handler)
         async def on_message(context: TurnContext, _: TurnState):
-            try:
-                result = await self._validate_agent_and_setup_context(context)
-                if result is None:
-                    return
-                tenant_id, agent_id = result
-
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    user_message = context.activity.text or ""
-                    if not user_message.strip() or user_message.strip() == "/help":
+            with agent_metrics.agent_operation("message_handling", context):
+                try:
+                    result = await self._validate_agent_and_setup_context(context)
+                    if result is None:
                         return
+                    # tenant_id, agent_id = "tenant_id", "agent_id"  # Temporary bypass for testing
+                    tenant_id, agent_id = result
 
-                    logger.info(f"📨 {user_message}")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
-                    await context.send_activity(response)
+                    with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                        user_message = context.activity.text or ""
+                        if not user_message.strip() or user_message.strip() == "/help":
+                            return
 
-            except Exception as e:
-                logger.error(f"❌ Error: {e}")
-                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
+                        logger.info(f"📨 {user_message}")
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+                        await context.send_activity(response)
+
+                except Exception as e:
+                    logger.error(f"❌ Error: {e}")
+                    await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
@@ -183,36 +199,37 @@ class GenericAgentHost:
             state: TurnState,
             notification_activity: AgentNotificationActivity,
         ):
-            try:
-                result = await self._validate_agent_and_setup_context(context)
-                if result is None:
-                    return
-                tenant_id, agent_id = result
-
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    logger.info(f"📬 {notification_activity.notification_type}")
-
-                    if not hasattr(
-                        self.agent_instance, "handle_agent_notification_activity"
-                    ):
-                        logger.warning("⚠️ Agent doesn't support notifications")
-                        await context.send_activity(
-                            "This agent doesn't support notification handling yet."
-                        )
+            with agent_metrics.agent_operation("notification_handling", context):
+                try:
+                    result = await self._validate_agent_and_setup_context(context)
+                    if result is None:
                         return
+                    tenant_id, agent_id = result
 
-                    response = (
-                        await self.agent_instance.handle_agent_notification_activity(
-                            notification_activity, self.agent_app.auth, self.auth_handler_name, context
+                    with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                        logger.info(f"📬 {notification_activity.notification_type}")
+
+                        if not hasattr(
+                            self.agent_instance, "handle_agent_notification_activity"
+                        ):
+                            logger.warning("⚠️ Agent doesn't support notifications")
+                            await context.send_activity(
+                                "This agent doesn't support notification handling yet."
+                            )
+                            return
+
+                        response = (
+                            await self.agent_instance.handle_agent_notification_activity(
+                                notification_activity, self.agent_app.auth, self.auth_handler_name, context
+                            )
                         )
-                    )
-                    await context.send_activity(response)
+                        await context.send_activity(response)
 
-            except Exception as e:
-                logger.error(f"❌ Notification error: {e}")
-                await context.send_activity(
-                    f"Sorry, I encountered an error processing the notification: {str(e)}"
-                )
+                except Exception as e:
+                    logger.error(f"❌ Notification error: {e}")
+                    await context.send_activity(
+                        f"Sorry, I encountered an error processing the notification: {str(e)}"
+                    )
 
     # --- Agent Initialization ---
     async def initialize_agent(self):
@@ -223,31 +240,33 @@ class GenericAgentHost:
 
     # --- Authentication ---
     def create_auth_configuration(self) -> AgentAuthConfiguration | None:
-        client_id = environ.get("CLIENT_ID")
-        tenant_id = environ.get("TENANT_ID")
-        client_secret = environ.get("CLIENT_SECRET")
+        return self.connection_manager.get_default_connection_configuration()
+        # client_id = environ.get("CLIENT_ID")
+        # tenant_id = environ.get("TENANT_ID")
+        # client_secret = environ.get("CLIENT_SECRET")
 
-        if client_id and tenant_id and client_secret:
-            logger.info("🔒 Using Client Credentials authentication")
-            return AgentAuthConfiguration(
-                client_id=client_id,
-                tenant_id=tenant_id,
-                client_secret=client_secret,
-                scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
-            )
+        # if client_id and tenant_id and client_secret:
+        #     logger.info("🔒 Using Client Credentials authentication")
+        #     return AgentAuthConfiguration(
+        #         client_id=client_id,
+        #         tenant_id=tenant_id,
+        #         client_secret=client_secret,
+        #         scopes=["5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"],
+        #     )
 
-        if environ.get("BEARER_TOKEN"):
-            logger.info("🔑 Anonymous dev mode")
-        else:
-            logger.warning("⚠️ No auth env vars; running anonymous")
-        return None
+        # if environ.get("BEARER_TOKEN"):
+        #     logger.info("🔑 Anonymous dev mode")
+        # else:
+        #     logger.warning("⚠️ No auth env vars; running anonymous")
+        # return None
 
     # --- Server ---
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         async def entry_point(req: Request) -> Response:
-            return await start_agent_process(
-                req, req.app["agent_app"], req.app["adapter"]
-            )
+            with agent_metrics.http_operation("entry_point"):
+                return await start_agent_process(
+                    req, req.app["agent_app"], req.app["adapter"]
+                )
 
         async def health(_req: Request) -> Response:
             return json_response(
