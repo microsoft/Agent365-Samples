@@ -32,6 +32,25 @@ information — always available with no API calls or token acquisition:
 The sample logs these fields at the start of every message turn and injects the display name
 into the LLM system instructions for personalized responses.
 
+## Handling Agent Install and Uninstall
+
+When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `handleInstallationUpdateActivity` ([agent.ts](src/agent.ts)):
+
+| Action | Description |
+|---|---|
+| `add` | Agent was installed — send a welcome message |
+| `remove` | Agent was uninstalled — send a farewell message |
+
+```typescript
+if (context.activity.action === 'add') {
+  await context.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
+} else if (context.activity.action === 'remove') {
+  await context.sendActivity('Thank you for your time, I enjoyed working with you.');
+}
+```
+
+To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.

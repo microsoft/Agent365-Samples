@@ -89,6 +89,22 @@ class MyAgent(AgentApplication):
             )
             await context.send_activity(Activity(type=ActivityTypes.message, text=help_message))
 
+        # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+        @self.activity("installationUpdate")
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            action = context.activity.action
+            from_prop = context.activity.from_property
+            logger.info(
+                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                action or "(none)",
+                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+            )
+            if action == "add":
+                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+            elif action == "remove":
+                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+
         @self.activity("message", auth_handlers=auth_handlers, rank=2)
         async def message_handler(context: TurnContext, _: TurnState):
             """Handle message activities."""
