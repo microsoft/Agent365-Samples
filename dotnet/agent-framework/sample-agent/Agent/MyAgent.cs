@@ -113,7 +113,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Greet when members are added to the conversation
             OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
-            // Handle A365 Notification Messages. 
+            // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate).
+            // Dual registration: agentic (A365 production) and non-agentic (Playground / WebChat).
+            var agenticInstallHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
+            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticInstallHandlers);
+            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: false);
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
             // Agentic requests use the agentic auth handler (if configured)
@@ -142,7 +146,35 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         }
 
         /// <summary>
-        /// General Message process for Teams and other channels. 
+        /// Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
+        /// Sends a welcome message on install and a farewell on uninstall.
+        /// </summary>
+        protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
+        {
+            await AgentMetrics.InvokeObservedAgentOperation(
+                "InstallationUpdate",
+                turnContext,
+                async () =>
+            {
+                _logger?.LogInformation(
+                    "InstallationUpdate received — Action: '{Action}', DisplayName: '{Name}', UserId: '{Id}'",
+                    turnContext.Activity.Action ?? "(none)",
+                    turnContext.Activity.From?.Name ?? "(unknown)",
+                    turnContext.Activity.From?.Id ?? "(unknown)");
+
+                if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentWelcomeMessage), cancellationToken);
+                }
+                else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text("Goodbye! Feel free to add me back any time."), cancellationToken);
+                }
+            });
+        }
+
+        /// <summary>
+        /// General Message process for Teams and other channels.
         /// </summary>
         /// <param name="turnContext"></param>
         /// <param name="turnState"></param>
