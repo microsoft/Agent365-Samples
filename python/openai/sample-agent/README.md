@@ -12,11 +12,17 @@ This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/mic
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
+>
+> To run the template in your local dev machine, you will need:
+>
+> - [Python](https://www.python.org/), supported versions: 3.11 or higher
+> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) latest version
+> - Prepare your own Azure OpenAI / OpenAI API credentials
+> - Azure CLI signed in with `az login`
 
-- Python 3.x
-- Microsoft Agent 365 SDK
-- OpenAI Agents SDK (openai-agents)
-- Azure/OpenAI API credentials
+> - Microsoft Agent 365 SDK
+> - OpenAI Agents SDK (openai-agents)
+> - A365 CLI: Required for agent deployment and management.
 
 ## Working with User Identity
 
@@ -31,6 +37,17 @@ information — always available with no API calls or token acquisition:
 
 The sample logs these fields at the start of every message turn and injects the display name
 into the LLM system instructions for personalized responses.
+
+## Running the Agent in Microsoft 365 Agents Playground
+
+1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
+1. In file *env/.env.playground.user*, fill in your Azure OpenAI key `SECRET_AZURE_OPENAI_API_KEY=<your-key>`, endpoint `AZURE_OPENAI_ENDPOINT=<your-endpoint>`, and deployment name `AZURE_OPENAI_DEPLOYMENT_NAME=<your-deployment>` if you're using Azure OpenAI.
+1. In file *env/.env.playground.user*, fill in your OpenAI key `SECRET_OPENAI_API_KEY=<your-key>` if you're using OpenAI.
+1. In file *env/.env.playground*, fill in your custom app registration client id `CLIENT_APP_ID`.
+1. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
+1. You can send any message to get a response from the agent.
+
+**Congratulations**! You are running an agent that can now interact with users in Microsoft 365 Agents Playground.
 
 ## Running the Agent
 
