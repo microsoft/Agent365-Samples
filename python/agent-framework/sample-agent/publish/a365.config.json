@@ -1,0 +1,20 @@
+{
+  "tenantId": "badf1f56-284d-4dc5-ac59-0dd53900e743",
+  "subscriptionId": "964de8b4-c259-4d89-a809-697ef73502f6",
+  "resourceGroup": "rg-pythonAF-grant",
+  "location": "eastus",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "62c45540-847c-4008-afc3-971bcc53f728",
+  "appServicePlanName": "rg-pythonAF-grant-plan",
+  "appServicePlanSku": "F1",
+  "webAppName": "pythonafgrant-webapp",
+  "agentIdentityDisplayName": "pythonAFgrant Identity",
+  "agentBlueprintDisplayName": "pythonAFgrant Blueprint",
+  "agentUserPrincipalName": "pythonafgrant@a365preview070.onmicrosoft.com",
+  "agentUserDisplayName": "pythonAFgrant Agent User",
+  "managerEmail": "Granth@a365preview070.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "C:\\Users\\grantharris\\source\\repos\\Agent365-Samples\\python\\agent-framework\\sample-agent",
+  "agentDescription": "pythonAFgrant - Agent 365 Agent"
+}

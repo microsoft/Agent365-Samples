@@ -1,0 +1,84 @@
+{
+  "managedIdentityPrincipalId": null,
+  "agentBlueprintId": "403bb954-0210-400d-8f96-363d2ab3470e",
+  "agentBlueprintObjectId": "403bb954-0210-400d-8f96-363d2ab3470e",
+  "agentBlueprintServicePrincipalObjectId": "c6ca881a-f821-4a1c-b8b6-1ef7ffa9207e",
+  "AgenticAppId": null,
+  "AgenticUserId": null,
+  "agentBlueprintClientSecret": "AQAAANCMnd8BFdERjHoAwE/Cl\u002BsBAAAATAYxf/MLd0imrq0DtQ3FHgAAAAACAAAAAAAQZgAAAAEAACAAAACQGJLzBT4KBzpz9AFZ1ah3ka5Fr\u002B6DAVEjo8GVxZBpgQAAAAAOgAAAAAIAACAAAADPuAWBLhuQ8AqsdEZfNIZBG29NGcEXUIipHexTytmbvjAAAAB9eYeLZOMMNU0l4XZO5v0/kLVF\u002BGQ8y7DfC2c4bqEwAomZoV4KWv4p/0crKrMoGNdAAAAAC49kJRSV0LFUVnsLPpUdeY5mWU5CMjE\u002BOcGNw4Ok6NHUaOUHHstMSbO8QjF5sDLmE36hJIcZPx3x3yFFsel/fg==",
+  "agentBlueprintClientSecretProtected": true,
+  "botId": "403bb954-0210-400d-8f96-363d2ab3470e",
+  "botMsaAppId": "403bb954-0210-400d-8f96-363d2ab3470e",
+  "botMessagingEndpoint": "https://pythonafgrant-webapp.azurewebsites.net/api/messages",
+  "resourceConsents": [
+    {
+      "resourceName": "Microsoft Graph",
+      "resourceAppId": "00000003-0000-0000-c000-000000000000",
+      "consentGranted": true,
+      "consentTimestamp": "2026-03-05T22:27:36.7930795Z",
+      "scopes": [
+        "Mail.ReadWrite",
+        "Mail.Send",
+        "Chat.ReadWrite",
+        "User.Read.All",
+        "Sites.Read.All"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Agent 365 Tools",
+      "resourceAppId": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1",
+      "consentGranted": true,
+      "consentTimestamp": "2026-03-05T22:28:21.0290381Z",
+      "scopes": [
+        "McpServers.Mail.All",
+        "McpServersMetadata.Read.All"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Messaging Bot API",
+      "resourceAppId": "5a807f24-c9de-44ee-a3a7-329e88a00ffc",
+      "consentGranted": true,
+      "consentTimestamp": "2026-03-05T22:28:22.9668943Z",
+      "scopes": [
+        "Authorization.ReadWrite",
+        "user_impersonation"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Observability API",
+      "resourceAppId": "9b975845-388f-4429-889e-eab1ef63949c",
+      "consentGranted": true,
+      "consentTimestamp": "2026-03-05T22:28:24.6795191Z",
+      "scopes": [
+        "user_impersonation"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    },
+    {
+      "resourceName": "Power Platform API",
+      "resourceAppId": "8578e004-a5c6-46e7-913e-12f58912df43",
+      "consentGranted": true,
+      "consentTimestamp": "2026-03-05T22:28:26.5935555Z",
+      "scopes": [
+        "Connectivity.Connections.Read"
+      ],
+      "inheritablePermissionsConfigured": true,
+      "inheritablePermissionsAlreadyExist": false
+    }
+  ],
+  "deploymentLastTimestamp": null,
+  "deploymentLastStatus": null,
+  "deploymentLastCommitHash": null,
+  "deploymentLastBuildId": null,
+  "lastUpdated": "2026-03-05T22:28:26.8460879Z",
+  "cliVersion": "1.1.104.33017",
+  "completed": true,
+  "completedAt": "2026-03-05T22:28:16.9435565Z"
+}

@@ -1,0 +1,7 @@
+[build]
+platform = "python"
+version = "3.13"
+build-command = "pip install -r requirements.txt"
+
+[run]
+command = "python start_with_generic_host.py"
