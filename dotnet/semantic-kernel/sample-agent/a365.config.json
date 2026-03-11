@@ -1,0 +1,20 @@
+{
+  "tenantId": "badf1f56-284d-4dc5-ac59-0dd53900e743",
+  "subscriptionId": "badf1f56-284d-4dc5-ac59-0dd53900e743",
+  "resourceGroup": "grantharris-agent365-rg",
+  "location": "canadacentral",
+  "environment": "prod",
+  "needDeployment": true,
+  "clientAppId": "b227f9b9-cb83-47df-a504-f4ffdd9f9a54",
+  "appServicePlanName": "grantharris-agent365-rg-plan",
+  "appServicePlanSku": "F1",
+  "webAppName": "grantharrisagent0309-webapp",
+  "agentIdentityDisplayName": "grantharrisagent0309 Identity",
+  "agentBlueprintDisplayName": "grantharrisagent0309 Blueprint",
+  "agentUserPrincipalName": "grantharrisagent0309@a365preview070.onmicrosoft.com",
+  "agentUserDisplayName": "grantharrisagent0309 Agent User",
+  "managerEmail": "grant-agentdev@a365preview070.onmicrosoft.com",
+  "agentUserUsageLocation": "US",
+  "deploymentProjectPath": "C:\\Users\\grantharris\\source\\repos\\Agent365-Samples\\dotnet\\semantic-kernel\\sample-agent",
+  "agentDescription": "grantharrisagent0309 - Agent 365 Agent"
+}

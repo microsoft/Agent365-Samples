@@ -1,0 +1,22 @@
+{
+  "managedIdentityPrincipalId": null,
+  "agentBlueprintId": "387fe613-d1a4-4539-9616-921d0457ac1e",
+  "agentBlueprintObjectId": "387fe613-d1a4-4539-9616-921d0457ac1e",
+  "agentBlueprintServicePrincipalObjectId": "d45b6f70-cdd9-4553-8dc4-7111545ed7f7",
+  "AgenticAppId": null,
+  "AgenticUserId": null,
+  "agentBlueprintClientSecret": null,
+  "agentBlueprintClientSecretProtected": false,
+  "botId": null,
+  "botMsaAppId": null,
+  "botMessagingEndpoint": null,
+  "resourceConsents": [],
+  "deploymentLastTimestamp": null,
+  "deploymentLastStatus": null,
+  "deploymentLastCommitHash": null,
+  "deploymentLastBuildId": null,
+  "lastUpdated": "2026-03-10T02:23:41.5416219Z",
+  "cliVersion": "1.1.111.30102",
+  "completed": false,
+  "completedAt": null
+}
