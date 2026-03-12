@@ -15,6 +15,11 @@ deploy:
       nodejs:
         symlinkDir: ./devTools/nodejs
 
+  # Install Python dependencies
+  - uses: script
+    with:
+      run: uv pip install -e .
+
   - uses: file/createOrUpdateEnvironmentFile
     with:
       target: ./.env
@@ -24,7 +29,7 @@ deploy:
         AZURE_OPENAI_API_KEY: ${{SECRET_AZURE_OPENAI_API_KEY}}
         AZURE_OPENAI_ENDPOINT: ${{AZURE_OPENAI_ENDPOINT}}
         AZURE_OPENAI_DEPLOYMENT: ${{AZURE_OPENAI_DEPLOYMENT_NAME}}
-        OPENAI_API_KEY: ${{SECRET_OPENAI_API_KEY}}
+        # OPENAI_API_KEY: ${{SECRET_OPENAI_API_KEY}}
         BEARER_TOKEN: ${{SECRET_BEARER_TOKEN}}
         USE_AGENTIC_AUTH: ${{USE_AGENTIC_AUTH}}
         connectionsMap__0__serviceUrl: ${{connectionsMap__0__serviceUrl}}

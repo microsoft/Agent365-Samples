@@ -5,8 +5,9 @@
             "name": "Start Python",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/src/app.py",
-            "cwd": "${workspaceFolder}/src",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "program": "${workspaceFolder}/start_with_generic_host.py",
+            "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "serverReadyAction": {
                 "pattern": "(started|listening|Running|Serving) (at|on) (https?://\\S+)",

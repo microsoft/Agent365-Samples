@@ -24,6 +24,18 @@ For comprehensive documentation and guidance on building agents with the Microso
 > - OpenAI Agents SDK (openai-agents)
 > - A365 CLI: Required for agent deployment and management.
 
+## Python Environment Configuration
+
+Set up the Python virtual environment manually before running the agent or deploy steps:
+
+1. Install `uv`:
+	- `pip install uv`
+2. Create a virtual environment:
+	- `uv venv`
+3. Activate the virtual environment:
+	- Windows PowerShell: `.venv\Scripts\Activate.ps1`
+	- macOS/Linux: `source .venv/bin/activate`
+
 ## Working with User Identity
 
 On every incoming message, the A365 platform populates `activity.from_property` with basic user
