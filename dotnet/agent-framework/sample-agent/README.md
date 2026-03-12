@@ -66,6 +66,56 @@ The handler is registered twice in the constructor — once for agentic (A365 pr
 
 To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
 
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `SendActivityAsync` multiple times within a single turn.
+
+> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `SendActivityAsync` directly to send immediate, discrete messages to the user.
+
+The sample demonstrates this in `OnMessageAsync` ([MyAgent.cs](Agent/MyAgent.cs)) by sending an immediate acknowledgment before the LLM response:
+
+```csharp
+// Message 1: immediate ack — reaches the user right away
+await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken);
+
+// ... LLM processing ...
+
+// Message 2: the LLM response (via StreamingResponse, buffered into one message for Teams agentic)
+await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
+```
+
+Each `SendActivityAsync` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+
+### Typing Indicators
+
+For long-running operations, send a typing indicator to show a "..." progress animation in Teams:
+
+```csharp
+// Typing indicator loop — refreshes every ~4s for long-running operations.
+using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+var typingTask = Task.Run(async () =>
+{
+    try
+    {
+        while (!typingCts.IsCancellationRequested)
+        {
+            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token);
+            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token);
+        }
+    }
+    catch (OperationCanceledException) { /* expected on cancel */ }
+}, typingCts.Token);
+
+try { /* ... do work ... */ }
+finally
+{
+    typingCts.Cancel();
+    try { await typingTask; } catch (OperationCanceledException) { }
+}
+```
+
+> **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

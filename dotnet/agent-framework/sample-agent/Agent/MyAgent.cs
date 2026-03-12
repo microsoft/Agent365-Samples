@@ -219,7 +219,30 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger,
                 async () =>
             {
-                // Start a Streaming Process to let clients that support streaming know that we are processing the request. 
+                // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
+                // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
+                // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+                //       use SendActivityAsync for any messages that must arrive immediately.
+                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+
+                // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+                // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var typingTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!typingCts.IsCancellationRequested)
+                        {
+                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
+                            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException) { /* expected on cancel */ }
+                }, typingCts.Token);
+
+                // StreamingResponse is best-effort: in Teams with agentic identity the SDK may buffer/downscale it.
+                // The ack + typing loop above handle the immediate UX; streaming remains for non-Teams / WebChat clients.
                 await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
                 try
                 {
@@ -252,7 +275,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
                 finally
                 {
-                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); // End the streaming response
+                    typingCts.Cancel();
+                    try { await typingTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
+                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
                 }
             });
         }
