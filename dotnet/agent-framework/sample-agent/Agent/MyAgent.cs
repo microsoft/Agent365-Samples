@@ -209,6 +209,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             }
 
 
+            if (turnContext is null)
+            {
+                throw new ArgumentNullException(nameof(turnContext));
+            }
+
             await A365OtelWrapper.InvokeObservedAgentOperation(
                 "MessageProcessor",
                 turnContext,
@@ -276,7 +281,14 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 finally
                 {
                     typingCts.Cancel();
-                    try { await typingTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
+                    try
+                    {
+                        await typingTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected: typingTask is canceled when typingCts is canceled; no further action required.
+                    }
                     await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
                 }
             });
