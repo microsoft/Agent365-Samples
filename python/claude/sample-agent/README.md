@@ -48,6 +48,57 @@ elif action == "remove":
 
 To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
 
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt. This is the recommended pattern for agentic identities in Teams.
+
+> **Important**: Streaming (SSE) is not supported for agentic identities in Teams. The SDK detects agentic identity and buffers streaming into a single message. Instead, call `send_activity` multiple times to send multiple messages.
+
+### Pattern
+
+1. Send an immediate acknowledgment so the user knows work has started
+2. Run a typing indicator loop — each indicator times out after ~5 seconds, so re-send every ~4 seconds
+3. Do your LLM work, then send the response
+
+### Typing Indicators
+
+- Typing indicators show a progress animation in Teams
+- They have a built-in ~5-second visual timeout
+- For long-running operations, re-send the typing indicator in a loop every ~4 seconds
+- Typing indicators are only visible in 1:1 chats and small group chats (not channels)
+
+### Code Example
+
+```python
+# Multiple messages: send an immediate ack before the LLM work begins.
+# Each send_activity call produces a discrete Teams message.
+await context.send_activity("Got it — working on it…")
+
+# Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+await context.send_activity(Activity(type="typing"))
+
+# Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+# asyncio.create_task is used because all aiohttp handlers share the same event loop.
+async def _typing_loop():
+    while True:
+        try:
+            await asyncio.sleep(4)
+            await context.send_activity(Activity(type="typing"))
+        except asyncio.CancelledError:
+            break
+
+typing_task = asyncio.create_task(_typing_loop())
+try:
+    response = await agent.invoke(user_message)
+    await context.send_activity(response)
+finally:
+    typing_task.cancel()
+    try:
+        await typing_task
+    except asyncio.CancelledError:
+        pass
+```
+
 ## Documentation
 
 For detailed setup and running instructions, please refer to the official documentation:

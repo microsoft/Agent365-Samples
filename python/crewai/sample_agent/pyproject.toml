@@ -6,7 +6,7 @@ authors = [{ name = "Microsoft", email = "support@microsoft.com" }]
 requires-python = ">=3.11"
 dependencies = [
     "crewai[azure-ai-inference,tools]==1.4.1",
-    "pysqlite3-binary>=0.5.2",
+    "pysqlite3-binary>=0.5.2; sys_platform == 'linux'",
     "tavily-python>=0.3.0",
     "python-dotenv>=1.0.0",
     

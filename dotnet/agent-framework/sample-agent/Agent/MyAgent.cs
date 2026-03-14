@@ -185,6 +185,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <returns></returns>
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
+            if (turnContext is null)
+            {
+                throw new ArgumentNullException(nameof(turnContext));
+            }
+
             // Log the user identity from Activity.From — set by the A365 platform on every message.
             var fromAccount = turnContext.Activity.From;
             _logger?.LogDebug(
@@ -208,7 +213,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 ObservabilityAuthHandlerName = ToolAuthHandlerName = OboAuthHandlerName;
             }
 
-
             await A365OtelWrapper.InvokeObservedAgentOperation(
                 "MessageProcessor",
                 turnContext,
@@ -219,7 +223,33 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger,
                 async () =>
             {
-                // Start a Streaming Process to let clients that support streaming know that we are processing the request. 
+                // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
+                // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
+                // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+                //       use SendActivityAsync for any messages that must arrive immediately.
+                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+
+                // Send typing indicator immediately on the main thread (awaited so it arrives before the LLM call starts).
+                await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
+
+                // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+                // Only visible in 1:1 and small group chats.
+                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var typingTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!typingCts.IsCancellationRequested)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
+                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException) { /* expected on cancel */ }
+                }, typingCts.Token);
+
+                // StreamingResponse is best-effort: in Teams with agentic identity the SDK may buffer/downscale it.
+                // The ack + typing loop above handle the immediate UX; streaming remains for non-Teams / WebChat clients.
                 await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
                 try
                 {
@@ -252,7 +282,16 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
                 finally
                 {
-                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); // End the streaming response
+                    typingCts.Cancel();
+                    try
+                    {
+                        await typingTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected: typingTask is canceled when typingCts is canceled; no further action required.
+                    }
+                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
                 }
             });
         }

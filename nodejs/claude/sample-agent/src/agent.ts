@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
@@ -19,7 +19,6 @@ export class MyAgent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
@@ -58,6 +57,27 @@ export class MyAgent extends AgentApplication<TurnState> {
       return;
     }
 
+    // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+    // Each sendActivity call produces a discrete Teams message.
+    // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+    //       use sendActivity for any messages that must arrive immediately.
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    // Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(async () => {
+        await turnContext.sendActivity({ type: 'typing' } as Activity);
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
+
     // Populate baggage consistently from TurnContext using hosting utilities
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
@@ -80,6 +100,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
+      stopTypingLoop();
       baggageScope.dispose();
     }
   }
