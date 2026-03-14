@@ -15,10 +15,10 @@ Tracking implementation of the multiple-messages pattern across all Agent365-Sam
 | `dotnet/agent-framework` | `Agent/MyAgent.cs` | ✅ | ✅ | ✅ | ✅ |
 | `dotnet/semantic-kernel` | `Agents/MyAgent.cs` | 🔧 | 🔧 | ⏳ | ✅ |
 | `python/agent-framework` | `host_agent_server.py` | 🔧 | 🔧 | ⏳ | ❌ Blocked — `agent_framework` SDK API break (`ChatAgent` removed); pre-existing env issue |
-| `python/openai` | `host_agent_server.py` | ⏳ | ⏳ | ⏳ | ⏳ |
-| `python/claude` | `host_agent_server.py` | ⏳ | ⏳ | ⏳ | ⏳ |
-| `python/crewai` | `host_agent_server.py` | ⏳ | ⏳ | ⏳ | ⏳ |
-| `python/google-adk` | `agent.py` | ⏳ | ⏳ | ⏳ | ⏳ |
+| `python/openai` | `host_agent_server.py` | 🔧 | 🔧 | ⏳ | ⏳ |
+| `python/claude` | `host_agent_server.py` | 🔧 | 🔧 | ⏳ | ⏳ |
+| `python/crewai` | `host_agent_server.py` | 🔧 | 🔧 | ⏳ | ⏳ |
+| `python/google-adk` | `hosting.py` | 🔧 | 🔧 | ⏳ | ⏳ |
 | `nodejs/openai` | `src/agent.ts` | 🔧 | 🔧 | ⏳ | ✅ |
 | `nodejs/claude` | `src/agent.ts` | 🔧 | 🔧 | ⏳ | ⏳ Needs ANTHROPIC_API_KEY |
 | `nodejs/langchain` | `src/agent.ts` | 🔧 | 🔧 | ⏳ | ⏳ |
@@ -34,7 +34,7 @@ Tracking implementation of the multiple-messages pattern across all Agent365-Sam
 
 ## Notes
 
-- `python/google-adk` uses a different hosting pattern — no shared `host_agent_server.py`; update approach TBD.
+- `python/google-adk` uses a different hosting pattern — `MyAgent(AgentApplication)` class in `hosting.py` rather than `host_agent_server.py`. Pattern applied to `message_handler` directly.
 - `nodejs/copilot-studio` was missing the `InstallationUpdate` handler in the constructor — added as part of this work.
 - `nodejs/langchain/quickstart-before` is a pre-refactor snapshot — fixed pre-existing TypeScript errors (`instructions` → `systemPrompt` for langchain 1.2.32+, added `@types/express`/`@types/node`).
 - Node.js samples use a manual `setInterval` typing loop (~4s) even though `startTypingTimer: true` is set in the constructor. The manual loop is necessary for long-running LLM calls that exceed the ~5s typing indicator timeout.

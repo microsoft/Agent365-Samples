@@ -19,7 +19,6 @@ export class MyAgent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
@@ -64,8 +63,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     //       use sendActivity for any messages that must arrive immediately.
     await turnContext.sendActivity('Got it — working on it…');
 
-    // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
-    // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    // Only visible in 1:1 and small group chats.
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     const startTypingLoop = () => {
       typingInterval = setInterval(async () => {

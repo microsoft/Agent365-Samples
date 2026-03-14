@@ -185,6 +185,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <returns></returns>
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
+            if (turnContext is null)
+            {
+                throw new ArgumentNullException(nameof(turnContext));
+            }
+
             // Log the user identity from Activity.From — set by the A365 platform on every message.
             var fromAccount = turnContext.Activity.From;
             _logger?.LogDebug(
@@ -208,12 +213,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 ObservabilityAuthHandlerName = ToolAuthHandlerName = OboAuthHandlerName;
             }
 
-
-            if (turnContext is null)
-            {
-                throw new ArgumentNullException(nameof(turnContext));
-            }
-
             await A365OtelWrapper.InvokeObservedAgentOperation(
                 "MessageProcessor",
                 turnContext,
@@ -230,8 +229,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 //       use SendActivityAsync for any messages that must arrive immediately.
                 await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
 
-                // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
-                // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+                // Send typing indicator immediately on the main thread (awaited so it arrives before the LLM call starts).
+                await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
+
+                // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+                // Only visible in 1:1 and small group chats.
                 using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 var typingTask = Task.Run(async () =>
                 {
@@ -239,8 +241,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     {
                         while (!typingCts.IsCancellationRequested)
                         {
-                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
                             await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
+                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
                         }
                     }
                     catch (OperationCanceledException) { /* expected on cancel */ }
