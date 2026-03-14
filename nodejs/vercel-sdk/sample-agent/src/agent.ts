@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
@@ -55,6 +55,24 @@ export class A365Agent extends AgentApplication<TurnState> {
       return;
     }
 
+    // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+    // Each sendActivity call produces a discrete Teams message.
+    // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+    //       use sendActivity for any messages that must arrive immediately.
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+    // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(async () => {
+        await turnContext.sendActivity({ type: 'typing' } as Activity);
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
+
     try {
       const client: Client = await getClient(displayName);
       const response = await client.invokeAgentWithScope(userMessage);
@@ -63,6 +81,8 @@ export class A365Agent extends AgentApplication<TurnState> {
       console.error('LLM query error:', error);
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
+    } finally {
+      stopTypingLoop();
     }
   }
 

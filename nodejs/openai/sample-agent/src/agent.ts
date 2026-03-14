@@ -7,7 +7,7 @@ import { configDotenv } from 'dotenv';
 configDotenv();
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
 import {AgenticTokenCacheInstance, BaggageBuilderUtils} from '@microsoft/agents-a365-observability-hosting'
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
@@ -63,6 +63,24 @@ export class MyAgent extends AgentApplication<TurnState> {
       return;
     }
 
+    // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+    // Each sendActivity call produces a discrete Teams message.
+    // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+    //       use sendActivity for any messages that must arrive immediately.
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+    // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(async () => {
+        await turnContext.sendActivity({ type: 'typing' } as Activity);
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
+
     // Populate baggage consistently from TurnContext using hosting utilities
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
@@ -78,6 +96,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       await baggageScope.run(async () => {
         const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
         const response = await client.invokeAgentWithScope(userMessage);
+        // Message 2: the LLM response
         await turnContext.sendActivity(response);
       });
     } catch (error) {
@@ -85,6 +104,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
+      stopTypingLoop();
       baggageScope.dispose();
     }
   }
