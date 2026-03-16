@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using Agent365SemanticKernelSampleAgent.Agents;
@@ -32,7 +32,7 @@ public class MyAgent : AgentApplication
     private readonly IConfiguration _configuration;
     // Setup reusable auto sign-in handlers
     private readonly string AgenticIdAuthHandler = "agentic";
-    private readonly string? OboAuthHandlerName;
+    private readonly string OboAuthHandlerName;
 
 
     internal static bool IsApplicationInstalled { get; set; } = false;
@@ -49,8 +49,13 @@ public class MyAgent : AgentApplication
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location.
         TermsAndConditionsAccepted = true;
 
-        OboAuthHandlerName = _configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
-        string[] autoSignInHandlersForNotAgenticAuth = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : [];
+        var configuredOboAuthHandlerName = _configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
+        OboAuthHandlerName = !string.IsNullOrWhiteSpace(configuredOboAuthHandlerName)
+            ? configuredOboAuthHandlerName
+            : AgenticIdAuthHandler;
+        string[] autoSignInHandlersForNotAgenticAuth = !string.IsNullOrEmpty(configuredOboAuthHandlerName)
+            ? new[] { OboAuthHandlerName }
+            : Array.Empty<string>();
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
         this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHandler });
