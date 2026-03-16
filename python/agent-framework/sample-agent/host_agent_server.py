@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 """Generic Agent Host Server - Hosts agents implementing AgentInterface"""
 
@@ -212,8 +213,8 @@ class GenericAgentHost:
                     # Each send_activity call produces a discrete Teams message.
                     # NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
                     #       use send_activity for any messages that must arrive immediately.
-                    await context.send_activity(Activity(type="typing"))
                     await context.send_activity("Got it — working on it…")
+                    await context.send_activity(Activity(type="typing"))
 
                     # Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
                     # Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.

@@ -187,8 +187,10 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     const startTypingLoop = () => {
-      typingInterval = setInterval(async () => {
-        await turnContext.sendActivity(Activity.fromObject({ type: "typing" }));
+      typingInterval = setInterval(() => {
+        turnContext.sendActivity(Activity.fromObject({ type: "typing" })).catch(() => {
+          // Typing indicator failed — non-critical, continue
+        });
       }, 4000);
     };
     const stopTypingLoop = () => { clearInterval(typingInterval); };

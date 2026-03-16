@@ -173,8 +173,10 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   // Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
   let typingInterval: ReturnType<typeof setInterval> | undefined;
   const startTypingLoop = () => {
-    typingInterval = setInterval(async () => {
-      await context.sendActivity(Activity.fromObject({ type: ActivityTypes.Typing }));
+    typingInterval = setInterval(() => {
+      context.sendActivity(Activity.fromObject({ type: ActivityTypes.Typing })).catch(() => {
+        // Typing indicator failed — non-critical, continue
+      });
     }, 4000);
   };
   const stopTypingLoop = () => { clearInterval(typingInterval); };

@@ -291,7 +291,7 @@ class GenericAgentHost:
                         try:
                             await typing_task
                         except asyncio.CancelledError:
-                            pass
+                            pass  # Expected: task is cancelled when LLM processing completes.
 
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"

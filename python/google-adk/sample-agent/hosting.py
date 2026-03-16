@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 # --- Imports ---
 import asyncio
@@ -146,7 +147,7 @@ class MyAgent(AgentApplication):
                 try:
                     await typing_task
                 except asyncio.CancelledError:
-                    pass
+                    pass  # Expected: task is cancelled when LLM processing completes.
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
