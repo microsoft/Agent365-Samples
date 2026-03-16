@@ -296,15 +296,7 @@ public class MyAgent : AgentApplication
     /// <returns></returns>
     protected async Task OnHireMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        string ObservabilityAuthHandlerName = "";
-        if (turnContext.IsAgenticRequest())
-        {
-            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
-        }
-        else
-        {
-            ObservabilityAuthHandlerName = OboAuthHandlerName;
-        }
+        string ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticIdAuthHandler : OboAuthHandlerName;
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
          "OnHireMessageAsync",
