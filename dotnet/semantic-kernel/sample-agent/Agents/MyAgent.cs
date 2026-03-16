@@ -239,9 +239,14 @@ public class MyAgent : AgentApplication
                          var responseEmailActivity = EmailResponse.CreateEmailResponseActivity(response.Content!);
                          await turnContext.SendActivityAsync(responseEmailActivity, cancellationToken);
                      }
+                     catch (OperationCanceledException)
+                     {
+                         _logger.LogInformation("Email notification processing was canceled.");
+                         throw;
+                     }
                      catch (Exception ex)
                      {
-                         _logger.LogError($"There was an error processing the email notification: {ex.Message}");
+                         _logger.LogError(ex, "There was an error processing the email notification.");
                          var responseEmailActivity = EmailResponse.CreateEmailResponseActivity("Unable to process your email at this time.");
                          await turnContext.SendActivityAsync(responseEmailActivity, cancellationToken);
                      }
@@ -265,9 +270,14 @@ public class MyAgent : AgentApplication
                          var responseWpxActivity = MessageFactory.Text(response.Content!);
                          await turnContext.SendActivityAsync(responseWpxActivity, cancellationToken);
                      }
+                     catch (OperationCanceledException)
+                     {
+                         _logger.LogInformation("Mention notification processing was canceled.");
+                         throw;
+                     }
                      catch (Exception ex)
                      {
-                         _logger.LogError($"There was an error processing the mention notification: {ex.Message}");
+                         _logger.LogError(ex, "There was an error processing the mention notification.");
                          var responseWpxActivity = MessageFactory.Text("Unable to process your mention comment at this time.");
                          await turnContext.SendActivityAsync(responseWpxActivity, cancellationToken);
                      }
