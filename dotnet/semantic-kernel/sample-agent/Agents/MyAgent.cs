@@ -312,7 +312,7 @@ public class MyAgent : AgentApplication
              if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
              {
                  IsApplicationInstalled = true;
-                 TermsAndConditionsAccepted = turnContext.IsAgenticRequest() ? true : false;
+                 TermsAndConditionsAccepted = turnContext.IsAgenticRequest();
 
                  string message = $"Thank you for hiring me! Looking forward to assisting you in your professional journey!";
                  if (!turnContext.IsAgenticRequest())
