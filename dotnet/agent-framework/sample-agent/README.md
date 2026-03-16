@@ -42,6 +42,30 @@ _logger?.LogInformation(
     fromAccount?.AadObjectId ?? "(none)");
 ```
 
+## Handling Agent Install and Uninstall
+
+When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `OnInstallationUpdateAsync` ([MyAgent.cs](Agent/MyAgent.cs)):
+
+| Action | Description |
+|---|---|
+| `add` | Agent was installed — send a welcome message |
+| `remove` | Agent was uninstalled — send a farewell message |
+
+```csharp
+if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+}
+else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+}
+```
+
+The handler is registered twice in the constructor — once for agentic (A365 production) requests and once for non-agentic (Agents Playground / WebChat) requests, enabling local testing without a full A365 deployment.
+
+To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

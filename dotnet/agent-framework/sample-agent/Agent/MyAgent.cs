@@ -22,6 +22,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
     public class MyAgent : AgentApplication
     {
         private const string AgentWelcomeMessage = "Hello! I can help you find information based on what I can access.";
+        private const string AgentHireMessage = "Thank you for hiring me! Looking forward to assisting you in your professional journey!";
+        private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
         // Non-interpolated raw string so {{ToolName}} placeholders are preserved as literal text.
         // {userName} is the only dynamic token and is injected via string.Replace in GetAgentInstructions.
@@ -113,14 +115,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Greet when members are added to the conversation
             OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
-            // Handle A365 Notification Messages. 
+            // Compute auth handler arrays once; reused for all agentic/OBO activity registrations below.
+            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? [AgenticAuthHandlerName] : Array.Empty<string>();
+            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : Array.Empty<string>();
+
+            // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate).
+            // Dual registration: agentic (A365 production) and non-agentic (Playground / WebChat).
+            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
+            OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: false);
 
             // Listen for ANY message to be received. MUST BE AFTER ANY OTHER MESSAGE HANDLERS
             // Agentic requests use the agentic auth handler (if configured)
-            var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? new[] { AgenticAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
             // Non-agentic requests (Playground, WebChat) use OBO auth handler (if configured)
-            var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? new[] { OboAuthHandlerName } : Array.Empty<string>();
             OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
         }
 
@@ -142,7 +149,35 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         }
 
         /// <summary>
-        /// General Message process for Teams and other channels. 
+        /// Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
+        /// Sends a welcome message on install and a farewell on uninstall.
+        /// </summary>
+        protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
+        {
+            await AgentMetrics.InvokeObservedAgentOperation(
+                "InstallationUpdate",
+                turnContext,
+                async () =>
+            {
+                _logger?.LogInformation(
+                    "InstallationUpdate received — Action: '{Action}', DisplayName: '{Name}', UserId: '{Id}'",
+                    turnContext.Activity.Action ?? "(none)",
+                    turnContext.Activity.From?.Name ?? "(unknown)",
+                    turnContext.Activity.From?.Id ?? "(unknown)");
+
+                if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+                }
+                else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+                {
+                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+                }
+            });
+        }
+
+        /// <summary>
+        /// General Message process for Teams and other channels.
         /// </summary>
         /// <param name="turnContext"></param>
         /// <param name="turnState"></param>

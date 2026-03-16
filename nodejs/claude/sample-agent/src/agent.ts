@@ -36,6 +36,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
     });
+
+    // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+    this.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: TurnState) => {
+      await this.handleInstallationUpdateActivity(context, state);
+    });
   }
 
   /**
@@ -143,6 +148,20 @@ export class MyAgent extends AgentApplication<TurnState> {
       console.error('Email notification error:', error);
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
       await context.sendActivity(errorResponse);
+    }
+  }
+  /**
+   * Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
+   * Sends a welcome message on install and a farewell on uninstall.
+   */
+  async handleInstallationUpdateActivity(context: TurnContext, state: TurnState): Promise<void> {
+    const from = context.activity?.from;
+    console.log(`InstallationUpdate received — Action: '${context.activity.action ?? "(none)"}', DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}'`);
+
+    if (context.activity.action === 'add') {
+      await context.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
+    } else if (context.activity.action === 'remove') {
+      await context.sendActivity('Thank you for your time, I enjoyed working with you.');
     }
   }
 }

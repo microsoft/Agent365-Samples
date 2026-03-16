@@ -203,6 +203,22 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded")(help_handler)
         self.agent_app.message("/help")(help_handler)
 
+        # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+        @self.agent_app.activity("installationUpdate")
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            action = context.activity.action
+            from_prop = context.activity.from_property
+            logger.info(
+                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                action or "(none)",
+                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+            )
+            if action == "add":
+                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+            elif action == "remove":
+                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+
         # Configure auth handlers - required for token exchange when auth_handler_name is set
         handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
         @self.agent_app.activity("message", **handler_config)

@@ -176,6 +176,22 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
         self.agent_app.message("/help", **handler_config)(help_handler)
 
+        # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+        @self.agent_app.activity("installationUpdate")
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            action = context.activity.action
+            from_prop = context.activity.from_property
+            logger.info(
+                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                action or "(none)",
+                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+            )
+            if action == "add":
+                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+            elif action == "remove":
+                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             try:
@@ -291,7 +307,17 @@ class GenericAgentHost:
 
         middlewares = []
         if auth_configuration:
-            middlewares.append(jwt_authorization_middleware)
+
+            @web_middleware
+            async def jwt_with_health_bypass(request, handler):
+                # Skip JWT validation for health endpoint so that container
+                # orchestrators (Azure Container Apps, Kubernetes, App Service)
+                # can reach /api/health without a bearer token.
+                if request.path == "/api/health":
+                    return await handler(request)
+                return await jwt_authorization_middleware(request, handler)
+
+            middlewares.append(jwt_with_health_bypass)
 
         @web_middleware
         async def anonymous_claims(request, handler):
