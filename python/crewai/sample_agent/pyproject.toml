@@ -3,7 +3,7 @@ name = "crew_agent"
 version = "0.1.0"
 description = "CrewAI Sample Agent using Microsoft Agent 365 SDK with MCP tooling support"
 authors = [{ name = "Microsoft", email = "support@microsoft.com" }]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "crewai[azure-ai-inference,tools]==1.4.1",
     "pysqlite3-binary>=0.5.2; sys_platform == 'linux'",
@@ -42,3 +42,7 @@ type = "crew"
 # This ensures we always get the latest features and fixes
 [tool.uv]
 prerelease = "allow"
+override-dependencies = [
+    # lancedb 0.30.1+ has no Windows wheels; cap at 0.30.0 which does
+    "lancedb<=0.30.0; sys_platform == 'win32'",
+]
