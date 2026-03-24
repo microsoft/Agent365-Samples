@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent365 LocalEvalTool Results</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🤖 Agent365 LocalEvalTool Results</h1>
+            <p class="subtitle">Evaluation results for HelloWorld A365 Agent</p>
+        </header>
+        
+        <div class="file-selector">
+            <label for="fileSelect">Select Evaluation Report: </label>
+            <select id="fileSelect" onchange="loadSelectedFile()">
+                <option value="">-- Select a report --</option>
+            </select>
+            <div class="file-info" id="fileInfo"></div>
+        </div>
+
+        <div id="content">
+            <div class="loading">
+                📊 Select an evaluation report to view results
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

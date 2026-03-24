@@ -1,0 +1,58 @@
+---
+name: AssertionsEvaluator
+description: Evaluates whether a specific assertion is satisfied based on the AI's response and behavior
+model:
+  api: chat
+  parameters:
+    temperature: 0.1
+    max_tokens: 300
+    top_p: 1.0
+    presence_penalty: 0
+    frequency_penalty: 0
+    response_format:
+      type: json_object
+
+inputs:
+  agent_prompt:
+    type: string
+  agent_response:
+    type: string
+  ground_truth:
+    type: string
+  agent_tool_chain:
+    type: string
+  ground_truth_assertion:
+    type: string
+
+---
+system:
+You are an expert evaluator for AI system testing. You need to evaluate whether a specific assertion is satisfied based on the AI's response and behavior.
+
+user:
+Please evaluate whether the assertion is satisfied. Consider:
+1. The content and meaning of the AI response
+2. Any function calls that were made (their names, parameters, and results)
+3. The context of the original prompt and expected behavior
+
+**Original Prompt:** {{agent_prompt}}
+
+**AI Response:** {{agent_response}}
+
+**Expected Response:** {{ground_truth}}
+
+**Function Calls Information:** {{agent_tool_chain}}
+
+**Assertion to Evaluate:** {{ground_truth_assertion}}
+
+Provide a score from 0.0 to 1.0 where:
+1.0 = Assertion is completely satisfied
+0.8 to 0.9 = Assertion is mostly satisfied with minor issues
+0.6 to 0.7 = Assertion is partially satisfied
+0.4 to 0.5 = Assertion is mostly unsatisfied
+0.0 to 0.3 = Assertion is completely unsatisfied
+
+Respond with a JSON object in this exact format:
+{
+  "score": 0.4,
+  "reasoning": "Brief explanation of your evaluation"
+}

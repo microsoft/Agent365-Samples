@@ -1,0 +1,29 @@
+evaluatorName: SimilarityEvaluator
+evaluationPrompt: |
+  You are an expert evaluator tasked with measuring the semantic similarity between two responses.
+
+  Please evaluate how similar the ACTUAL response is to the EXPECTED response on a scale from 0.0 to 1.0, where:
+  - 1.0 = Identical meaning, even if worded differently
+  - 0.8-0.9 = Very similar meaning with minor differences
+  - 0.6-0.7 = Moderately similar meaning
+  - 0.4-0.5 = Some similarity but notable differences
+  - 0.2-0.3 = Little similarity
+  - 0.0-0.1 = No meaningful similarity
+
+  Consider:
+  - Semantic meaning over exact wording
+  - Key facts and information conveyed
+  - Overall intent and purpose
+  - Logical structure and reasoning
+
+  EXPECTED Response:
+  {{ground_truth}}
+
+  ACTUAL Response:
+  {{agent_response}}
+
+  Please respond with a JSON object in this exact format:
+  {
+    "score": 0.85,
+    "reasoning": "Brief explanation of your evaluation and the key factors that influenced the score"
+  }

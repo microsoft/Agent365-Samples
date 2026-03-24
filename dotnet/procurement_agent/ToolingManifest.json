@@ -1,0 +1,44 @@
+{
+	"mcpServers": [
+		{
+			"mcpServerName": "SharePointTools",
+			"mcpServerUniqueName": "SharePointTools"
+		},
+		{
+			"mcpServerName": "mcp_OneDriveServer",
+			"mcpServerUniqueName": "mcp_OneDriveServer"
+		},
+		{
+			"mcpServerName": "mcp_SearchTools",
+			"mcpServerUniqueName": "mcp_SearchTools"
+		},
+		{
+			"mcpServerName": "mcp_CalendarTools",
+			"mcpServerUniqueName": "mcp_CalendarTools"
+		},
+		{
+			"mcpServerName": "mcp_Admin365_GraphTools",
+			"mcpServerUniqueName": "mcp_Admin365_GraphTools"
+		},
+		{
+			"mcpServerName": "mcp_TeamsServer",
+			"mcpServerUniqueName": "mcp_TeamsServer"
+		},
+		{
+			"mcpServerName": "mcp_KnowledgeTools",
+			"mcpServerUniqueName": "mcp_KnowledgeTools"
+		},
+		{
+			"mcpServerName": "MeMCPServer",
+			"mcpServerUniqueName": "MeMCPServer"
+		},
+		{
+			"mcpServerName": "mcp_NLWeb",
+			"mcpServerUniqueName": "mcp_NLWeb"
+		},
+		{
+			"mcpServerName": "mcp_MailTools",
+			"mcpServerUniqueName": "mcp_MailTools"
+		}
+	]
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "43d5d6b0-5c97-4367-b716-4a78c90ac3df",
+  "name": {
+    "short": "Zava Procurement Agent",
+    "full": "Zava Procurement Agent"
+  },
+  "description": {
+    "short": "Analyze supplier spend and get instant insights for faster decisions.",
+    "full": "Zava Procurement Agent helps you make smarter, faster decisions about supplier spend. Whether you're preparing for a negotiation or reviewing quarterly trends, the agent gives you instant access to insights without digging through spreadsheets or dashboards. The agent responds with clear summaries, tables, and recommendations, helping you spot patterns, flag anomalies, and prepare for supplier conversations. It’s designed to support procurement professionals who want to move quickly, stay informed, and drive better outcomes."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#9ec9d9",
+  "version": "1.1.4",
+  "manifestVersion": "devPreview",
+  "developer": {
+    "name": "Microsoft Corporation",
+    "mpnId": "",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "agenticUserTemplates": [
+    {
+      "id": "7b0926a6-c4ee-445a-a913-bd054594bd09",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}

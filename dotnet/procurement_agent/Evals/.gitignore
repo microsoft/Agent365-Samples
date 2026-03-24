@@ -1,0 +1,65 @@
+# =============================================================================
+# Agent365 Evaluation Framework - Consolidated GitIgnore
+# =============================================================================
+# This file consolidates ignore rules for both 1P and 3P evaluation frameworks
+# Keep folder structures in Git while ignoring generated content
+
+# Evaluation Reports - Preserve folder structure, ignore generated content
+reports/*.json
+reports/*.txt
+reports/*.xlsx
+reports/*.html
+reports/**/*.json
+reports/**/*.txt
+reports/**/*.xlsx
+!reports/.gitkeep
+!reports/README.md
+
+# 1P Evaluation Generated Files
+1P Evals/bin/LocalEvalTool.exe
+1P Evals/bin/appsettings.json
+1P Evals/bin/LocalAgentConfig/*.json
+1P Evals/logs/*.txt
+1P Evals/logs/*.log
+1P Evals/logs/**/*.txt
+1P Evals/logs/**/*.log
+
+# 3P Evaluation Generated Files
+3P Evals/bin/*.json
+3P Evals/bin/LocalAgentConfig/*.json
+3P Evals/logs/*.txt
+3P Evals/logs/*.log
+
+# Results Viewer Generated Files
+ResultsViewer/index.html
+
+# Configuration Files with Potential Secrets
+# Uncomment these lines if you store API keys in config files
+# 1P Evals/configs/appsettings.*.json
+# 3P Evals/configs/appsettings.*.json
+# configs/appsettings.*.json
+
+# Temporary Files
+*.tmp
+*.temp
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE Files
+.vscode/settings.json
+.vs/
+*.swp
+*.swo
+
+# Backup Files  
+*.bak
+*.backup
+*.orig

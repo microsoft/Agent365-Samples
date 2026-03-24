@@ -1,0 +1,67 @@
+@tenantId=0618cee6-6dee-4393-9dea-efaf68e088a4
+@agentBlueprintId=34bde265-6abe-4392-9f2a-90063f156f4a
+@agentId=9a30198f-8b51-4538-93fc-b2ffb672a839
+@userObjectId=4d724b43-0fdf-407f-a92c-a53cce60eabd
+@userEmail=johnsnow.0819211351@projectkairoentra.onmicrosoft.com
+@agentFriendlyName=Agent John Snow
+@host=http://localhost:5280
+
+### Health Check
+GET {{host}}/api/agents/healthcheck
+
+### Provision an Agent User
+POST {{host}}/api/agents/provision
+Content-Type: application/json
+
+{
+  "TenantId": "{{tenantId}}",
+  "AgentId": "{{agentId}}",
+  "UserObjectId": "{{userObjectId}}",
+  "UserEmail": "{{userEmail}}",
+  "AgentFriendlyName": "{{agentFriendlyName}}",
+  "AgentBlueprintId": "{{agentBlueprintId}}",
+  "WebhookUrl": ""
+}
+
+
+### Delete an Agent User: WARNING only use if you know what you're doing :)
+DELETE http://localhost:5280/api/agents/{{tenantId}}/{{agentId}}
+
+
+### Admin Consent
+### customize permissions, for example: Team.ReadBasic.All,Chat.ReadWrite,Mail.Send,ChannelMessage.Send,Files.ReadWrite.All,Sites.ReadWrite.All
+@ppapiAppIdTest=0ddb742a-e7dc-4899-a31e-80e797ec7144
+@mcpScope={{ppapiAppIdTest}}/Connectivity.Connections.Read
+@scope=Mail.ReadWrite Mail.Send Chat.ReadWrite User.Read.All
+https://login.microsoftonline.com/{{tenantId}}/v2.0/adminconsent?client_id={{agentId}}&scope={{scope}}&redirect_uri=https://entra.microsoft.com/TokenAuthorize&state=xyz123
+
+### ==== AGENT APPLICATION ENTITY MANAGEMENT ====
+
+### Get all agent application entities
+GET {{host}}/api/AgentBlueprint
+
+### Create a new agent blueprint entity
+# Note: When new agent instances are discovered for this entity, 
+# the system will automatically:
+# 1. Create a AgentMetadata record
+# 2. Send an installation activity to the webhook URL (if configured)
+POST {{host}}/api/AgentBlueprint
+Content-Type: application/json
+
+{
+  "Id": "{{agentBlueprintId}}",
+  "TenantId": "{{tenantId}}",
+  "WebhookUrl": "enter webhook url here"
+}
+
+### Delete an entity: WARNING only use if you know what you're doing :)
+DELETE {{host}}/api/AgentBlueprint/{{agentBlueprintId}}
+
+
+### Send Activity - TODO
+POST {{host}}/api/messages
+Content-Type: application/json
+
+{
+  
+}

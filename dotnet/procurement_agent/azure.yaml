@@ -1,0 +1,18 @@
+# Azure Developer CLI (azd) configuration for Blazor Server App on App Service (Linux, B1)
+name: CRUDTasksWithAgent
+metadata:
+  template: blazor-appservice
+infra:
+  path: ./infra
+  module: main
+services:
+  web:
+    project: .
+    language: csharp
+    host: appservice
+    resourceName: zava-procurement-webapp
+    resourceGroup: helloworld-rg
+resources:
+  appInsights:
+    resourceName: zava-procurement-insights
+

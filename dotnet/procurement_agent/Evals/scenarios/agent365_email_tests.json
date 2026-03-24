@@ -1,0 +1,47 @@
+{
+  "enabled_evaluators": [
+    {
+      "Name": "SimilarityEvaluator",
+      "PassingScore": 0.7
+    },
+    {
+      "Name": "AssertionsEvaluator",
+      "PassingScore": 0.7
+    }
+  ],
+  "tests": [
+    {
+      "test_id": "email_001",
+      "prompt": "Can you send an email to bob@contoso.com and let him know you are working on urgent Delta project?",
+      "expected_response": "I have successfully sent an email to bob@contoso.com informing him that you are working on the urgent Delta project. The email has been delivered with a professional message regarding the project status.",
+      "category": "email",
+      "description": "Email plugin functionality test",
+      "assertions": [
+        "Response should confirm that an email was sent",
+        "A single Send_Email tool should have been called with bob@contoso.com as the recipient, and mentions the Delta project"
+      ]
+    },
+    {
+      "test_id": "email_002",
+      "prompt": "Can you check with alice@contoso.com for the current status of project Delta?",
+      "expected_response": "I have sent an email to alice@contoso.com requesting an update on the current status of project Delta. The email includes a professional inquiry asking for the latest progress report and any relevant project milestones.",
+      "category": "email",
+      "description": "Simple email functionality test",
+      "assertions": [
+        "Response should confirm that an email was sent",
+        "A single Send_Email tool should have been called with alice@contoso.com as the recipient, and mentions the Delta project"
+      ]
+    },
+    {
+      "test_id": "email_003",
+      "prompt": "Can you send a follow up email to bob@contoso.com to check if he is still interesting in buying product ABC? But please send this first thing during business hours tomorrow morning.",
+      "expected_response": "I have sent a follow-up email to bob@contoso.com inquiring about his continued interest in purchasing product ABC. The email includes a professional follow-up message with product details and next steps for the sales process.",
+      "category": "email",
+      "description": "Simple email functionality test",
+      "assertions": [
+        "Response should confirm that an email was sent",
+        "A single Send_Email tool should have been called with bob@contoso.com as the recipient, and mentions the product ABC"
+      ]
+    }
+  ]
+}
