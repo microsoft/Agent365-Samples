@@ -232,7 +232,6 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const baggageScope = new BaggageBuilder()
     .tenantId(tenantId)
     .agentId(agentId)
-    .correlationId(activityId || `corr-${Date.now()}`)
     .agentName(agentName)
     .agentDescription(
       "AI answer engine for research, writing, and task assistance using live web search and citations",
