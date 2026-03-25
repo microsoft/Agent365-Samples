@@ -1247,4 +1247,121 @@ public sealed class GraphService(
             throw;
         }
     }
+/// <summary>
+    /// Send a message to a specific Teams chat.
+    /// </summary>
+    /// <param name="agent">The agent metadata</param>
+    /// <param name="chatId">The ID of the chat to send the message to</param>
+    /// <param name="messageBody">The message content to send (HTML format)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The sent message</returns>
+    public async Task<ChatMessage?> SendAdaptiveCardChatMessageAsync(
+        AgentMetadata agent, string chatId, string cardJson, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(chatId)) throw new ArgumentException("Chat ID is required", nameof(chatId));
+        if (string.IsNullOrEmpty(cardJson)) throw new ArgumentException("String representing JSON card is required", nameof(cardJson));
+        try
+        {
+            var graphClient = GetGraphServiceClient(agent);
+            var attachmentId = Guid.NewGuid().ToString();
+            var chatMessage = new ChatMessage
+            {
+                // Body MUST contain an <attachment id="..."></attachment> marker that matches each attachment Id
+                Body = new ItemBody { ContentType = BodyType.Html, Content = $"<attachment id=\"{attachmentId}\"></attachment>" },
+                Attachments = new List<ChatMessageAttachment>
+                {
+                    new ChatMessageAttachment
+                    {
+                        Id = attachmentId,
+                        ContentType = "application/vnd.microsoft.card.adaptive",
+                        Content = cardJson
+                    }
+                }
+            };
+            logger.LogDebug("Attempting to send adaptive card to chat: {ChatId}", chatId);
+            var sentMessage = await graphClient.Chats[chatId].Messages.PostAsync(chatMessage, cancellationToken: cancellationToken);
+            logger.LogInformation("Successfully sent adaptive card to chat: {ChatId}, message ID: {MessageId}", chatId, sentMessage?.Id);
+            return sentMessage;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error sending adaptive card to chat: {ChatId}", chatId);
+            ClearCachedClient(agent.AgentId);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Updates an adaptive card message, optionally including a text message alongside the card.
+    /// Note: Graph API supports updating both the card and message content in a single PATCH request.
+    /// </summary>
+    /// <param name="agent">The agent metadata</param>
+    /// <param name="chatId">The ID of the chat</param>
+    /// <param name="messageId">The ID of the message to update</param>
+    /// <param name="updatedCardJson">The updated adaptive card JSON</param>
+    /// <param name="messageText">Optional text message to display alongside the card (can be null or empty)</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>The updated message</returns>
+    public async Task<ChatMessage?> UpdateAdaptiveCardChatMessageAsync(
+        AgentMetadata agent, 
+        string chatId, 
+        string messageId, 
+        string updatedCardJson,
+        string? messageText = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(chatId)) throw new ArgumentException("Chat ID is required", nameof(chatId));
+        if (string.IsNullOrEmpty(messageId)) throw new ArgumentException("Message ID is required", nameof(messageId));
+        if (string.IsNullOrEmpty(updatedCardJson)) throw new ArgumentException("Updated card JSON is required", nameof(updatedCardJson));
+        
+        try
+        {
+            var graphClient = GetGraphServiceClient(agent);
+            logger.LogDebug("Attempting to update adaptive card in message {MessageId} in chat: {ChatId}", messageId, chatId);
+            
+            var attachmentId = Guid.NewGuid().ToString();
+            
+            // Build body content - either with custom message text or just the attachment marker
+            string bodyContent;
+            if (!string.IsNullOrWhiteSpace(messageText))
+            {
+                // Include custom message text along with the attachment
+                bodyContent = $"<attachment id=\"{attachmentId}\"></attachment><br/> {messageText}";
+            }
+            else
+            {
+                // Just the attachment marker
+                bodyContent = $"<attachment id=\"{attachmentId}\"></attachment>";
+            }
+            
+            var chatMessage = new ChatMessage
+            {
+                Body = new ItemBody 
+                { 
+                    ContentType = BodyType.Html, 
+                    Content = bodyContent
+                },
+                Attachments = new List<ChatMessageAttachment>
+                {
+                    new ChatMessageAttachment
+                    {
+                        Id = attachmentId,
+                        ContentType = "application/vnd.microsoft.card.adaptive",
+                        Content = updatedCardJson
+                    }
+                }
+            };
+            
+            var updatedMessage = await graphClient.Chats[chatId].Messages[messageId].PatchAsync(chatMessage, cancellationToken: cancellationToken);
+            logger.LogDebug("Adaptive card updated successfully in chat: {ChatId}, message ID: {MessageId}", chatId, messageId);
+            return updatedMessage;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error updating adaptive card in message {MessageId} in chat: {ChatId}", messageId, chatId);
+            ClearCachedClient(agent.AgentId);
+            throw;
+        }
+    }
+
 }

@@ -41,10 +41,10 @@ public class AgentMetadata : ITableEntity
     public string? AgentManagerEmail { get; set; }
 
     /// <summary>
-    /// Indicates whether the initial greeting has been sent to the manager.
-    /// Used to ensure the greeting is only sent once during background processing.
+    /// Comma-separated list of admin object IDs who can perform administrative actions.
+    /// Stored as a string in Table Storage for compatibility.
     /// </summary>
-    public bool IsGreetingSent { get; set; } = false;
+    public string AdminObjectIds { get; set; } = string.Empty;
 
     public AgentMetadata()
     {
@@ -55,12 +55,55 @@ public class AgentMetadata : ITableEntity
         // Use TenantId as PartitionKey for efficient querying within tenant
         PartitionKey = tenantId.ToString();
         // Use AgentId as RowKey for unique identification
-        RowKey = agentId.ToString();
+        RowKey = userId.ToString();
 
         TenantId = tenantId;
         AgentId = agentId;
         UserId = userId;
         AgentFriendlyName = agentFriendlyName;
         OwningServiceName = owningServiceName;
+    }
+
+    /// <summary>
+    /// Get the list of admin object IDs as a collection
+    /// </summary>
+    public IEnumerable<string> GetAdminObjectIds()
+    {
+        if (string.IsNullOrEmpty(AdminObjectIds))
+            return Array.Empty<string>();
+
+        return AdminObjectIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(id => id.Trim())
+            .Where(id => !string.IsNullOrEmpty(id));
+    }
+
+    /// <summary>
+    /// Set the admin object IDs from a collection
+    /// </summary>
+    public void SetAdminObjectIds(IEnumerable<string> adminIds)
+    {
+        AdminObjectIds = string.Join(",", adminIds.Where(id => !string.IsNullOrEmpty(id)));
+    }
+
+    /// <summary>
+    /// Add new admin object IDs to the existing list
+    /// </summary>
+    public void AppendAdminObjectIds(IEnumerable<string> newAdminIds)
+    {
+        var currentIds = GetAdminObjectIds().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var updatedIds = currentIds.Union(newAdminIds.Where(id => !string.IsNullOrEmpty(id)), StringComparer.OrdinalIgnoreCase);
+        SetAdminObjectIds(updatedIds);
+    }
+
+    /// <summary>
+    /// Check if a given object ID is in the admin list
+    /// </summary>
+    public bool IsAdmin(string objectId)
+    {
+        if (string.IsNullOrEmpty(objectId))
+            return false;
+
+        return GetAdminObjectIds().Any(adminId => 
+            adminId.Equals(objectId, StringComparison.OrdinalIgnoreCase));
     }
 }

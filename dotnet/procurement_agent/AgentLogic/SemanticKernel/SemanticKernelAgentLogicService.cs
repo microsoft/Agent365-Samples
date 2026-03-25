@@ -309,17 +309,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             maxRetries, managerId, agentMetadata.AgentId);
     }
 
-    private sealed class UserMetadata
-    {
-        public string? AadObjectId { get; set; }
-
-        public string? Id { get; set; }
-
-        public string? Name { get; set; }
-
-        public string? EmailId { get; set; }
-    }
-
     private static bool LooksLikeRosterXml(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
@@ -362,7 +351,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         // Check for reset command from admin
         if (!string.IsNullOrWhiteSpace(incomingText) && 
             incomingText.Trim().Equals("reset", StringComparison.OrdinalIgnoreCase) &&
-            sender?.AadObjectId != null)
+            sender?.AadObjectId != null &&
+            _agentMetadata.IsAdmin(sender.AadObjectId))
         {
             _logger.LogInformation("Reset command received from admin {AdminObjectId}", sender.AadObjectId);
             await HandleResetCommandAsync(turnContext, cancellationToken);
@@ -416,8 +406,16 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
         using var baggageScope = new BaggageBuilder()
             .CorrelationId(turnContext.Activity.RequestId)
+            // Propagate agent details from metadata
+            .AgentAuid(_agentMetadata.UserId.ToString())
+            .AgentUpn(_agentMetadata.EmailId)
+            .AgentBlueprintId(_agentMetadata.AgentApplicationId.ToString())
+            // Propagate tenant details from metadata
             .TenantId(_agentMetadata.TenantId.ToString())
-            .AgentId(_agentMetadata.AgentId.ToString())
+            // Propagate caller details from sender
+            .CallerId(senderMetadata.AadObjectId)
+            .CallerName(senderMetadata.Name)
+            .CallerUpn(senderMetadata.EmailId)
             .Build();
 
         // Create agent details from metadata
@@ -473,6 +471,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         await _graphService.SetPresence(_agentMetadata, PresenceState.Available);
     }
 
+
     public async Task<string> NewChatReceived(string chatId, string fromUser, string messageBody)
     {
         using var baggageScope = new BaggageBuilder()
@@ -504,32 +503,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         catch (Exception ex)
         {
             throw new Exception($"Error processing chat message: {ex.Message}", ex);
-        }
-    }
-
-    public async Task<string> NewEmailReceived(string fromEmail, string subject, string messageBody)
-    {
-        using var baggageScope = new BaggageBuilder()
-            .TenantId(_agentMetadata.TenantId.ToString())
-            .AgentId(_agentMetadata.AgentId.ToString())
-            .Build();
-
-        try
-        {
-            ChatHistoryAgentThread agentThread = new();
-            var formattedMessage = $"Please respond to this email From: {fromEmail}\nSubject: {subject}\nMessage: {messageBody}";
-
-            var responseText = new StringBuilder();
-            await foreach (var responseItem in InvokeAgentAsync(formattedMessage, agentThread))
-            {
-                responseText.Append(responseItem.Message.Content ?? string.Empty);
-            }
-
-            return responseText.ToString();
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"Error processing message: {ex.Message}", ex);
         }
     }
 
@@ -658,17 +631,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             await ResponseWithAdaptiveCard(managerChat.Id, tasks, "Purchase order request received", emailContent);
             _logger.LogInformation("Created/retrieved chat {ChatId} with manager", managerChat.Id);
-
-            // Format the message for the agent to analyze the email
-            var formattedMessage = $"I received an email requesting procurement approval.\n" +
-                                  $"From: {fromEmail}\n" +
-                                  $"Subject: {emailSubject}\n" +
-                                  $"Message: {emailContent}\n\n" +
-                                  $"We recieved this email for purchase. Process the purchased, and inform the manager. Your response is to your manager. You need to describe the work that you did.";
-
-            // Use streaming to communicate with the manager via Teams chat
-            //await ProcessProcurementRequest(turnContext, formattedMessage, new CancellationToken(), false); //await ProcessEmailWithManagerChatAsync(managerChat.Id, formattedMessage, CancellationToken.None);
-
+            
             // Send email response confirming the order is processed and approved
             var emailResponseText = $"<p>Thank you for your email regarding the procurement request.\n\n" +
                                    $"I have analyzed your request and discussed it with my manager. " +
@@ -785,7 +748,19 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             await PopulateManagerInformationAsync(_agentMetadata, cancellationToken);
         }
 
+        if (_agentMetadata.AgentManagerId == null)
+        {
+            _logger.LogWarning("Cannot send greeting - no manager configured for agent {AgentId}", _agentMetadata.AgentId);
+            await turnContext.SendActivityAsync(
+                MessageFactory.Text("Reset failed: no manager is configured for this agent. Please set AgentManagerId in the Agents table."),
+                cancellationToken);
+            return;
+        }
+
         await NotifyManagerAboutNewAgentAsync(_agentMetadata, cancellationToken);
+        // await turnContext.SendActivityAsync(
+        //     MessageFactory.Text($"Greeting sent to manager {_agentMetadata.AgentManagerName ?? _agentMetadata.AgentManagerId.ToString()}."),
+        //     cancellationToken);
     }
 
     /// <summary>
@@ -823,7 +798,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             // Send initial card with first task in progress
             var cardJson = BuildAdaptiveCard(title, tasks, 1);
-            var initialMessage = await _graphService.SendChatMessageAsync(_agentMetadata, chatId, cardJson, cancellationToken);
+            var initialMessage = await _graphService.SendAdaptiveCardChatMessageAsync(_agentMetadata, chatId, cardJson, cancellationToken);
             
             if (initialMessage == null || string.IsNullOrEmpty(initialMessage.Id))
             {
@@ -839,7 +814,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 await Task.Delay(5000, cancellationToken); 
                 
                 cardJson = BuildAdaptiveCard(title, tasks, i + 1);
-                await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, cardJson);
+                await _graphService.UpdateAdaptiveCardChatMessageAsync(_agentMetadata, chatId, messageId, cardJson, null, cancellationToken);
                 
                 _logger.LogDebug("Updated adaptive card: {CompletedCount}/{TotalCount} tasks completed", i, tasks.Count);
             }
@@ -847,8 +822,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             // Now await the agent response (it should be ready or nearly ready by now)
             // var agentResponseText = await agentResponseTask;
             cardJson = BuildAdaptiveCard(title, tasks, tasks.Count);
-            var finalText = $"{cardJson}\n\n{responseText}";
-            await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, finalText);
+            await _graphService.UpdateAdaptiveCardChatMessageAsync(_agentMetadata, chatId, messageId, cardJson, responseText, cancellationToken);
 
             _logger.LogInformation("Completed ResponseWithAdaptiveCard for chat {ChatId}", chatId);
         }
@@ -1108,7 +1082,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                     _logger.LogInformation("Adaptive card detected for {Label}; sending new card message", label);
                     try
                     {
-                        await _graphService.SendChatMessageAsync(_agentMetadata, chatId, resultText, cancellationToken);
+                        await _graphService.SendAdaptiveCardChatMessageAsync(_agentMetadata, chatId, resultText, cancellationToken);
                     }
                     catch (Exception ex)
                     {
