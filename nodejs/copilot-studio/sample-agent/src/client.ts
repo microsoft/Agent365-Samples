@@ -149,7 +149,7 @@ class McsClient implements Client {
         // Record the inference telemetry
         scope.recordInputMessages([prompt]);
         scope.recordOutputMessages([response]);
-        scope.recordResponseId(`resp-${Date.now()}`);
+        scope.recordAttributes({ 'gen_ai.response.id': `resp-${Date.now()}` });
         scope.recordFinishReasons(['stop']);
       });
     } catch (error) {
