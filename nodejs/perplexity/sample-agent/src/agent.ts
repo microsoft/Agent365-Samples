@@ -232,13 +232,13 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const baggageScope = new BaggageBuilder()
     .tenantId(tenantId)
     .agentId(agentId)
-    .correlationId(activityId || `corr-${Date.now()}`)
+    .setPairs({ correlationId: activityId })
     .agentName(agentName)
     .agentDescription(
       "AI answer engine for research, writing, and task assistance using live web search and citations",
     )
-    .callerId(userId)
-    .callerName(userName)
+    .userId(userId)
+    .userName(userName)
     .conversationId(conversationId)
     .operationSource("sdk")
     .build();

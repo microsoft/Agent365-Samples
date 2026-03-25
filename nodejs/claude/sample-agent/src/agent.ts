@@ -85,7 +85,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       new BaggageBuilder(),
       turnContext
     ).sessionDescription('Initial onboarding session')
-      .correlationId("7ff6dca0-917c-4bb0-b31a-794e533d8aad")
+      .setPairs({ correlationId: turnContext.activity.id })
       .build();
 
     // Preload/refresh exporter token

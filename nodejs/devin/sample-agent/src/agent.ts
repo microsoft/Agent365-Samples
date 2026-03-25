@@ -27,7 +27,6 @@ import {
   createEmailResponseActivity,
 } from "@microsoft/agents-a365-notifications";
 import { Stream } from "stream";
-import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
 import tokenCache from "./token-cache";
 import { ApplicationTurnState } from "./types/agent.types";
@@ -93,7 +92,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         const baggageScope = new BaggageBuilder()
           .tenantId(tenantDetails.tenantId)
           .agentId(invokeAgentDetails.agentId)
-          .correlationId(uuidv4())
+          .setPairs({ correlationId: context.activity.id })
           .agentName(invokeAgentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();
