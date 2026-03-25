@@ -92,7 +92,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         const baggageScope = new BaggageBuilder()
           .tenantId(tenantDetails.tenantId)
           .agentId(invokeAgentDetails.agentId)
-          .sessionId(context.activity.id)
+          .setPairs({ correlationId: context.activity.id })
           .agentName(invokeAgentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();

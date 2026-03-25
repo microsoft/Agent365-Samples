@@ -88,7 +88,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       new BaggageBuilder(),
       turnContext
     ).sessionDescription('Copilot Studio integration session')
-      .sessionId(turnContext.activity.id)
+      .setPairs({ correlationId: turnContext.activity.id })
       .build();
 
     // Preload/refresh exporter token

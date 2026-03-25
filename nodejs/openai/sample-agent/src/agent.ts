@@ -90,7 +90,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       new BaggageBuilder(),
       turnContext
     ).sessionDescription('Initial onboarding session')
-      .sessionId(turnContext.activity.id)
+      .setPairs({ correlationId: turnContext.activity.id })
       .build();
 
     // Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
