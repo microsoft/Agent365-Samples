@@ -1,10 +1,12 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 """
 Generic Agent Host Server
 A generic hosting server that can host any agent class that implements the required interface.
 """
 
+import asyncio
 import logging
 import os
 import socket
@@ -16,7 +18,7 @@ from aiohttp.client_exceptions import ClientConnectorError, ClientResponseError
 from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
-from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity import load_configuration_from_env, Activity
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -261,19 +263,44 @@ class GenericAgentHost:
                     if user_message.strip() == "/help":
                         return
 
-                    # Process with the hosted agent
-                    logger.info(f"🤖 Processing with {self.agent_class.__name__}...")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
+                    # Multiple messages: send an immediate ack before the LLM work begins.
+                    # Each send_activity call produces a discrete Teams message.
+                    await context.send_activity("Got it — working on it…")
 
-                    # Send response back
-                    logger.info(
-                        f"📤 Sending response: '{response[:100] if len(response) > 100 else response}'"
-                    )
-                    await context.send_activity(response)
+                    # Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+                    await context.send_activity(Activity(type="typing"))
 
-                    logger.info("✅ Response sent successfully to client")
+                    # Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+                    # asyncio.create_task is used because all aiohttp handlers share the same event loop.
+                    async def _typing_loop():
+                        while True:
+                            try:
+                                await asyncio.sleep(4)
+                                await context.send_activity(Activity(type="typing"))
+                            except asyncio.CancelledError:
+                                break
+
+                    typing_task = asyncio.create_task(_typing_loop())
+                    try:
+                        # Process with the hosted agent
+                        logger.info(f"🤖 Processing with {self.agent_class.__name__}...")
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+
+                        # Send response back
+                        logger.info(
+                            f"📤 Sending response: '{response[:100] if len(response) > 100 else response}'"
+                        )
+                        await context.send_activity(response)
+
+                        logger.info("✅ Response sent successfully to client")
+                    finally:
+                        typing_task.cancel()
+                        try:
+                            await typing_task
+                        except asyncio.CancelledError:
+                            pass  # Expected: task is cancelled when LLM processing completes.
 
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"

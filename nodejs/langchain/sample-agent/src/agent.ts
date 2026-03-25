@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
@@ -19,7 +19,6 @@ export class A365Agent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
@@ -58,6 +57,25 @@ export class A365Agent extends AgentApplication<TurnState> {
       return;
     }
 
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    // Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(() => {
+        turnContext.sendActivity({ type: 'typing' } as Activity).catch(() => {
+          // Typing indicator failed — non-critical, continue
+        });
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
+
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
       turnContext
@@ -81,6 +99,7 @@ export class A365Agent extends AgentApplication<TurnState> {
         }
       });
     } finally {
+      stopTypingLoop();
       baggageScope.dispose();
     }
   }

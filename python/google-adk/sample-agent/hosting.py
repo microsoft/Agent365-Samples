@@ -1,6 +1,8 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 # --- Imports ---
+import asyncio
 import os
 
 # Import our agent interface
@@ -113,14 +115,39 @@ class MyAgent(AgentApplication):
                 await context.send_activity("Please send me a message and I'll help you!")
                 return
 
-            response = await self.agent.invoke_agent_with_scope(
-                message=user_message,
-                auth=self.auth,
-                auth_handler_name=self.auth_handler_name,
-                context=context
-            )
+            # Multiple messages: send an immediate ack before the LLM work begins.
+            # Each send_activity call produces a discrete Teams message.
+            await context.send_activity("Got it — working on it…")
 
-            await context.send_activity(Activity(type=ActivityTypes.message, text=response))
+            # Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+            await context.send_activity(Activity(type="typing"))
+
+            # Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+            # asyncio.create_task is used because all aiohttp handlers share the same event loop.
+            async def _typing_loop():
+                while True:
+                    try:
+                        await asyncio.sleep(4)
+                        await context.send_activity(Activity(type="typing"))
+                    except asyncio.CancelledError:
+                        break
+
+            typing_task = asyncio.create_task(_typing_loop())
+            try:
+                response = await self.agent.invoke_agent_with_scope(
+                    message=user_message,
+                    auth=self.auth,
+                    auth_handler_name=self.auth_handler_name,
+                    context=context
+                )
+
+                await context.send_activity(Activity(type=ActivityTypes.message, text=response))
+            finally:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass  # Expected: task is cancelled when LLM processing completes.
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),

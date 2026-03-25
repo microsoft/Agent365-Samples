@@ -30,6 +30,49 @@ information — always available with no API calls or token acquisition:
 
 The sample logs these fields at the start of every message turn.
 
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `sendActivity` multiple times within a single turn.
+
+> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `sendActivity` directly to send immediate, discrete messages to the user.
+
+The sample demonstrates this in the message activity handler ([agent.ts](src/agent.ts)):
+
+```typescript
+// Message 1: immediate ack — reaches the user right away
+await context.sendActivity('Got it — working on it…');
+
+// ... LLM processing ...
+
+// Message 2: the LLM response (sent from within handleAgentMessageActivity)
+await turnContext.sendActivity(chunk);
+```
+
+Each `sendActivity` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+
+### Typing Indicators
+
+The agent sends typing indicators in a loop every ~4 seconds to keep the `...` animation alive while the LLM processes the request:
+
+```typescript
+let typingInterval: ReturnType<typeof setInterval> | undefined;
+const startTypingLoop = () => {
+  typingInterval = setInterval(async () => {
+    await context.sendActivity(Activity.fromObject({ type: 'typing' }));
+  }, 4000);
+};
+const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+startTypingLoop();
+try {
+  // ... LLM processing ...
+} finally {
+  stopTypingLoop();
+}
+```
+
+> **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.

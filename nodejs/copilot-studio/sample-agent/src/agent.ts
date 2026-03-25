@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
@@ -29,7 +29,6 @@ export class MyAgent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: { type: 'agentic'}
@@ -44,6 +43,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     // Handle direct messages
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
+    });
+
+    // Handle install and uninstall events
+    this.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: TurnState) => {
+      await this.handleInstallationUpdateActivity(context, state);
     });
   }
 
@@ -60,6 +64,25 @@ export class MyAgent extends AgentApplication<TurnState> {
       await turnContext.sendActivity('Please send me a message and I\'ll forward it to Copilot Studio!');
       return;
     }
+
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    // Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(() => {
+        turnContext.sendActivity({ type: 'typing' } as Activity).catch(() => {
+          // Typing indicator failed — non-critical, continue
+        });
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
 
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
@@ -84,6 +107,7 @@ export class MyAgent extends AgentApplication<TurnState> {
         }
       });
     } finally {
+      stopTypingLoop();
       baggageScope.dispose();
     }
   }
@@ -162,6 +186,16 @@ export class MyAgent extends AgentApplication<TurnState> {
       console.error('Email notification error:', error);
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
       await context.sendActivity(errorResponse);
+    }
+  }
+  /**
+   * Handles agent installation and removal events.
+   */
+  async handleInstallationUpdateActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
+    if (turnContext.activity.action === 'add') {
+      await turnContext.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
+    } else if (turnContext.activity.action === 'remove') {
+      await turnContext.sendActivity('Thank you for your time, I enjoyed working with you.');
     }
   }
 }

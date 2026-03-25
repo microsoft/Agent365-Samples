@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using Agent365SemanticKernelSampleAgent.Agents;
@@ -32,7 +32,7 @@ public class MyAgent : AgentApplication
     private readonly IConfiguration _configuration;
     // Setup reusable auto sign-in handlers
     private readonly string AgenticIdAuthHandler = "agentic";
-    private readonly string MyAuthHandler = "me";
+    private readonly string OboAuthHandlerName;
 
 
     internal static bool IsApplicationInstalled { get; set; } = false;
@@ -46,15 +46,21 @@ public class MyAgent : AgentApplication
         _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
-        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location. 
+        // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location.
         TermsAndConditionsAccepted = true;
 
-        bool useBearerToken = Agent365Agent.TryGetBearerTokenForDevelopment(out var bearerToken);
-        string[] autoSignInHandlersForNotAgenticAuth = useBearerToken ? [] : new[] { MyAuthHandler };
+        var configuredOboAuthHandlerName = _configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
+        OboAuthHandlerName = !string.IsNullOrWhiteSpace(configuredOboAuthHandlerName)
+            ? configuredOboAuthHandlerName
+            : AgenticIdAuthHandler;
+        string[] autoSignInHandlersForNotAgenticAuth = !string.IsNullOrEmpty(configuredOboAuthHandlerName)
+            ? new[] { OboAuthHandlerName }
+            : Array.Empty<string>();
 
         // Register Agentic specific Activity routes.  These will only be used if the incoming Activity is Agentic.
         this.OnAgentNotification("*", AgentNotificationActivityAsync, RouteRank.Last, autoSignInHandlers: new[] { AgenticIdAuthHandler });
         OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
+        OnActivity(ActivityTypes.InstallationUpdate, OnHireMessageAsync, isAgenticOnly: false);
         OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: true, autoSignInHandlers: new[] { AgenticIdAuthHandler });
         OnActivity(ActivityTypes.Message, MessageActivityAsync, rank: RouteRank.Last, isAgenticOnly: false, autoSignInHandlers: autoSignInHandlersForNotAgenticAuth);
     }
@@ -85,8 +91,8 @@ public class MyAgent : AgentApplication
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHandler;
-            ToolAuthHandlerName = MyAuthHandler;
+            ObservabilityAuthHandlerName = OboAuthHandlerName;
+            ToolAuthHandlerName = OboAuthHandlerName;
         }
         // Init the activity for observability
 
@@ -108,12 +114,22 @@ public class MyAgent : AgentApplication
                             new ServiceDescriptor(typeof(Kernel), _kernel),
              ];
 
-             // Disabled for development purposes. 
+             // Disabled for development purposes.
              //if (!IsApplicationInstalled)
              //{
              //    await turnContext.SendActivityAsync(MessageFactory.Text("Please install the application before sending messages."), cancellationToken);
              //    return;
              //}
+
+             // Send the ack BEFORE agent initialization, which may open the streaming connection.
+             // This guarantees the ack arrives as message 1 and the LLM response arrives as message 2.
+             if (turnContext.Activity.ChannelId.IsParentChannel(Channels.Msteams) && TermsAndConditionsAccepted)
+             {
+                 await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+                 // Typing indicator — shown while agent initializes, before the streaming response opens.
+                 // Only visible in 1:1 and small group chats, not in channels.
+                 await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
+             }
 
              var agent365Agent = await GetAgent365Agent(serviceCollection, turnContext, ToolAuthHandlerName);
              if (!TermsAndConditionsAccepted)
@@ -163,8 +179,8 @@ public class MyAgent : AgentApplication
         }
         else
         {
-            ObservabilityAuthHandlerName = MyAuthHandler;
-            ToolAuthHandlerName = MyAuthHandler;
+            ObservabilityAuthHandlerName = OboAuthHandlerName;
+            ToolAuthHandlerName = OboAuthHandlerName;
         }
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -223,9 +239,14 @@ public class MyAgent : AgentApplication
                          var responseEmailActivity = EmailResponse.CreateEmailResponseActivity(response.Content!);
                          await turnContext.SendActivityAsync(responseEmailActivity, cancellationToken);
                      }
+                     catch (OperationCanceledException)
+                     {
+                         _logger.LogInformation("Email notification processing was canceled.");
+                         throw;
+                     }
                      catch (Exception ex)
                      {
-                         _logger.LogError($"There was an error processing the email notification: {ex.Message}");
+                         _logger.LogError(ex, "There was an error processing the email notification.");
                          var responseEmailActivity = EmailResponse.CreateEmailResponseActivity("Unable to process your email at this time.");
                          await turnContext.SendActivityAsync(responseEmailActivity, cancellationToken);
                      }
@@ -249,9 +270,14 @@ public class MyAgent : AgentApplication
                          var responseWpxActivity = MessageFactory.Text(response.Content!);
                          await turnContext.SendActivityAsync(responseWpxActivity, cancellationToken);
                      }
+                     catch (OperationCanceledException)
+                     {
+                         _logger.LogInformation("Mention notification processing was canceled.");
+                         throw;
+                     }
                      catch (Exception ex)
                      {
-                         _logger.LogError($"There was an error processing the mention notification: {ex.Message}");
+                         _logger.LogError(ex, "There was an error processing the mention notification.");
                          var responseWpxActivity = MessageFactory.Text("Unable to process your mention comment at this time.");
                          await turnContext.SendActivityAsync(responseWpxActivity, cancellationToken);
                      }
@@ -270,15 +296,7 @@ public class MyAgent : AgentApplication
     /// <returns></returns>
     protected async Task OnHireMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        string ObservabilityAuthHandlerName = "";
-        if (turnContext.IsAgenticRequest())
-        {
-            ObservabilityAuthHandlerName = AgenticIdAuthHandler;
-        }
-        else
-        {
-            ObservabilityAuthHandlerName = MyAuthHandler;
-        }
+        string ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticIdAuthHandler : OboAuthHandlerName;
         // Init the activity for observability
         await A365OtelWrapper.InvokeObservedAgentOperation(
          "OnHireMessageAsync",
@@ -294,7 +312,7 @@ public class MyAgent : AgentApplication
              if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
              {
                  IsApplicationInstalled = true;
-                 TermsAndConditionsAccepted = turnContext.IsAgenticRequest() ? true : false;
+                 TermsAndConditionsAccepted = turnContext.IsAgenticRequest();
 
                  string message = $"Thank you for hiring me! Looking forward to assisting you in your professional journey!";
                  if (!turnContext.IsAgenticRequest())
@@ -323,8 +341,12 @@ public class MyAgent : AgentApplication
     /// <returns></returns>
     protected async Task TeamsMessageActivityAsync(Agent365Agent agent365Agent, ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
+        // NOTE: The "Got it — working on it…" ack and typing indicator are sent in MessageActivityAsync
+        // before agent initialization, ensuring they arrive before the streaming connection opens.
 
-        // Start a Streaming Process 
+        // NOTE: For Teams agentic identities, streaming responses are buffered by the SDK
+        // and delivered as a single message. If you need to send multiple discrete messages,
+        // use SendActivityAsync directly (see the multi-message ack above).
         await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
         try
         {

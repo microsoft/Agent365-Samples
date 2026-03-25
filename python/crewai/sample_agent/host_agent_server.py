@@ -11,6 +11,7 @@ Features:
 - MCP tooling support
 """
 
+import asyncio
 import logging
 import socket
 import os
@@ -20,7 +21,7 @@ from agent_interface import AgentInterface, check_agent_inheritance
 from aiohttp.web import Application, Request as AiohttpRequest, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
-from microsoft_agents.activity import load_configuration_from_env
+from microsoft_agents.activity import load_configuration_from_env, Activity
 from microsoft_agents.authentication.msal import MsalConnectionManager
 from microsoft_agents.hosting.aiohttp import (
     CloudAdapter,
@@ -241,31 +242,56 @@ class GenericAgentHost:
                     if not user_message.strip() or user_message.strip() == "/help":
                         return
 
-                    # Create observability details using shared utility
-                    invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
-                    caller_details = create_caller_details(ctx_details)
-                    tenant_details = create_tenant_details(ctx_details)
-                    request = create_request(ctx_details, user_message)
+                    # Multiple messages: send an immediate ack before the LLM work begins.
+                    # Each send_activity call produces a discrete Teams message.
+                    await context.send_activity("Got it — working on it…")
 
-                    # Wrap the agent invocation with InvokeAgentScope
-                    with InvokeAgentScope.start(
-                        invoke_agent_details=invoke_details,
-                        tenant_details=tenant_details,
-                        request=request,
-                        caller_details=caller_details,
-                    ) as invoke_scope:
-                        if hasattr(invoke_scope, 'record_input_messages'):
-                            invoke_scope.record_input_messages([user_message])
+                    # Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+                    await context.send_activity(Activity(type="typing"))
 
-                        response = await self.agent_instance.process_user_message(
-                            user_message, self.agent_app.auth, self.auth_handler_name, context
-                        )
+                    # Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+                    # asyncio.create_task is used because all aiohttp handlers share the same event loop.
+                    async def _typing_loop():
+                        while True:
+                            try:
+                                await asyncio.sleep(4)
+                                await context.send_activity(Activity(type="typing"))
+                            except asyncio.CancelledError:
+                                break
 
-                        if hasattr(invoke_scope, 'record_output_messages'):
-                            invoke_scope.record_output_messages([response])
+                    typing_task = asyncio.create_task(_typing_loop())
+                    try:
+                        # Create observability details using shared utility
+                        invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                        caller_details = create_caller_details(ctx_details)
+                        tenant_details = create_tenant_details(ctx_details)
+                        request = create_request(ctx_details, user_message)
 
-                    logger.info("Sending response: '%s'", response[:100] if len(response) > 100 else response)
-                    await context.send_activity(response)
+                        # Wrap the agent invocation with InvokeAgentScope
+                        with InvokeAgentScope.start(
+                            invoke_agent_details=invoke_details,
+                            tenant_details=tenant_details,
+                            request=request,
+                            caller_details=caller_details,
+                        ) as invoke_scope:
+                            if hasattr(invoke_scope, 'record_input_messages'):
+                                invoke_scope.record_input_messages([user_message])
+
+                            response = await self.agent_instance.process_user_message(
+                                user_message, self.agent_app.auth, self.auth_handler_name, context
+                            )
+
+                            if hasattr(invoke_scope, 'record_output_messages'):
+                                invoke_scope.record_output_messages([response])
+
+                        logger.info("Sending response: '%s'", response[:100] if len(response) > 100 else response)
+                        await context.send_activity(response)
+                    finally:
+                        typing_task.cancel()
+                        try:
+                            await typing_task
+                        except asyncio.CancelledError:
+                            pass  # Expected: task is cancelled when LLM processing completes.
 
             except Exception as e:
                 error_msg = f"Sorry, I encountered an error: {str(e)}"

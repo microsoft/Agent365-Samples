@@ -79,6 +79,51 @@ elif action == "remove":
 
 To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
 
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `send_activity` multiple times within a single turn.
+
+> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `send_activity` directly to send immediate, discrete messages to the user.
+
+The sample demonstrates this in `on_message` ([host_agent_server.py](host_agent_server.py)):
+
+```python
+# Message 1: immediate ack — reaches the user right away
+await context.send_activity("Got it — working on it…")
+
+# Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+await context.send_activity(Activity(type="typing"))
+
+# Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+async def _typing_loop():
+    try:
+        while True:
+            await asyncio.sleep(4)
+            await context.send_activity(Activity(type="typing"))
+    except asyncio.CancelledError:
+        pass  # Expected on cancel.
+
+typing_task = asyncio.create_task(_typing_loop())
+try:
+    response = await agent.process_user_message(...)
+    # Message 2: the LLM response
+    await context.send_activity(response)
+finally:
+    typing_task.cancel()
+    try:
+        await typing_task
+    except asyncio.CancelledError:
+        pass
+```
+
+Each `send_activity` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+
+### Typing Indicators
+
+- Typing indicators show a "..." progress animation in Teams
+- They have a built-in ~5-second visual timeout and must be refreshed in a loop every ~4 seconds
+- Only visible in 1:1 chats and small group chats — not in channels
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.

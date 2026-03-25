@@ -1,8 +1,10 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 """Generic Agent Host Server - Hosts agents implementing AgentInterface"""
 
 # --- Imports ---
+import asyncio
 import logging
 import os
 import socket
@@ -206,10 +208,36 @@ class GenericAgentHost:
                         return
 
                     logger.info(f"📨 {user_message}")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
-                    await context.send_activity(response)
+
+                    # Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+                    # Each send_activity call produces a discrete Teams message.
+                    # NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+                    #       use send_activity for any messages that must arrive immediately.
+                    await context.send_activity("Got it — working on it…")
+                    await context.send_activity(Activity(type="typing"))
+
+                    # Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+                    # Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+                    async def _typing_loop():
+                        try:
+                            while True:
+                                await asyncio.sleep(4)
+                                await context.send_activity(Activity(type="typing"))
+                        except asyncio.CancelledError:
+                            pass  # Expected: loop is cancelled when processing completes.
+
+                    typing_task = asyncio.create_task(_typing_loop())
+                    try:
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+                        await context.send_activity(response)
+                    finally:
+                        typing_task.cancel()
+                        try:
+                            await typing_task
+                        except asyncio.CancelledError:
+                            pass  # Expected on cancel.
 
             except Exception as e:
                 logger.error(f"❌ Error: {e}")
