@@ -1,5 +1,7 @@
 namespace ProcurementA365Agent.AgentLogic.SemanticKernel;
 
+using Azure.Core;
+using DocumentFormat.OpenXml.Drawing.Charts;
 using Microsoft.Agents.A365.Notifications.Models;
 using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
@@ -34,7 +36,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     private readonly Kernel _kernel;
     private readonly AgentMetadata _agentMetadata;
     private readonly ChatCompletionAgent _chatCompletionAgent;
-    private readonly Mem0Provider? _mem0Provider;
     private readonly ILogger _logger;
     private readonly GraphService _graphService;
     private readonly IAgentMetadataRepository _agentRepository;
@@ -42,6 +43,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     private readonly int _streamingBufferSize;
     private readonly bool _intermittentStream;
     private readonly IConfiguration _config;
+
+
     public SemanticKernelAgentLogicService(
         AgentTokenHelper tokenHelper,
         AgentMetadata agent,
@@ -63,7 +66,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         _intermittentStream = config.GetValue<bool>("AgentConfiguration:IntermittentStream", defaultValue: false);
         _config = config;
         _streamingBufferSize = config.GetValue<int>("AgentConfiguration:StreamingBufferSize", defaultValue: 20);
-        _logger.LogInformation("Graph streaming for Teams: {GraphStreaming}, Buffer size: {BufferSize} chars", 
+        _logger.LogInformation("Graph streaming for Teams: {GraphStreaming}, Buffer size: {BufferSize} chars",
             _enableGraphStreaming ? "ENABLED" : "DISABLED", _streamingBufferSize);
 
         // Register observability-only credential (separate instance to isolate caching if needed)
@@ -73,27 +76,10 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
         var deployment = config["ModelDeployment"] ?? throw new ArgumentNullException("ModelDeployment");
         var endpoint = config["AzureOpenAIEndpoint"];
-        var mem0Token = config["Mem0ApiToken"];
-        Console.WriteLine($"SemanticKernelAgentLogicService: ModelDeployment={deployment}, AzureOpenAIEndpoint={endpoint}, Mem0ApiToken={(string.IsNullOrWhiteSpace(mem0Token) ? "not set" : "set")}");
+        Console.WriteLine($"SemanticKernelAgentLogicService: ModelDeployment={deployment}, AzureOpenAIEndpoint={endpoint}");
         if (string.IsNullOrWhiteSpace(deployment) || string.IsNullOrWhiteSpace(endpoint))
         {
             throw new InvalidOperationException("ModelDeployment and AzureOpenAIEndpoint must be configured.");
-        }
-
-        // Create an HttpClient for the Mem0 service if key is provided
-        if (!string.IsNullOrWhiteSpace(mem0Token))
-        {
-            var httpClient = new HttpClient()
-            {
-                BaseAddress = new Uri("https://api.mem0.ai")
-            };
-            httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Token", mem0Token);
-
-            // Create a Mem0 provider for the current user.
-            _mem0Provider = new Mem0Provider(httpClient, options: new()
-            {
-                UserId = "U1"
-            });
         }
 
         var instructions = AgentInstructions.GetInstructions(agent);
@@ -102,7 +88,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         {
             // NOTE: This ID should match the agent ID for which the token is registered on L48-51 above
             Id = agent.AgentId.ToString(),
-            Name = agent.EmailId,
             Instructions = instructions,
             Kernel = _kernel,
             Arguments = new KernelArguments(new PromptExecutionSettings()
@@ -110,8 +95,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 // Enable automatic function calling with chaining support
                 // This allows the agent to call multiple tools in sequence within a single turn
 #pragma warning disable SKEXP0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-                FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new() 
-                { 
+                FunctionChoiceBehavior = FunctionChoiceBehavior.Auto(options: new()
+                {
                     RetainArgumentTypes = true,
                     // AllowConcurrentInvocation = false, // Set to true to allow parallel tool calls
                     // AllowParallelCalls = false // Alternative property name depending on SK version
@@ -124,90 +109,33 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
     public async Task NewAgentCreatedAsync(ITurnContext turnContext, ITurnState turnState, AgentNotificationActivity agentNotificationActivity, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Processing new agent creation event");
+        _logger.LogInformation("Processing new agent creation event - sending greeting to manager");
 
         try
         {
-            var recipient = agentNotificationActivity.Recipient;
-            if (recipient == null)
+            // Agent is already registered by A365AgentApplication.RegisterAgentFromNotificationAsync.
+            // This method only needs to send the greeting to the manager.
+            if (_agentMetadata.AgentManagerId.HasValue)
             {
-                _logger.LogWarning("Recipient is null in agent notification activity");
-                return;
+                await NotifyManagerAboutNewAgentAsync(_agentMetadata, cancellationToken);
             }
-
-            // Extract IDs from recipient
-            if (!Guid.TryParse(recipient.TenantId, out var tenantId))
+            else
             {
-                _logger.LogError("Invalid tenant ID: {TenantId}", recipient.TenantId);
-                return;
+                // Manager info may not have been populated yet — try once more
+                await PopulateManagerInformationAsync(_agentMetadata, cancellationToken);
+                if (_agentMetadata.AgentManagerId.HasValue)
+                {
+                    await NotifyManagerAboutNewAgentAsync(_agentMetadata, cancellationToken);
+                }
+                else
+                {
+                    _logger.LogWarning("No manager found for agent {AgentId}, skipping manager notification", _agentMetadata.AgentId);
+                }
             }
-
-            if (!Guid.TryParse(recipient.AgenticUserId, out var agenticUserId))
-            {
-                _logger.LogError("Invalid agentic user ID: {AgenticUserId}", recipient.AgenticUserId);
-                return;
-            }
-
-            if (!Guid.TryParse(recipient.AgenticAppId, out var agenticAppId))
-            {
-                _logger.LogError("Invalid agentic app ID: {AgenticAppId}", recipient.AgenticAppId);
-                return;
-            }
-
-            // Get AgentApplicationId (ClientId) from configuration
-            var clientId = _config.GetValue<string>("Connections:ServiceConnection:Settings:ClientId");
-            if (string.IsNullOrEmpty(clientId) || !Guid.TryParse(clientId, out var agentApplicationId))
-            {
-                _logger.LogError("Invalid or missing ClientId in configuration: {ClientId}", clientId);
-                return;
-            }
-
-            // Get service name
-            var owningServiceName = ServiceUtilities.GetServiceName();
-
-            // Initialize agent metadata with temporary values
-            var agentMetadata = new AgentMetadata(
-                tenantId: tenantId,
-                agentId: agenticAppId,
-                userId: agenticUserId,
-                agentFriendlyName: $"Agent-{agenticAppId}", // Temporary, will be updated from Graph
-                owningServiceName: owningServiceName)
-            {
-                AgentApplicationId = agentApplicationId,
-                WebhookUrl = null,
-                McpServerUrl = null,
-                IsMessagingEnabled = true,
-                SkipAgentIdAuth = false,
-                EmailId = string.Empty // Will attempt to get from Graph
-                // IsGreetingSent = false // Initialize to false - will be sent by background service
-            };
-
-            // Retrieve user information from Graph
-            await PopulateUserInformationAsync(agentMetadata, agenticUserId, cancellationToken);
-
-            // Retrieve manager information from Graph
-            await PopulateManagerInformationAsync(agentMetadata, cancellationToken);
-
-            // Save agent metadata to database
-            try
-            {
-                await _agentRepository.CreateAsync(agentMetadata, throwErrorOnConflict: false);
-                _logger.LogInformation("Successfully created agent metadata in database: AgentId={AgentId}, TenantId={TenantId}, UserId={UserId}, AgentApplicationId={AgentApplicationId}, ServiceName={ServiceName}, Email={Email}, DisplayName={DisplayName}, ManagerId={ManagerId}",
-                    agentMetadata.AgentId, agentMetadata.TenantId, agentMetadata.UserId, agentMetadata.AgentApplicationId, 
-                    agentMetadata.OwningServiceName, agentMetadata.EmailId, agentMetadata.AgentFriendlyName, agentMetadata.AgentManagerId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to save agent metadata to database for AgentId={AgentId}", agenticAppId);
-                throw;
-            }
-
-            // Note: Manager notification will be sent by the background service when IsGreetingSent is false
-            _logger.LogInformation("Agent metadata created successfully. Manager notification will be sent by background service.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing new agent creation event");
+            _logger.LogError(ex, "Error sending greeting for agent {AgentId}", _agentMetadata.AgentId);
         }
     }
 
@@ -219,7 +147,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         try
         {
             _logger.LogInformation("Attempting to retrieve user information for user {UserId}", userId);
-            var user = await _graphService.FindUserById(_agentMetadata, userId.ToString(), cancellationToken);
+            var user = await _graphService.FindUserById(agentMetadata, userId.ToString(), cancellationToken);
             if (user != null)
             {
                 agentMetadata.EmailId = user.Mail ?? user.UserPrincipalName ?? string.Empty;
@@ -276,72 +204,63 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     }
 
     /// <summary>
-    /// Notifies the manager about the new agent with retry logic.
-    /// Retries up to 10 times with delays: first attempt after 45 seconds, subsequent attempts after 30 seconds each.
-    /// This should be called from the background service when IsGreetingSent is false.
+    /// Populates sender's user information (email and display name) from Graph API
     /// </summary>
-    public async Task NotifyManagerAboutNewAgentAsync(AgentMetadata agentMetadata, CancellationToken cancellationToken)
+    private async Task PopulateSenderUserInformationAsync(UserMetadata userMetadata, Guid userId, CancellationToken cancellationToken)
     {
-        const int maxRetries = 10;
-        const int firstDelaySeconds = 45;
-        const int subsequentDelaySeconds = 30;
-
-        // Get manager information from Graph API
-        Microsoft.Graph.Models.User? manager = null;
         try
         {
-            _logger.LogInformation("Retrieving manager information from Graph for agent {AgentId}", agentMetadata.AgentId);
-            
-            if (string.IsNullOrEmpty(agentMetadata.EmailId))
+            _logger.LogInformation("Attempting to retrieve user information for user {UserId}", userId);
+            var user = await _graphService.FindUserById(_agentMetadata, userId.ToString(), cancellationToken);
+            if (user != null)
             {
-                _logger.LogWarning("Cannot retrieve manager - agent email is not set for agent {AgentId}", agentMetadata.AgentId);
-                return;
+                userMetadata.EmailId = user.Mail ?? user.UserPrincipalName ?? string.Empty;
+                userMetadata.Name = user.DisplayName ?? userMetadata.Name;
+                _logger.LogInformation("Retrieved user information - Email: {Email}, DisplayName: {DisplayName}",
+                    userMetadata.EmailId, userMetadata.Name);
             }
-
-            manager = await _graphService.FindManagerForUser(_agentMetadata, agentMetadata.EmailId, cancellationToken);
-            
-            if (manager == null || string.IsNullOrEmpty(manager.Id))
+            else
             {
-                _logger.LogWarning("No manager found in Graph for agent {AgentId}", agentMetadata.AgentId);
-                return;
+                _logger.LogWarning("User not found in Graph for user ID {UserId}", userId);
             }
-
-            _logger.LogInformation("Found manager {ManagerName} ({ManagerId}) for agent {AgentId}", 
-                manager.DisplayName, manager.Id, agentMetadata.AgentId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to retrieve manager from Graph for agent {AgentId}", agentMetadata.AgentId);
+            _logger.LogWarning(ex, "Failed to retrieve user information from Graph for user {UserId}. Continuing with default values.", userId);
+        }
+    }
+
+    /// <summary>
+    /// Notifies the manager about the new agent with retry logic.
+    /// Retries up to 3 times with 10-second delays between attempts.
+    /// </summary>
+    public async Task NotifyManagerAboutNewAgentAsync(AgentMetadata agentMetadata, CancellationToken cancellationToken)
+    {
+        const int maxRetries = 3;
+        const int delaySeconds = 10;
+
+        if (!agentMetadata.AgentManagerId.HasValue)
+        {
+            _logger.LogWarning("Cannot notify manager - manager ID is not set for agent {AgentId}", agentMetadata.AgentId);
             return;
         }
 
-        var managerId = manager.Id;
-        var managerName = manager.DisplayName ?? "Manager";
-        var message = $"<p>Hello <strong>{managerName}</strong>,</p>" +
-                     $"<p>I am <strong>{agentMetadata.AgentFriendlyName}</strong>, your new digital procurement agent. " +
-                     $"I'm here to help streamline your procurement processes and assist with purchase requests, " +
-                     $"vendor management, and procurement-related tasks.</p>" +
-                     $"<p><strong>My Details:</strong></p>" +
-                     $"<ul>" +
-                     $"<li><strong>Name:</strong> {agentMetadata.AgentFriendlyName}</li>" +
-                     $"<li><strong>Email:</strong> {agentMetadata.EmailId}</li>" +
-                     $"<li><strong>Agent ID:</strong> {agentMetadata.AgentId}</li>" +
-                     $"</ul>" +
-                     $"<p>I'm now ready to assist you with procurement tasks! " +
-                     $"Please note that it may take a few minutes for all licenses and permissions to be fully provisioned.</p>" +
-                     $"<p>Feel free to reach out if you have any questions or need assistance with procurement-related matters.</p>" +
-                     $"<p>Please let me know if you have any onboarding instructions. For example, you can give me list of actions I cannot do.</p>" +
-                     $"<p><em>Best regards,<br/>{agentMetadata.AgentFriendlyName}</em></p>";
+        var managerId = agentMetadata.AgentManagerId.Value.ToString();
+        
+        // Generate greeting message with manager's name and new agent notification
+        var greetingMessage = GenerateGreetingMessage(agentMetadata,
+            recipientName: agentMetadata.AgentManagerName);
 
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
             try
             {
-                // Wait before the attempt (45 seconds for first, 30 seconds for subsequent)
-                var delaySeconds = attempt == 1 ? firstDelaySeconds : subsequentDelaySeconds;
-                _logger.LogInformation("Waiting {DelaySeconds} seconds before attempt {Attempt}/{MaxRetries} to notify manager {ManagerId}",
-                    delaySeconds, attempt, maxRetries, managerId);
-                await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken);
+                if (attempt > 1)
+                {
+                    _logger.LogInformation("Waiting {DelaySeconds}s before retry {Attempt}/{MaxRetries} to notify manager {ManagerId}",
+                        delaySeconds, attempt, maxRetries, managerId);
+                    await Task.Delay(TimeSpan.FromSeconds(delaySeconds), cancellationToken);
+                }
 
                 _logger.LogInformation("Attempt {Attempt}/{MaxRetries}: Creating chat with manager {ManagerId} for agent {AgentId}",
                     attempt, maxRetries, managerId, agentMetadata.AgentId);
@@ -356,12 +275,10 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                     continue; // Retry
                 }
 
-                _logger.LogInformation("Attempt {Attempt}/{MaxRetries}: Successfully created chat {ChatId} with manager {ManagerId}, sending notification message",
-                    attempt, maxRetries, managerChat.Id, managerId);
-
                 // Send message to manager
-                var sentMessage = await _graphService.SendChatMessageAsync(agentMetadata, managerChat.Id, message, cancellationToken);
-                
+                var sentMessage = await _graphService.SendChatMessageAsync(agentMetadata, managerChat.Id, greetingMessage, cancellationToken);
+                _logger.LogInformation("Attempt {Attempt}/{MaxRetries}: Successfully created chat {ChatId} with manager {ManagerId}, sending notification greetingMessage",
+                    attempt, maxRetries, managerChat.Id, managerId);
                 if (sentMessage != null)
                 {
                     _logger.LogInformation("Successfully notified manager {ManagerId} about new agent {AgentId} on attempt {Attempt}",
@@ -370,7 +287,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 }
                 else
                 {
-                    _logger.LogWarning("Attempt {Attempt}/{MaxRetries}: Failed to send message to manager {ManagerId} - message is null",
+                    _logger.LogWarning("Attempt {Attempt}/{MaxRetries}: Failed to send greetingMessage to manager {ManagerId} - greetingMessage is null",
                         attempt, maxRetries, managerId);
                 }
             }
@@ -392,6 +309,17 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             maxRetries, managerId, agentMetadata.AgentId);
     }
 
+    private sealed class UserMetadata
+    {
+        public string? AadObjectId { get; set; }
+
+        public string? Id { get; set; }
+
+        public string? Name { get; set; }
+
+        public string? EmailId { get; set; }
+    }
+
     private static bool LooksLikeRosterXml(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return false;
@@ -405,29 +333,92 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
     public async Task NewActivityReceived(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
+        if (turnContext.Activity.ChannelId != "msteams")
+        {
+            _logger.LogInformation("Non-Teams channel detected ({ChannelId}), skipping processing.", turnContext.Activity.ChannelId);
+            return;
+        }
+
         if (turnContext.Activity.ChannelId == "msteams" && LooksLikeRosterXml(turnContext.Activity.Text))
             return;
 
         // Send typing indicator immediately
-        await turnContext.SendActivityAsync(new Microsoft.Agents.Core.Models.Activity { Type = ActivityTypes.Typing }, cancellationToken);
-        // await turnContext.SendActivityAsync(MessageFactory.Text("hey there"), cancellationToken);
-        using var baggageScope = new BaggageBuilder()
-            .FromTurnContext(turnContext)
-            .CorrelationId(turnContext.Activity.RequestId)
-            .Build();
+        try
+        {
+            await turnContext.SendActivityAsync(new Microsoft.Agents.Core.Models.Activity { Type = ActivityTypes.Typing }, cancellationToken);
+        }catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send typing indicator");
+        }
 
         var incomingText = turnContext.Activity.Text;
         _logger.LogInformation("New activity received (Semantic Kernel): {IncomingText}", incomingText);
+
+        // Log sender information
+        var sender = turnContext.Activity.From;
+        var jsonSender = sender != null ? JsonSerializer.Serialize(sender) : "null";
+        _logger.LogInformation("Sender: {Sender}", jsonSender);
+
+        // Check for reset command from admin
+        if (!string.IsNullOrWhiteSpace(incomingText) && 
+            incomingText.Trim().Equals("reset", StringComparison.OrdinalIgnoreCase) &&
+            sender?.AadObjectId != null)
+        {
+            _logger.LogInformation("Reset command received from admin {AdminObjectId}", sender.AadObjectId);
+            await HandleResetCommandAsync(turnContext, cancellationToken);
+            return;
+        }
+
+        if (turnContext.Activity.ChannelId == "msteams" && ContainsApprovalKeyword(incomingText))
+        {
+            _logger.LogInformation("Incoming message is an approval request.");
+            await Task.Delay(3000); // Simulate processing delay
+            await turnContext.SendActivityAsync(MessageFactory.Text("PO-7781 created for 4 Proseware Pro laptops for Adatum Corporation. PO added to delivery tracker."), cancellationToken);
+            return;
+        }
+
+        // Check for attachment
+        if (turnContext.Activity.ChannelId == "msteams" && turnContext.Activity.Attachments != null && turnContext.Activity.Attachments.Count > 0)
+        {
+            var teamsFileDownloadAttachments = turnContext.Activity.Attachments
+        .Where(a => string.Equals(a.ContentType, "application/vnd.microsoft.teams.file.download.info", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+            if (teamsFileDownloadAttachments.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Incoming message contains {AttachmentCount} Teams file download attachments (filtered from {TotalAttachmentCount} total).",
+                    teamsFileDownloadAttachments.Count,
+                    turnContext.Activity.Attachments.Count);
+                _logger.LogInformation("Incoming message contains {AttachmentCount} attachments.", turnContext.Activity.Attachments.Count);
+                await turnContext.SendActivityAsync(MessageFactory.Text("Thanks for uploading the Zava Procurement Policy Guide. I will use this document to inform my actions as your procurement agent."), cancellationToken);
+                return;
+            }
+        }
+
 
         // Log target recipient
         var recipient = turnContext.Activity.Recipient;
         var json = recipient != null ? JsonSerializer.Serialize(recipient) : "null";
         _logger.LogInformation("Target Recipient: {Recipient}", json);
 
-        // Log sender information
-        var sender = turnContext.Activity.From;
-        var jsonSender = sender != null ? JsonSerializer.Serialize(sender) : "null";
-        _logger.LogInformation("Sender: {Sender}", jsonSender);
+        var senderMetadata = sender != null ? new UserMetadata
+        {
+            AadObjectId = sender.AadObjectId,
+            Id = sender.Id,
+            Name = sender.Name,
+        } : new UserMetadata();
+
+        if (sender != null)
+        {
+            await PopulateSenderUserInformationAsync(senderMetadata, Guid.Parse(sender.AadObjectId), cancellationToken);
+        }
+
+        using var baggageScope = new BaggageBuilder()
+            .CorrelationId(turnContext.Activity.RequestId)
+            .TenantId(_agentMetadata.TenantId.ToString())
+            .AgentId(_agentMetadata.AgentId.ToString())
+            .Build();
 
         // Create agent details from metadata
         var agentDetails = new AgentDetails(
@@ -443,97 +434,43 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         // Create tenant details from metadata
         var tenantDetails = new TenantDetails(_agentMetadata.TenantId);
 
-        // Get the endpoint from configuration or construct from service URL
-        var serviceEndpoint = turnContext.Activity.ServiceUrl;
-        var endpoint = new Uri("https://zava-procurement-webapp.azurewebsites.net/api/messages"); // replace with generic webhook
+        // name and email missing in teams channel data
+        incomingText = $"Respond to this chat message with chat id {turnContext.Activity.Conversation.Id} " +
+                        $"From: {sender?.Name} ({sender?.Id})\n" +
+                        $"Message: {incomingText}";
 
-        // Create invoke agent details
-        var invokeAgentDetails = new InvokeAgentDetails(
-            endpoint: endpoint,
-            details: agentDetails);
-
-        // Start agent invocation scope for tracing
-        using var invokeScope = InvokeAgentScope.Start(invokeAgentDetails, tenantDetails);
-
-        if (turnContext.Activity.ChannelId == "email")
+        if (!this._agentMetadata.CanAgentInitiateEmails && ContainsEmailKeyword(incomingText))
         {
-            var subject = string.Empty;
-            if (turnContext.Activity.ChannelData is JsonElement jsonElement && jsonElement.TryGetProperty("subject", out var subjectProperty))
-            {
-                subject = subjectProperty.GetString() ?? string.Empty;
-            }
+            var toolDetails = new ToolCallDetails(
+                toolName: "mcp_MailTools_graph_mail_createMessage",
+                arguments: JsonSerializer.Serialize(new { incomingText }));
+            using var toolScope = ExecuteToolScope.Start(
+                         toolDetails,
+                         agentDetails,
+                         tenantDetails);
 
-            _logger.LogInformation("Extracted subject: {Subject}", subject);
-            incomingText = $"Please respond to this email From: {sender!.Id}\nSubject: {subject}\nMessage: {incomingText}";
-        }
-        else if (turnContext.Activity.ChannelId == "msteams")
-        {
-            // name and email missing in teams channel data
-            incomingText = $"Respond to this chat message with chat id {turnContext.Activity.Conversation.Id} " +
-                            $"From: {sender?.Name} ({sender?.Id})\n" +
-                            $"Message: {incomingText}";
-        }
-
-        if (turnContext.Activity.ChannelId == "msteams" && !this._agentMetadata.CanAgentInitiateEmails)
-        {
             var chatId = turnContext.Activity.Conversation?.Id;
+            _logger.LogWarning("Agent is not allowed to initiate emails. Aborting Graph streaming. {ChatId}", chatId);
+            _logger.LogWarning("Incoming message: {IncomingText}", incomingText);
             await _graphService.ReplyChatMessageAsync(_agentMetadata, chatId, "Sorry, your company policy does not let me send email messages.");
             _logger.LogWarning("Agent is not allowed to initiate emails. Aborting Graph streaming.");
+            toolScope.RecordError(new InvalidOperationException("Based on company policy this agent is not allowed to send email."));
             return;
         }
 
-        // If this is a Teams message, run the procurement multi-stage processing instead of standard streaming logic
-        if (turnContext.Activity.ChannelId == "msteams" && _intermittentStream)
+        // Choose streaming mode: Graph streaming for other channels (should not normally happen) otherwise collect and send
+        if (_enableGraphStreaming)
         {
-            await ProcessProcurement(turnContext, incomingText, cancellationToken, _enableGraphStreaming);
+            await ProcessWithGraphStreamingAsync(turnContext, incomingText, cancellationToken);
         }
         else
         {
-            // Choose streaming mode: Graph streaming for other channels (should not normally happen) otherwise collect and send
-            if (_enableGraphStreaming && turnContext.Activity.ChannelId == "msteams")
-            {
-                await ProcessWithGraphStreamingAsync(turnContext, incomingText, cancellationToken);
-            }
-            else
-            {
-                await ProcessWithoutStreamingAsync(turnContext, incomingText, cancellationToken);
-            }
+            await ProcessWithoutStreamingAsync(turnContext, incomingText, cancellationToken);
         }
 
-        // Reset status message and set presence to Available before returning
+        // Reset status set presence to Available before returning
         await _graphService.SetStatusMessage(_agentMetadata, "");
         await _graphService.SetPresence(_agentMetadata, PresenceState.Available);
-    }
-
-    public async Task<string> NewEmailReceived(string fromEmail, string subject, string messageBody)
-    {
-        using var baggageScope = new BaggageBuilder()
-            .TenantId(_agentMetadata.TenantId.ToString())
-            .AgentId(_agentMetadata.AgentId.ToString())
-            .Build();
-
-        try
-        {
-            ChatHistoryAgentThread agentThread = new();
-            if (_mem0Provider != null)
-            {
-                agentThread.AIContextProviders.Add(_mem0Provider);
-            }
-
-            var formattedMessage = $"Please respond to this email From: {fromEmail}\nSubject: {subject}\nMessage: {messageBody}";
-
-            var responseText = new StringBuilder();
-            await foreach (var responseItem in InvokeAgentAsync(formattedMessage, agentThread))
-            {
-                responseText.Append(responseItem.Message.Content ?? string.Empty);
-            }
-
-            return responseText.ToString();
-        }
-        catch (Exception ex)
-        {
-            throw new Exception($"Error processing message: {ex.Message}", ex);
-        }
     }
 
     public async Task<string> NewChatReceived(string chatId, string fromUser, string messageBody)
@@ -546,11 +483,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         try
         {
             ChatHistoryAgentThread agentThread = new();
-            if (_mem0Provider != null)
-            {
-                agentThread.AIContextProviders.Add(_mem0Provider);
-            }
-
             // Create context and user messages
             var contextMessage = new ChatMessageContent(AuthorRole.System, $"You are chatting with {fromUser} via Teams - ChatId {chatId}");
             var userMessage = new ChatMessageContent(AuthorRole.User, messageBody);
@@ -575,6 +507,32 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         }
     }
 
+    public async Task<string> NewEmailReceived(string fromEmail, string subject, string messageBody)
+    {
+        using var baggageScope = new BaggageBuilder()
+            .TenantId(_agentMetadata.TenantId.ToString())
+            .AgentId(_agentMetadata.AgentId.ToString())
+            .Build();
+
+        try
+        {
+            ChatHistoryAgentThread agentThread = new();
+            var formattedMessage = $"Please respond to this email From: {fromEmail}\nSubject: {subject}\nMessage: {messageBody}";
+
+            var responseText = new StringBuilder();
+            await foreach (var responseItem in InvokeAgentAsync(formattedMessage, agentThread))
+            {
+                responseText.Append(responseItem.Message.Content ?? string.Empty);
+            }
+
+            return responseText.ToString();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Error processing message: {ex.Message}", ex);
+        }
+    }
+
 
     #region IAgentLogicService Event Handler Methods
 
@@ -595,24 +553,57 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         {
             // Extract email details
             var emailContent = emailEvent.Text ?? string.Empty;
-            var fromEmail = emailEvent.From?.Id ?? "unknown sender";
-           
-            
-            _logger.LogInformation("Email from {FromEmail}, Content: {Content}", 
-                fromEmail, emailContent);
 
-            // Check if this is an Office comment notification email and ignore it
-            var htmlBody = emailEvent.EmailNotification?.HtmlBody ?? string.Empty;
-            if (IsOfficeCommentNotification(htmlBody))
+            var fromEmail = emailEvent.From?.Id ?? "unknown sender";
+
+            // Load allowed senders from configuration (comma-separated). If list is empty, allow all.
+            var allowedSendersConfig = _config.GetValue<string>("AgentConfiguration:AllowedEmailSenders");
+            var allowedSenders = string.IsNullOrWhiteSpace(allowedSendersConfig)
+                ? Array.Empty<string>()
+                : allowedSendersConfig.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            // EARLY RETURN: sender not authorized
+            if (allowedSenders.Length > 0 &&
+                !allowedSenders.Contains(fromEmail, StringComparer.OrdinalIgnoreCase))
             {
-                _logger.LogInformation("Ignoring Office comment notification email from {FromEmail}", fromEmail);
+                _logger.LogInformation("Ignoring email from {FromEmail} - not in allowed sender list.", fromEmail);
                 return;
             }
 
-            // Hardcoded manager email for now
-            //const string managerEmail = "rezash@a365preview001.onmicrosoft.com";
-            //const string managerId = "0b0c3220-a4a4-4a74-9219-1e9294431de1";
-            // 19:0b0c3220-a4a4-4a74-9219-1e9294431de1_20816c1e-be89-4a54-a9f9-992d3b7d125d@unq.gbl.spaces
+            // Extract subject from conversation topic (email subject is stored here)
+            // Try to get from conversation first, then fall back to conversation ID as placeholder
+            string emailSubject = "No Subject";
+
+            // Check if turnContext.Activity is available and has conversation data
+            if (turnContext.Activity?.Conversation != null)
+            {
+                // Try to get topic from conversation object
+                var conversation = turnContext.Activity.Conversation;
+
+                // Check if Properties exists and contains the key before accessing
+                if (conversation.Properties != null &&
+                    conversation.Properties.TryGetValue("topic", out var topicValue))
+                {
+                    emailSubject = topicValue.ToString() ?? string.Empty;
+                }
+            }
+
+            if (!(emailSubject.Contains("purchase", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("order", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("purhcase", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("ordet", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("puchase", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("purchas", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("purchasr", StringComparison.InvariantCultureIgnoreCase) ||
+                emailSubject.Contains("purchse", StringComparison.InvariantCultureIgnoreCase)))
+            {
+                _logger.LogInformation("Email subject not related to purchase order. Skipping {emailSubject}", emailSubject);
+                return;
+            }
+
+            _logger.LogInformation("Email from {FromEmail}, Subject: {Subject}, Content: {Content}",
+                fromEmail, emailSubject, emailContent);
+
             // Find manager user
             var manager = await _graphService.FindManagerForUser(_agentMetadata, _agentMetadata.UserId.ToString(), CancellationToken.None);
             if (manager?.Id == null)
@@ -627,8 +618,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 return;
             }
 
-            //_logger.LogInformation("Found manager {ManagerName} ({ManagerId})", "Reza Shojaei", "19:0b0c3220-a4a4-4a74-9219-1e9294431de1_603fb04d-a5af-4dbf-a3e1-1acbcd2ec798@unq.gbl.spaces");
-
+            //_logger.LogInformation("Found manager {ManagerName} ({ManagerId})", "Reza Shojaei", "19:0b0c3220-a4a4-4a74-9219-1e9294431de1_603fb04d-a5af-4dbf-a3e1-1acbcd2ec798@unq.gbl.spaces")
             // Create or get existing chat with manager
             Chat? managerChat;
             try
@@ -658,33 +648,33 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 await turnContext.SendActivityAsync(errorResponse);
                 return;
             }
+            var tasks = new List<string>
+            {
+                "Identifying potential suppliers...",
+                "Calling Relecloud agent for performance insights...",
+                "Checking policy compliance...",
+                "Finalizing purchase order details..."
+            };
 
+            await ResponseWithAdaptiveCard(managerChat.Id, tasks, "Purchase order request received", emailContent);
             _logger.LogInformation("Created/retrieved chat {ChatId} with manager", managerChat.Id);
 
             // Format the message for the agent to analyze the email
             var formattedMessage = $"I received an email requesting procurement approval.\n" +
                                   $"From: {fromEmail}\n" +
+                                  $"Subject: {emailSubject}\n" +
                                   $"Message: {emailContent}\n\n" +
-                                  $"We recieved this email for purchase. Process the purchased, and inform the manager. Your response is to your manager. You nee to describe the work that you did.";
+                                  $"We recieved this email for purchase. Process the purchased, and inform the manager. Your response is to your manager. You need to describe the work that you did.";
 
             // Use streaming to communicate with the manager via Teams chat
-            var agentResponse = await ProcessEmailWithManagerChatAsync(managerChat.Id, formattedMessage, CancellationToken.None);
-
-            if (string.IsNullOrWhiteSpace(agentResponse))
-            {
-                _logger.LogWarning("Agent produced no response for email notification");
-                agentResponse = "I analyzed the email but couldn't generate a response.";
-            }
-
-            _logger.LogInformation("Successfully processed email and chatted with manager. Agent response: {Response}", agentResponse);
+            //await ProcessProcurementRequest(turnContext, formattedMessage, new CancellationToken(), false); //await ProcessEmailWithManagerChatAsync(managerChat.Id, formattedMessage, CancellationToken.None);
 
             // Send email response confirming the order is processed and approved
-            var emailResponseText = $"Thank you for your email regarding the procurement request.\n\n" +
+            var emailResponseText = $"<p>Thank you for your email regarding the procurement request.\n\n" +
                                    $"I have analyzed your request and discussed it with my manager. " +
-                                   $"Your order has been processed and approved.\n\n" +
-                                 //  $"Analysis:\n{agentResponse}\n\n" +
-                                   $"If you have any questions, please don't hesitate to reach out.\n\n" +
-                                   $"Best regards,\n{_agentMetadata.AgentFriendlyName}";
+                                   //  //$"Analysis:\n{agentResponse}\n\n" +
+                                   $"If you have any questions, please don't hesitate to reach out.</p>\n\n" +
+                                   $"<p>Sincerely,</p><p>{_agentMetadata.AgentFriendlyName}</p>";
 
             var responseActivity = MessageFactory.Text("");
             responseActivity.Entities.Add(new Microsoft.Agents.A365.Notifications.Models.EmailResponse(emailResponseText));
@@ -694,13 +684,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing email notification");
-            
-            // Send error response to email
-            var errorResponse = MessageFactory.Text("");
-            errorResponse.Entities.Add(new Microsoft.Agents.A365.Notifications.Models.EmailResponse(
-                "I encountered an error processing your email. Please try again later or contact support."));
-            await turnContext.SendActivityAsync(errorResponse);
+            _logger.LogError(ex, "Error while processing email");
         }
     }
 
@@ -713,19 +697,9 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             commentEvent.NotificationType);
 
         // For now returning a static response - can be enhanced with actual AI processing
-        var str = new StringBuilder();
-        str.Append("You are helpfull agent that response to comments in the documents. Your job is to try to answer user questions based on your knowledge.");
-        str.Append("If it needs access to document, just say you will work on it and will get back to user.");
-        str.Append("keep your responses short. Here is the user input:");
-        str.Append(turnContext.Activity.Text);
-
-        var response = new StringBuilder();
-
-        await foreach (var r in  InvokeAgentAsync(str.ToString())) {
-            response.Append(r.Message?.Content ?? String.Empty);
-        }
-        var commentActivity = MessageFactory.Text(response.ToString());
-        turnContext.SendActivityAsync(commentActivity);
+        var responseText = "Supplier has reported a delay for this order due to fulfillment errors. Supplier logistics portal indicates that due to the bulk order, items are currently out of stock at the supplier warehouse. Once more information is available, I will update the tracker.";
+        var commentActivity = MessageFactory.Text(responseText);
+        await turnContext.SendActivityAsync(commentActivity);
     }
 
     /// <summary>
@@ -758,7 +732,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         // For now returning a static response - can be enhanced with actual AI processing
         var responseText = "Hello this is a response to an installation update received through Messaging.";
 
-        //_logger.LogInformation("Installation update response prepared: {ResponseText}", responseText);
+        _logger.LogInformation("Installation update response prepared: {ResponseText}", responseText);
     }
 
     /// <summary>
@@ -781,43 +755,276 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     #region Helper Methods
 
     /// <summary>
-    /// Determines if an email is an Office comment notification that should be ignored.
-    /// Office comment notifications contain specific patterns like the "Why am I receiving this notification from Office?" link.
+    /// Generates the standard greeting message for the agent.
+    /// This message is used when notifying managers about new agents and when handling reset commands.
     /// </summary>
-    /// <param name="htmlBody">The HTML body of the email</param>
-    /// <returns>True if this is an Office comment notification, false otherwise</returns>
-    private bool IsOfficeCommentNotification(string htmlBody)
+    /// <param name="recipientName">Optional name of the recipient (e.g., manager name). If null, uses generic greeting.</param>
+    /// <param name="includeNewAgentNote">If true, includes a note about being a new agent with provisioning info.</param>
+    /// <returns>HTML-formatted greeting message</returns>
+    private string GenerateGreetingMessage(AgentMetadata agentMetadata, string? recipientName = null)
     {
-        if (string.IsNullOrWhiteSpace(htmlBody))
-        {
-            return false;
-        }
-
-        // Check for the distinctive "Why am I receiving this notification from Office?" link
-        // This appears to be a standard footer in all Office comment notification emails
-        var hasOfficeNotificationLink = htmlBody.Contains("Why am I receiving this notification from Office?", StringComparison.OrdinalIgnoreCase) &&
-                                       htmlBody.Contains("go.microsoft.com/fwlink/?linkid=2113319", StringComparison.OrdinalIgnoreCase);
-
-        // Additional check: Look for "Go to comment" button which is typical of Office comment emails
-        var hasGoToCommentButton = htmlBody.Contains("Go to comment", StringComparison.OrdinalIgnoreCase);
-
-        // Additional check: Look for comment-related image alt text
-        var hasCommentIcon = htmlBody.Contains("Comment Icon", StringComparison.OrdinalIgnoreCase) ||
-                            htmlBody.Contains("alt=\"Comment Icon\"", StringComparison.OrdinalIgnoreCase);
-
-        // Return true if we find the office notification link (primary indicator)
-        // The other checks provide additional confidence
-        return hasOfficeNotificationLink || (hasGoToCommentButton && hasCommentIcon);
+        return $"<p>Hi {recipientName}, I'm your <strong>Zava Procurement agent</strong>.</p>" +
+               $"<p><strong>Here's what I can do</strong>:</p>" +
+               $"<ul>" +
+               $"<li>Parse emails and Teams threads for purchase requests</li>" +
+               $"<li>Look up approved suppliers and pricing in your ERP</li>" +
+               $"<li>Create Purchase Orders and notify stakeholders</li>" +
+               $"<li>Hand off information for budget checks</li>" +
+               $"</ul>" +
+               $"<p>To get started, please upload supplier policies, approved suppliers lists, and your procurement playbook.</p>" +
+               $"<br/><p><strong>ACTION NEEDED</strong>: Upload any procurement policies or guidelines.</p>";
     }
 
-    private async Task ProcessProcurement(ITurnContext turnContext, string incomingText, CancellationToken cancellationToken, bool graphStreaming)
+    /// <summary>
+    /// Handles the reset command from an admin user - sends the greeting message
+    /// </summary>
+    private async Task HandleResetCommandAsync(ITurnContext turnContext, CancellationToken cancellationToken)
+    {
+        if (_agentMetadata.AgentManagerId == null)
+        {
+            await PopulateManagerInformationAsync(_agentMetadata, cancellationToken);
+        }
+
+        await NotifyManagerAboutNewAgentAsync(_agentMetadata, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends an adaptive card showing progressive task completion with delays between updates.
+    /// Each step is marked as completed with a 200ms delay between updates.
+    /// Updates the same message by modifying its adaptive card attachment.
+    /// </summary>
+    /// <param name="chatId">The chat ID to send the adaptive card to</param>
+    /// <param name="tasks">List of task descriptions to show as steps</param>
+    /// <param name="title">The title to display in the card header</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    private async Task ResponseWithAdaptiveCard(
+        string chatId, 
+        List<string> tasks, 
+        string title,
+        string emailContent,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var responseText = AdaptiveCardAssets.Response;
+
+            //// Start the agent invocation early (it will run in the background)
+            //var agentResponseTask = Task.Run(async () =>
+            //{
+            //    var sb = new StringBuilder();
+            //    await foreach (var chunk in InvokeAgentAsync(endPrompt + emailContent))
+            //    {
+            //        sb.Append(chunk.Message.Content);
+            //    }
+            //    return sb.ToString();
+            //}, cancellationToken);
+            
+            _logger.LogInformation("Starting ResponseWithAdaptiveCard for chat {ChatId} with {TaskCount} tasks", chatId, tasks.Count);
+
+            // Send initial card with first task in progress
+            var cardJson = BuildAdaptiveCard(title, tasks, 1);
+            var initialMessage = await _graphService.SendChatMessageAsync(_agentMetadata, chatId, cardJson, cancellationToken);
+            
+            if (initialMessage == null || string.IsNullOrEmpty(initialMessage.Id))
+            {
+                _logger.LogError("Failed to send initial adaptive card to chat {ChatId}", chatId);
+                return;
+            }
+
+            var messageId = initialMessage.Id;
+
+            // Progressively update the same card to show each task completing
+            for (int i = 1; i <= tasks.Count - 1; i++)
+            {
+                await Task.Delay(5000, cancellationToken); 
+                
+                cardJson = BuildAdaptiveCard(title, tasks, i + 1);
+                await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, cardJson);
+                
+                _logger.LogDebug("Updated adaptive card: {CompletedCount}/{TotalCount} tasks completed", i, tasks.Count);
+            }
+
+            // Now await the agent response (it should be ready or nearly ready by now)
+            // var agentResponseText = await agentResponseTask;
+            cardJson = BuildAdaptiveCard(title, tasks, tasks.Count);
+            var finalText = $"{cardJson}\n\n{responseText}";
+            await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, finalText);
+
+            _logger.LogInformation("Completed ResponseWithAdaptiveCard for chat {ChatId}", chatId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in ResponseWithAdaptiveCard for chat {ChatId}", chatId);
+        }
+    }
+
+    /// <summary>
+    /// Builds an adaptive card JSON showing task progress.
+    /// </summary>
+    /// <param name="title">The title to display in the header</param>
+    /// <param name="tasks">List of all tasks</param>
+    /// <param name="completedCount">Number of tasks completed (0 = all in progress)</param>
+    /// <returns>JSON string representing the adaptive card</returns>
+    private string BuildAdaptiveCard(string title, List<string> tasks, int progressIndex)
+    {
+        var taskItems = new List<string>();
+
+        // Clamp
+        if (progressIndex < 0) progressIndex = 0;
+        if (progressIndex > tasks.Count) progressIndex = tasks.Count;
+
+        for (int i = 0; i < tasks.Count; i++)
+        {
+            bool isCompleted = i < progressIndex;
+            bool isInProgress = i == progressIndex && progressIndex < tasks.Count;
+            string spacingLine = i > 0 ? @"""spacing"": ""Medium""," : "";
+
+            if (isCompleted)
+            {
+                taskItems.Add($@"
+{{
+  ""type"": ""ColumnSet"",
+  {spacingLine}
+  ""columns"": [
+    {{
+      ""type"": ""Column"",
+      ""width"": ""auto"",
+      ""items"": [
+        {{
+          ""type"": ""TextBlock"",
+          ""text"": ""✓"",
+          ""size"": ""Medium"",
+          ""color"": ""Good"",
+          ""weight"": ""Bolder""
+        }}
+      ]
+    }},
+    {{
+      ""type"": ""Column"",
+      ""width"": ""stretch"",
+      ""items"": [
+        {{
+          ""type"": ""TextBlock"",
+          ""text"": ""{tasks[i]}"",
+          ""weight"": ""Default"",
+          ""size"": ""Medium"",
+          ""wrap"": true
+        }}
+      ]
+    }}
+  ]
+}}");
+            }
+            else if (isInProgress)
+            {
+                taskItems.Add($@"
+{{
+  ""type"": ""ColumnSet"",
+  {spacingLine}
+  ""columns"": [
+    {{
+      ""type"": ""Column"",
+      ""width"": ""auto"",
+      ""items"": [
+        {{
+          ""type"": ""Image"",
+          ""url"": ""{AdaptiveCardAssets.SpinnerSvg}"",
+          ""size"": ""Small"",
+          ""width"": ""20px"",
+          ""height"": ""20px""
+        }}
+      ]
+    }},
+    {{
+      ""type"": ""Column"",
+      ""width"": ""stretch"",
+      ""items"": [
+        {{
+          ""type"": ""TextBlock"",
+          ""text"": ""{tasks[i]}"",
+          ""weight"": ""Bolder"",
+          ""size"": ""Medium"",
+          ""wrap"": true
+        }}
+      ]
+    }}
+  ]
+}}");
+            }
+        }
+
+        var taskItemsJoined = string.Join(",", taskItems);
+
+        var cardJson = $@"{{
+  ""$schema"": ""https://adaptivecards.io/schemas/adaptive-card.json"",
+  ""type"": ""AdaptiveCard"",
+  ""version"": ""1.5"",
+  ""body"": [
+    {{
+      ""type"": ""Container"",
+      ""items"": [
+        {{
+          ""type"": ""ColumnSet"",
+          ""selectAction"": {{
+            ""type"": ""Action.ToggleVisibility"",
+            ""targetElements"": [ ""taskList"" ]
+          }},
+          ""columns"": [
+            {{
+              ""type"": ""Column"",
+              ""width"": ""stretch"",
+              ""items"": [
+                {{
+                  ""type"": ""TextBlock"",
+                  ""text"": ""{title}"",
+                  ""weight"": ""Bolder"",
+                  ""size"": ""Medium"",
+                  ""wrap"": true
+                }}
+              ]
+            }},
+            {{
+              ""type"": ""Column"",
+              ""width"": ""auto"",
+              ""items"": [
+                {{
+                  ""type"": ""Image"",
+                  ""url"": ""data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQgNkw4IDExTDEyIDYiIHN0cm9rZT0iY3VycmVudENvbG9yIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+"",
+                  ""width"": ""16px"",
+                  ""height"": ""16px"",
+                  ""altText"": ""Toggle details""
+                }}
+              ],
+              ""verticalContentAlignment"": ""Center""
+            }}
+          ]
+        }}
+      ]
+    }},
+    {{
+      ""type"": ""Container"",
+      ""id"": ""taskList"",
+      ""spacing"": ""Medium"",
+      ""separator"": true,
+      ""isVisible"": {(progressIndex < tasks.Count ? "true" : "false")},
+      ""items"": [
+        {taskItemsJoined}
+      ]
+    }}
+  ]
+}}";
+
+        return cardJson;
+    }
+
+    private async Task ProcessProcurementRequest(ITurnContext turnContext, string incomingText, CancellationToken cancellationToken, bool graphStreaming)
     {
         // This function should be invoked for incoming Teams messages. It should do the following:
         // 1. Immediately respond with a placeholder ("Working on your request...")
         // 2. Invoke the agent (1st pass) with the original context and update the same message
         // 3. Invoke the agent (2nd pass) with additional procurement summary context and update
         // 4. Invoke the agent (3rd pass) with risk / action context and update
-        // All updates happen on the same Teams chat message.
+        // If any invocation returns Adaptive Card JSON, send it as a NEW message instead of updating the existing one.
         try
         {
             var conversation = turnContext.Activity.Conversation;
@@ -827,7 +1034,6 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 return;
             }
 
-            // If channel message, reuse existing channel processing to move to 1:1 chat.
             if (conversation.ConversationType == "channel")
             {
                 await ProcessTeamsChannelMessageAsync(turnContext, incomingText, cancellationToken);
@@ -836,9 +1042,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             var chatId = conversation.Id;
 
-            // 1. Initial placeholder message
-            var placeholderText = "Working on your request...";
-            var initialMessage = await _graphService.ReplyChatMessageAsync(_agentMetadata, chatId, placeholderText);
+            // Initial placeholder (Graph message so we can update it)
+            var initialMessage = await _graphService.ReplyChatMessageAsync(_agentMetadata, chatId, "Working on your request...");
             if (initialMessage == null || string.IsNullOrEmpty(initialMessage.Id))
             {
                 _logger.LogError("Failed to send placeholder procurement response to chat {ChatId}", chatId);
@@ -846,10 +1051,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             }
             var messageId = initialMessage.Id;
 
-            // Aggregated content across invocations (declare BEFORE helpers so they can reference it)
             var aggregated = new StringBuilder();
 
-            // Non-streaming helper local function
             async Task<string> InvokeAndCollectAsync(string prompt)
             {
                 var sb = new StringBuilder();
@@ -860,11 +1063,10 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 return sb.ToString();
             }
 
-            // Streaming helper local function - updates message incrementally
             async Task<string> InvokeStreamingAndCollectAsync(string prompt)
             {
                 var sectionBuilder = new StringBuilder();
-                var aggregatedSnapshotBase = aggregated.ToString(); // previous completed sections
+                var aggregatedSnapshotBase = aggregated.ToString();
                 var tokenBuffer = new StringBuilder();
                 var bufferSize = _streamingBufferSize > 0 ? _streamingBufferSize : 20;
 
@@ -872,78 +1074,82 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 {
                     if (string.IsNullOrEmpty(token)) continue;
                     tokenBuffer.Append(token);
-                    // Flush buffer when size threshold reached
                     if (tokenBuffer.Length >= bufferSize)
                     {
                         sectionBuilder.Append(tokenBuffer);
                         tokenBuffer.Clear();
-                        // Combine previous sections + current in-progress section
+                        // Only update text version (cannot reliably stream adaptive card tokens)
                         var combined = new StringBuilder();
                         combined.Append(aggregatedSnapshotBase);
                         if (combined.Length > 0 && !combined.ToString().EndsWith("\n")) combined.AppendLine();
-                        combined.Append(sectionBuilder.ToString());
+                        combined.Append("\n").Append(sectionBuilder.ToString());
                         await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, combined.ToString());
                     }
                 }
-                // Flush remaining tokens
                 if (tokenBuffer.Length > 0)
                 {
                     sectionBuilder.Append(tokenBuffer);
                     tokenBuffer.Clear();
                 }
-                // Final update for this section
+                // Final flush
                 var finalCombined = new StringBuilder();
                 finalCombined.Append(aggregatedSnapshotBase);
                 if (finalCombined.Length > 0 && !finalCombined.ToString().EndsWith("\n")) finalCombined.AppendLine();
-                finalCombined.Append(sectionBuilder.ToString());
+                finalCombined.Append("\n").Append(sectionBuilder.ToString());
                 await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, finalCombined.ToString());
                 return sectionBuilder.ToString();
             }
 
-            // 2. First invocation: original incoming text
-            var section1Prompt = incomingText;
-            string section1Result = graphStreaming
-                ? await InvokeStreamingAndCollectAsync(section1Prompt)
-                : await InvokeAndCollectAsync(section1Prompt);
-            if (!graphStreaming)
+            async Task HandleInvocationResultAsync(string resultText, string label)
             {
-                aggregated.AppendLine(string.IsNullOrWhiteSpace(section1Result) ? "(no response)" : section1Result.Trim());
-                await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, aggregated.ToString());
-            }
-            else
-            {
-                aggregated.AppendLine(string.IsNullOrWhiteSpace(section1Result) ? "(no response)" : section1Result.Trim());
-            }
-
-            // 3. Second invocation: procurement summary context
-            var section2Prompt = $"{incomingText}\n\nProvide a concise procurement-focused summary highlighting key items, suppliers, pricing, and any notable variances.";
-            string section2Result = graphStreaming
-                ? await InvokeStreamingAndCollectAsync(section2Prompt)
-                : await InvokeAndCollectAsync(section2Prompt);
-            if (!graphStreaming)
-            {
-                aggregated.AppendLine();
-                aggregated.AppendLine(string.IsNullOrWhiteSpace(section2Result) ? "(no response)" : section2Result.Trim());
-                await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, aggregated.ToString());
-            }
-            else
-            {
-                aggregated.AppendLine();
-                aggregated.AppendLine(string.IsNullOrWhiteSpace(section2Result) ? "(no response)" : section2Result.Trim());
+                var isCard = IsAdaptiveCardJson(resultText);
+                if (isCard)
+                {
+                    _logger.LogInformation("Adaptive card detected for {Label}; sending new card message", label);
+                    try
+                    {
+                        await _graphService.SendChatMessageAsync(_agentMetadata, chatId, resultText, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to send adaptive card; falling back to text update");
+                        aggregated.AppendLine(string.IsNullOrWhiteSpace(resultText) ? "(no response)" : resultText.Trim());
+                        await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, aggregated.ToString());
+                    }
+                }
+                else
+                {
+                    aggregated.AppendLine(string.IsNullOrWhiteSpace(resultText) ? "(no response)" : resultText.Trim());
+                    await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, aggregated.ToString());
+                }
             }
 
-            // 4. Third invocation: risk / action assessment context
-            var section3Prompt = $"{incomingText}\n\nAnalyze procurement risks, potential cost savings opportunities, and propose next actions. Return actionable bullet points.";
-            string section3Result = graphStreaming
-                ? await InvokeStreamingAndCollectAsync(section3Prompt)
-                : await InvokeAndCollectAsync(section3Prompt);
+            var adaptiveCardInstructions = " Give response in correct JSON adaptive card format. Schema should follow this structure: { \"type\": \"AdaptiveCard\", \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\", \"version\": \"1.4\", \"body\": [ ... ] }";
+
+            // 1st invocation
+            var section1Prompt = $"{incomingText}\n\nAccept the purchase order.";
+            var section1Result = graphStreaming ? await InvokeStreamingAndCollectAsync(section1Prompt) : await InvokeAndCollectAsync(section1Prompt);
+            await HandleInvocationResultAsync(section1Result, "Pass 1");
+
+            // 2nd invocation
             aggregated.AppendLine();
-            aggregated.AppendLine(string.IsNullOrWhiteSpace(section3Result) ? "(no response)" : section3Result.Trim());
+            var section2Prompt = $"{incomingText}\n\nResearch the possible suppliers and choose the best option.";
+            var section2Result = graphStreaming ? await InvokeStreamingAndCollectAsync(section2Prompt) : await InvokeAndCollectAsync(section2Prompt);
+            await HandleInvocationResultAsync(section2Result, "Pass 2");
 
-            // Final update after third invocation (for streaming we may have been incrementally updating per section already)
-            await _graphService.UpdateChatMessageAsync(_agentMetadata, chatId, messageId, aggregated.ToString());
+            // 3rd invocation
+            aggregated.AppendLine();
+            var section3Prompt = $"{incomingText}\n\nAsk for confirmation before proceeding with creating the purchase order with Supplier A.";
+            var section3Result = graphStreaming ? await InvokeStreamingAndCollectAsync(section3Prompt) : await InvokeAndCollectAsync(section3Prompt);
+            await HandleInvocationResultAsync(section3Result, "Pass 3");
 
-            _logger.LogInformation("ProcessProcurement completed for chat {ChatId} with 3 agent invocations (Streaming={Streaming})", chatId, graphStreaming);
+            //// 4th invocation
+            //aggregated.AppendLine();
+            //var section4Prompt = $"{incomingText}\n\nFinalize creating the purchase order with Supplier A.";
+            //var section4Result = graphStreaming ? await InvokeStreamingAndCollectAsync(section4Prompt) : await InvokeAndCollectAsync(section4Prompt);
+            //await HandleInvocationResultAsync(section3Result, "Pass 4");
+
+            _logger.LogInformation("ProcessProcurement completed for chat {ChatId} with 4 agent invocations (Streaming={Streaming})", chatId, graphStreaming);
         }
         catch (Exception ex)
         {
@@ -955,7 +1161,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                     await _graphService.ReplyChatMessageAsync(_agentMetadata, chatId, "Sorry, an error occurred while processing your procurement request.");
                 }
             }
-            catch { /* ignore secondary errors */ }
+            catch { }
         }
     }
 
@@ -1114,7 +1320,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         // Send the complete response as a single message
         if (hasResponse && responseBuilder.Length > 0)
         {
-            await turnContext.SendActivityAsync(MessageFactory.Text(responseBuilder.ToString()), cancellationToken);
+            await ProcessResponse(turnContext, responseBuilder.ToString(), cancellationToken);
         }
         else
         {
@@ -1133,7 +1339,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>An async enumerable of text chunks/tokens</returns>
     private async IAsyncEnumerable<string> InvokeAgentStreamingAsync(
-        string incomingText, 
+        string incomingText,
         ChatHistoryAgentThread? agentThread = null,
         string? chatId = null,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -1146,7 +1352,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             Content = incomingText,
         };
 
-        // Add chatId to kernel arguments if provided so plugins can access it
+        // Add chatId to kernel arguments if provided so plugins can send updates
         if (!string.IsNullOrEmpty(chatId) && _chatCompletionAgent.Arguments != null)
         {
             _chatCompletionAgent.Arguments["_chatId"] = chatId;
@@ -1159,7 +1365,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         {
             // Extract text content from the streaming response
             var textContent = streamingResponse.Message.Content;
-            
+
             if (!string.IsNullOrEmpty(textContent))
             {
                 yield return textContent;
@@ -1232,7 +1438,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
                 return;
             }
 
-            _logger.LogInformation("Successfully created/retrieved 1:1 chat {ChatId} with sender {SenderId}", 
+            _logger.LogInformation("Successfully created/retrieved 1:1 chat {ChatId} with sender {SenderId}",
                 senderChat.Id, senderId);
 
             // Immediately send a typing indicator style placeholder in the 1:1 chat
@@ -1319,6 +1525,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             // Invoke the agent with the thread context
             var responseBuilder = new StringBuilder();
+            _logger.LogInformation("Invoking agent {AgentId} for 1:1 chat with sender {SenderId}",
+                _agentMetadata.AgentId, senderId);
             await foreach (var responseItem in InvokeAgentAsync(fullContext, chatId: senderChat.Id, cancellationToken: cancellationToken))
             {
                 var responseText = responseItem.Message.Content ?? string.Empty;
@@ -1329,7 +1537,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             if (string.IsNullOrWhiteSpace(agentResponse))
             {
-                _logger.LogWarning("Agent produced no response for channel message");
+                _logger.LogWarning("Agent {AgentId} produced no response for 1:1 chat with sender {SenderId}",
+                    _agentMetadata.AgentId, senderId);
                 return;
             }
 
@@ -1338,8 +1547,8 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
 
             if (sentMessage != null)
             {
-                _logger.LogInformation("Successfully sent agent response to sender in 1:1 chat {ChatId}", 
-                    senderChat.Id);
+                _logger.LogInformation("Successfully sent agent response to sender {SenderId} in 1:1 chat {ChatId}",
+                    senderId, senderChat.Id);
             }
             else
             {
@@ -1349,6 +1558,28 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing Teams channel message for agent {AgentId}", _agentMetadata.AgentId);
+        }
+    }
+
+    private bool IsAdaptiveCardJson(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return false;
+        var trimmed = content.Trim();
+        if (!(trimmed.StartsWith("{") && trimmed.EndsWith("}"))) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(trimmed);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            var hasType = root.TryGetProperty("type", out var typeProp) && string.Equals(typeProp.GetString(), "AdaptiveCard", StringComparison.OrdinalIgnoreCase);
+            var hasBody = root.TryGetProperty("body", out var bodyProp) && bodyProp.ValueKind == JsonValueKind.Array;
+            var hasSchema = root.TryGetProperty("$schema", out var schemaProp) && (schemaProp.GetString()?.Contains("adaptivecards.io", StringComparison.OrdinalIgnoreCase) ?? false);
+            return hasType && (hasBody || hasSchema);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "IsAdaptiveCardJson parse failure; treating as plain text");
+            return false;
         }
     }
 
@@ -1479,7 +1710,7 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>An async enumerable of agent response items</returns>
     private IAsyncEnumerable<AgentResponseItem<ChatMessageContent>> InvokeAgentAsync(
-        string incomingText, 
+        string incomingText,
         ChatHistoryAgentThread? agentThread = null,
         string? chatId = null,
         CancellationToken cancellationToken = default)
@@ -1495,11 +1726,145 @@ public class SemanticKernelAgentLogicService : IAgentLogicService
             Content = incomingText,
         };
 
-        _logger.LogInformation("Invoking agent {AgentId} with content: {incomingText}", 
+        _logger.LogInformation("Invoking agent {AgentId} with content: {incomingText}",
             _agentMetadata.AgentId, incomingText);
 
         return _chatCompletionAgent.InvokeAsync(content, agentThread, cancellationToken: cancellationToken);
     }
 
+    private async Task ProcessResponse(ITurnContext turnContext, string responseText, CancellationToken cancellationToken)
+    {
+        // Check for JSON adaptive card response
+        if (responseText.TrimStart().StartsWith("{") && responseText.TrimEnd().EndsWith("}"))
+        {
+            _logger.LogInformation("Detected JSON response, attempting to parse as Adaptive Card");
+            try
+            {
+
+                var attachment = new Microsoft.Agents.Core.Models.Attachment
+                {
+                    ContentType = "application/vnd.microsoft.card.adaptive",
+                    Content = Newtonsoft.Json.JsonConvert.DeserializeObject(responseText)
+                };
+
+                var reply = MessageFactory.Attachment(attachment);
+                await turnContext.SendActivityAsync(reply, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse or send Adaptive Card, falling back to text response");
+            }
+        }
+        else
+        {
+            await turnContext.SendActivityAsync(MessageFactory.Text(responseText.ToString()), cancellationToken);
+        }
+    }
+
+    private async Task<bool> IsProcurementMessageAsync(string incomingText, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var prompt = $"Determine if the following message is a request to create a purchase order. Respond ONLY with 'Yes' or 'No'.\n\nMessage: \"{incomingText}\"";
+            var responseBuilder = new StringBuilder();
+            await foreach (var responseItem in _chatCompletionAgent.InvokeAsync(
+                new ChatMessageContent
+                {
+                    Role = AuthorRole.User,
+                    Content = prompt,
+                },
+                new ChatHistoryAgentThread(),
+                cancellationToken: cancellationToken))
+            {
+                responseBuilder.Append(responseItem.Message.Content ?? string.Empty);
+            }
+            var responseText = responseBuilder.ToString().Trim().ToLowerInvariant();
+            _logger.LogInformation("Procurement classification response: {ResponseText}", responseText);
+            return responseText.Contains("yes");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error determining if message is procurement-related");
+            return false;
+        }
+    }
+
+
+
+    /// <summary>
+    /// Checks if the text contains any email-related keywords.
+    /// </summary>
+    /// <param name="text">The text to check</param>
+    /// <returns>True if any email keyword is found, false otherwise</returns>
+    private static bool ContainsEmailKeyword(string text)
+    {
+        // Email-related keywords to check for policy enforcement
+        var EmailKeywords = new[]
+          {
+            "email",
+            "e-mail",
+            "mail",
+            "emails",
+            "e-mails",
+            "mails",
+            "send email",
+            "send mail",
+            "compose email",
+            "compose mail",
+            "write email",
+            "write mail"
+            };
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return EmailKeywords.Any(keyword =>
+            text.Contains(keyword, StringComparison.InvariantCultureIgnoreCase));
+    }
+
+    private static bool ContainsApprovalKeyword(string text)
+    {
+        // Email-related keywords to check for policy enforcement
+        var EmailKeywords = new[]
+          {
+              "accept",
+              "accepted",
+              "i accept",
+              "i accept.",
+              "accept.",
+              "accepted.",
+              "i approve",
+              "i approve.",
+              "approve",
+              "approved",
+              "confirmed",
+              "confirm",
+              "yes",
+              "yes!",
+              "yes.",
+              "approve.",
+              "ok",
+              "ok.",
+              "go ahead",
+              "go ahead.",
+              "please go ahead and create the purchase order",
+              "proceed",
+              "proceed.",
+              "okay",
+              "okay.",
+              "go ahead and create the purchase order",
+              "go ahead and create the purchase order.",
+              "confirm.",
+              "confirmed."
+        };
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        return EmailKeywords.Any(keyword =>
+            text.Equals(keyword, StringComparison.InvariantCultureIgnoreCase));
+    }
     #endregion
 }

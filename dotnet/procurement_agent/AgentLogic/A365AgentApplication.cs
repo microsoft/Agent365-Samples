@@ -31,6 +31,20 @@ public class A365AgentApplication : AgentApplication
         ConfigureMessageHandling();
     }
 
+    private static bool IsAllowedMessagingChannel(string? channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            return false;
+        }
+
+        // Allow Teams plus known agentic/APX style channels.
+        return channelId.Equals("msteams", StringComparison.OrdinalIgnoreCase)
+            || channelId.Contains("agentic", StringComparison.OrdinalIgnoreCase)
+            || channelId.Contains("a365", StringComparison.OrdinalIgnoreCase)
+            || channelId.Contains("agents", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Configures message handling for the agent.
     /// </summary>
@@ -128,11 +142,14 @@ public class A365AgentApplication : AgentApplication
             // Get agent logic service from factory
             var agentService = await _factory.GetService(agent);
 
-            // Ignoring all other channel Ids to prevent duplicate notifications.
-			if (agent.IsMessagingEnabled && turnContext.Activity.ChannelId != "msteams")
+            // Ignore unsupported channels when messaging polling is enabled to reduce duplicate processing.
+            if (agent.IsMessagingEnabled && !IsAllowedMessagingChannel(turnContext.Activity.ChannelId))
             {
+                Console.WriteLine($"Skipping message activity for unsupported channel '{turnContext.Activity.ChannelId}' while messaging is enabled.");
                 return;
             }
+
+			Console.WriteLine($"Processing message activity for channel '{turnContext.Activity.ChannelId}' (IsMessagingEnabled={agent.IsMessagingEnabled}).");
 
 			// Execute logic
 			await agentService.NewActivityReceived(turnContext, turnState, cancellationToken);

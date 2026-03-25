@@ -86,6 +86,12 @@ public class OpenAiAgentLogicService : IAgentLogicService
         throw new NotImplementedException("NewAgentCreatedAsync");
     }
 
+    public Task NotifyManagerAboutNewAgentAsync(AgentMetadata agentMetadata, CancellationToken cancellationToken)
+    {
+        _logger.LogWarning("NotifyManagerAboutNewAgentAsync is not implemented for OpenAI logic service.");
+        return Task.CompletedTask;
+    }
+
     public async Task<string> NewEmailReceived(string fromEmail, string subject, string messageBody)
     {
         try

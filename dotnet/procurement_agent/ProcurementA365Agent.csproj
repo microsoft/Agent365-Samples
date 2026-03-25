@@ -15,14 +15,6 @@
         <OpenTelemetryVersion>1.12.0</OpenTelemetryVersion>
     </PropertyGroup>
     
-	<!--<ItemGroup>
-		<PackageReference Include="Microsoft.Kairo.Sdk.Observability" Version="*-preview.*" />
-		<PackageReference Include="Microsoft.Kairo.Sdk.Observability.OpenAI" Version="*-preview.*" />
-		<PackageReference Include="Microsoft.Kairo.Sdk.Observability.SemanticKernel" Version="*-preview.*" />
-		<PackageReference Include="Microsoft.Kairo.Sdk.Runtime.Common" Version="*-preview.*" />
-		<PackageReference Include="Microsoft.Kairo.Sdk.Tooling.SemanticKernel" Version="*-preview.*" />
-	</ItemGroup>-->
-
 	<ItemGroup>
 		<!-- Azure SDK packages - ensure compatible versions -->
 		<PackageReference Include="Azure.Core" Version="1.47.3" />
@@ -65,13 +57,13 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <ProjectReference Include="..\..\sdk\Notification\Microsoft.Agents.A365.Notifications\Microsoft.Agents.A365.Notifications.csproj" />
-	  <ProjectReference Include="..\..\sdk\Observability\Core\Microsoft.Agents.A365.Observability.csproj" />
-	  <ProjectReference Include="..\..\sdk\Observability\Runtime\Microsoft.Agents.A365.Observability.Runtime.csproj" />
-	  <ProjectReference Include="..\..\sdk\Observability\Extensions\OpenAI\Microsoft.Agents.A365.Observability.Extensions.OpenAI.csproj" />
-	  <ProjectReference Include="..\..\sdk\Observability\Extensions\SemanticKernel\Microsoft.Agents.A365.Observability.Extensions.SemanticKernel.csproj" />
-	  <ProjectReference Include="..\..\sdk\Runtime\Core\Microsoft.Agents.A365.Runtime.csproj" />
-	  <ProjectReference Include="..\..\sdk\Tooling\Core\Microsoft.Agents.A365.Tooling.csproj" />
-	  <ProjectReference Include="..\..\sdk\Tooling\Extensions\SemanticKernel\Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.csproj" />
+	  <PackageReference Include="Microsoft.Agents.A365.Notifications" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Observability" Version="0.1.75-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Observability.Runtime" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.OpenAI" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.SemanticKernel" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Runtime" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Tooling" Version="0.2.127-beta" />
+	  <PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel" Version="0.2.127-beta" />
 	</ItemGroup>
 </Project>

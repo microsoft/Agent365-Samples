@@ -16,6 +16,7 @@ public class BackgroundNotificationService : BackgroundService
     private readonly IConfiguration configuration;
     private readonly TimeSpan checkInterval;
     private readonly HashSet<string> disableMailForAgenticTenantIds;
+    private readonly bool enableGraphFallback;
 
     public BackgroundNotificationService(
         ILogger<BackgroundNotificationService> logger,
@@ -33,11 +34,15 @@ public class BackgroundNotificationService : BackgroundService
         // Load tenant IDs that should disable mail sending for agentic identity
         var tenantIds = configuration.GetSection("NotificationService:DisableMailForAgenticTenantIds").Get<string[]>() ?? [];
         disableMailForAgenticTenantIds = new HashSet<string>(tenantIds, StringComparer.OrdinalIgnoreCase);
+
+        // Allows temporarily forcing APX-only processing by disabling Graph polling fallback paths.
+        enableGraphFallback = configuration.GetValue("NotificationService:EnableGraphFallback", true);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Agent Background Service started");
+        logger.LogInformation("Graph fallback polling is {State}", enableGraphFallback ? "ENABLED" : "DISABLED");
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -90,14 +95,27 @@ public class BackgroundNotificationService : BackgroundService
 
             logger.LogDebug("Processing notifications for {AgentCount} agents for service {ServiceName}", agents.Count, ServiceUtilities.GetServiceName());
 
-            foreach (var agent in agents)
+            if (enableGraphFallback)
             {
-                SetAgentPresenceToActiveAsync(agent, cancellationToken);    
+                foreach (var agent in agents)
+                {
+                    await SetAgentPresenceToActiveAsync(agent, cancellationToken);
+                }
+            }
+            else
+            {
+                logger.LogDebug("Graph fallback disabled; skipping background Graph presence updates.");
             }
             foreach (var agent in agents.Where(a => blueprints.FirstOrDefault(b => b.Id == a.AgentApplicationId)?.ProcessRuntimeEvents ?? true))
             {
-                if (agent.IsMessagingEnabled || cancellationToken.IsCancellationRequested)
+                if (cancellationToken.IsCancellationRequested)
                     break;
+
+                if (!agent.IsMessagingEnabled)
+                {
+                    logger.LogDebug("Skipping agent {AgentId} because messaging is disabled", agent.AgentId);
+                    continue;
+                }
 
                 await ProcessSingleAgent(agent, messagingService, webhookService, agentLogicServiceFactory, agentMetadataRepository, cancellationToken);
             }
@@ -156,14 +174,21 @@ public class BackgroundNotificationService : BackgroundService
                 }
             }
 
-            // Check if agent should skip auth based on configuration or agent setting
-            if (agent.SkipAgentIdAuth || !disableMailForAgenticTenantIds.Contains(agent.TenantId.ToString()))
+            if (enableGraphFallback)
             {
-                await ProcessAgentEmail(agent, messagingService, webhookService, factory, storageService, cancellationToken);
-            }
+                // Check if agent should skip auth based on configuration or agent setting
+                if (agent.SkipAgentIdAuth || !disableMailForAgenticTenantIds.Contains(agent.TenantId.ToString()))
+                {
+                    await ProcessAgentEmail(agent, messagingService, webhookService, factory, storageService, cancellationToken);
+                }
 
-            // Process Teams chat messages for the agent
-            await ProcessAgentChatMessagesAsync(agent, messagingService, webhookService, factory, storageService, cancellationToken);
+                // Process Teams chat messages for the agent
+                await ProcessAgentChatMessagesAsync(agent, messagingService, webhookService, factory, storageService, cancellationToken);
+            }
+            else
+            {
+                logger.LogDebug("Graph fallback disabled; skipping background email/chat polling for agent {AgentId}", agent.AgentId);
+            }
 
             // Perform other periodic tasks for the agent
             await PerformPeriodicMaintenanceAsync(agent, cancellationToken);

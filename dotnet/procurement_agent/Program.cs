@@ -246,9 +246,10 @@ builder.Services.AddSingleton(sp =>
     };
 });
 
-builder.Services
-    .AddTracing(config => config
-        .WithSemanticKernel());
+builder.AddA365Tracing(config =>
+{
+    config.WithSemanticKernel();
+});
 
 
 #endregion
@@ -278,7 +279,7 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
 
 app.MapGet("/", () => {
     Console.WriteLine("Tracing Status is: " + Environment.GetEnvironmentVariable("EnableAgent365Exporter"));
-    Console.WriteLine("Tracing Status is kairo flag: " + Environment.GetEnvironmentVariable("EnableKairoTracing"));
+    Console.WriteLine("Tracing Status is A365 flag: " + Environment.GetEnvironmentVariable("EnableA365Tracing"));
 
     return "Meet your Procurement Agent!";
     });

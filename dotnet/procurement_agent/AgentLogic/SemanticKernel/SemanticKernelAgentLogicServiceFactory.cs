@@ -66,21 +66,13 @@ public sealed class SemanticKernelAgentLogicServiceFactory(
         
         if (configuration["McpEnabled"]?.ToLower() == "true")
         {
-            var requestContext = new TokenRequestContext([Utility.GetMcpPlatformAuthenticationScope()]);
-            var tokenCredential = new AgentTokenCredential(tokenHelper, agent, certificateData);
-            var accessToken = tokenCredential.GetTokenAsync(requestContext, CancellationToken.None).GetAwaiter().GetResult();
-            string agentUserId = agent.UserId.ToString();
-            var environmentId = configuration["McpPlatformEnvironmentId"] ?? Environment.GetEnvironmentVariable("McpPlatformEnvironmentId");
-            if (string.IsNullOrEmpty(environmentId))
-            {
-                environmentId = $"Default-{agent.TenantId.ToString()}";
-            }
-            UserAuthorization userAuthorization = null;
-            ITurnContext turnContext = null;
+            var authHandlerName = configuration["McpAuthHandlerName"] ?? "ServiceConnection";
+            UserAuthorization userAuthorization = null!;
+            ITurnContext turnContext = null!;
 
             try
             {
-                mcpToolRegistrationService.AddToolServersToAgent(kernel, agentUserId, environmentId, userAuthorization, turnContext, accessToken.Token);
+                await mcpToolRegistrationService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
             } catch (Exception ex) 
             {
                 logger.LogError(ex, "Failed to add MCP Tool Servers for agent {AgentId}", agent.AgentId);
