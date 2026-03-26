@@ -31,7 +31,7 @@ When crafting your prompt, reference these Microsoft Learn pages by URL:
 Open GitHub Copilot Chat in VS Code and paste a prompt like this, including the Microsoft Learn documentation URLs:
 
 ```
-Using these documentations:
+Using these documentation articles:
 https://learn.microsoft.com/en-us/microsoft-agent-365/developer/?tabs=nodejs
 https://learn.microsoft.com/en-us/microsoft-agent-365/developer/notification?tabs=nodejs
 https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling?tabs=nodejs
