@@ -46,6 +46,6 @@ type = "crew"
 [tool.uv]
 prerelease = "allow"
 override-dependencies = [
-    # lancedb 0.30.1+ has no Windows wheels; cap at 0.30.0 which does
+    # lancedb 0.30.1+ has no Windows wheels; cap at 0.30.0 which does provide Windows wheels.
     "lancedb<=0.30.0; sys_platform == 'win32'",
 ]
