@@ -8,6 +8,13 @@ This script demonstrates direct usage without complex imports.
 
 import sys
 
+from agent_framework.observability import configure_otel_providers, enable_instrumentation
+from telemetry import configure_telemetry, instrument_libraries
+
+configure_telemetry()
+configure_otel_providers()
+instrument_libraries()
+
 try:
     from agent import AgentFrameworkAgent
     from host_agent_server import create_and_run_host

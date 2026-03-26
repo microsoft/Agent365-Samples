@@ -1,0 +1,40 @@
+# AgentFramework SDK - The official package
+agent-framework==1.0.0b260128
+agent-framework-azure-ai==1.0.0b260128
+
+# Azure AI Projects - explicitly require pre-release version
+azure-ai-agents
+azure-ai-projects
+
+# Microsoft Agents SDK - Official packages for hosting and integration
+microsoft-agents-hosting-aiohttp
+microsoft-agents-hosting-core
+microsoft-agents-authentication-msal
+microsoft-agents-activity
+opentelemetry-instrumentation-aiohttp-server
+opentelemetry-instrumentation-aiohttp-client
+opentelemetry-instrumentation-requests
+
+# Azure SDK components
+azure-identity
+
+# Core dependencies
+python-dotenv
+fastapi>=0.100.0
+
+# HTTP client
+httpx>=0.24.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Additional utilities
+typing-extensions>=4.0.0
+
+# Microsoft Agent 365 SDK packages
+microsoft_agents_a365_tooling >= 0.1.0
+microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0
+microsoft_agents_a365_observability_core >= 0.1.0
+microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0
+microsoft_agents_a365_runtime >= 0.1.0
+microsoft_agents_a365_notifications >= 0.1.0

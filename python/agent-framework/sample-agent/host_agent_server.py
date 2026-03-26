@@ -47,6 +47,7 @@ from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
 from token_cache import cache_agentic_token
+from agent_metrics import agent_metrics
 
 # --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -170,10 +171,11 @@ class GenericAgentHost:
         handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
 
         async def help_handler(context: TurnContext, _: TurnState):
-            await context.send_activity(
-                f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
-                "How can I help you today?"
-            )
+            with agent_metrics.agent_operation("help_handler", context):
+                await context.send_activity(
+                    f"👋 **Hi there!** I'm **{self.agent_class.__name__}**, your AI assistant.\n\n"
+                    "How can I help you today?"
+                )
 
         self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
         self.agent_app.message("/help", **handler_config)(help_handler)
@@ -181,67 +183,69 @@ class GenericAgentHost:
         # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
         @self.agent_app.activity("installationUpdate")
         async def on_installation_update(context: TurnContext, _: TurnState):
-            action = context.activity.action
-            from_prop = context.activity.from_property
-            logger.info(
-                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
-                action or "(none)",
-                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
-                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
-            )
-            if action == "add":
-                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
-            elif action == "remove":
-                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+            with agent_metrics.agent_operation("on_installation_update", context):
+                action = context.activity.action
+                from_prop = context.activity.from_property
+                logger.info(
+                    "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                    action or "(none)",
+                    getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                    getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+                )
+                if action == "add":
+                    await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+                elif action == "remove":
+                    await context.send_activity("Thank you for your time, I enjoyed working with you.")
 
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
-            try:
-                result = await self._validate_agent_and_setup_context(context)
-                if result is None:
-                    return
-                tenant_id, agent_id = result
-
-                with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                    user_message = context.activity.text or ""
-                    if not user_message.strip() or user_message.strip() == "/help":
+            with agent_metrics.agent_operation("on_message", context):
+                try:
+                    result = await self._validate_agent_and_setup_context(context)
+                    if result is None:
                         return
+                    tenant_id, agent_id = result
 
-                    logger.info(f"📨 {user_message}")
+                    with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                        user_message = context.activity.text or ""
+                        if not user_message.strip() or user_message.strip() == "/help":
+                            return
 
-                    # Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
-                    # Each send_activity call produces a discrete Teams message.
-                    # NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
-                    #       use send_activity for any messages that must arrive immediately.
-                    await context.send_activity("Got it — working on it…")
-                    await context.send_activity(Activity(type="typing"))
+                        logger.info(f"📨 {user_message}")
 
-                    # Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
-                    # Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
-                    async def _typing_loop():
+                        # Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+                        # Each send_activity call produces a discrete Teams message.
+                        # NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+                        #       use send_activity for any messages that must arrive immediately.
+                        await context.send_activity("Got it — working on it…")
+                        await context.send_activity(Activity(type="typing"))
+
+                        # Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+                        # Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+                        async def _typing_loop():
+                            try:
+                                while True:
+                                    await asyncio.sleep(4)
+                                    await context.send_activity(Activity(type="typing"))
+                            except asyncio.CancelledError:
+                                pass  # Expected: loop is cancelled when processing completes.
+
+                        typing_task = asyncio.create_task(_typing_loop())
                         try:
-                            while True:
-                                await asyncio.sleep(4)
-                                await context.send_activity(Activity(type="typing"))
-                        except asyncio.CancelledError:
-                            pass  # Expected: loop is cancelled when processing completes.
+                            response = await self.agent_instance.process_user_message(
+                                user_message, self.agent_app.auth, self.auth_handler_name, context
+                            )
+                            await context.send_activity(response)
+                        finally:
+                            typing_task.cancel()
+                            try:
+                                await typing_task
+                            except asyncio.CancelledError:
+                                pass  # Expected on cancel.
 
-                    typing_task = asyncio.create_task(_typing_loop())
-                    try:
-                        response = await self.agent_instance.process_user_message(
-                            user_message, self.agent_app.auth, self.auth_handler_name, context
-                        )
-                        await context.send_activity(response)
-                    finally:
-                        typing_task.cancel()
-                        try:
-                            await typing_task
-                        except asyncio.CancelledError:
-                            pass  # Expected on cancel.
-
-            except Exception as e:
-                logger.error(f"❌ Error: {e}")
-                await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
+                except Exception as e:
+                    logger.error(f"❌ Error: {e}")
+                    await context.send_activity(f"Sorry, I encountered an error: {str(e)}")
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
@@ -298,6 +302,7 @@ class GenericAgentHost:
 
     # --- Authentication ---
     def create_auth_configuration(self) -> AgentAuthConfiguration | None:
+
         client_id = environ.get("CLIENT_ID")
         tenant_id = environ.get("TENANT_ID")
         client_secret = environ.get("CLIENT_SECRET")
@@ -320,9 +325,10 @@ class GenericAgentHost:
     # --- Server ---
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         async def entry_point(req: Request) -> Response:
-            return await start_agent_process(
-                req, req.app["agent_app"], req.app["adapter"]
-            )
+            with agent_metrics.http_operation("entry_point"):
+                return await start_agent_process(
+                    req, req.app["agent_app"], req.app["adapter"]
+                )
 
         async def health(_req: Request) -> Response:
             return json_response(

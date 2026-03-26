@@ -1,8 +1,4 @@
 {
   "mcpServers": [
-    {
-      "mcpServerName": "mcp_MailTools",
-      "mcpServerUniqueName": "mcp_MailTools"
-    }
   ]
 }
