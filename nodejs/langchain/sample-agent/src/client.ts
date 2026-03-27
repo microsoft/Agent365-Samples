@@ -227,7 +227,6 @@ class LangChainClient implements Client {
       // Record the inference response with token usage
       scope.recordOutputMessages([response]);
       scope.recordInputMessages([prompt]);
-      scope.recordResponseId(`resp-${Date.now()}`);
       scope.recordInputTokens(45);
       scope.recordOutputTokens(78);
       scope.recordFinishReasons(['stop']);

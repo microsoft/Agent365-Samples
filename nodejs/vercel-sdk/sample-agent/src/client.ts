@@ -122,7 +122,6 @@ class VercelAiClient implements Client {
           response = await this.invokeAgent(prompt);
           scope.recordOutputMessages([response]);
           scope.recordInputMessages([prompt]);
-          scope.recordResponseId(`resp-${Date.now()}`);
           scope.recordInputTokens(45);
           scope.recordOutputTokens(78);
           scope.recordFinishReasons(['stop']);
