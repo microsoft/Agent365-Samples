@@ -18,7 +18,7 @@ using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
+// Setup ASP service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
 builder.ConfigureOpenTelemetry();
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
