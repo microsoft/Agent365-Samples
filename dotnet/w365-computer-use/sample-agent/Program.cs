@@ -42,6 +42,17 @@ builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationSe
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 // **********  END Configure A365 Services **********
 
+// Register the model provider based on configuration
+var aiProvider = builder.Configuration["AIServices:Provider"] ?? "AzureOpenAI";
+if (aiProvider.Equals("CustomEndpoint", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<ICuaModelProvider, CustomEndpointProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
+}
+
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
 
@@ -94,5 +105,12 @@ else
 {
     app.MapControllers();
 }
+
+// End active W365 session on shutdown to release the VM back to the pool
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    var orchestrator = app.Services.GetRequiredService<ComputerUseOrchestrator>();
+    orchestrator.EndSessionOnShutdownAsync().GetAwaiter().GetResult();
+});
 
 app.Run();

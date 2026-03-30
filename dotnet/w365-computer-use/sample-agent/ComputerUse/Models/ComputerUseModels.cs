@@ -50,6 +50,7 @@ public class ComputerUseRequest
 
 /// <summary>
 /// Defines the computer_use_preview tool for the OpenAI Responses API.
+/// Used by computer-use-preview models.
 /// </summary>
 public class ComputerUseTool
 {
@@ -64,6 +65,16 @@ public class ComputerUseTool
 
     [JsonPropertyName("environment")]
     public string Environment { get; set; } = "windows";
+}
+
+/// <summary>
+/// Defines the "computer" tool for GPT-5.4+ models.
+/// Bare type with no parameters — the model infers screen dimensions from screenshots.
+/// </summary>
+public class ComputerToolV2
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "computer";
 }
 
 /// <summary>

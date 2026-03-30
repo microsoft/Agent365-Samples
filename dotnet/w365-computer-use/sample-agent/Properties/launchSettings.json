@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "W365ComputerUseSample": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "http://localhost:3978"
+    }
+  }
+}
