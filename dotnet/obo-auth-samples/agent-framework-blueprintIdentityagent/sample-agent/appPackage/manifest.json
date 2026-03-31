@@ -1,0 +1,59 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.22",
+    "version": "1.0.1",
+    "id": "${{IDENTITY_APP_ID}}",
+    "developer": {
+        "name": "Contoso",
+        "websiteUrl": "https://www.example.com",
+        "privacyUrl": "https://www.example.com/privacy",
+        "termsOfUseUrl": "https://www.example.com/termofuse"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "blueprint-identity-agent",
+        "full": "Agent 365 Blueprint Identity Sample Agent"
+    },
+    "description": {
+        "short": "Sample demonstrating Blueprint + Identity auth flow",
+        "full": "Sample demonstrating Agent 365 Blueprint + Identity authentication flow with Managed Identity"
+    },
+    "accentColor": "#FFFFFF",
+    "webApplicationInfo": {
+        "id": "${{IDENTITY_APP_ID}}",
+        "resource": "api://botid-${{IDENTITY_APP_ID}}"
+    },
+    "copilotAgents": {
+        "customEngineAgents": [
+            {
+                "id": "${{IDENTITY_APP_ID}}",
+                "type": "bot",
+                "disclaimer": {
+                    "text": "This agent uses AI. Please verify important information."
+                }
+            }
+        ]
+    },
+    "bots": [
+        {
+            "botId": "${{IDENTITY_APP_ID}}",
+            "scopes": [
+                "personal",
+                "team",
+                "groupChat"
+            ],
+            "supportsFiles": true,
+            "isNotificationOnly": false
+        }
+    ],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": [
+        "<your-app-service-domain>.azurewebsites.net"
+    ]
+}
