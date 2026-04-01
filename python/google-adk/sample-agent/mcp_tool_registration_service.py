@@ -89,5 +89,6 @@ class McpToolRegistrationService:
             name=agent.name,
             model=agent.model,
             description=agent.description,
+            instruction=agent.instruction,
             tools=all_tools,
         )
