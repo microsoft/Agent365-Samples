@@ -54,11 +54,13 @@ def start_server(agent_app: AgentApplication):
     # direct CLIENT_ID / TENANT_ID / CLIENT_SECRET vars as fallback.
     agent_auth_config = None
     client_id = (
-        os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
+        os.getenv("AGENTIC_APP_ID")
+        or os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
         or os.getenv("CLIENT_ID")
     )
     tenant_id = (
-        os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
+        os.getenv("AGENTIC_TENANT_ID")
+        or os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
         or os.getenv("TENANT_ID")
     )
     client_secret = (
