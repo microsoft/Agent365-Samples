@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 # Internal imports
 import os
@@ -13,7 +14,6 @@ from aiohttp.web_middlewares import middleware as web_middleware
 from microsoft_agents.hosting.core import AgentApplication, ClaimsIdentity, AuthenticationConstants
 from microsoft_agents.hosting.core.authorization import AgentAuthConfiguration
 from microsoft_agents.hosting.aiohttp import start_agent_process, jwt_authorization_middleware
-from microsoft_agents.activity import load_configuration_from_env
 
 # Microsoft Agent 365 Observability Imports
 from microsoft_agents_a365.observability.core.config import configure
@@ -30,7 +30,11 @@ logger = logging.getLogger(__name__)
 
 def start_server(agent_app: AgentApplication):
     """Start the agent application server."""
-    isProduction = os.getenv("WEBSITE_SITE_NAME") is not None
+    isProduction = (
+        os.getenv("WEBSITE_SITE_NAME") is not None       # Azure App Service
+        or os.getenv("K_SERVICE") is not None            # GCP Cloud Run
+        or os.getenv("ENVIRONMENT", "").lower() == "production"  # Explicit flag
+    )
 
     async def entry_point(req: Request) -> Response:
         return await start_agent_process(req, agent_app, agent_app.adapter)
