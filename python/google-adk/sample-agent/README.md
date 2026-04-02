@@ -59,6 +59,16 @@ AUTH_HANDLER_NAME=              # leave empty for Playground/local dev
 
 ### 3. Initialize A365 configuration
 
+The fastest way is the **AI-guided setup** — attach the instruction file to GitHub Copilot Chat (agent mode) and it walks you through every step automatically:
+
+```
+Follow the steps in #file:a365-setup-instructions.md
+```
+
+> See [AI-guided setup for Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/ai-guided-setup) for full instructions and to download `a365-setup-instructions.md`.
+
+Alternatively, run the CLI manually:
+
 ```bash
 a365 config init
 ```
@@ -223,25 +233,29 @@ python main.py
 
 ### Configure Application Settings
 
-The `.env` file is **not** deployed. Set all variables as Azure App Service Application Settings:
+The `.env` file is **not** deployed. Set all variables as Azure App Service Application Settings.
 
-| Key | Value |
-|-----|-------|
-| `GOOGLE_API_KEY` | Your Google API key |
-| `GOOGLE_GENAI_USE_VERTEXAI` | `FALSE` |
-| `GEMINI_MODEL` | `gemini-2.5-flash` |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | App registration client ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | Client secret |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | Tenant ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES` | `<app-id>/.default` |
-| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__TYPE` | `AgenticUserAuthorization` |
-| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES` | `https://graph.microsoft.com/.default` |
-| `AUTH_HANDLER_NAME` | `AGENTIC` |
-| `AGENTIC_APP_ID` | Agent app ID from A365 portal |
-| `AGENTIC_TENANT_ID` | Tenant ID |
-| `AGENTIC_USER_ID` | Agent user ID from A365 portal |
-| `ENABLE_OBSERVABILITY` | `true` |
-| `OBSERVABILITY_SERVICE_NAME` | `GoogleADKSampleAgent` |
+All values below come from `a365.config.json` and `a365.generated.config.json` (produced by `a365 setup all`). Run `a365 config display -g` to view the decrypted generated values.
+
+| Key | Source | Value |
+|-----|--------|-------|
+| `GOOGLE_API_KEY` | Google AI Studio | Your Google API key |
+| `GOOGLE_GENAI_USE_VERTEXAI` | — | `FALSE` |
+| `GEMINI_MODEL` | — | `gemini-2.5-flash` |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | `a365.generated.config.json` → `agentBlueprintClientSecret` | Blueprint client secret |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | `a365.config.json` → `tenantId` | Azure tenant ID |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES` | `a365.generated.config.json` → `agentBlueprintId` + `/.default` | `<blueprintId>/.default` |
+| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__TYPE` | — | `AgenticUserAuthorization` |
+| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES` | — | `https://graph.microsoft.com/.default` |
+| `AUTH_HANDLER_NAME` | — | `AGENTIC` |
+| `AGENTIC_UPN` | `a365.config.json` → `agentUserPrincipalName` | Agent user principal name |
+| `AGENTIC_NAME` | `a365.config.json` → `agentUserDisplayName` | Agent display name |
+| `AGENTIC_APP_ID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
+| `AGENTIC_TENANT_ID` | `a365.config.json` → `tenantId` | Azure tenant ID |
+| `AGENTIC_USER_ID` | `a365.generated.config.json` → `AgenticUserId` | Populated after Teams admin approves the agent instance |
+| `ENABLE_OBSERVABILITY` | — | `true` |
+| `OBSERVABILITY_SERVICE_NAME` | — | `GoogleADKSampleAgent` |
 
 ### Running on GCP (Cloud Run)
 
