@@ -122,9 +122,15 @@ public class ComputerUseOrchestrator
         // Start session once — reuse across all messages
         if (!_sessionStarted)
         {
+            _logger.LogInformation("No active session — calling QuickStartSession (first message)");
             onStatusUpdate?.Invoke("Starting W365 computing session...");
             await StartSessionAsync(w365Tools, _logger, cancellationToken);
             _sessionStarted = true;
+            _logger.LogInformation("Session started successfully, _sessionStarted={Started}", _sessionStarted);
+        }
+        else
+        {
+            _logger.LogInformation("Reusing existing session (_sessionStarted={Started})", _sessionStarted);
         }
 
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message
@@ -248,8 +254,17 @@ public class ComputerUseOrchestrator
     /// </summary>
     public static async Task StartSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
     {
-        await InvokeToolAsync(tools, "W365_QuickStartSession", new Dictionary<string, object?>(), ct);
-        logger.LogInformation("W365 session started via QuickStartSession");
+        logger.LogInformation("Starting W365 session via QuickStartSession...");
+        try
+        {
+            var result = await InvokeToolAsync(tools, "W365_QuickStartSession", new Dictionary<string, object?>(), ct);
+            logger.LogInformation("W365 QuickStartSession result: {Result}", result?.ToString()?[..Math.Min(500, result?.ToString()?.Length ?? 0)]);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "W365 QuickStartSession FAILED");
+            throw;
+        }
     }
 
     /// <summary>
@@ -421,7 +436,12 @@ public class ComputerUseOrchestrator
             var result = await mcpClient.CallToolAsync("W365_CaptureScreenshot", new Dictionary<string, object?>(), cancellationToken: ct);
             foreach (var item in result.Content)
             {
+                _logger.LogDebug("Screenshot content block: Type={Type}, DataLen={DataLen}, TextLen={TextLen}, MimeType={Mime}",
+                    item.Type, item.Data?.Length ?? 0, item.Text?.Length ?? 0, item.MimeType);
+
                 if (item.Type == "image" && !string.IsNullOrEmpty(item.Data))
+                    return item.Data;
+                if (!string.IsNullOrEmpty(item.Data))
                     return item.Data;
                 if (item.Type == "text" && !string.IsNullOrEmpty(item.Text))
                 {
@@ -429,6 +449,10 @@ public class ComputerUseOrchestrator
                     if (!string.IsNullOrEmpty(nested)) return nested;
                 }
             }
+
+            // Log full content for debugging
+            foreach (var item in result.Content)
+                _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
 
             throw new InvalidOperationException($"Screenshot MCP response had {result.Content.Count} content blocks but no extractable image data.");
         }
