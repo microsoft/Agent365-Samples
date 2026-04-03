@@ -296,22 +296,63 @@ See [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-a
 
 ---
 
-## After Publishing — Configure in Teams Developer Portal
+## After Publishing — Post-Deployment Steps
 
-After running `a365 publish`, configure the agent blueprint in the Teams Developer Portal so it can receive messages from Teams and Microsoft 365:
+After `a365 deploy` and `a365 publish` complete, the following steps require browser interaction and cannot be automated by the CLI.
 
-1. Get your blueprint ID:
+### Step 1: Configure in Teams Developer Portal
 
-```bash
-a365 config display -g
-```
+1. Get your blueprint App ID:
+   ```bash
+   a365 config display -g
+   ```
+   Copy the `agentBlueprintId` value from the output.
 
-2. Open `https://dev.teams.microsoft.com/tools/agent-blueprint/<blueprint-id>/configuration`
-3. Set **Agent Type** to **API Based**
-4. Set **Notification URL** to your messaging endpoint
-5. Click **Save** and wait 5–10 minutes for propagation
+2. Open your blueprint configuration page:
+   ```
+   https://dev.teams.microsoft.com/tools/agent-blueprint/<blueprint-id>/configuration
+   ```
+
+3. Set **Agent Type** to `Bot Based`
+4. Set **Bot ID** to your `agentBlueprintId`
+5. Click **Save**
 
 > See [Configure agent in Teams Developer Portal](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) and [Publish agent](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish) for full instructions.
+
+### Step 2: Upload manifest to M365 Admin Center
+
+1. Go to [https://admin.microsoft.com](https://admin.microsoft.com) > **Agents** > **All agents** > **Upload custom agent**
+2. Upload `manifest/manifest.zip` (created by `a365 publish`)
+
+### Step 3: Create agent instance
+
+1. In Microsoft Teams, go to **Apps** and search for your agent name
+2. Select your agent and click **Request Instance**
+3. A tenant admin must approve the request at:
+   ```
+   https://admin.cloud.microsoft/#/agents/all/requested
+   ```
+
+### Step 4: Update AGENTIC_USER_ID after approval
+
+Once the admin approves the agent instance, the agent user is created. Update `AGENTIC_USER_ID` in two places:
+
+1. Find the value in `a365.generated.config.json` → `AgenticUserId`
+
+2. Update `.env`:
+   ```env
+   AGENTIC_USER_ID=<AgenticUserId from a365.generated.config.json>
+   ```
+
+3. Update the Azure App Service Application Setting:
+   ```bash
+   az webapp config appsettings set \
+     --name gemini-buddy-agent-webapp \
+     --resource-group AgentSDKTestRG \
+     --settings AGENTIC_USER_ID=<AgenticUserId>
+   ```
+
+> **Note:** The agent user creation is asynchronous — it can take a few minutes to a few hours to become searchable in Teams after the instance is approved.
 
 ---
 
