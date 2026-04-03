@@ -106,3 +106,12 @@ coverage/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Agent 365 generated config and deployment artifacts
+a365.config.json
+a365.generated.config.json
+app.zip
+app_logs.zip
+app_logs/
+publish/
+manifest/

@@ -54,6 +54,14 @@ class McpToolRegistrationService:
             New Agent instance with all MCP servers
         """
 
+        # Build authorization context for V2 per-audience token acquisition
+        authorization_context = {
+            "auth": auth,
+            "auth_handler_name": auth_handler_name,
+            "context": context,
+        }
+
+        # V1 fallback: exchange a shared token if no bearer token provided
         if not auth_token:
             scopes = get_mcp_platform_authentication_scope()
             auth_token_obj = await auth.exchange_token(context, scopes, auth_handler_name)
@@ -61,22 +69,30 @@ class McpToolRegistrationService:
 
         self._logger.info(f"Listing MCP tool servers for agent {agentic_app_id}")
         mcp_server_configs = await self.config_service.list_tool_servers(
-                agentic_app_id=agentic_app_id,
-                auth_token=auth_token
-            )
+            agentic_app_id=agentic_app_id,
+            authorization_context=authorization_context,
+        )
 
         self._logger.info(f"Loaded {len(mcp_server_configs)} MCP server configurations")
 
-        # Convert MCP server configs to MCPServerInfo objects
-        mcp_servers_info = []
-        mcp_server_headers = {
+        # Base headers used as fallback when no per-server headers are provided (V1)
+        base_headers = {
             "Authorization": f"Bearer {auth_token}"
         }
 
+        # Convert MCP server configs to McpToolset objects
+        mcp_servers_info = []
+
         for server_config in mcp_server_configs:
+            # V2: merge per-server headers (server_config.headers override base_headers)
+            server_level_headers = getattr(server_config, "headers", None) or {}
+            mcp_server_headers = {**base_headers, **server_level_headers}
+
+            server_url = getattr(server_config, "url", None) or server_config.mcp_server_unique_name
+
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
-                    url=server_config.mcp_server_unique_name,
+                    url=server_url,
                     headers=mcp_server_headers
                 )
             )
