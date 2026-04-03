@@ -72,9 +72,9 @@ jobs:
             import agent_interface
             import local_authentication_options
             import token_cache
-          import observability_config
-          import turn_context_utils
-          import mcp_tool_registration_service
+            import observability_config
+            import turn_context_utils
+            import mcp_tool_registration_service
             print('✅ All imports validated successfully')
         except ImportError as e:
             print(f'❌ Import validation failed: {e}')

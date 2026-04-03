@@ -73,7 +73,6 @@ from turn_context_utils import (
     create_agent_details,
     create_invoke_agent_details,
     create_caller_details,
-    create_tenant_details,
     create_request,
     build_baggage_builder,
 )
@@ -332,19 +331,18 @@ Guidelines:
                 logger.warning("⚠️ Observability not configured, spans may not be exported")
             
             # Use BaggageBuilder to set contextual information that flows through all spans
-            with build_baggage_builder(context, ctx_details.correlation_id).build():
+            with build_baggage_builder(context).build():
                 # Create observability details using shared utilities (CrewAI pattern)
                 agent_details = create_agent_details(ctx_details)
                 caller_details = create_caller_details(ctx_details)
-                tenant_details = create_tenant_details(ctx_details)
                 request = create_request(ctx_details, message)
                 invoke_details = create_invoke_agent_details(ctx_details)
                 
                 # Use context manager pattern per documentation
                 with InvokeAgentScope.start(
-                    invoke_agent_details=invoke_details,
-                    tenant_details=tenant_details,
                     request=request,
+                    scope_details=invoke_details,
+                    agent_details=agent_details,
                     caller_details=caller_details,
                 ) as invoke_scope:
                     # Record input message
@@ -359,10 +357,9 @@ Guidelines:
                     )
                     
                     with InferenceScope.start(
+                        request=request,
                         details=inference_details,
                         agent_details=agent_details,
-                        tenant_details=tenant_details,
-                        request=request,
                     ) as inference_scope:
                         # Get MCP servers in Claude SDK format
                         mcp_servers = self.get_mcp_servers_for_claude()
@@ -469,9 +466,9 @@ Guidelines:
                                             
                                             # Start ExecuteToolScope and track it
                                             tool_scope = ExecuteToolScope.start(
+                                                request=request,
                                                 details=tool_call_details,
                                                 agent_details=agent_details,
-                                                tenant_details=tenant_details,
                                             )
                                             active_tool_scopes[tool_call_id] = {
                                                 "scope": tool_scope,
