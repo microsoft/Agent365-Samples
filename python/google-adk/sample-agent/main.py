@@ -56,11 +56,13 @@ def start_server(agent_app: AgentApplication):
     # attribute access (.TENANT_ID, .ANONYMOUS_ALLOWED), not a plain dict.
     # Read from CONNECTIONS__SERVICE_CONNECTION__SETTINGS__* (A365 format) or
     # direct CLIENT_ID / TENANT_ID / CLIENT_SECRET vars as fallback.
+    # IMPORTANT: client_id for JWT validation must be the blueprint/app-registration ID
+    # (CLIENTID), NOT the AGENTIC_APP_ID. Bot Framework tokens have aud=blueprint ID.
     agent_auth_config = None
     client_id = (
-        os.getenv("AGENTIC_APP_ID")
-        or os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
+        os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
         or os.getenv("CLIENT_ID")
+        or os.getenv("AGENTIC_APP_ID")
     )
     tenant_id = (
         os.getenv("AGENTIC_TENANT_ID")
@@ -84,13 +86,28 @@ def start_server(agent_app: AgentApplication):
     else:
         logger.info("No auth credentials found — running in anonymous mode")
 
+    # Wrap JWT middleware so it only applies to POST /api/messages.
+    # Azure App Service sends health probes (GET /robots933456.txt, GET /)
+    # that must return 200 without authentication.
+    @web_middleware
+    async def selective_jwt_auth(request, handler):
+        if request.method == "POST" and request.path == "/api/messages":
+            return await jwt_authorization_middleware(request, handler)
+        return await handler(request)
+
     middlewares = [anonymous_claims]
     if agent_auth_config and isProduction:
-        middlewares.append(jwt_authorization_middleware)
-        logger.info("JWT authorization middleware enabled")
+        middlewares.append(selective_jwt_auth)
+        logger.info("JWT authorization middleware enabled (POST /api/messages only)")
+
+    # Health / readiness endpoint — returns 200 for Azure App Service probes.
+    async def health_check(req: Request) -> Response:
+        return Response(text="OK", status=200)
 
     # Configure App
     app = Application(middlewares=middlewares)
+    app.router.add_get("/", health_check)
+    app.router.add_get("/robots933456.txt", health_check)
     app.router.add_post("/api/messages", entry_point)
     app["agent_configuration"] = agent_auth_config
 

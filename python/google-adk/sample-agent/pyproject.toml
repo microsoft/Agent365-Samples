@@ -7,7 +7,7 @@ authors = [
 ]
 dependencies = [
     # Google ADK -- official package
-    "google-adk",
+    "google-adk>=1.18.0",
 
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp",
