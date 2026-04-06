@@ -17,7 +17,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11–3.13
 - [UV](https://docs.astral.sh/uv/) (recommended for dependency management)
 - Azure OpenAI API credentials OR OpenAI API key
 - [Tavily API key](https://tavily.com) for weather search functionality
