@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -12,7 +13,7 @@ namespace W365ComputerUseSample.ComputerUse;
 /// <summary>
 /// Thin protocol adapter between OpenAI's computer-use-preview model and W365 MCP tools.
 /// The model emits computer_call actions; this class translates them to MCP tool calls
-/// and feeds back screenshots. The MCP server manages sessions automatically.
+/// and feeds back screenshots. Supports multiple concurrent sessions keyed by conversation ID.
 /// </summary>
 public class ComputerUseOrchestrator
 {
@@ -27,28 +28,20 @@ public class ComputerUseOrchestrator
     private readonly List<object> _tools;
 
     /// <summary>
-    /// Conversation history persisted across user messages.
-    /// This allows the model to maintain context across multiple turns
-    /// (e.g., "now save the file" after a previous "type hello" command).
+    /// Per-conversation session state. Each conversation (user chat) gets its own
+    /// W365 session, conversation history, and screenshot counter.
     /// </summary>
-    private readonly List<JsonElement> _conversationHistory = [];
+    private readonly ConcurrentDictionary<string, ConversationSession> _sessions = new();
 
     /// <summary>
-    /// Whether a W365 session has been started. Tracked here (singleton) because
-    /// MyAgent is transient — a new agent instance is created per HTTP request.
-    /// </summary>
-    private bool _sessionStarted;
-
-    /// <summary>
-    /// Cached reference to the last-used W365 tools, used for shutdown cleanup.
-    /// </summary>
-    private IList<AITool>? _cachedTools;
-
-    /// <summary>
-    /// Cached MCP client reference — kept alive for the app lifetime so EndSession
-    /// can be called on shutdown. Disposed when the app stops.
+    /// Shared MCP client — one SSE connection reused across all conversations.
     /// </summary>
     private IMcpClient? _cachedMcpClient;
+
+    /// <summary>
+    /// Shared tool list — same tools for all conversations.
+    /// </summary>
+    private IList<AITool>? _cachedTools;
 
     private const string SystemInstructions = """
         You are a computer-using agent that can control a Windows desktop computer.
@@ -105,9 +98,10 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Run the CUA loop. Session must already be started by the caller.
+    /// Run the CUA loop for a specific conversation.
     /// </summary>
     public async Task<string> RunAsync(
+        string conversationId,
         string userMessage,
         IList<AITool> w365Tools,
         IMcpClient? mcpClient = null,
@@ -115,28 +109,34 @@ public class ComputerUseOrchestrator
         Action<string>? onStatusUpdate = null,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting CUA loop for: {Message}", Truncate(userMessage, 100));
+        _logger.LogInformation("Starting CUA loop for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
         _cachedTools = w365Tools;
         if (mcpClient != null) _cachedMcpClient = mcpClient;
 
-        // Start session once — reuse across all messages
-        if (!_sessionStarted)
+        var session = _sessions.GetOrAdd(conversationId, _ => new ConversationSession());
+
+        // Start session once per conversation
+        if (!session.SessionStarted)
         {
+            _logger.LogInformation("No active session for conversation {ConversationId} — calling QuickStartSession", conversationId);
             onStatusUpdate?.Invoke("Starting W365 computing session...");
-            await StartSessionAsync(w365Tools, _logger, cancellationToken);
-            _sessionStarted = true;
+            session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
+            session.SessionStarted = true;
+            _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+        }
+        else
+        {
+            _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
         }
 
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message
-        // so the model can see the screen. On subsequent messages, the history already has
-        // computer_call_output screenshots, so adding another input_image would cause a 400 error.
-        if (_toolType == "computer" && _conversationHistory.Count == 0)
+        if (_toolType == "computer" && session.ConversationHistory.Count == 0)
         {
-            var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, cancellationToken);
-            var initialName = $"{++_screenshotCounter:D3}_initial";
+            var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
+            var initialName = $"{conversationId[..8]}_{++session.ScreenshotCounter:D3}_initial";
             SaveScreenshotToDisk(initialScreenshot!, initialName);
             await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken);
-            _conversationHistory.Add(ToJsonElement(new
+            session.ConversationHistory.Add(ToJsonElement(new
             {
                 type = "message",
                 role = "user",
@@ -149,14 +149,14 @@ public class ComputerUseOrchestrator
         }
         else
         {
-            _conversationHistory.Add(CreateUserMessage(userMessage));
+            session.ConversationHistory.Add(CreateUserMessage(userMessage));
         }
 
         for (var i = 0; i < _maxIterations; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var response = await CallModelAsync(_conversationHistory, cancellationToken);
+            var response = await CallModelAsync(session.ConversationHistory, cancellationToken);
             if (response?.Output == null || response.Output.Count == 0)
                 break;
 
@@ -167,7 +167,7 @@ public class ComputerUseOrchestrator
                 var type = item.GetProperty("type").GetString();
                 if (type == "reasoning") continue;
 
-                _conversationHistory.Add(item);
+                session.ConversationHistory.Add(item);
 
                 switch (type)
                 {
@@ -177,14 +177,14 @@ public class ComputerUseOrchestrator
                     case "computer_call":
                         hasActions = true;
                         _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
-                        _conversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, graphAccessToken, onStatusUpdate, cancellationToken));
+                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, cancellationToken));
                         break;
 
                     case "function_call":
                         hasActions = true;
                         var funcName = item.GetProperty("name").GetString();
                         _logger.LogInformation("CUA iteration {Iteration}: function_call {Name}", i + 1, funcName);
-                        _conversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
+                        session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                         if (funcName == "OnTaskComplete")
                         {
                             return "Task completed successfully.";
@@ -202,16 +202,18 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// End the W365 session. Called by the agent on shutdown or explicit end.
     /// </summary>
-    public static async Task EndSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
+    public static async Task EndSessionAsync(IList<AITool> tools, ILogger logger, string? sessionId, CancellationToken ct)
     {
         try
         {
-            await InvokeToolAsync(tools, "W365_EndSession", new Dictionary<string, object?>(), ct);
-            logger.LogInformation("W365 session ended");
+            var args = new Dictionary<string, object?>();
+            if (!string.IsNullOrEmpty(sessionId))
+                args["sessionId"] = sessionId;
+            await InvokeToolAsync(tools, "W365_EndSession", args, ct);
+            logger.LogInformation("W365 session ended (sessionId={SessionId})", sessionId);
         }
         catch (ObjectDisposedException)
         {
-            // MCP client already disposed (dev mode SSE connection closed) — session will time out on server
             logger.LogInformation("MCP client already disposed — W365 session will be released by server timeout");
         }
         catch (Exception ex)
@@ -221,21 +223,28 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// End the session using cached tools. Called from app shutdown hook.
+    /// End all active sessions on shutdown.
     /// </summary>
     public async Task EndSessionOnShutdownAsync()
     {
-        if (_cachedTools == null || !_sessionStarted)
+        if (_cachedTools == null)
         {
-            _logger.LogInformation("No active session to end on shutdown");
+            _logger.LogInformation("No tools cached — nothing to clean up on shutdown");
             return;
         }
 
-        await EndSessionAsync(_cachedTools, _logger, CancellationToken.None);
-        _cachedTools = null;
-        _sessionStarted = false;
+        foreach (var (convId, session) in _sessions)
+        {
+            if (session.SessionStarted)
+            {
+                _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, session.W365SessionId);
+                await EndSessionAsync(_cachedTools, _logger, session.W365SessionId, CancellationToken.None);
+            }
+        }
 
-        // Dispose the MCP client if we own it
+        _sessions.Clear();
+        _cachedTools = null;
+
         if (_cachedMcpClient != null)
         {
             await _cachedMcpClient.DisposeAsync();
@@ -244,12 +253,49 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Start a W365 session. Called by the agent on first message.
+    /// Start a W365 session and return the sessionId.
     /// </summary>
-    public static async Task StartSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
+    public static async Task<string?> StartSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
     {
-        await InvokeToolAsync(tools, "W365_QuickStartSession", new Dictionary<string, object?>(), ct);
-        logger.LogInformation("W365 session started via QuickStartSession");
+        logger.LogInformation("Starting W365 session via QuickStartSession...");
+        try
+        {
+            var result = await InvokeToolAsync(tools, "W365_QuickStartSession", new Dictionary<string, object?>(), ct);
+            var resultStr = result?.ToString() ?? "";
+            logger.LogInformation("W365 QuickStartSession result: {Result}", resultStr[..Math.Min(500, resultStr.Length)]);
+
+            // Parse sessionId from response
+            try
+            {
+                using var doc = JsonDocument.Parse(resultStr);
+                if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var block in content.EnumerateArray())
+                    {
+                        if (block.TryGetProperty("text", out var text))
+                        {
+                            var textStr = text.GetString() ?? "";
+                            try
+                            {
+                                using var innerDoc = JsonDocument.Parse(textStr);
+                                if (innerDoc.RootElement.TryGetProperty("sessionId", out var sid))
+                                    return sid.GetString();
+                            }
+                            catch (JsonException) { }
+                        }
+                    }
+                }
+            }
+            catch (JsonException) { }
+
+            logger.LogWarning("Could not parse sessionId from QuickStartSession response — using default session");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "W365 QuickStartSession FAILED");
+            throw;
+        }
     }
 
     /// <summary>
@@ -306,17 +352,16 @@ public class ComputerUseOrchestrator
     /// Translate a computer_call into an MCP tool call, capture screenshot, return computer_call_output.
     /// </summary>
     private async Task<JsonElement> HandleComputerCallAsync(
-        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, string? graphAccessToken, Action<string>? onStatus, CancellationToken ct)
+        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, CancellationToken ct)
     {
         var callId = call.GetProperty("call_id").GetString()!;
+        var sessionId = session.W365SessionId;
 
         // GPT-5.4 uses "actions" (non-empty array), older models use "action" (singular).
-        // Some models return both: "action": {...}, "actions": [] — so we must check the array is non-empty.
         if (call.TryGetProperty("actions", out var actionsArray)
             && actionsArray.ValueKind == JsonValueKind.Array
             && actionsArray.GetArrayLength() > 0)
         {
-            // Process batch actions (GPT-5.4 format)
             foreach (var action in actionsArray.EnumerateArray())
             {
                 var actionType = action.GetProperty("type").GetString()!;
@@ -324,34 +369,43 @@ public class ComputerUseOrchestrator
 
                 if (actionType != "screenshot")
                 {
-                    var (toolName, args) = MapActionToMcpTool(actionType, action);
+                    var (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
                     await InvokeToolAsync(tools, toolName, args, ct);
                 }
             }
         }
         else if (call.TryGetProperty("action", out var singleAction))
         {
-            // Single action (computer-use-preview format)
             var actionType = singleAction.GetProperty("type").GetString()!;
             onStatus?.Invoke($"Performing: {actionType}...");
 
             if (actionType != "screenshot")
             {
-                var (toolName, args) = MapActionToMcpTool(actionType, singleAction);
+                var (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
                 await InvokeToolAsync(tools, toolName, args, ct);
             }
         }
 
         // Always capture screenshot after action
-        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, ct);
+        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
 
-        // Save screenshot locally and/or upload to OneDrive
-        var stepName = $"{++_screenshotCounter:D3}_step";
+        var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
         await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken);
 
         var safetyChecks = call.TryGetProperty("pending_safety_checks", out var sc)
             ? sc : JsonSerializer.Deserialize<JsonElement>("[]");
+
+        // "computer" tool type (gpt-5.4+) doesn't support acknowledged_safety_checks
+        if (_toolType == "computer")
+        {
+            return ToJsonElement(new
+            {
+                type = "computer_call_output",
+                call_id = callId,
+                output = new { type = "computer_screenshot", image_url = $"data:image/png;base64,{screenshot}" }
+            });
+        }
 
         return ToJsonElement(new
         {
@@ -364,11 +418,11 @@ public class ComputerUseOrchestrator
 
     /// <summary>
     /// Map OpenAI computer_call action types to W365 MCP tool names and arguments.
-    /// sessionId is omitted — the MCP server resolves sessions by user context.
+    /// Includes sessionId so the MCP server uses the correct session.
     /// </summary>
-    private static (string ToolName, Dictionary<string, object?> Args) MapActionToMcpTool(string actionType, JsonElement action)
+    private static (string ToolName, Dictionary<string, object?> Args) MapActionToMcpTool(string actionType, JsonElement action, string? sessionId)
     {
-        return actionType.ToLowerInvariant() switch
+        var (toolName, args) = actionType.ToLowerInvariant() switch
         {
             "click" => ("W365_Click2", new Dictionary<string, object?>
             {
@@ -411,17 +465,32 @@ public class ComputerUseOrchestrator
             }),
             _ => throw new NotSupportedException($"Unsupported action: {actionType}")
         };
+
+        // Add sessionId to all tool calls so the MCP server routes to the correct session
+        if (!string.IsNullOrEmpty(sessionId))
+            args["sessionId"] = sessionId;
+
+        return (toolName, args);
     }
 
-    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, CancellationToken ct)
+    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
+        var screenshotArgs = new Dictionary<string, object?>();
+        if (!string.IsNullOrEmpty(sessionId))
+            screenshotArgs["sessionId"] = sessionId;
+
         // Use direct MCP client when available — AIFunction wrappers drop image content blocks
         if (mcpClient != null)
         {
-            var result = await mcpClient.CallToolAsync("W365_CaptureScreenshot", new Dictionary<string, object?>(), cancellationToken: ct);
+            var result = await mcpClient.CallToolAsync("W365_CaptureScreenshot", screenshotArgs, cancellationToken: ct);
             foreach (var item in result.Content)
             {
+                _logger.LogDebug("Screenshot content block: Type={Type}, DataLen={DataLen}, TextLen={TextLen}, MimeType={Mime}",
+                    item.Type, item.Data?.Length ?? 0, item.Text?.Length ?? 0, item.MimeType);
+
                 if (item.Type == "image" && !string.IsNullOrEmpty(item.Data))
+                    return item.Data;
+                if (!string.IsNullOrEmpty(item.Data))
                     return item.Data;
                 if (item.Type == "text" && !string.IsNullOrEmpty(item.Text))
                 {
@@ -430,12 +499,19 @@ public class ComputerUseOrchestrator
                 }
             }
 
+            // Log full content for debugging
+            foreach (var item in result.Content)
+                _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
+
             throw new InvalidOperationException($"Screenshot MCP response had {result.Content.Count} content blocks but no extractable image data.");
         }
 
         // Fallback: AIFunction wrapper (may lose image content)
-        var aiResult = await InvokeToolAsync(tools, "W365_CaptureScreenshot", new Dictionary<string, object?>(), ct);
+        var aiResult = await InvokeToolAsync(tools, "W365_CaptureScreenshot", screenshotArgs, ct);
         var str = aiResult?.ToString() ?? "";
+
+        _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
+            aiResult?.GetType().Name ?? "null", str.Length, str[..Math.Min(200, str.Length)]);
 
         try
         {
@@ -444,10 +520,28 @@ public class ComputerUseOrchestrator
             if (root.TryGetProperty("screenshotData", out var sd)) return sd.GetString() ?? "";
             if (root.TryGetProperty("image", out var img)) return img.GetString() ?? "";
             if (root.TryGetProperty("data", out var d)) return d.GetString() ?? "";
+
+            // Try nested content array (SDK gateway format)
+            if (root.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var block in content.EnumerateArray())
+                {
+                    if (block.TryGetProperty("data", out var blockData) && !string.IsNullOrEmpty(blockData.GetString()))
+                        return blockData.GetString();
+                    if (block.TryGetProperty("text", out var blockText))
+                    {
+                        var extracted = ExtractBase64FromText(blockText.GetString());
+                        if (!string.IsNullOrEmpty(extracted)) return extracted;
+                    }
+                }
+            }
         }
         catch (JsonException) { }
 
-        if (str.Length > 100) return str;
+        // Last resort: if it looks like raw base64 (long string, no JSON), use it directly
+        if (str.Length > 1000 && !str.StartsWith("{") && !str.StartsWith("["))
+            return str;
+
         throw new InvalidOperationException($"Failed to extract screenshot. Response length: {str.Length}");
     }
 
@@ -512,8 +606,6 @@ public class ComputerUseOrchestrator
         JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(obj));
 
     private static string Truncate(string v, int max) => v.Length <= max ? v : v[..max] + "...";
-
-    private int _screenshotCounter;
 
     private void SaveScreenshotToDisk(string base64Data, string name)
     {
@@ -581,5 +673,17 @@ public class ComputerUseOrchestrator
         {
             _logger.LogWarning(ex, "Failed to upload screenshot to OneDrive");
         }
+    }
+
+    /// <summary>
+    /// Per-conversation session state. Holds the W365 session ID, conversation history,
+    /// and screenshot counter for a single user conversation.
+    /// </summary>
+    private sealed class ConversationSession
+    {
+        public bool SessionStarted { get; set; }
+        public string? W365SessionId { get; set; }
+        public List<JsonElement> ConversationHistory { get; } = [];
+        public int ScreenshotCounter { get; set; }
     }
 }

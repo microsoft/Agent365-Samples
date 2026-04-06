@@ -220,8 +220,10 @@ public class MyAgent : AgentApplication
                             graphToken = Environment.GetEnvironmentVariable("GRAPH_TOKEN");
                         }
 
-                        // Run the CUA loop — session is already active
+                        // Run the CUA loop — session is managed per conversation
+                        var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
                         var response = await _orchestrator.RunAsync(
+                            conversationId,
                             userText,
                             w365Tools,
                             mcpClient: mcpClient,
