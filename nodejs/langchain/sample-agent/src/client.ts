@@ -16,8 +16,8 @@ import {
   Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
+  Request,
   Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
 import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
@@ -209,18 +209,18 @@ class LangChainClient implements Client {
       model: "gpt-4o-mini",
     };
 
-    const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
-      agentName: agentName,
+    const request: Request = {
       conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
-    const tenantDetails: TenantDetails = {
+    const agentDetails: AgentDetails = {
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
+      agentName: agentName,
       tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
     };
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => {
       response = await this.invokeAgent(prompt);
