@@ -113,7 +113,21 @@ def start_server(agent_app: AgentApplication):
 
     try:
         host = "0.0.0.0" if isProduction else "localhost"
-        port = int(os.getenv("PORT", 3978))
+        
+        # PORT environment variable is optional - defaults to 3978 for local dev
+        # Azure App Service automatically sets PORT=8000
+        port_str = os.getenv("PORT")
+        if port_str:
+            try:
+                port = int(port_str)
+                logger.info("Using PORT from environment: %d", port)
+            except ValueError:
+                logger.warning("Invalid PORT value '%s', using default 3978", port_str)
+                port = 3978
+        else:
+            port = 3978
+            logger.info("PORT not set, using default: %d", port)
+        
         logger.info("Listening on %s:%d/api/messages", host, port)
         run_app(app, host=host, port=port, handle_signals=True)
     except KeyboardInterrupt:

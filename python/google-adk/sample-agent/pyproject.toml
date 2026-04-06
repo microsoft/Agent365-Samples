@@ -50,6 +50,26 @@ default = true
 # This ensures we always get the latest features and fixes
 [tool.uv]
 prerelease = "allow"
+# Overrides to resolve conflicts between google-adk and agent-framework-core:
+# - google-adk requires opentelemetry-sdk<1.39.0
+# - agent-framework-core requires opentelemetry-sdk>=1.39.0
+# google-adk is the binding constraint; the otel API is stable across these versions.
+# Also overrides gradio's outdated pydantic upper bound and old ruff pin.
+override-dependencies = [
+    # Pin entire otel stack to 1.38.x — google-adk requires sdk<1.39.0
+    # and all otel packages must be on the same minor version.
+    "opentelemetry-api>=1.38.0,<1.39.0",
+    "opentelemetry-sdk>=1.38.0,<1.39.0",
+    "opentelemetry-exporter-otlp>=1.38.0,<1.39.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.38.0,<1.39.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.38.0,<1.39.0",
+    "opentelemetry-exporter-otlp-proto-common>=1.38.0,<1.39.0",
+    "opentelemetry-proto>=1.38.0,<1.39.0",
+    "opentelemetry-semantic-conventions>=0.59b0,<0.60b0",
+    "opentelemetry-instrumentation>=0.59b0,<0.60b0",
+    "pydantic>=2.0.0",
+    "ruff>=0.9.3",
+]
 
 [project.optional-dependencies]
 dev = [
