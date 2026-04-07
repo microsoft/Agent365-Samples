@@ -229,6 +229,8 @@ public class MyAgent : AgentApplication
                             mcpClient: mcpClient,
                             graphAccessToken: graphToken,
                             onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
+                            onFolderLinkReady: async url => await turnContext.SendActivityAsync(
+                                MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
                             cancellationToken: cancellationToken);
 
                         // Send the response

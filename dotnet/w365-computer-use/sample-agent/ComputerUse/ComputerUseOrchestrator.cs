@@ -114,13 +114,23 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient = null,
         string? graphAccessToken = null,
         Action<string>? onStatusUpdate = null,
+        Func<string, Task>? onFolderLinkReady = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting CUA loop for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
         _cachedTools = w365Tools;
         if (mcpClient != null) _cachedMcpClient = mcpClient;
 
-        var session = _sessions.GetOrAdd(conversationId, _ => new ConversationSession());
+        var session = _sessions.GetOrAdd(conversationId, _ =>
+        {
+            // Build a safe subfolder name from date + truncated conversation ID
+            var safeId = new string(conversationId.Where(c => char.IsLetterOrDigit(c)).ToArray());
+            safeId = safeId.Length > 8 ? safeId[..8] : safeId;
+            return new ConversationSession
+            {
+                ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeId}"
+            };
+        });
 
         if (session.SessionStarted)
         {
@@ -162,21 +172,35 @@ public class ComputerUseOrchestrator
                         {
                             _logger.LogInformation("First computer_call for conversation {ConversationId} — starting session", conversationId);
                             onStatusUpdate?.Invoke("Starting W365 computing session...");
-                            session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
-                            session.SessionStarted = true;
-                            _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+                            try
+                            {
+                                session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
+                                session.SessionStarted = true;
+                                _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "QuickStartSession failed for conversation {ConversationId}", conversationId);
+                                return "Unable to start a W365 Cloud PC session. This could mean:\n" +
+                                       "- No Cloud PC pools are available for your agent user\n" +
+                                       "- All sessions in the pool are currently in use\n" +
+                                       "- The agent user doesn't have the required permissions\n\n" +
+                                       $"Error: {ex.Message}";
+                            }
 
                             // For gpt-5.4+ ("computer" tool type), capture an initial screenshot
                             if (_toolType == "computer")
                             {
                                 var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
-                                var initialName = $"{conversationId[..Math.Min(8, conversationId.Length)]}_{++session.ScreenshotCounter:D3}_initial";
+                                var initialName = $"{++session.ScreenshotCounter:D3}_initial";
                                 SaveScreenshotToDisk(initialScreenshot!, initialName);
-                                await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken);
+                                var folderUrl = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+                                if (folderUrl != null && onFolderLinkReady != null)
+                                    await onFolderLinkReady(folderUrl);
                             }
                         }
 
-                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, cancellationToken));
+                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
                         break;
 
                     case "function_call":
@@ -388,7 +412,7 @@ public class ComputerUseOrchestrator
     /// Translate a computer_call into an MCP tool call, capture screenshot, return computer_call_output.
     /// </summary>
     private async Task<JsonElement> HandleComputerCallAsync(
-        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, CancellationToken ct)
+        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
     {
         var callId = call.GetProperty("call_id").GetString()!;
         var sessionId = session.W365SessionId;
@@ -442,7 +466,9 @@ public class ComputerUseOrchestrator
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
-        await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken);
+        var folderUrl = await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+        if (folderUrl != null && onFolderLinkReady != null)
+            await onFolderLinkReady(folderUrl);
 
         var safetyChecks = call.TryGetProperty("pending_safety_checks", out var sc)
             ? sc : JsonSerializer.Deserialize<JsonElement>("[]");
@@ -731,31 +757,31 @@ public class ComputerUseOrchestrator
     /// Requires a Graph access token with Files.ReadWrite scope.
     /// Files are uploaded to /CUA-Sessions/{date}/ folder.
     /// </summary>
-    private async Task UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken)
+    private async Task<string?> UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken, string? subfolder, ConversationSession session)
     {
         if (string.IsNullOrEmpty(graphAccessToken))
         {
             _logger.LogDebug("OneDrive upload skipped: no Graph token");
-            return;
+            return null;
         }
         if (string.IsNullOrEmpty(base64Data))
         {
             _logger.LogDebug("OneDrive upload skipped: no screenshot data");
-            return;
+            return null;
         }
         if (string.IsNullOrEmpty(_oneDriveFolder))
         {
             _logger.LogDebug("OneDrive upload skipped: OneDriveFolder not configured");
-            return;
+            return null;
         }
 
         try
         {
-            // Use /me/drive for token owner, or /users/{id}/drive for a specific user
-            var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
-                ? "https://graph.microsoft.com/v1.0/me/drive"
-                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
-            var url = $"{driveBase}/root:/{_oneDriveFolder.TrimStart('/')}/{fileName}:/content";
+            // Upload to /CUA-Sessions/{subfolder}/{fileName} — subfolder is per-conversation
+            var folderPath = string.IsNullOrEmpty(subfolder)
+                ? _oneDriveFolder.TrimStart('/')
+                : $"{_oneDriveFolder.TrimStart('/')}/{subfolder}";
+            var url = $"https://graph.microsoft.com/v1.0/me/drive/root:/{folderPath}/{fileName}:/content";
 
             using var request = new HttpRequestMessage(HttpMethod.Put, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
@@ -765,16 +791,87 @@ public class ComputerUseOrchestrator
             var response = await _httpClient.SendAsync(request);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("Screenshot uploaded to OneDrive: {Folder}/{FileName}", _oneDriveFolder, fileName);
+                _logger.LogInformation("Screenshot uploaded to OneDrive: {Folder}/{FileName}", folderPath, fileName);
+
+                // On first upload, create an org-scoped sharing link for the folder
+                if (!session.FolderShared)
+                {
+                    var shareUrl = await ShareConversationFolderAsync(folderPath, graphAccessToken);
+                    if (shareUrl != null)
+                    {
+                        session.FolderShared = true;
+                        return shareUrl;
+                    }
+                }
             }
             else
             {
-                _logger.LogWarning("OneDrive upload failed: {Status}", response.StatusCode);
+                var content = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("OneDrive upload failed: {Status} {Content}", response.StatusCode, content);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to upload screenshot to OneDrive");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Create an organization-scoped sharing link for the conversation's screenshot folder.
+    /// Returns the web URL that anyone in the org can use to view the folder.
+    /// </summary>
+    private async Task<string?> ShareConversationFolderAsync(string folderPath, string graphAccessToken)
+    {
+        try
+        {
+            // Get the folder's item ID
+            var folderUrl = $"https://graph.microsoft.com/v1.0/me/drive/root:/{folderPath}";
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, folderUrl);
+            getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
+            var getResponse = await _httpClient.SendAsync(getRequest);
+
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to get folder item for sharing: {Status}", getResponse.StatusCode);
+                return null;
+            }
+
+            var folderJson = await getResponse.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(folderJson);
+            var folderId = doc.RootElement.GetProperty("id").GetString();
+            var webUrl = doc.RootElement.TryGetProperty("webUrl", out var wu) ? wu.GetString() : null;
+
+            // Create an organization-scoped view link
+            var linkUrl = $"https://graph.microsoft.com/v1.0/me/drive/items/{folderId}/createLink";
+            using var linkRequest = new HttpRequestMessage(HttpMethod.Post, linkUrl);
+            linkRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
+            linkRequest.Content = new StringContent(
+                JsonSerializer.Serialize(new { type = "view", scope = "organization" }),
+                System.Text.Encoding.UTF8, "application/json");
+
+            var linkResponse = await _httpClient.SendAsync(linkRequest);
+            if (linkResponse.IsSuccessStatusCode)
+            {
+                var linkJson = await linkResponse.Content.ReadAsStringAsync();
+                using var linkDoc = JsonDocument.Parse(linkJson);
+                var shareUrl = linkDoc.RootElement.GetProperty("link").GetProperty("webUrl").GetString();
+                _logger.LogInformation("Folder shared with org: {Url}", shareUrl);
+                return shareUrl;
+            }
+            else
+            {
+                var errorContent = await linkResponse.Content.ReadAsStringAsync();
+                _logger.LogWarning("Failed to create sharing link: {Status} {Content}", linkResponse.StatusCode, errorContent);
+                // Fall back to the folder's webUrl (user may not be able to access without sharing)
+                return webUrl;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to share conversation folder");
+            return null;
         }
     }
 
@@ -786,7 +883,9 @@ public class ComputerUseOrchestrator
     {
         public bool SessionStarted { get; set; }
         public string? W365SessionId { get; set; }
-        public List<JsonElement> ConversationHistory { get; } = [];
+        public List<JsonElement> ConversationHistory { get; } = []; 
         public int ScreenshotCounter { get; set; }
+        public bool FolderShared { get; set; }
+        public string? ScreenshotSubfolder { get; set; }
     }
 }
