@@ -137,15 +137,27 @@ public class ComputerUseOrchestrator
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
         }
 
-        // Always add the user message as text — session start and initial screenshot
-        // are deferred until the model emits its first computer_call.
-        session.ConversationHistory.Add(CreateUserMessage(userMessage));
+        // Between user messages: keep text context (user messages + model text replies)
+        // but drop computer actions and screenshots. This preserves conversational memory
+        // (so follow-ups like "how many?" work) without carrying stale screen state or
+        // heavy base64 screenshot data from previous tasks.
+        session.ConversationHistory.RemoveAll(item =>
+        {
+            var type = item.TryGetProperty("type", out var t) ? t.GetString() : null;
+            return type is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
+        });
+        session.NewItems.Clear();
+        session.LastResponseId = null;
+
+        var userMsg = CreateUserMessage(userMessage);
+        session.ConversationHistory.Add(userMsg);
+        session.NewItems.Add(userMsg);
 
         for (var i = 0; i < _maxIterations; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var response = await CallModelAsync(session.ConversationHistory, cancellationToken);
+            var response = await CallModelAsync(session, cancellationToken);
             if (response?.Output == null || response.Output.Count == 0)
                 break;
 
@@ -157,6 +169,9 @@ public class ComputerUseOrchestrator
                 if (type == "reasoning") continue;
 
                 session.ConversationHistory.Add(item);
+                // No need to add model output items to NewItems — the API reconstructs
+                // its own output from previous_response_id. We only need to send new
+                // user-side items (user messages, computer_call_output, function_call_output).
 
                 switch (type)
                 {
@@ -200,14 +215,18 @@ public class ComputerUseOrchestrator
                             }
                         }
 
-                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
+                        var callOutput = await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken);
+                        session.ConversationHistory.Add(callOutput);
+                        session.NewItems.Add(callOutput);
                         break;
 
                     case "function_call":
                         hasActions = true;
                         var funcName = item.GetProperty("name").GetString();
                         _logger.LogInformation("CUA iteration {Iteration}: function_call {Name}", i + 1, funcName);
-                        session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
+                        var funcOutput = CreateFunctionOutput(item.GetProperty("call_id").GetString()!);
+                        session.ConversationHistory.Add(funcOutput);
+                        session.NewItems.Add(funcOutput);
                         if (funcName == "OnTaskComplete")
                         {
                             return "Task completed successfully.";
@@ -393,19 +412,41 @@ public class ComputerUseOrchestrator
         return (_cachedTools, _cachedMcpClient);
     }
 
-    private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, CancellationToken ct)
+    private async Task<ComputerUseResponse?> CallModelAsync(ConversationSession session, CancellationToken ct)
     {
+        List<JsonElement> input;
+        string? previousResponseId = null;
+
+        if (session.LastResponseId != null)
+        {
+            // Send only the items added since the last model call
+            input = session.NewItems;
+            previousResponseId = session.LastResponseId;
+        }
+        else
+        {
+            // First call — send the full conversation history
+            input = session.ConversationHistory;
+        }
+
         var body = JsonSerializer.Serialize(new ComputerUseRequest
         {
             Model = _modelProvider.ModelName,
             Instructions = SystemInstructions,
-            Input = conversation,
+            PreviousResponseId = previousResponseId,
+            Input = input,
             Tools = _tools,
             Truncation = "auto"
         }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
 
         var responseJson = await _modelProvider.SendAsync(body, ct);
-        return JsonSerializer.Deserialize<ComputerUseResponse>(responseJson);
+        var response = JsonSerializer.Deserialize<ComputerUseResponse>(responseJson);
+
+        // Store the response ID for the next call and reset new items
+        session.LastResponseId = response?.Id;
+        session.NewItems.Clear();
+
+        return response;
     }
 
     /// <summary>
@@ -883,7 +924,9 @@ public class ComputerUseOrchestrator
     {
         public bool SessionStarted { get; set; }
         public string? W365SessionId { get; set; }
-        public List<JsonElement> ConversationHistory { get; } = []; 
+        public List<JsonElement> ConversationHistory { get; } = [];
+        public List<JsonElement> NewItems { get; } = [];
+        public string? LastResponseId { get; set; }
         public int ScreenshotCounter { get; set; }
         public bool FolderShared { get; set; }
         public string? ScreenshotSubfolder { get; set; }
