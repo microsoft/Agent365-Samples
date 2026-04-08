@@ -222,6 +222,11 @@ public class ComputerUseOrchestrator
                             {
                                 session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
                                 session.SessionStarted = true;
+                                // Update subfolder to use session ID instead of conversation ID
+                                var safeSessionId = session.W365SessionId != null
+                                    ? new string(session.W365SessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
+                                    : "unknown";
+                                session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
                                 _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
                             }
                             catch (Exception ex)
@@ -784,6 +789,11 @@ public class ComputerUseOrchestrator
         var newSessionId = await StartSessionAsync(tools, logger, ct);
         session.W365SessionId = newSessionId;
         session.SessionStarted = true;
+        // Update subfolder to use new session ID
+        var safeSessionId = newSessionId != null
+            ? new string(newSessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
+            : "unknown";
+        session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
         logger.LogInformation("Session recovered. New W365SessionId={SessionId}", newSessionId);
         return newSessionId;
     }
