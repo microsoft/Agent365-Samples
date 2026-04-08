@@ -138,14 +138,45 @@ public class ComputerUseOrchestrator
         }
 
         // Between user messages: keep text context (user messages + model text replies)
-        // but drop computer actions and screenshots. This preserves conversational memory
-        // (so follow-ups like "how many?" work) without carrying stale screen state or
-        // heavy base64 screenshot data from previous tasks.
+        // and the LAST computer_call + computer_call_output pair so the model has visual
+        // context for simple follow-ups. Both must be kept together — the API requires
+        // a matching computer_call for every computer_call_output (linked by call_id).
+        JsonElement? lastCall = null;
+        JsonElement? lastCallOutput = null;
+        for (var i = session.ConversationHistory.Count - 1; i >= 0; i--)
+        {
+            var item = session.ConversationHistory[i];
+            if (item.TryGetProperty("type", out var t) && t.GetString() == "computer_call_output")
+            {
+                lastCallOutput = item;
+                // Find the matching computer_call by call_id
+                var callId = item.TryGetProperty("call_id", out var cid) ? cid.GetString() : null;
+                if (callId != null)
+                {
+                    for (var j = i - 1; j >= 0; j--)
+                    {
+                        var candidate = session.ConversationHistory[j];
+                        if (candidate.TryGetProperty("type", out var ct) && ct.GetString() == "computer_call"
+                            && candidate.TryGetProperty("call_id", out var ccid) && ccid.GetString() == callId)
+                        {
+                            lastCall = candidate;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
         session.ConversationHistory.RemoveAll(item =>
         {
             var type = item.TryGetProperty("type", out var t) ? t.GetString() : null;
             return type is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
         });
+        if (lastCall.HasValue && lastCallOutput.HasValue)
+        {
+            session.ConversationHistory.Add(lastCall.Value);
+            session.ConversationHistory.Add(lastCallOutput.Value);
+        }
         session.NewItems.Clear();
         session.LastResponseId = null;
 
@@ -206,7 +237,7 @@ public class ComputerUseOrchestrator
                             // For gpt-5.4+ ("computer" tool type), capture an initial screenshot
                             if (_toolType == "computer")
                             {
-                                var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
+                                var initialScreenshot = await CaptureScreenshotCoreAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
                                 var initialName = $"{++session.ScreenshotCounter:D3}_initial";
                                 SaveScreenshotToDisk(initialScreenshot!, initialName);
                                 var folderUrl = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
@@ -502,8 +533,18 @@ public class ComputerUseOrchestrator
             }
         }
 
-        // Always capture screenshot after action
-        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
+        // Always capture screenshot after action — with session recovery (same pattern as action tools)
+        string screenshot;
+        try
+        {
+            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
+        }
+        catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
+        {
+            onStatus?.Invoke("Session lost — recovering...");
+            sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
+        }
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
@@ -591,7 +632,7 @@ public class ComputerUseOrchestrator
         return (toolName, args);
     }
 
-    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
+    private async Task<string> CaptureScreenshotCoreAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
         var screenshotArgs = new Dictionary<string, object?>();
         if (!string.IsNullOrEmpty(sessionId))
@@ -617,6 +658,11 @@ public class ComputerUseOrchestrator
                 }
             }
 
+            // Check if the error is a session-not-found before throwing
+            var contentText = string.Join(" ", result.Content.Select(c => c.Text ?? ""));
+            if (IsSessionNotFoundError(contentText))
+                throw new InvalidOperationException($"Screenshot failed: no active session. Response: {contentText[..Math.Min(300, contentText.Length)]}");
+
             // Log full content for debugging
             foreach (var item in result.Content)
                 _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
@@ -630,6 +676,10 @@ public class ComputerUseOrchestrator
 
         _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
             aiResult?.GetType().Name ?? "null", str.Length, str[..Math.Min(200, str.Length)]);
+
+        // Detect session-not-found early so the retry wrapper can recover the session
+        if (IsSessionNotFoundError(str))
+            throw new InvalidOperationException($"Screenshot failed: no active session. Response: {str[..Math.Min(300, str.Length)]}");
 
         try
         {
