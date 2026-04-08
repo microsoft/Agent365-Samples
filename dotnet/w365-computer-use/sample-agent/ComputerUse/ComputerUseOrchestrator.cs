@@ -143,23 +143,23 @@ public class ComputerUseOrchestrator
         // a matching computer_call for every computer_call_output (linked by call_id).
         JsonElement? lastCall = null;
         JsonElement? lastCallOutput = null;
-        for (var i = session.ConversationHistory.Count - 1; i >= 0; i--)
+        for (var histIdx = session.ConversationHistory.Count - 1; histIdx >= 0; histIdx--)
         {
-            var item = session.ConversationHistory[i];
-            if (item.TryGetProperty("type", out var t) && t.GetString() == "computer_call_output")
+            var entry = session.ConversationHistory[histIdx];
+            if (entry.TryGetProperty("type", out var entryType) && entryType.GetString() == "computer_call_output")
             {
-                lastCallOutput = item;
+                lastCallOutput = entry;
                 // Find the matching computer_call by call_id
-                var callId = item.TryGetProperty("call_id", out var cid) ? cid.GetString() : null;
-                if (callId != null)
+                var outputCallId = entry.TryGetProperty("call_id", out var callIdProp) ? callIdProp.GetString() : null;
+                if (outputCallId != null)
                 {
-                    for (var j = i - 1; j >= 0; j--)
+                    for (var searchIdx = histIdx - 1; searchIdx >= 0; searchIdx--)
                     {
-                        var candidate = session.ConversationHistory[j];
-                        if (candidate.TryGetProperty("type", out var ct) && ct.GetString() == "computer_call"
-                            && candidate.TryGetProperty("call_id", out var ccid) && ccid.GetString() == callId)
+                        var earlier = session.ConversationHistory[searchIdx];
+                        if (earlier.TryGetProperty("type", out var earlierType) && earlierType.GetString() == "computer_call"
+                            && earlier.TryGetProperty("call_id", out var earlierCallId) && earlierCallId.GetString() == outputCallId)
                         {
-                            lastCall = candidate;
+                            lastCall = earlier;
                             break;
                         }
                     }
@@ -169,8 +169,8 @@ public class ComputerUseOrchestrator
         }
         session.ConversationHistory.RemoveAll(item =>
         {
-            var type = item.TryGetProperty("type", out var t) ? t.GetString() : null;
-            return type is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
+            var itemType = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
+            return itemType is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
         });
         if (lastCall.HasValue && lastCallOutput.HasValue)
         {
