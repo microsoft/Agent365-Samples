@@ -146,7 +146,8 @@ export class DevinClient implements Client {
           const messageContent = String(latestMessage?.message);
           responseStream.emit("data", messageContent);
           sentMessages.add(latestMessage.event_id);
-          console.debug(`emit data event with content: ${messageContent}}`);
+          console.debug(`emit data event with content: ${messageContent}`);
+          break;
         }
       }
     }
