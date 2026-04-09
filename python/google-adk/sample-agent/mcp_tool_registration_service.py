@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 from typing import Optional
 import logging
@@ -84,6 +85,13 @@ class McpToolRegistrationService:
         mcp_servers_info = []
 
         for server_config in mcp_server_configs:
+            if not server_config.url:
+                self._logger.warning(
+                    "Skipping MCP server '%s' — no URL configured (dev mode or manifest-only config).",
+                    server_config.mcp_server_unique_name,
+                )
+                continue
+
             # V2: merge per-server headers (server_config.headers override base_headers)
             server_level_headers = getattr(server_config, "headers", None) or {}
             mcp_server_headers = {**base_headers, **server_level_headers}
@@ -105,5 +113,6 @@ class McpToolRegistrationService:
             name=agent.name,
             model=agent.model,
             description=agent.description,
+            instruction=agent.instruction,
             tools=all_tools,
         )
