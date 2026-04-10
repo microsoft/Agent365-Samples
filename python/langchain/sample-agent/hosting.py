@@ -37,6 +37,11 @@ from microsoft_agents_a365.notifications.models import (
     EmailResponse
 )
 
+from microsoft_agents_a365.runtime.environment_utils import (
+    get_observability_authentication_scope,
+)
+from token_cache import cache_agentic_token
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -135,6 +140,23 @@ class MyAgent(AgentApplication):
 
             typing_task = asyncio.create_task(_typing_loop())
             try:
+                # Exchange and cache the agentic token for the observability exporter
+                if self.auth_handler_name:
+                    try:
+                        recipient = context.activity.recipient
+                        tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
+                        agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
+                        obs_token = await self.auth.exchange_token(
+                            context,
+                            scopes=get_observability_authentication_scope(),
+                            auth_handler_id=self.auth_handler_name,
+                        )
+                        if obs_token and obs_token.token:
+                            cache_agentic_token(tenant_id, agent_id, obs_token.token)
+                            logger.info("Agentic token cached for observability exporter")
+                    except Exception as token_err:
+                        logger.warning("Failed to exchange/cache observability token: %s", token_err)
+
                 response = await self.agent.invoke_agent_with_scope(
                     message=user_message,
                     auth=self.auth,

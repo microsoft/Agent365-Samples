@@ -17,6 +17,7 @@ from microsoft_agents.hosting.aiohttp import start_agent_process, jwt_authorizat
 
 # Microsoft Agent 365 Observability Imports
 from microsoft_agents_a365.observability.core.config import configure
+from token_cache import get_cached_agentic_token
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -137,15 +138,24 @@ def start_server(agent_app: AgentApplication):
 def main():
     """Main function to run the sample agent application."""
     if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
-        configure(
+        def token_resolver(agent_id: str, tenant_id: str) -> str | None:
+            """Resolve cached agentic token for the A365 observability exporter."""
+            return get_cached_agentic_token(tenant_id, agent_id)
+
+        status = configure(
             service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "LangChainSampleAgent"),
             service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "LangChainTesting"),
+            token_resolver=token_resolver,
+            cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
         )
-        logger.info(
-            "Observability configured (service=%s, a365_exporter=%s)",
-            os.getenv("OBSERVABILITY_SERVICE_NAME", "LangChainSampleAgent"),
-            os.getenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "false"),
-        )
+        if status:
+            logger.info(
+                "Observability configured (service=%s, a365_exporter=%s)",
+                os.getenv("OBSERVABILITY_SERVICE_NAME", "LangChainSampleAgent"),
+                os.getenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "false"),
+            )
+        else:
+            logger.warning("Observability configuration failed")
     else:
         logger.info("Observability disabled (ENABLE_OBSERVABILITY=false)")
 
