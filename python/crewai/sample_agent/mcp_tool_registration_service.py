@@ -126,12 +126,17 @@ class McpToolRegistrationService:
                 scope = server.get("scope", "")
                 audience = server.get("audience", "")
                 
+                publisher = server.get("publisher", "")
+                server_headers = server.get("headers", {})
+
                 if url:
                     servers.append({
                         "name": name,
                         "url": url,
                         "scope": scope,
                         "audience": audience,
+                        "publisher": publisher,
+                        "headers": server_headers,
                     })
                     self._logger.info(f"  📌 [Manifest] Server: {name} -> {url}")
             
@@ -234,39 +239,57 @@ class McpToolRegistrationService:
         mcp_server_configs = []
         try:
             self._logger.info(f"🔍 Discovering MCP servers for agent {agentic_app_id}")
+
+            # Build authorization context for V2 per-audience token acquisition
+            authorization_context = {
+                "auth": auth,
+                "auth_handler_name": auth_handler_name,
+                "context": context,
+            }
+
             sdk_configs = await self._config_service.list_tool_servers(
                 agentic_app_id=agentic_app_id,
-                auth_token=auth_token if auth_token else None,
+                authorization_context=authorization_context,
             )
-            
+
             # Convert SDK config objects to our format
             for config in sdk_configs:
                 # Extract URL - try different attribute names the SDK might use
                 server_url = getattr(config, "url", None) or \
                              getattr(config, "server_url", None) or \
                              getattr(config, "endpoint", None)
-                
+
                 server_name = getattr(config, "mcp_server_name", None) or \
                               getattr(config, "mcp_server_unique_name", None) or \
                               getattr(config, "name", "unknown")
-                
+
+                # Extract V2 fields
+                audience = getattr(config, "audience", None)
+                scope = getattr(config, "scope", None)
+                publisher = getattr(config, "publisher", None)
+                server_headers = getattr(config, "headers", None) or {}
+
                 # If URL is not a full URL, it might just be the server name/path
                 if not server_url:
                     # Use server name as path if no URL provided
                     server_url = getattr(config, "mcp_server_unique_name", None) or server_name
-                
+
                 # Build full URL
                 full_url = self._build_full_url(server_url)
-                
+
                 if full_url:
                     mcp_server_configs.append({
                         "name": server_name,
                         "url": full_url,
+                        "audience": audience,
+                        "scope": scope,
+                        "publisher": publisher,
+                        "headers": server_headers,
                     })
                     self._logger.info(f"  📌 [SDK] Server: {server_name} -> {full_url}")
-            
+
             self._logger.info(f"📋 SDK discovered {len(mcp_server_configs)} MCP server(s)")
-            
+
         except Exception as e:
             self._logger.warning(f"⚠️ McpToolServerConfigurationService failed: {e}")
         
@@ -286,6 +309,7 @@ class McpToolRegistrationService:
                     name=server_config["name"],
                     url=server_config["url"],
                     auth_token=auth_token,
+                    server_headers=server_config.get("headers", {}),
                 )
                 
                 if connection and connection.connected:
@@ -324,36 +348,41 @@ class McpToolRegistrationService:
         name: str,
         url: str,
         auth_token: str,
+        server_headers: Optional[Dict[str, str]] = None,
     ) -> Optional[MCPServerConnection]:
         """
         Connect to an MCP server and fetch its tools.
-        
+
         Args:
             name: Server display name.
             url: Server URL endpoint.
-            auth_token: Authentication token.
-            
+            auth_token: Authentication token (V1 fallback).
+            server_headers: Per-server headers from SDK (V2 per-audience tokens).
+
         Returns:
             MCPServerConnection with tools, or None if connection failed.
         """
         # Check if this is a local server (no auth needed)
         is_local = url.startswith("http://localhost") or url.startswith("http://127.0.0.1")
-        
+
         if is_local:
-            headers = {
+            base_headers = {
                 "Content-Type": "application/json",
             }
             self._logger.info(f"🏠 Connecting to local MCP server: {url}")
         else:
-            if not auth_token:
+            if not auth_token and not server_headers:
                 self._logger.warning(f"⚠️ Skipping remote server {name} - no auth token")
                 return None
-            headers = {
+            base_headers = {
                 Constants.Headers.AUTHORIZATION: f"{Constants.Headers.BEARER_PREFIX} {auth_token}",
                 "User-Agent": f"CrewAI-Agent-SDK/1.0 ({self._orchestrator_name})",
                 "Content-Type": "application/json",
             }
             self._logger.info(f"☁️ Connecting to remote MCP server: {url}")
+
+        # V2: merge per-server headers (server_headers override base_headers)
+        headers = {**base_headers, **(server_headers or {})}
         
         connection = MCPServerConnection(
             name=name,
