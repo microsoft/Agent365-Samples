@@ -17,6 +17,25 @@ from microsoft_agents_a365.observability.core.middleware.baggage_builder import 
     BaggageBuilder,
 )
 
+# Observability scopes — these types were added in newer SDK versions.
+# Fall back gracefully so the agent still works on older deployments.
+try:
+    from microsoft_agents_a365.observability.core import (
+        AgentDetails,
+        ExecutionType,
+        InferenceCallDetails,
+        InferenceOperationType,
+        InferenceScope,
+        InvokeAgentDetails,
+        InvokeAgentScope,
+        Request,
+        TenantDetails,
+    )
+    from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
+    _HAS_OBSERVABILITY_SCOPES = True
+except ImportError:
+    _HAS_OBSERVABILITY_SCOPES = False
+
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 from agent_interface import AgentInterface
@@ -162,15 +181,60 @@ class LangChainAgent(AgentInterface):
             result = await agent.ainvoke({"messages": [HumanMessage(content=message)]})
 
             # Extract the last AI message
+            content = None
             if result.get("messages"):
                 last_message = result["messages"][-1]
                 content = getattr(last_message, "content", None) or str(last_message)
-                return content
 
-            return "I couldn't get a response from the agent. :("
+            return content or "I couldn't get a response from the agent. :("
         except Exception as e:
             logger.error("LangChain agent error: %s", e)
             return "Sorry, I encountered an error while processing your request. Please try again."
+
+    async def _invoke_agent_with_inference_scope(
+        self,
+        message: str,
+        auth: Authorization,
+        auth_handler_name: str,
+        context: TurnContext,
+    ) -> str:
+        """invoke_agent wrapped in an InferenceScope for observability."""
+        model_name = (
+            os.getenv("AZURE_OPENAI_DEPLOYMENT")
+            or os.getenv("OPENAI_MODEL", "gpt-4o")
+        )
+        provider_name = "Azure OpenAI" if os.getenv("AZURE_OPENAI_API_KEY") else "OpenAI"
+
+        inference_details = InferenceCallDetails(
+            operationName=InferenceOperationType.CHAT,
+            model=model_name,
+            providerName=provider_name,
+        )
+
+        recipient = context.activity.recipient
+        tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
+        agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
+
+        agent_details = AgentDetails(
+            agent_id=agent_id,
+            agent_name=getattr(recipient, "name", None) or "LangChain Agent",
+            agent_description="AI assistant powered by LangChain with MCP tool integration",
+        )
+        tenant_details = TenantDetails(tenant_id=tenant_id)
+
+        with InferenceScope.start(
+            details=inference_details,
+            agent_details=agent_details,
+            tenant_details=tenant_details,
+        ) as inference_scope:
+            inference_scope.record_input_messages([message])
+
+            result = await self.invoke_agent(message, auth, auth_handler_name, context)
+
+            inference_scope.record_output_messages([result])
+            inference_scope.record_finish_reasons(["stop"])
+
+        return result
 
     async def invoke_agent_with_scope(
         self,
@@ -184,10 +248,60 @@ class LangChainAgent(AgentInterface):
         recipient = context.activity.recipient
         tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
         agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
-        with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-            return await self.invoke_agent(
-                message=message,
-                auth=auth,
-                auth_handler_name=auth_handler_name,
-                context=context,
+
+        # When the SDK has full observability types, wrap in InvokeAgentScope + InferenceScope.
+        # Otherwise fall back to BaggageBuilder only (older SDK on deployed App Service).
+        if _HAS_OBSERVABILITY_SCOPES:
+            agent_details = AgentDetails(
+                agent_id=agent_id,
+                agent_name=getattr(recipient, "name", None) or "LangChain Agent",
+                agent_description="AI assistant powered by LangChain with MCP tool integration",
             )
+            tenant_details = TenantDetails(tenant_id=tenant_id)
+
+            activity = context.activity
+            invoke_details = InvokeAgentDetails(
+                details=agent_details,
+                session_id=(getattr(activity, "channel_data", None) or {}).get("sessionId", ""),
+            )
+
+            from_prop = activity.from_property
+            caller_details = CallerDetails(
+                caller_id=getattr(from_prop, "id", None) or "",
+                caller_name=getattr(from_prop, "name", None) or "",
+            )
+
+            request = Request(
+                content=message,
+                execution_type=ExecutionType.HUMAN_TO_AGENT,
+                session_id=(getattr(activity, "channel_data", None) or {}).get("sessionId", ""),
+            )
+
+            with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                with InvokeAgentScope.start(
+                    invoke_agent_details=invoke_details,
+                    tenant_details=tenant_details,
+                    request=request,
+                    caller_details=caller_details,
+                ) as invoke_scope:
+                    invoke_scope.record_input_messages([message])
+
+                    result = await self._invoke_agent_with_inference_scope(
+                        message=message,
+                        auth=auth,
+                        auth_handler_name=auth_handler_name,
+                        context=context,
+                    )
+
+                    invoke_scope.record_output_messages([result])
+
+                return result
+        else:
+            # Older SDK — BaggageBuilder only
+            with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
+                return await self.invoke_agent(
+                    message=message,
+                    auth=auth,
+                    auth_handler_name=auth_handler_name,
+                    context=context,
+                )
