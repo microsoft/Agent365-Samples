@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+import os
 from typing import Optional
 import logging
 
@@ -55,14 +56,7 @@ class McpToolRegistrationService:
             New Agent instance with all MCP servers
         """
 
-        # Build authorization context for V2 per-audience token acquisition
-        authorization_context = {
-            "auth": auth,
-            "auth_handler_name": auth_handler_name,
-            "context": context,
-        }
-
-        # V1 fallback: exchange a shared token if no bearer token provided
+        # Acquire auth token if not provided
         if not auth_token:
             scopes = get_mcp_platform_authentication_scope()
             auth_token_obj = await auth.exchange_token(context, scopes, auth_handler_name)
@@ -71,7 +65,7 @@ class McpToolRegistrationService:
         self._logger.info(f"Listing MCP tool servers for agent {agentic_app_id}")
         mcp_server_configs = await self.config_service.list_tool_servers(
             agentic_app_id=agentic_app_id,
-            authorization_context=authorization_context,
+            auth_token=auth_token or "",
         )
 
         self._logger.info(f"Loaded {len(mcp_server_configs)} MCP server configurations")
@@ -92,16 +86,24 @@ class McpToolRegistrationService:
                 )
                 continue
 
-            # V2: merge per-server headers (server_config.headers override base_headers)
-            server_level_headers = getattr(server_config, "headers", None) or {}
-            mcp_server_headers = {**base_headers, **server_level_headers}
+            # V2: look up per-server token from env (BEARER_TOKEN_MCP_{SERVERNAME_UPPER})
+            # e.g. mcp_CalendarTools → BEARER_TOKEN_MCP_CALENDARTOOLS
+            env_key = f"BEARER_TOKEN_{server_config.mcp_server_unique_name.upper()}"
+            per_server_token = os.getenv(env_key)
+            if per_server_token:
+                mcp_server_headers = {"Authorization": f"Bearer {per_server_token}"}
+            else:
+                # Fall back: merge base headers with any server_config.headers (V1 path)
+                server_level_headers = getattr(server_config, "headers", None) or {}
+                mcp_server_headers = {**base_headers, **server_level_headers}
 
             server_url = getattr(server_config, "url", None) or server_config.mcp_server_unique_name
 
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
                     url=server_url,
-                    headers=mcp_server_headers
+                    headers=mcp_server_headers,
+                    timeout=30.0,
                 )
             )
 

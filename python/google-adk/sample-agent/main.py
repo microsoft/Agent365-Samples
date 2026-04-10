@@ -3,6 +3,14 @@
 
 # Internal imports
 import os
+import sys
+
+# Force UTF-8 on Windows so emoji/unicode in SDK log messages don't crash the charmap codec
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from hosting import MyAgent
 from agent import GoogleADKAgent
 
@@ -113,7 +121,7 @@ def start_server(agent_app: AgentApplication):
 
     try:
         host = "0.0.0.0" if isProduction else "localhost"
-        
+
         # PORT environment variable is optional - defaults to 3978 for local dev
         # Azure App Service automatically sets PORT=8000
         port_str = os.getenv("PORT")
@@ -127,6 +135,23 @@ def start_server(agent_app: AgentApplication):
         else:
             port = 3978
             logger.info("PORT not set, using default: %d", port)
+
+        # Free the port if already in use — prevents [Errno 10048] on Windows restart
+        import subprocess as _sp, sys as _sys
+        if _sys.platform == "win32":
+            try:
+                _out = _sp.check_output(
+                    f'netstat -ano', shell=True, text=True, stderr=_sp.DEVNULL
+                )
+                for _line in _out.splitlines():
+                    if f":{port} " in _line and "LISTENING" in _line:
+                        _pid = _line.split()[-1]
+                        if _pid.isdigit():
+                            _sp.run(f"taskkill /PID {_pid} /F",
+                                    shell=True, capture_output=True)
+                            logger.info("Released port %d (killed PID %s)", port, _pid)
+            except Exception:
+                pass
         
         logger.info("Listening on %s:%d/api/messages", host, port)
         run_app(app, host=host, port=port, handle_signals=True)
