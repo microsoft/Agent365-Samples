@@ -129,6 +129,9 @@ class MyAgent(AgentApplication):
                         await context.send_activity(Activity(type="typing"))
                     except asyncio.CancelledError:
                         break
+                    except Exception as loop_err:
+                        logger.debug("Typing indicator send failed: %s", loop_err)
+                        break
 
             typing_task = asyncio.create_task(_typing_loop())
             try:
@@ -140,10 +143,13 @@ class MyAgent(AgentApplication):
                 )
 
                 await context.send_activity(Activity(type=ActivityTypes.message, text=response))
-            except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                logger.error("Error processing message: %s", e)
-                await context.send_activity(error_msg)
+            except Exception:
+                error_id = os.urandom(8).hex()
+                logger.exception("Error processing message. error_id=%s", error_id)
+                await context.send_activity(
+                    f"Sorry, I encountered an internal error while processing your message. "
+                    f"Please try again later. Reference ID: {error_id}"
+                )
             finally:
                 typing_task.cancel()
                 try:

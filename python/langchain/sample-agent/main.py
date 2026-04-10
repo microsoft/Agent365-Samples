@@ -160,4 +160,4 @@ if __name__ == "__main__":
         logger.info("\nShutting down gracefully...")
     except Exception as e:
         logger.error("Application error: %s", e)
-        raise e
+        raise
