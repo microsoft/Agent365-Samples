@@ -1,0 +1,75 @@
+[project]
+name = "sample-langchain-agent"
+version = "0.1.0"
+description = "Sample LangChain Agent using Microsoft Agent 365 SDK"
+authors = [
+    { name = "Microsoft", email = "support@microsoft.com" }
+]
+dependencies = [
+    # LangChain -- official packages
+    "langchain>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langgraph>=0.3.0",
+    "langchain-mcp-adapters>=0.1.0",
+
+    # Microsoft Agents SDK - Official packages for hosting and integration
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+
+    # HTTP server support for MCP servers
+    "uvicorn[standard]>=0.20.0",
+    "fastapi>=0.100.0",
+
+    # HTTP client
+    "httpx>=0.24.0",
+
+    # Data validation
+    "pydantic>=2.0.0",
+
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+
+    # Microsoft Agent 365 SDK packages
+    "microsoft_agents_a365_tooling >= 0.1.0",
+    "microsoft_agents_a365_observability_core >= 0.1.0",
+    "microsoft_agents_a365_notifications >= 0.1.0",
+]
+requires-python = ">=3.11"
+
+# Package index configuration
+# PyPI is the default/primary source
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv]
+prerelease = "allow"
+
+[project.optional-dependencies]
+dev = [
+    # For development and testing
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Don't include any Python modules in the package since this is a sample/script collection
+py-modules = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = ["build*", "dist*", "venv*"]
