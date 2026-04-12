@@ -707,7 +707,7 @@ class McpToolRegistrationService:
     ) -> List:
         """
         Fetch MCP server configurations the agent is allowed to use.
-        
+
         This is a legacy method for backwards compatibility.
         Prefer using discover_and_connect_servers() for full functionality.
 
@@ -720,9 +720,20 @@ class McpToolRegistrationService:
             token = auth_token_obj.token
 
         self._logger.info("Listing MCP tool servers for agent %s", agentic_app_id)
+
+        # Pass auth context for V2 per-audience token acquisition.
+        list_kwargs = {}
+        if auth_handler_name:
+            list_kwargs = {
+                "authorization": auth,
+                "auth_handler_name": auth_handler_name,
+                "turn_context": context,
+            }
+
         mcp_server_configs = await self._config_service.list_tool_servers(
             agentic_app_id=agentic_app_id,
             auth_token=token,
+            **list_kwargs,
         )
 
         self._logger.info("Loaded %d MCP server configurations", len(mcp_server_configs))
