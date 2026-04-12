@@ -56,12 +56,6 @@ public class Agent365Agent
         return _agent;
     }
 
-    public static bool TryGetBearerTokenForDevelopment(out string? bearerToken)
-    {
-        bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
-        return !string.IsNullOrEmpty(bearerToken);
-    }
-
     /// <summary>
     /// Checks if graceful fallback to bare LLM mode is enabled when MCP tools fail to load.
     /// This is only allowed in Development environment AND when SKIP_TOOLING_ON_ERRORS is explicitly set to "true".
@@ -103,16 +97,11 @@ public class Agent365Agent
 
             try
             {
-                if (TryGetBearerTokenForDevelopment(out var bearerToken))
-                {
-                    // Development mode: Use bearer token from environment variable for simplified local testing
-                    await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext, bearerToken);
-                }
-                else
-                {
-                    // Production mode: Use standard authentication flow (Client Credentials, Managed Identity, or Federated Credentials)
-                    await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
-                }
+                // The SDK's token provider (AgenticMcpTokenProvider in production,
+                // DevMcpTokenProvider in dev) resolves per-server tokens automatically:
+                // - Dev:  reads BEARER_TOKEN_<SERVER_NAME> (V2) or BEARER_TOKEN (V1 fallback)
+                // - Prod: performs per-audience OBO exchange for each V2 server
+                await toolService.AddToolServersToAgentAsync(kernel, userAuthorization, authHandlerName, turnContext);
             }
             catch (Exception ex)
             {

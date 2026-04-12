@@ -2,32 +2,32 @@
   "profiles": {
     "Sample Agent": {
       "commandName": "Project",
-      "launchBrowser": true,
+      "launchBrowser": false,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "SKIP_TOOLING_ON_ERRORS": "true"
       },
-      "applicationUrl": "https://localhost:64896;http://localhost:64897"
+      "applicationUrl": "http://localhost:3978"
     },
     "Sample Agent with Bearer Token Support": {
       "commandName": "Project",
-      "launchBrowser": true,
+      "launchBrowser": false,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "BEARER_TOKEN": "",
         "SKIP_TOOLING_ON_ERRORS": "true"
       },
-      "applicationUrl": "https://localhost:64896;http://localhost:64897"
+      "applicationUrl": "http://localhost:3978"
     },
     "Sample Agent with V2 Bearer Token Support": {
       "commandName": "Project",
-      "launchBrowser": true,
+      "launchBrowser": false,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "BEARER_TOKEN": "",
         "SKIP_TOOLING_ON_ERRORS": "true"
       },
-      "applicationUrl": "https://localhost:64896;http://localhost:64897"
+      "applicationUrl": "http://localhost:3978"
     }
   }
 }
