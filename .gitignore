@@ -107,7 +107,10 @@ coverage/
 a365.config.json
 a365.generated.config.json
 app.zip
+app_logs.zip
+app_logs/
 publish/
+manifest/
 
 # OS-specific files
 .DS_Store
