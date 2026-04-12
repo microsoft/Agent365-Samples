@@ -26,6 +26,7 @@ import asyncio
 import json
 
 from microsoft_agents.hosting.core import Authorization, TurnContext
+from microsoft_agents_a365.tooling.models import ToolOptions
 from microsoft_agents_a365.tooling.utils.constants import Constants
 from microsoft_agents_a365.tooling.services.mcp_tool_server_configuration_service import (
     McpToolServerConfigurationService,
@@ -240,16 +241,24 @@ class McpToolRegistrationService:
         try:
             self._logger.info(f"🔍 Discovering MCP servers for agent {agentic_app_id}")
 
-            # Build authorization context for V2 per-audience token acquisition
-            authorization_context = {
-                "auth": auth,
-                "auth_handler_name": auth_handler_name,
-                "context": context,
-            }
+            # Pass auth context for V2 per-audience token acquisition (production path).
+            # In dev/Playground mode (empty auth_handler_name), the SDK reads per-server
+            # tokens from BEARER_TOKEN_MCP_<SERVER> / BEARER_TOKEN env vars automatically
+            # via its internal _attach_dev_tokens method.
+            options = ToolOptions(orchestrator_name=self._orchestrator_name)
+            list_kwargs = {}
+            if auth_handler_name:
+                list_kwargs = {
+                    "authorization": auth,
+                    "auth_handler_name": auth_handler_name,
+                    "turn_context": context,
+                }
 
             sdk_configs = await self._config_service.list_tool_servers(
                 agentic_app_id=agentic_app_id,
-                authorization_context=authorization_context,
+                auth_token=auth_token or "",
+                options=options,
+                **list_kwargs,
             )
 
             # Convert SDK config objects to our format
@@ -371,11 +380,19 @@ class McpToolRegistrationService:
             }
             self._logger.info(f"🏠 Connecting to local MCP server: {url}")
         else:
-            if not auth_token and not server_headers:
+            # server_headers contains the per-audience Authorization token set by the SDK:
+            # - Dev mode:  set by SDK's _attach_dev_tokens (reads BEARER_TOKEN_MCP_* / BEARER_TOKEN)
+            # - Prod mode: set by SDK's _attach_per_audience_tokens (per-audience OAuth exchange)
+            # auth_token is kept as a final fallback for backward compatibility.
+            sdk_auth = (server_headers or {}).get(Constants.Headers.AUTHORIZATION)
+            effective_auth = sdk_auth or (
+                f"{Constants.Headers.BEARER_PREFIX} {auth_token}" if auth_token else None
+            )
+            if not effective_auth:
                 self._logger.warning(f"⚠️ Skipping remote server {name} - no auth token")
                 return None
             base_headers = {
-                Constants.Headers.AUTHORIZATION: f"{Constants.Headers.BEARER_PREFIX} {auth_token}",
+                Constants.Headers.AUTHORIZATION: effective_auth,
                 "User-Agent": f"CrewAI-Agent-SDK/1.0 ({self._orchestrator_name})",
                 "Content-Type": "application/json",
             }

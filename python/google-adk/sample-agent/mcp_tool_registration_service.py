@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-import os
 from typing import Optional
 import logging
 
@@ -10,16 +9,21 @@ from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StreamableHTTPConn
 
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
+from microsoft_agents_a365.runtime.utility import Utility
+from microsoft_agents_a365.tooling.models import ToolOptions
 from microsoft_agents_a365.tooling.services.mcp_tool_server_configuration_service import (
     McpToolServerConfigurationService,
 )
-
+from microsoft_agents_a365.tooling.utils.constants import Constants
 from microsoft_agents_a365.tooling.utils.utility import (
     get_mcp_platform_authentication_scope,
 )
 
+
 class McpToolRegistrationService:
     """Service for managing MCP tools and servers for an agent"""
+
+    _orchestrator_name: str = "GoogleADK"
 
     def __init__(self, logger: Optional[logging.Logger] = None):
         """
@@ -49,13 +53,14 @@ class McpToolRegistrationService:
             agent: The existing agent to add servers to.
             agentic_app_id: Agentic App ID for the agent.
             auth: Authorization object used to exchange tokens for MCP server access.
+            auth_handler_name: Name of the authorization handler.
             context: TurnContext object representing the current turn/session context.
-            auth_token: Authentication token to access the MCP servers. If not provided, will be obtained using `auth` and `context`.
+            auth_token: Authentication token to access the MCP servers. If not provided,
+                        will be obtained using `auth` and `context`.
 
         Returns:
             New Agent instance with all MCP servers
         """
-
         # Acquire auth token if not provided
         if not auth_token:
             scopes = get_mcp_platform_authentication_scope()
@@ -63,17 +68,29 @@ class McpToolRegistrationService:
             auth_token = auth_token_obj.token
 
         self._logger.info(f"Listing MCP tool servers for agent {agentic_app_id}")
+
+        options = ToolOptions(orchestrator_name=self._orchestrator_name)
+
+        # Pass auth context for V2 per-audience token acquisition (production path).
+        # In dev/Playground mode (empty auth_handler_name), the SDK reads per-server
+        # tokens from BEARER_TOKEN_MCP_<SERVER> / BEARER_TOKEN env vars automatically
+        # via its internal _attach_dev_tokens method.
+        list_kwargs = {}
+        if auth_handler_name:
+            list_kwargs = {
+                "authorization": auth,
+                "auth_handler_name": auth_handler_name,
+                "turn_context": context,
+            }
+
         mcp_server_configs = await self.config_service.list_tool_servers(
             agentic_app_id=agentic_app_id,
-            auth_token=auth_token or "",
+            auth_token=auth_token,
+            options=options,
+            **list_kwargs,
         )
 
         self._logger.info(f"Loaded {len(mcp_server_configs)} MCP server configurations")
-
-        # Base headers used as fallback when no per-server headers are provided (V1)
-        base_headers = {
-            "Authorization": f"Bearer {auth_token}"
-        }
 
         # Convert MCP server configs to McpToolset objects
         mcp_servers_info = []
@@ -86,22 +103,20 @@ class McpToolRegistrationService:
                 )
                 continue
 
-            # V2: look up per-server token from env (BEARER_TOKEN_MCP_{SERVERNAME_UPPER})
-            # e.g. mcp_CalendarTools → BEARER_TOKEN_MCP_CALENDARTOOLS
-            env_key = f"BEARER_TOKEN_{server_config.mcp_server_unique_name.upper()}"
-            per_server_token = os.getenv(env_key)
-            if per_server_token:
-                mcp_server_headers = {"Authorization": f"Bearer {per_server_token}"}
-            else:
-                # Fall back: merge base headers with any server_config.headers (V1 path)
-                server_level_headers = getattr(server_config, "headers", None) or {}
-                mcp_server_headers = {**base_headers, **server_level_headers}
-
-            server_url = getattr(server_config, "url", None) or server_config.mcp_server_unique_name
+            # server_config.headers already contains the per-audience Authorization token:
+            # - Dev mode:  set by SDK's _attach_dev_tokens (reads BEARER_TOKEN_MCP_* / BEARER_TOKEN)
+            # - Prod mode: set by SDK's _attach_per_audience_tokens (per-audience OAuth exchange)
+            base_headers = {
+                Constants.Headers.USER_AGENT: Utility.get_user_agent_header(
+                    self._orchestrator_name
+                )
+            }
+            server_level_headers = dict(server_config.headers) if server_config.headers else {}
+            mcp_server_headers = {**base_headers, **server_level_headers}
 
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
-                    url=server_url,
+                    url=server_config.url,
                     headers=mcp_server_headers,
                     timeout=30.0,
                 )
