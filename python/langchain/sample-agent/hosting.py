@@ -144,8 +144,8 @@ class MyAgent(AgentApplication):
                 if self.auth_handler_name:
                     try:
                         recipient = context.activity.recipient
-                        tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
-                        agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
+                        tenant_id = getattr(recipient, "tenant_id", None) or ""
+                        agent_id = getattr(recipient, "agentic_app_id", None) or ""
                         obs_token = await self.auth.exchange_token(
                             context,
                             scopes=get_observability_authentication_scope(),

@@ -50,40 +50,35 @@ def start_server(agent_app: AgentApplication):
     async def entry_point(req: Request) -> Response:
         return await start_agent_process(req, agent_app, agent_app.adapter)
 
-    # Configure middlewares
-    @web_middleware
-    async def anonymous_claims(request, handler):
-        request['claims_identity'] = ClaimsIdentity(
-            {
-                AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
-                AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
-            },
-            False,
-            "Anonymous",
-        )
-        return await handler(request)
+    # Build auth configuration
+    def _env(name: str) -> str | None:
+        """Read an env var, returning None for empty strings and <<…>> placeholders."""
+        v = os.getenv(name)
+        if not v or v.startswith("<<"):
+            return None
+        return v
 
     agent_auth_config = None
     client_id = (
-        os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
-        or os.getenv("CLIENT_ID")
-        or os.getenv("AGENTIC_APP_ID")
+        _env("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
+        or _env("CLIENT_ID")
     )
     tenant_id = (
-        os.getenv("AGENTIC_TENANT_ID")
-        or os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
-        or os.getenv("TENANT_ID")
+        _env("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
+        or _env("TENANT_ID")
     )
     client_secret = (
-        os.getenv("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET")
-        or os.getenv("CLIENT_SECRET")
+        _env("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET")
+        or _env("CLIENT_SECRET")
     )
+    scopes = _env("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES") or "5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default"
     if client_id and tenant_id and client_secret:
         try:
             agent_auth_config = AgentAuthConfiguration(
                 client_id=client_id,
                 tenant_id=tenant_id,
                 client_secret=client_secret,
+                scopes=[scopes],
             )
             logger.info("JWT auth configured (client_id=%s)", client_id)
         except Exception as e:
@@ -91,26 +86,47 @@ def start_server(agent_app: AgentApplication):
     else:
         logger.info("No auth credentials found — running in anonymous mode")
 
-    # Wrap JWT middleware so it only applies to POST /api/messages.
+    # Configure middlewares
+    # Anonymous claims — only applied when auth is NOT configured.
     @web_middleware
-    async def selective_jwt_auth(request, handler):
-        if request.method == "POST" and request.path == "/api/messages":
-            return await jwt_authorization_middleware(request, handler)
+    async def anonymous_claims(request, handler):
+        if not agent_auth_config:
+            request['claims_identity'] = ClaimsIdentity(
+                {
+                    AuthenticationConstants.AUDIENCE_CLAIM: "anonymous",
+                    AuthenticationConstants.APP_ID_CLAIM: "anonymous-app",
+                },
+                False,
+                "Anonymous",
+            )
         return await handler(request)
 
-    middlewares = [anonymous_claims]
-    if agent_auth_config and isProduction:
-        middlewares.append(selective_jwt_auth)
-        logger.info("JWT authorization middleware enabled (POST /api/messages only)")
+    # JWT auth — excludes health/readiness endpoints.
+    @web_middleware
+    async def auth_with_exclusions(request, handler):
+        path = request.path.lower()
+        if path in ["/", "/robots933456.txt", "/api/health"]:
+            return await handler(request)
+        return await jwt_authorization_middleware(request, handler)
 
-    # Health / readiness endpoint
+    middlewares = []
+    if agent_auth_config:
+        middlewares.append(auth_with_exclusions)
+        logger.info("JWT authorization middleware enabled")
+    middlewares.append(anonymous_claims)
+
+    # Health / readiness endpoints
     async def health_check(req: Request) -> Response:
-        return Response(text="OK", status=200)
+        import json as _json
+        from datetime import datetime, timezone
+        body = _json.dumps({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()})
+        return Response(text=body, status=200, content_type="application/json")
 
     # Configure App
     app = Application(middlewares=middlewares)
     app.router.add_get("/", health_check)
     app.router.add_get("/robots933456.txt", health_check)
+    app.router.add_get("/api/health", health_check)
     app.router.add_post("/api/messages", entry_point)
     app["agent_configuration"] = agent_auth_config
 

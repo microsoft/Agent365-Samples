@@ -157,9 +157,13 @@ class LangChainAgent(AgentInterface):
 
         if bearer_token or auth_handler_name:
             try:
+                # Extract agent ID from the activity recipient (set by the platform).
+                recipient = context.activity.recipient
+                _app_id = getattr(recipient, "agentic_app_id", None) or "agent123"
+
                 tools, mcp_client = await asyncio.wait_for(
                     self.tool_service.get_mcp_tools(
-                        agentic_app_id=os.getenv("AGENTIC_APP_ID", "agent123"),
+                        agentic_app_id=_app_id,
                         auth=auth,
                         auth_handler_name=auth_handler_name,
                         context=context,
@@ -212,8 +216,8 @@ class LangChainAgent(AgentInterface):
         )
 
         recipient = context.activity.recipient
-        tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
-        agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
+        tenant_id = getattr(recipient, "tenant_id", None) or ""
+        agent_id = getattr(recipient, "agentic_app_id", None) or ""
 
         agent_details = AgentDetails(
             agent_id=agent_id,
@@ -243,11 +247,10 @@ class LangChainAgent(AgentInterface):
         auth_handler_name: str,
         context: TurnContext,
     ) -> str:
-        # Playground sends a minimal recipient (id + name only).
-        # Fall back to env vars so observability baggage is still populated.
+        # Extract identity from the activity recipient (populated by the platform).
         recipient = context.activity.recipient
-        tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
-        agent_id = getattr(recipient, "agentic_user_id", None) or os.getenv("AGENTIC_USER_ID", "")
+        tenant_id = getattr(recipient, "tenant_id", None) or ""
+        agent_id = getattr(recipient, "agentic_app_id", None) or ""
 
         # When the SDK has full observability types, wrap in InvokeAgentScope + InferenceScope.
         # Otherwise fall back to BaggageBuilder only (older SDK on deployed App Service).
