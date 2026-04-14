@@ -12,7 +12,7 @@ dependencies = [
     "microsoft-agents-authentication-msal>=0.7.0",
     "microsoft-agents-activity>=0.7.0",
     
-    # Agent 365 packages (using local SDK from Agent365-python repo)
+    # Agent 365 packages (using stable versions from PyPI)
     "microsoft-agents-a365-observability-core>=0.1.0",
     "microsoft-agents-a365-observability-hosting>=0.1.0",
     "microsoft-agents-a365-notifications>=0.1.0",
