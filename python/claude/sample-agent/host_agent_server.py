@@ -56,7 +56,6 @@ from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
 
 # Observability imports (optional)
 try:
-    from microsoft_agents_a365.observability.core.config import configure as configure_observability
     from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
     from token_cache import get_cached_agentic_token, cache_agentic_token
     OBSERVABILITY_AVAILABLE = True
@@ -568,44 +567,6 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
         # Check that the agent inherits from AgentInterface
         if not check_agent_inheritance(agent_class):
             raise TypeError(f"Agent class {agent_class.__name__} must inherit from AgentInterface")
-
-        # Configure observability if available and enabled
-        if OBSERVABILITY_AVAILABLE:
-            enable_observability = os.getenv("ENABLE_OBSERVABILITY", "false").lower() in ("true", "1", "yes")
-            if enable_observability:
-                service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", "generic-agent-host")
-                service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365")
-                
-                # Token resolver for Agent365 exporter (optional)
-                def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-                    """Resolve authentication token for observability exporter"""
-                    try:
-                        logger.debug(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-                        # Use cached agentic token if available
-                        cached_token = get_cached_agentic_token(tenant_id, agent_id)
-                        if cached_token:
-                            logger.debug("Using cached agentic token for observability")
-                            return cached_token
-                        logger.debug("No cached token available for observability")
-                        return None
-                    except Exception as e:
-                        logger.warning(f"Error resolving token for observability: {e}")
-                        return None
-                
-                try:
-                    configure_observability(
-                        service_name=service_name,
-                        service_namespace=service_namespace,
-                        token_resolver=token_resolver,
-                        cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
-                    )
-                    logger.info(f"✅ Observability configured: {service_name} ({service_namespace})")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to configure observability: {e}")
-            else:
-                logger.info("ℹ️ Observability disabled (ENABLE_OBSERVABILITY=false)")
-        else:
-            logger.debug("ℹ️ Observability packages not available")
 
         # Create the host
         host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
