@@ -73,14 +73,22 @@ class MyAgent(AgentApplication):
         )
 
         self.agent = agent
-        self.auth_handler_name = "AGENTIC"
+        # Read from AUTH_HANDLER_NAME env var. Set to "AGENTIC" for production
+        # agentic auth. Leave empty (default) for local dev and Agents Playground.
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
+            logger.info("Auth handler: %s", self.auth_handler_name)
+        else:
+            logger.info("No auth handler configured — anonymous mode (Playground/local dev)")
         self.agent_notification = AgentNotification(self)
 
         self._setup_handlers()
 
     def _setup_handlers(self):
         """Set up activity handlers for the agent."""
-        auth_handlers = [self.auth_handler_name]
+        # Only enforce auth when AUTH_HANDLER_NAME is configured.
+        # Without it the Agents Playground (and local dev) can reach the handler.
+        handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
 
         @self.conversation_update("membersAdded")
         async def help_handler(context: TurnContext, _: TurnState):
@@ -107,7 +115,7 @@ class MyAgent(AgentApplication):
             elif action == "remove":
                 await context.send_activity("Thank you for your time, I enjoyed working with you.")
 
-        @self.activity("message", auth_handlers=auth_handlers, rank=2)
+        @self.activity("message", **handler_config, rank=2)
         async def message_handler(context: TurnContext, _: TurnState):
             """Handle message activities."""
             user_message = context.activity.text
@@ -151,7 +159,7 @@ class MyAgent(AgentApplication):
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
-            auth_handlers=auth_handlers,
+            **handler_config,
             rank=1
         )
         async def agent_notification_handler(
