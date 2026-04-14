@@ -12,12 +12,12 @@ dependencies = [
     "microsoft-agents-authentication-msal>=0.7.0",
     "microsoft-agents-activity>=0.7.0",
     
-    # Agent 365 packages (use stable versions from PyPI)
-    "microsoft_agents_a365_observability_core>=0.1.0",
-    "microsoft_agents_a365_observability_hosting>=0.1.0",
-    "microsoft_agents_a365_notifications>=0.1.0",
-    "microsoft_agents_a365_tooling>=0.1.0",
-    "microsoft_agents_a365_runtime>=0.1.0",
+    # Agent 365 packages (using local SDK from Agent365-python repo)
+    "microsoft-agents-a365-observability-core>=0.1.0",
+    "microsoft-agents-a365-observability-hosting>=0.1.0",
+    "microsoft-agents-a365-notifications>=0.1.0",
+    "microsoft-agents-a365-tooling>=0.1.0",
+    "microsoft-agents-a365-runtime>=0.1.0",
     
     # Core dependencies
     "python-dotenv",

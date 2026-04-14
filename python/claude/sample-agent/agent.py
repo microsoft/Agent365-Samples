@@ -78,10 +78,7 @@ from turn_context_utils import (
 )
 
 # MCP Tooling Services
-from mcp_tool_registration_service import McpToolRegistrationService, MCPToolDefinition
-
-# MCP Tooling available for Claude SDK
-MCP_AVAILABLE = True
+from mcp_tool_registration_service import McpToolRegistrationService
 
 # Notifications
 from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
@@ -175,112 +172,53 @@ Guidelines:
     # <McpTooling>
 
     def _initialize_mcp_services(self):
-        """
-        Initialize MCP services for tool discovery.
-        
-        Uses McpToolRegistrationService to:
-        - Discover MCP servers via McpToolServerConfigurationService (production)
-        - Fallback to ToolingManifest.json (development)
-        - Connect to MCP servers and fetch available tools
-        - Provide tool execution capabilities
-        """
+        """Initialize MCP services for tool discovery."""
         self.mcp_service = McpToolRegistrationService(logger=self.logger)
-        self.mcp_tools: list[MCPToolDefinition] = []
-        logger.info("✅ MCP tool registration service initialized")
+        logger.info("MCP tool registration service initialized")
 
     async def setup_mcp_servers(
         self, auth: Authorization, auth_handler_name: str, context: TurnContext
     ):
         """
-        Discover MCP servers, connect to them, and fetch available tools.
-        
-        This method uses the McpToolRegistrationService to:
-        1. Authenticate with the MCP platform
-        2. Discover available MCP servers via SDK or ToolingManifest.json fallback
-        3. Connect to each server
-        4. Fetch and index all available tools
-        
+        Discover MCP servers via the SDK and register them for Claude.
+
         Args:
             auth: Authorization for token exchange
             auth_handler_name: Name of the auth handler
             context: Turn context from M365 SDK
         """
         try:
-            # Get agentic_app_id from context or environment
-            agentic_app_id = None
-            if context.activity and context.activity.recipient:
-                agentic_app_id = context.activity.recipient.agentic_app_id
-            if not agentic_app_id:
-                agentic_app_id = os.getenv("AGENT_ID", "claude-agent")
-            
-            # Get auth token - prefer token exchange for proper MCP authentication
-            # When USE_AGENTIC_AUTH=true, the service will exchange token with proper scopes
-            # Otherwise, we fall back to the static bearer token (for local dev)
+            # Get auth token for local dev, or let the SDK exchange one
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
             auth_token = None
-            
+
             if not use_agentic_auth:
-                # Use static bearer token for local development
                 auth_token = self.auth_options.bearer_token
-                logger.info("ℹ️ Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
-            else:
-                # Let the MCP service exchange the token with proper scopes
-                logger.info("ℹ️ MCP will use token exchange for authentication")
-            
-            # Discover and connect to MCP servers
-            self.mcp_tools = await self.mcp_service.discover_and_connect_servers(
-                agentic_app_id=agentic_app_id,
+                logger.info("Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
+
+            await self.mcp_service.discover_and_connect_servers(
+                agentic_app_id="",  # resolved by SDK via Utility.resolve_agent_identity
                 auth=auth,
                 auth_handler_name=auth_handler_name,
                 context=context,
-                auth_token=auth_token,  # None = service will exchange token
+                auth_token=auth_token,
             )
-            
-            if self.mcp_tools:
-                logger.info(f"✅ {len(self.mcp_tools)} MCP tool(s) available:")
-                for tool in self.mcp_tools:
-                    logger.info(f"   🔧 {tool.name}: {tool.description[:50]}...")
+
+            servers = self.mcp_service.get_mcp_servers_for_claude()
+            if servers:
+                logger.info("%d MCP server(s) registered: %s", len(servers), list(servers.keys()))
             else:
-                logger.info("ℹ️ No MCP tools discovered")
-            
+                logger.info("No MCP servers discovered")
+
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
-            self.mcp_tools = []
-
-    def get_mcp_tool_names(self) -> list[str]:
-        """
-        Get list of available MCP tool names.
-        
-        Returns:
-            List of tool names that can be called
-        """
-        return self.mcp_service.get_available_tool_names()
-
-    def get_mcp_tools_for_claude(self) -> list[dict]:
-        """
-        Get MCP tool definitions in Claude's expected format.
-        
-        Returns:
-            List of tool definitions compatible with Claude's tool use
-        """
-        return self.mcp_service.get_tools_for_claude()
 
     def get_mcp_servers_for_claude(self) -> dict:
-        """
-        Get MCP servers in Claude SDK's McpHttpServerConfig format.
-        
-        Returns:
-            Dict mapping server names to server configs
-        """
+        """Get MCP servers in Claude SDK's McpHttpServerConfig format."""
         return self.mcp_service.get_mcp_servers_for_claude()
 
     def get_allowed_mcp_tool_names(self) -> list[str]:
-        """
-        Get MCP tool names in Claude's mcp__<server>__<tool> format.
-        
-        Returns:
-            List of prefixed tool names for allowed_tools
-        """
+        """Get MCP tool names in Claude's mcp__<server>__<tool> format."""
         return self.mcp_service.get_allowed_tool_names_for_claude()
 
     # </McpTooling>
