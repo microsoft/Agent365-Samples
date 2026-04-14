@@ -155,20 +155,24 @@ class GenericAgentHost:
                 getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
             )
             if action == "add":
-                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+                try:
+                    await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+                except Exception as e:
+                    logger.warning("Could not send welcome message: %s", e)
             elif action == "remove":
-                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+                try:
+                    await context.send_activity("Thank you for your time, I enjoyed working with you.")
+                except Exception as e:
+                    logger.warning("Could not send remove reply: %s", e)
 
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             """Handle all messages with the hosted agent"""
             try:
-                # Ensure the agent is available
-                if not self.agent_instance:
-                    error_msg = "❌ Sorry, the agent is not available."
-                    logger.error(error_msg)
-                    await context.send_activity(error_msg)
+                result = await self._validate_agent_and_setup_context(context)
+                if result is None:
                     return
+                tenant_id, agent_id = result
 
                 user_message = context.activity.text or ""
                 logger.info(f"📨 Processing message: '{user_message}'")
@@ -309,13 +313,13 @@ class GenericAgentHost:
         response = await self.agent_instance.handle_agent_notification_activity(
             notification_activity, self.agent_app.auth, context, self.auth_handler_name
         )
-        
+
         # For email notifications, wrap response in EmailResponse entity
         if notification_activity.notification_type == NotificationTypes.EMAIL_NOTIFICATION:
             response_activity = EmailResponse.create_email_response_activity(response)
             await context.send_activity(response_activity)
             return
-        
+
         # Send the response for other notification types
         await context.send_activity(response)
 
@@ -331,7 +335,7 @@ class GenericAgentHost:
         """
         # Extract tenant and agent IDs
         tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
-        agent_id = context.activity.recipient.agentic_app_id if context.activity.recipient else None
+        agent_id = context.activity.get_agentic_instance_id()
 
         # Ensure agent is available
         if not self.agent_instance:
@@ -358,7 +362,7 @@ class GenericAgentHost:
         """
         if not OBSERVABILITY_AVAILABLE:
             return
-            
+
         try:
             from microsoft_agents_a365.runtime.environment_utils import (
                 get_observability_authentication_scope,
@@ -367,7 +371,7 @@ class GenericAgentHost:
             exchange_kwargs = {}
             if self.auth_handler_name:
                 exchange_kwargs["auth_handler_id"] = self.auth_handler_name
-            
+
             exaau_token = await self.agent_app.auth.exchange_token(
                 context,
                 scopes=get_observability_authentication_scope(),
@@ -397,12 +401,14 @@ class GenericAgentHost:
 
     def create_auth_configuration(self) -> AgentAuthConfiguration | None:
         """Create authentication configuration based on available environment variables."""
-        client_id = environ.get("CLIENT_ID")
-        tenant_id = environ.get("TENANT_ID")
-        client_secret = environ.get("CLIENT_SECRET")
+        # Read from the CONNECTIONS service-connection settings (canonical source)
+        # to avoid duplicating CLIENT_ID / TENANT_ID / CLIENT_SECRET.
+        client_id = environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID")
+        tenant_id = environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
+        client_secret = environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET")
 
         if client_id and tenant_id and client_secret:
-            logger.info("🔒 Using Client Credentials authentication (CLIENT_ID/TENANT_ID provided)")
+            logger.info("🔒 Using Client Credentials authentication")
             try:
                 return AgentAuthConfiguration(
                     client_id=client_id,

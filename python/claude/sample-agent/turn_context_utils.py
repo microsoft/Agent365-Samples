@@ -63,7 +63,10 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
 
     # Extract agent details from recipient (ChannelAccount)
     tenant_id = recipient.tenant_id if recipient else None
-    agent_id = getattr(recipient, "id", None) if recipient else None
+    # Use get_agentic_instance_id() (recipient.agentic_app_id) for agent_id
+    agent_id = activity.get_agentic_instance_id()
+    if not agent_id:
+        agent_id = getattr(recipient, "id", None) if recipient else None
     if not agent_id:
         agent_id = os.getenv("AGENT_ID", "claude-agent")
     agent_name = getattr(recipient, "name", None) if recipient else None
