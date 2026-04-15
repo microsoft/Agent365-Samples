@@ -104,8 +104,8 @@ class McpToolRegistrationService:
                 continue
 
             # server_config.headers already contains the per-audience Authorization token:
-            # - Dev mode:  set by SDK's _attach_dev_tokens (reads BEARER_TOKEN_MCP_* / BEARER_TOKEN)
-            # - Prod mode: set by SDK's _attach_per_audience_tokens (per-audience OAuth exchange)
+            # - Dev mode:  set by SDK's _create_dev_token_acquirer (reads BEARER_TOKEN_MCP_* / BEARER_TOKEN)
+            # - Prod mode: set by SDK's _create_obo_token_acquirer (per-audience OBO exchange)
             base_headers = {
                 Constants.Headers.USER_AGENT: Utility.get_user_agent_header(
                     self._orchestrator_name
@@ -113,6 +113,14 @@ class McpToolRegistrationService:
             }
             server_level_headers = dict(server_config.headers) if server_config.headers else {}
             mcp_server_headers = {**base_headers, **server_level_headers}
+
+            has_auth = Constants.Headers.AUTHORIZATION in mcp_server_headers
+            self._logger.info(
+                "Configuring MCP server '%s' → %s (auth_header=%s)",
+                server_config.mcp_server_name,
+                server_config.url,
+                "present" if has_auth else "MISSING — MCP calls will fail without a valid token",
+            )
 
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
