@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import logging
 import os
 import random
+import time
 import aiohttp
 import asyncio
 import json
@@ -97,6 +98,26 @@ class McpToolRegistrationService:
         self._tools_by_name: Dict[str, MCPToolDefinition] = {}
         self._auth_token: Optional[str] = None
         self._config_service = McpToolServerConfigurationService(logger=self._logger)
+
+    @staticmethod
+    def _check_jwt_expiry(token: str, name: str) -> bool:
+        """Returns True if token is valid (not expired), False if expired. Logs a warning if expired."""
+        try:
+            from base64 import urlsafe_b64decode
+            payload = token.split(".")[1]
+            if len(payload) % 4 != 0:
+                payload += "=" * (4 - len(payload) % 4)
+            exp = json.loads(urlsafe_b64decode(payload)).get("exp", 0)
+            if exp and time.time() > exp:
+                logging.getLogger(__name__).warning(
+                    "%s is expired (exp=%d) — regenerate with `a365 develop get-token` "
+                    "and RESTART the agent to pick up new tokens.",
+                    name, exp,
+                )
+                return False
+        except Exception:
+            pass  # non-JWT format; treat as valid
+        return True
 
     def _load_manifest_servers_fallback(self) -> List[Dict[str, Any]]:
         """
@@ -222,10 +243,17 @@ class McpToolRegistrationService:
         # Fallback to static BEARER_TOKEN from environment
         if not auth_token:
             bearer_token = os.getenv("BEARER_TOKEN", "").strip()
-            if bearer_token:
+            if bearer_token and self._check_jwt_expiry(bearer_token, "BEARER_TOKEN"):
                 auth_token = bearer_token
                 self._logger.info("ℹ️ Using BEARER_TOKEN from environment for MCP authentication")
-        
+
+        # Warn about expired per-server tokens in dev mode.
+        if not auth_handler_name:
+            for env_var in [k for k in os.environ if k.startswith("BEARER_TOKEN_") and k != "BEARER_TOKEN"]:
+                mcp_token = os.environ[env_var]
+                if mcp_token:
+                    self._check_jwt_expiry(mcp_token, env_var)
+
         # For local development, allow connections without auth token
         if not auth_token:
             self._logger.info("ℹ️ No auth token - will attempt local connections only")

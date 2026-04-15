@@ -1,20 +1,19 @@
 {
   "mcpServers": [
     {
-     
       "mcpServerName": "mcp_CalendarTools",
       "mcpServerUniqueName": "mcp_CalendarTools",
-      "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_CalendarTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools",
       "scope": "Tools.ListInvoke.All",
-      "audience": "19ec8e8a-5f2f-4e00-9f66-d3e5b4c3e201",
+      "audience": "910333d2-47e9-43ca-981f-6df2f4531ef4",
       "publisher": "Microsoft"
     },
     {
       "mcpServerName": "mcp_MailTools",
       "mcpServerUniqueName": "mcp_MailTools",
-      "url": "https://test.agent365.svc.cloud.dev.microsoft/agents/servers/mcp_MailTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
       "scope": "Tools.ListInvoke.All",
-      "audience": "24b71c94-d291-44af-ac1e-a396e6837fd3",
+      "audience": "16b1878d-62c7-4009-aa25-68989d63bbad",
       "publisher": "Microsoft"
     }
   ]

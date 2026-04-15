@@ -41,7 +41,7 @@ def start_server(agent_app: AgentApplication):
     isProduction = (
         os.getenv("WEBSITE_SITE_NAME") is not None       # Azure App Service
         or os.getenv("K_SERVICE") is not None            # GCP Cloud Run
-        or os.getenv("ENVIRONMENT", "").lower() == "production"  # Explicit flag
+        or os.getenv("PYTHON_ENVIRONMENT", "").lower() == "production"  # Explicit flag
     )
 
     async def entry_point(req: Request) -> Response:

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 import logging
 import os
+import time
 import aiohttp
 import asyncio
 
@@ -100,10 +101,31 @@ class McpToolRegistrationService:
         self._auth_token: Optional[str] = None
         self._config_service = McpToolServerConfigurationService(logger=self._logger)
 
+    @staticmethod
+    def _check_jwt_expiry(token: str, name: str) -> bool:
+        """Returns True if token is valid (not expired), False if expired. Logs a warning if expired."""
+        try:
+            from base64 import urlsafe_b64decode
+            import json as _json
+            payload = token.split(".")[1]
+            if len(payload) % 4 != 0:
+                payload += "=" * (4 - len(payload) % 4)
+            exp = _json.loads(urlsafe_b64decode(payload)).get("exp", 0)
+            if exp and time.time() > exp:
+                logging.getLogger(__name__).warning(
+                    "%s is expired (exp=%d) — regenerate with `a365 develop get-token` "
+                    "and RESTART the agent to pick up new tokens.",
+                    name, exp,
+                )
+                return False
+        except Exception:
+            pass  # non-JWT format; treat as valid
+        return True
+
     def _load_manifest_servers_fallback(self) -> List[Dict[str, Any]]:
         """
         Load MCP server configurations directly from ToolingManifest.json.
-        
+
         This is a fallback for local development when McpToolServerConfigurationService
         cannot discover servers (e.g., no Gateway connection).
         
@@ -214,16 +236,28 @@ class McpToolRegistrationService:
             self._auth_token = auth_token
             self._logger.info("Using provided auth token for MCP authentication")
         else:
-            environment = os.getenv("ENVIRONMENT", "Production").strip().lower()
+            environment = os.getenv("PYTHON_ENVIRONMENT", "Production").strip().lower()
             bearer_token = (os.getenv("BEARER_TOKEN") or "").strip()
 
             if bearer_token:
                 # Bearer token mode (development only)
                 if environment != "development":
                     raise ValueError(
-                        "BEARER_TOKEN is set but ENVIRONMENT is not 'development'. "
+                        "BEARER_TOKEN is set but PYTHON_ENVIRONMENT is not 'development'. "
                         "Bearer tokens are only supported in development environments."
                     )
+                # Clear if expired — fall through to auth_handler or bare mode.
+                if not self._check_jwt_expiry(bearer_token, "BEARER_TOKEN"):
+                    bearer_token = ""
+
+            # Warn about expired per-server tokens in dev mode.
+            if not auth_handler_name:
+                for env_var in [k for k in os.environ if k.startswith("BEARER_TOKEN_") and k != "BEARER_TOKEN"]:
+                    mcp_token = os.environ[env_var]
+                    if mcp_token:
+                        self._check_jwt_expiry(mcp_token, env_var)
+
+            if bearer_token:
                 self._auth_token = bearer_token
                 self._logger.info("Using BEARER_TOKEN authentication (development mode)")
             elif auth_handler_name:

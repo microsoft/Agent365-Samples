@@ -217,7 +217,7 @@ Guidelines:
             # Get auth token - prefer token exchange for proper MCP authentication
             # When USE_AGENTIC_AUTH=true, the service will exchange token with proper scopes
             # Otherwise, we fall back to the static bearer token (for local dev)
-            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
+            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
             auth_token = None
             
             if not use_agentic_auth:

@@ -104,7 +104,7 @@ class McpToolRegistrationService:
                 continue
 
             # server_config.headers already contains the per-audience Authorization token:
-            # - Dev mode:  set by SDK's _create_dev_token_acquirer (reads BEARER_TOKEN_MCP_* / BEARER_TOKEN)
+            # - Dev mode:  set by SDK's _create_dev_token_acquirer (reads BEARER_TOKEN_* / BEARER_TOKEN)
             # - Prod mode: set by SDK's _create_obo_token_acquirer (per-audience OBO exchange)
             base_headers = {
                 Constants.Headers.USER_AGENT: Utility.get_user_agent_header(
