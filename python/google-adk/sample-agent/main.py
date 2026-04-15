@@ -3,6 +3,14 @@
 
 # Internal imports
 import os
+import sys
+
+# Force UTF-8 on Windows so emoji/unicode in SDK log messages don't crash the charmap codec
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from hosting import MyAgent
 from agent import GoogleADKAgent
 
@@ -33,7 +41,7 @@ def start_server(agent_app: AgentApplication):
     isProduction = (
         os.getenv("WEBSITE_SITE_NAME") is not None       # Azure App Service
         or os.getenv("K_SERVICE") is not None            # GCP Cloud Run
-        or os.getenv("ENVIRONMENT", "").lower() == "production"  # Explicit flag
+        or os.getenv("PYTHON_ENVIRONMENT", "").lower() == "production"  # Explicit flag
     )
 
     async def entry_point(req: Request) -> Response:
@@ -113,7 +121,7 @@ def start_server(agent_app: AgentApplication):
 
     try:
         host = "0.0.0.0" if isProduction else "localhost"
-        
+
         # PORT environment variable is optional - defaults to 3978 for local dev
         # Azure App Service automatically sets PORT=8000
         port_str = os.getenv("PORT")
@@ -127,7 +135,7 @@ def start_server(agent_app: AgentApplication):
         else:
             port = 3978
             logger.info("PORT not set, using default: %d", port)
-        
+
         logger.info("Listening on %s:%d/api/messages", host, port)
         run_app(app, host=host, port=port, handle_signals=True)
     except KeyboardInterrupt:

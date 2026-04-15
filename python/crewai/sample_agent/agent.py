@@ -103,7 +103,7 @@ class CrewAIAgent(AgentInterface):
                 agentic_app_id = os.getenv("AGENTIC_APP_ID", DEFAULT_AGENT_ID)
             
             # Get auth token - prefer token exchange for proper MCP authentication
-            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "true").lower() == "true"
+            use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
             auth_token = None
             
             if not use_agentic_auth:
