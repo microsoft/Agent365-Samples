@@ -1,0 +1,28 @@
+# TeamsFx files
+env/.env.*.user
+env/.env.local
+env/.env.sandbox
+.localConfigs
+.localConfigs.playground
+.localConfigs
+.notification.localstore.json
+.notification.playgroundstore.json
+appPackage/build
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# misc
+.env
+.deployment
+.DS_Store
+
+# Dev tool directories
+/devTools/

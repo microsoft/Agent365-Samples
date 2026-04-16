@@ -5,11 +5,13 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
     "install:clean": "npm run clean && npm install",
     "clean": "rimraf dist node_modules package-lock.json",
-    "build": "tsc"
+    "build": "tsc",
+    "dev:teamsfx:playground": "env-cmd --silent -f .localConfigs.playground npm run dev",
+    "dev:teamsfx:launch-playground": "env-cmd --silent -f env/.env.playground agentsplayground start"
   },
   "keywords": [],
   "author": "Microsoft",
@@ -32,6 +34,7 @@
     "@microsoft/m365agentsplayground": "^0.2.18",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
+    "env-cmd": "^11.0.0",
     "nodemon": "^3.1.10",
     "rimraf": "^5.0.0",
     "ts-node": "^10.9.2",
