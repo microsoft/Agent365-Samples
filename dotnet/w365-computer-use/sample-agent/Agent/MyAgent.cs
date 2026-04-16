@@ -27,7 +27,7 @@ public class MyAgent : AgentApplication
     private readonly ILogger<MyAgent> _logger;
     private readonly IMcpToolRegistrationService _toolService;
     private readonly ComputerUseOrchestrator _orchestrator;
-    private readonly string? _mcpServerUrl;
+    private readonly string[] _mcpServerUrls;
 
     private readonly string? AgenticAuthHandlerName;
     private readonly string? OboAuthHandlerName;
@@ -70,7 +70,15 @@ public class MyAgent : AgentApplication
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
-        _mcpServerUrl = configuration["McpServer:Url"];
+
+        // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
+        _mcpServerUrls = configuration.GetSection("McpServers").Get<string[]>() ?? [];
+        if (_mcpServerUrls.Length == 0)
+        {
+            var singleUrl = configuration["McpServer:Url"];
+            if (!string.IsNullOrEmpty(singleUrl))
+                _mcpServerUrls = [singleUrl];
+        }
 
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
         OboAuthHandlerName = configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
@@ -168,9 +176,6 @@ public class MyAgent : AgentApplication
             _logger,
             async () =>
             {
-                // Immediate acknowledgment
-                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
-
                 // Typing indicator
                 await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
 
@@ -186,14 +191,15 @@ public class MyAgent : AgentApplication
                         }
                     }
                     catch (OperationCanceledException) { /* expected */ }
+                    catch (ObjectDisposedException) { /* CTS disposed before task finished */ }
                 }, typingCts.Token);
 
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
 
-                    // Get W365 MCP tools — direct connection in Dev, SDK in Production
-                    var (w365Tools, mcpClient) = await GetW365ToolsAsync(turnContext, ToolAuthHandlerName);
+                    // Get MCP tools — direct connection in Dev, SDK in Production
+                    var (w365Tools, additionalTools, mcpClient) = await GetToolsAsync(turnContext, ToolAuthHandlerName);
 
                     try
                     {
@@ -204,8 +210,6 @@ public class MyAgent : AgentApplication
                                 cancellationToken);
                             return;
                         }
-
-                        await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on your request...").ConfigureAwait(false);
 
                         // Get Graph token for OneDrive screenshot upload.
                         // In production: acquired via agentic auth (UserAuthorization).
@@ -226,9 +230,18 @@ public class MyAgent : AgentApplication
                             conversationId,
                             userText,
                             w365Tools,
+                            additionalTools: additionalTools,
                             mcpClient: mcpClient,
                             graphAccessToken: graphToken,
                             onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
+                            onCuaStarting: async (isNewSession) =>
+                            {
+                                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+                                if (isNewSession)
+                                {
+                                    await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Starting a session to a Windows 365 Cloud PC…");
+                                }
+                            },
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -242,20 +255,22 @@ public class MyAgent : AgentApplication
                 }
                 finally
                 {
-                    typingCts.Cancel();
+                    try { typingCts.Cancel(); } catch (ObjectDisposedException) { }
                     try { await typingTask.ConfigureAwait(false); }
                     catch (OperationCanceledException) { /* expected */ }
-                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
+                    catch (ObjectDisposedException) { /* expected */ }
+                    try { await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); }
+                    catch (ObjectDisposedException) { /* stream already disposed */ }
                 }
             });
     }
 
     /// <summary>
-    /// Get the W365 MCP tools. In Development mode with a bearer token, connects directly
-    /// to the MCP server URL from appsettings.json. In Production, uses the A365 SDK
-    /// to discover servers via the Tooling Gateway.
+    /// Get MCP tools, separated into W365 (CUA) and additional (function) tools.
+    /// In Development mode with a bearer token, connects directly to the MCP server URL.
+    /// In Production, uses the A365 SDK to discover servers via the Tooling Gateway.
     /// </summary>
-    private async Task<(IList<AITool>? Tools, IMcpClient? Client)> GetW365ToolsAsync(ITurnContext context, string? authHandlerName)
+    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client)> GetToolsAsync(ITurnContext context, string? authHandlerName)
     {
         // Acquire access token
         string? accessToken = null;
@@ -276,37 +291,42 @@ public class MyAgent : AgentApplication
         if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
         {
             _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
-            return (null, null);
+            return (null, null, null);
         }
 
         try
         {
+            IList<AITool>? allTools;
+            IMcpClient? mcpClient = null;
+
             // Development with bearer token: use orchestrator's cached MCP connection
             if (TryGetBearerTokenForDevelopment(out _) && IsDevelopment())
             {
-                if (string.IsNullOrEmpty(_mcpServerUrl))
-                    throw new InvalidOperationException("McpServer:Url is required in appsettings.json for Development mode.");
-                return await _orchestrator.GetOrCreateMcpConnectionAsync(_mcpServerUrl, accessToken!);
+                if (_mcpServerUrls.Length == 0)
+                    throw new InvalidOperationException("McpServers (or McpServer:Url) is required in appsettings for Development mode.");
+                (allTools, mcpClient) = await _orchestrator.GetOrCreateMcpConnectionAsync(_mcpServerUrls, accessToken!);
+            }
+            else
+            {
+                // Production: use the A365 SDK's tooling gateway for server discovery
+                var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
+                    ? authHandlerName
+                    : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
+                var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
+
+                allTools = await _toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
             }
 
-            // Production: use the A365 SDK's tooling gateway for server discovery
-            var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
-                ? authHandlerName
-                : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-            var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
-
-            var allTools = await _toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
-
-            // Filter to only W365 tools
             var w365Tools = FilterW365Tools(allTools);
-            return (w365Tools, null);
+            var additionalTools = FilterAdditionalTools(allTools);
+            return (w365Tools, additionalTools, mcpClient);
         }
         catch (Exception ex)
         {
             if (ShouldSkipToolingOnErrors())
             {
                 _logger.LogWarning(ex, "Failed to connect to MCP servers. Continuing without tools (SKIP_TOOLING_ON_ERRORS=true).");
-                return (null, null);
+                return (null, null, null);
             }
 
             _logger.LogError(ex, "Failed to connect to MCP servers.");
@@ -340,5 +360,23 @@ public class MyAgent : AgentApplication
         }
 
         return w365Tools;
+    }
+
+    private IList<AITool>? FilterAdditionalTools(IList<AITool>? allTools)
+    {
+        var additionalTools = allTools?.Where(t =>
+        {
+            var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
+            return !name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
+        }).ToList();
+
+        if (additionalTools != null && additionalTools.Count > 0)
+        {
+            _logger.LogInformation("Found {ToolCount} additional function tools: {Names}",
+                additionalTools.Count,
+                string.Join(", ", additionalTools.Select(t => (t as AIFunction)?.Name ?? "?")));
+        }
+
+        return additionalTools;
     }
 }
