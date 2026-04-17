@@ -171,7 +171,6 @@ class GenericAgentHost:
                 result = await self._validate_agent_and_setup_context(context)
                 if result is None:
                     return
-                tenant_id, agent_id = result
 
                 user_message = context.activity.text or ""
                 logger.info(f"📨 Processing message: '{user_message}'")
