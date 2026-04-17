@@ -3,6 +3,10 @@
 		{
 			"mcpServerName": "mcp_W365ComputerUse",
 			"url": "mcp_W365ComputerUse"
+		},
+		{
+			"mcpServerName": "mcp_MailTools",
+			"url": "mcp_MailTools"
 		}
 	]
 }

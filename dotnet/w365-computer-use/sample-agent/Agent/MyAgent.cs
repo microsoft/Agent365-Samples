@@ -242,6 +242,8 @@ public class MyAgent : AgentApplication
                                     await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Starting a session to a Windows 365 Cloud PC…");
                                 }
                             },
+                            onFolderLinkReady: async url => await turnContext.SendActivityAsync(
+                                MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
                             cancellationToken: cancellationToken);
 
                         // Send the response

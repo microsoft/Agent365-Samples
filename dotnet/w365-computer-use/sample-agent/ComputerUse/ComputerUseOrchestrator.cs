@@ -54,11 +54,16 @@ public class ComputerUseOrchestrator
         If the user's message is conversational or doesn't require computer use, respond with a helpful text message.
 
         ## Function tools (email, calendar, etc.)
-        You have access to function tools for tasks like sending email, managing calendar, etc.
-        ALWAYS use function tools when available — they are faster and more reliable than computer actions.
-        When the user asks you to send an email, search messages, or perform any action that matches a function tool, call that tool directly.
+        You may have access to function tools for tasks like sending email, managing calendar, etc.
+        Prefer function tools over computer use when a matching one is available — they are faster and more reliable.
         After calling a function tool, respond with a text message describing what you did and the result.
         Do NOT call OnTaskComplete after using function tools — just respond with text.
+
+        ## When no tool can accomplish the request
+        If the user asks for something and no function tool matches AND computer use cannot accomplish it either,
+        respond with a text message explaining clearly that you are unable to perform that task and why
+        (e.g. "I don't have an email tool available in this environment").
+        Do NOT call OnTaskComplete in this case — only call OnTaskComplete when you have actually completed a computer-use task.
 
         ## Computer use (desktop control)
         Only use computer actions when no function tool can accomplish the task.
@@ -127,11 +132,20 @@ public class ComputerUseOrchestrator
         string? graphAccessToken = null,
         Action<string>? onStatusUpdate = null,
         Func<bool, Task>? onCuaStarting = null,
+        Func<string, Task>? onFolderLinkReady = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
 
-        var session = _sessions.GetOrAdd(conversationId, _ => new ConversationSession());
+        var session = _sessions.GetOrAdd(conversationId, _ =>
+        {
+            var safeId = new string(conversationId.Where(c => char.IsLetterOrDigit(c)).ToArray());
+            safeId = safeId.Length > 8 ? safeId[..8] : safeId;
+            return new ConversationSession
+            {
+                ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeId}"
+            };
+        });
 
         if (session.SessionStarted)
         {
@@ -144,7 +158,9 @@ public class ComputerUseOrchestrator
             var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
             var initialName = $"{conversationId[..8]}_{++session.ScreenshotCounter:D3}_initial";
             SaveScreenshotToDisk(initialScreenshot!, initialName);
-            await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken);
+            var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+            if (folderUrlReuse != null && onFolderLinkReady != null)
+                await onFolderLinkReady(folderUrlReuse);
             session.ConversationHistory.Add(ToJsonElement(new
             {
                 type = "message",
@@ -220,6 +236,11 @@ public class ComputerUseOrchestrator
                                 onStatusUpdate?.Invoke("Starting W365 computing session...");
                                 session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
                                 session.SessionStarted = true;
+                                // Update subfolder to use W365 session ID instead of conversation ID
+                                var safeSessionId = session.W365SessionId != null
+                                    ? new string(session.W365SessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
+                                    : "unknown";
+                                session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
                                 _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
                             }
                             else if (onCuaStarting != null)
@@ -231,7 +252,7 @@ public class ComputerUseOrchestrator
                         }
 
                         _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
-                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, cancellationToken));
+                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
                         break;
 
                     case "function_call":
@@ -443,7 +464,7 @@ public class ComputerUseOrchestrator
     /// Translate a computer_call into an MCP tool call, capture screenshot, return computer_call_output.
     /// </summary>
     private async Task<JsonElement> HandleComputerCallAsync(
-        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, CancellationToken ct)
+        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
     {
         var callId = call.GetProperty("call_id").GetString()!;
         var sessionId = session.W365SessionId;
@@ -482,7 +503,9 @@ public class ComputerUseOrchestrator
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
-        await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken);
+        var folderUrl = await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+        if (folderUrl != null && onFolderLinkReady != null)
+            await onFolderLinkReady(folderUrl);
 
         var safetyChecks = call.TryGetProperty("pending_safety_checks", out var sc)
             ? sc : JsonSerializer.Deserialize<JsonElement>("[]");
@@ -702,16 +725,21 @@ public class ComputerUseOrchestrator
         var name = functionCall.GetProperty("name").GetString()!;
         var argsStr = functionCall.GetProperty("arguments").GetString() ?? "{}";
 
+        _logger.LogInformation("Function call {Name} invoked. call_id={CallId}, args={Args}",
+            name, callId, Truncate(argsStr, 1000));
+
         try
         {
             var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsStr) ?? [];
             var result = await InvokeToolAsync(tools, name, args, ct);
             var resultStr = result?.ToString() ?? "success";
+            _logger.LogInformation("Function call {Name} returned ({Length} chars): {Result}",
+                name, resultStr.Length, Truncate(resultStr, 2000));
             return CreateFunctionOutput(callId, resultStr);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Function call {Name} failed", name);
+            _logger.LogError(ex, "Function call {Name} threw. call_id={CallId}", name, callId);
             return CreateFunctionOutput(callId, $"Error: {ex.Message}");
         }
     }
@@ -742,22 +770,22 @@ public class ComputerUseOrchestrator
     /// Requires a Graph access token with Files.ReadWrite scope.
     /// Files are uploaded to /CUA-Sessions/{date}/ folder.
     /// </summary>
-    private async Task UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken)
+    private async Task<string?> UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken, string? subfolder, ConversationSession session)
     {
         if (string.IsNullOrEmpty(graphAccessToken))
         {
             _logger.LogDebug("OneDrive upload skipped: no Graph token");
-            return;
+            return null;
         }
         if (string.IsNullOrEmpty(base64Data))
         {
             _logger.LogDebug("OneDrive upload skipped: no screenshot data");
-            return;
+            return null;
         }
         if (string.IsNullOrEmpty(_oneDriveFolder))
         {
             _logger.LogDebug("OneDrive upload skipped: OneDriveFolder not configured");
-            return;
+            return null;
         }
 
         try
@@ -766,7 +794,10 @@ public class ComputerUseOrchestrator
             var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
                 ? "https://graph.microsoft.com/v1.0/me/drive"
                 : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
-            var url = $"{driveBase}/root:/{_oneDriveFolder.TrimStart('/')}/{fileName}:/content";
+            var folderPath = string.IsNullOrEmpty(subfolder)
+                ? _oneDriveFolder.TrimStart('/')
+                : $"{_oneDriveFolder.TrimStart('/')}/{subfolder}";
+            var url = $"{driveBase}/root:/{folderPath}/{fileName}:/content";
 
             using var request = new HttpRequestMessage(HttpMethod.Put, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
@@ -776,16 +807,86 @@ public class ComputerUseOrchestrator
             var response = await _httpClient.SendAsync(request);
             if (response.IsSuccessStatusCode)
             {
-                _logger.LogInformation("Screenshot uploaded to OneDrive: {Folder}/{FileName}", _oneDriveFolder, fileName);
+                _logger.LogInformation("Screenshot uploaded to OneDrive: {Folder}/{FileName}", folderPath, fileName);
+
+                // On first upload, create an org-scoped sharing link for the folder
+                if (!session.FolderShared)
+                {
+                    var shareUrl = await ShareConversationFolderAsync(folderPath, graphAccessToken);
+                    if (shareUrl != null)
+                    {
+                        session.FolderShared = true;
+                        return shareUrl;
+                    }
+                }
             }
             else
             {
-                _logger.LogWarning("OneDrive upload failed: {Status}", response.StatusCode);
+                var content = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("OneDrive upload failed: {Status} {Content}", response.StatusCode, content);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to upload screenshot to OneDrive");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Create an organization-scoped sharing link for the conversation's screenshot folder.
+    /// Returns the web URL that anyone in the org can use to view the folder.
+    /// </summary>
+    private async Task<string?> ShareConversationFolderAsync(string folderPath, string graphAccessToken)
+    {
+        try
+        {
+            var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
+                ? "https://graph.microsoft.com/v1.0/me/drive"
+                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
+
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, $"{driveBase}/root:/{folderPath}");
+            getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
+            var getResponse = await _httpClient.SendAsync(getRequest);
+
+            if (!getResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to get folder item for sharing: {Status}", getResponse.StatusCode);
+                return null;
+            }
+
+            var folderJson = await getResponse.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(folderJson);
+            var folderId = doc.RootElement.GetProperty("id").GetString();
+            var webUrl = doc.RootElement.TryGetProperty("webUrl", out var wu) ? wu.GetString() : null;
+
+            using var linkRequest = new HttpRequestMessage(HttpMethod.Post, $"{driveBase}/items/{folderId}/createLink");
+            linkRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
+            linkRequest.Content = new StringContent(
+                JsonSerializer.Serialize(new { type = "view", scope = "organization" }),
+                System.Text.Encoding.UTF8, "application/json");
+
+            var linkResponse = await _httpClient.SendAsync(linkRequest);
+            if (linkResponse.IsSuccessStatusCode)
+            {
+                var linkJson = await linkResponse.Content.ReadAsStringAsync();
+                using var linkDoc = JsonDocument.Parse(linkJson);
+                var shareUrl = linkDoc.RootElement.GetProperty("link").GetProperty("webUrl").GetString();
+                _logger.LogInformation("Folder shared with org: {Url}", shareUrl);
+                return shareUrl;
+            }
+            else
+            {
+                var errorContent = await linkResponse.Content.ReadAsStringAsync();
+                _logger.LogWarning("Failed to create sharing link: {Status} {Content}", linkResponse.StatusCode, errorContent);
+                return webUrl;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to share conversation folder");
+            return null;
         }
     }
 
@@ -799,5 +900,7 @@ public class ComputerUseOrchestrator
         public string? W365SessionId { get; set; }
         public List<JsonElement> ConversationHistory { get; } = [];
         public int ScreenshotCounter { get; set; }
+        public string? ScreenshotSubfolder { get; set; }
+        public bool FolderShared { get; set; }
     }
 }
