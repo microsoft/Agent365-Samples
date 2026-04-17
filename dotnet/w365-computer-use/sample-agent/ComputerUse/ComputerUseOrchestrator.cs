@@ -18,6 +18,7 @@ namespace W365ComputerUseSample.ComputerUse;
 public class ComputerUseOrchestrator
 {
     private readonly ICuaModelProvider _modelProvider;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly HttpClient _httpClient;
     private readonly ILogger<ComputerUseOrchestrator> _logger;
     private readonly int _maxIterations;
@@ -34,20 +35,41 @@ public class ComputerUseOrchestrator
     private readonly ConcurrentDictionary<string, ConversationSession> _sessions = new();
 
     /// <summary>
-    /// Shared MCP client — one SSE connection reused across all conversations.
+    /// Primary MCP client (W365 server) — used for direct screenshot calls.
     /// </summary>
     private IMcpClient? _cachedMcpClient;
 
     /// <summary>
-    /// Shared tool list — same tools for all conversations.
+    /// All MCP clients — one per connected server, for cleanup on shutdown.
+    /// </summary>
+    private readonly List<IMcpClient> _allMcpClients = [];
+
+    /// <summary>
+    /// Shared tool list — merged tools from all connected servers.
     /// </summary>
     private IList<AITool>? _cachedTools;
 
     private const string SystemInstructions = """
-        You are a computer-using agent that can control a Windows desktop computer.
-        After each action, examine the screenshot to verify it worked.
+        You are a helpful assistant that can also control a Windows desktop computer.
+        If the user's message is conversational or doesn't require computer use, respond with a helpful text message.
+
+        ## Function tools (email, calendar, etc.)
+        You may have access to function tools for tasks like sending email, managing calendar, etc.
+        Prefer function tools over computer use when a matching one is available — they are faster and more reliable.
+        After calling a function tool, respond with a text message describing what you did and the result.
+        Do NOT call OnTaskComplete after using function tools — just respond with text.
+
+        ## When no tool can accomplish the request
+        If the user asks for something and no function tool matches AND computer use cannot accomplish it either,
+        respond with a text message explaining clearly that you are unable to perform that task and why
+        (e.g. "I don't have an email tool available in this environment").
+        Do NOT call OnTaskComplete in this case — only call OnTaskComplete when you have actually completed a computer-use task.
+
+        ## Computer use (desktop control)
+        Only use computer actions when no function tool can accomplish the task.
+        When a task requires computer use, perform the actions and examine screenshots to verify they worked.
         If you see browser setup or sign-in dialogs, dismiss them (Escape, X, or Skip).
-        Once you have completed the task, call the OnTaskComplete function.
+        Once you have completed a computer use task, call the OnTaskComplete function.
         Do NOT continue looping after the task is done.
         If the user wants to end, quit, or disconnect their session, call the EndSession function.
         If the user sends a casual greeting or question that does not require computer use, reply with a helpful text message.
@@ -60,6 +82,7 @@ public class ComputerUseOrchestrator
         ILogger<ComputerUseOrchestrator> logger)
     {
         _modelProvider = modelProvider;
+        _httpClientFactory = httpClientFactory;
         _httpClient = httpClientFactory.CreateClient("WebClient");
         _logger = logger;
         _maxIterations = configuration.GetValue("ComputerUse:MaxIterations", 30);
@@ -111,19 +134,18 @@ public class ComputerUseOrchestrator
         string conversationId,
         string userMessage,
         IList<AITool> w365Tools,
+        IList<AITool>? additionalTools = null,
         IMcpClient? mcpClient = null,
         string? graphAccessToken = null,
         Action<string>? onStatusUpdate = null,
+        Func<bool, Task>? onCuaStarting = null,
         Func<string, Task>? onFolderLinkReady = null,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting CUA loop for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
-        _cachedTools = w365Tools;
-        if (mcpClient != null) _cachedMcpClient = mcpClient;
+        _logger.LogInformation("Processing message for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
 
         var session = _sessions.GetOrAdd(conversationId, _ =>
         {
-            // Build a safe subfolder name from date + truncated conversation ID
             var safeId = new string(conversationId.Where(c => char.IsLetterOrDigit(c)).ToArray());
             safeId = safeId.Length > 8 ? safeId[..8] : safeId;
             return new ConversationSession
@@ -137,58 +159,60 @@ public class ComputerUseOrchestrator
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
         }
 
-        // Between user messages: keep text context (user messages + model text replies)
-        // and the LAST computer_call + computer_call_output pair so the model has visual
-        // context for simple follow-ups. Both must be kept together — the API requires
-        // a matching computer_call for every computer_call_output (linked by call_id).
-        JsonElement? lastCall = null;
-        JsonElement? lastCallOutput = null;
-        for (var histIdx = session.ConversationHistory.Count - 1; histIdx >= 0; histIdx--)
+        // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message if session already active
+        if (_toolType == "computer" && session.ConversationHistory.Count == 0 && session.SessionStarted)
         {
-            var entry = session.ConversationHistory[histIdx];
-            if (entry.TryGetProperty("type", out var entryType) && entryType.GetString() == "computer_call_output")
+            var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
+            var initialName = $"{conversationId[..8]}_{++session.ScreenshotCounter:D3}_initial";
+            SaveScreenshotToDisk(initialScreenshot!, initialName);
+            var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+            if (folderUrlReuse != null && onFolderLinkReady != null)
+                await onFolderLinkReady(folderUrlReuse);
+            session.ConversationHistory.Add(ToJsonElement(new
             {
-                lastCallOutput = entry;
-                // Find the matching computer_call by call_id
-                var outputCallId = entry.TryGetProperty("call_id", out var callIdProp) ? callIdProp.GetString() : null;
-                if (outputCallId != null)
+                type = "message",
+                role = "user",
+                content = new object[]
                 {
-                    for (var searchIdx = histIdx - 1; searchIdx >= 0; searchIdx--)
-                    {
-                        var earlier = session.ConversationHistory[searchIdx];
-                        if (earlier.TryGetProperty("type", out var earlierType) && earlierType.GetString() == "computer_call"
-                            && earlier.TryGetProperty("call_id", out var earlierCallId) && earlierCallId.GetString() == outputCallId)
-                        {
-                            lastCall = earlier;
-                            break;
-                        }
-                    }
+                    new { type = "input_text", text = userMessage },
+                    new { type = "input_image", image_url = $"data:image/png;base64,{initialScreenshot}" }
                 }
-                break;
+            }));
+        }
+        else
+        {
+            session.ConversationHistory.Add(CreateUserMessage(userMessage));
+        }
+
+        // Build the model's tools list — computer + OnTaskComplete + any additional function tools
+        var modelTools = new List<object>(_tools);
+        if (additionalTools?.Count > 0)
+        {
+            foreach (var tool in additionalTools.OfType<AIFunction>())
+            {
+                modelTools.Add(new FunctionToolDefinition
+                {
+                    Name = tool.Name,
+                    Description = tool.Description ?? string.Empty,
+                    Parameters = tool.JsonSchema
+                });
+            }
+
+            _logger.LogInformation("Added {Count} additional function tools to model", additionalTools.Count);
+            foreach (var tool in additionalTools.OfType<AIFunction>())
+            {
+                var schemaStr = tool.JsonSchema.GetRawText();
+                _logger.LogInformation("Function tool: {Name}, Description: {Desc}, Schema: {Schema}",
+                    tool.Name, Truncate(tool.Description ?? "", 80), Truncate(schemaStr, 200));
             }
         }
-        session.ConversationHistory.RemoveAll(item =>
-        {
-            var itemType = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
-            return itemType is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
-        });
-        if (lastCall.HasValue && lastCallOutput.HasValue)
-        {
-            session.ConversationHistory.Add(lastCall.Value);
-            session.ConversationHistory.Add(lastCallOutput.Value);
-        }
-        session.NewItems.Clear();
-        session.LastResponseId = null;
 
-        var userMsg = CreateUserMessage(userMessage);
-        session.ConversationHistory.Add(userMsg);
-        session.NewItems.Add(userMsg);
-
+        var cuaAcknowledged = false;
         for (var i = 0; i < _maxIterations; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var response = await CallModelAsync(session, cancellationToken);
+            var response = await CallModelAsync(session.ConversationHistory, modelTools, cancellationToken);
             if (response?.Output == null || response.Output.Count == 0)
                 break;
 
@@ -200,9 +224,6 @@ public class ComputerUseOrchestrator
                 if (type == "reasoning") continue;
 
                 session.ConversationHistory.Add(item);
-                // No need to add model output items to NewItems — the API reconstructs
-                // its own output from previous_response_id. We only need to send new
-                // user-side items (user messages, computer_call_output, function_call_output).
 
                 switch (type)
                 {
@@ -211,64 +232,48 @@ public class ComputerUseOrchestrator
 
                     case "computer_call":
                         hasActions = true;
-                        _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
-
-                        // Lazy session start — only spin up the VM when the model actually needs the computer
-                        if (!session.SessionStarted)
+                        // Lazy session start: only start when CUA is actually needed
+                        if (!cuaAcknowledged)
                         {
-                            _logger.LogInformation("First computer_call for conversation {ConversationId} — starting session", conversationId);
-                            onStatusUpdate?.Invoke("Starting W365 computing session...");
-                            try
+                            if (!session.SessionStarted)
                             {
+                                _logger.LogInformation("CUA needed for conversation {ConversationId} — starting session", conversationId);
+                                if (onCuaStarting != null)
+                                    await onCuaStarting(true);
+                                onStatusUpdate?.Invoke("Starting W365 computing session...");
                                 session.W365SessionId = await StartSessionAsync(w365Tools, _logger, cancellationToken);
                                 session.SessionStarted = true;
-                                // Update subfolder to use session ID instead of conversation ID
+                                // Update subfolder to use W365 session ID instead of conversation ID
                                 var safeSessionId = session.W365SessionId != null
                                     ? new string(session.W365SessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
                                     : "unknown";
                                 session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
                                 _logger.LogInformation("Session started for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
                             }
-                            catch (Exception ex)
+                            else if (onCuaStarting != null)
                             {
-                                _logger.LogError(ex, "QuickStartSession failed for conversation {ConversationId}", conversationId);
-                                return "Unable to start a W365 Cloud PC session. This could mean:\n" +
-                                       "- No Cloud PC pools are available for your agent user\n" +
-                                       "- All sessions in the pool are currently in use\n" +
-                                       "- The agent user doesn't have the required permissions\n\n" +
-                                       $"Error: {ex.Message}";
+                                await onCuaStarting(false);
                             }
 
-                            // For gpt-5.4+ ("computer" tool type), capture an initial screenshot
-                            if (_toolType == "computer")
-                            {
-                                var initialScreenshot = await CaptureScreenshotCoreAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
-                                var initialName = $"{++session.ScreenshotCounter:D3}_initial";
-                                SaveScreenshotToDisk(initialScreenshot!, initialName);
-                                var folderUrl = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
-                                if (folderUrl != null && onFolderLinkReady != null)
-                                    await onFolderLinkReady(folderUrl);
-                            }
+                            cuaAcknowledged = true;
                         }
 
-                        var callOutput = await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken);
-                        session.ConversationHistory.Add(callOutput);
-                        session.NewItems.Add(callOutput);
+                        _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
+                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
                         break;
 
                     case "function_call":
                         hasActions = true;
                         var funcName = item.GetProperty("name").GetString();
                         _logger.LogInformation("CUA iteration {Iteration}: function_call {Name}", i + 1, funcName);
-                        var funcOutput = CreateFunctionOutput(item.GetProperty("call_id").GetString()!);
-                        session.ConversationHistory.Add(funcOutput);
-                        session.NewItems.Add(funcOutput);
                         if (funcName == "OnTaskComplete")
                         {
+                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                             return "Task completed successfully.";
                         }
                         if (funcName == "EndSession")
                         {
+                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                             if (session.SessionStarted)
                             {
                                 _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
@@ -280,6 +285,14 @@ public class ComputerUseOrchestrator
                             }
                             return "Session ended. The VM has been released back to the pool.";
                         }
+
+                        // Invoke additional MCP function tool
+                        if (additionalTools != null)
+                        {
+                            var callResult = await InvokeFunctionCallAsync(item, additionalTools, cancellationToken);
+                            session.ConversationHistory.Add(callResult);
+                        }
+
                         break;
                 }
             }
@@ -288,26 +301,6 @@ public class ComputerUseOrchestrator
         }
 
         return "The task could not be completed within the allowed number of steps.";
-    }
-
-    /// <summary>
-    /// Check if a conversation has an active W365 session.
-    /// </summary>
-    public bool HasActiveSession(string conversationId)
-    {
-        return _sessions.TryGetValue(conversationId, out var session) && session.SessionStarted;
-    }
-
-    /// <summary>
-    /// End the session for a specific conversation and clean up state.
-    /// </summary>
-    public async Task EndConversationSessionAsync(string conversationId, IList<AITool> tools, CancellationToken ct)
-    {
-        if (_sessions.TryRemove(conversationId, out var session) && session.SessionStarted)
-        {
-            _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
-            await EndSessionAsync(tools, _logger, session.W365SessionId, ct);
-        }
     }
 
     /// <summary>
@@ -360,11 +353,14 @@ public class ComputerUseOrchestrator
         _sessions.Clear();
         _cachedTools = null;
 
-        if (_cachedMcpClient != null)
+        foreach (var client in _allMcpClients)
         {
-            await _cachedMcpClient.DisposeAsync();
-            _cachedMcpClient = null;
+            try { await client.DisposeAsync(); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
         }
+
+        _allMcpClients.Clear();
+        _cachedMcpClient = null;
     }
 
     /// <summary>
@@ -414,75 +410,79 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Get or create the MCP client and tool list. Creates the connection once on first call,
-    /// then returns the cached result on subsequent calls. This ensures the SSE connection
-    /// stays alive across messages (MyAgent is transient, but this orchestrator is singleton).
+    /// Get or create MCP clients and merged tool list. Connects to each server URL once on first call,
+    /// then returns the cached result on subsequent calls. The SSE connections stay alive across
+    /// messages (MyAgent is transient, but this orchestrator is singleton).
+    /// The primary MCP client (for W365 screenshot calls) is the one whose tools start with "W365_".
     /// </summary>
     public async Task<(IList<AITool> Tools, IMcpClient? Client)> GetOrCreateMcpConnectionAsync(
-        string mcpUrl, string accessToken)
+        IList<string> mcpUrls, string accessToken)
     {
         if (_cachedTools != null)
             return (_cachedTools, _cachedMcpClient);
 
-        var httpClient = _httpClient;
-        httpClient.DefaultRequestHeaders.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var allTools = new List<AITool>();
 
-        var transport = new SseClientTransport(new SseClientTransportOptions
+        foreach (var url in mcpUrls)
         {
-            Endpoint = new Uri(mcpUrl),
-            TransportMode = HttpTransportMode.AutoDetect,
-        }, httpClient);
+            try
+            {
+                // Each MCP server needs its own HttpClient — the auto-detect transport
+                // manages internal state that conflicts when shared across connections.
+                var httpClient = _httpClientFactory.CreateClient("McpConnection");
+                httpClient.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
 
-        _cachedMcpClient = await McpClientFactory.CreateAsync(transport);
-        var allTools = (await _cachedMcpClient.ListToolsAsync()).Cast<AITool>().ToList();
+                var transport = new SseClientTransport(new SseClientTransportOptions
+                {
+                    Endpoint = new Uri(url),
+                    TransportMode = HttpTransportMode.AutoDetect,
+                }, httpClient);
 
-        // Filter to W365 tools only
-        _cachedTools = allTools.Where(t =>
-        {
-            var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
-            return name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
-        }).ToList();
+                var client = await McpClientFactory.CreateAsync(transport);
+                var tools = (await client.ListToolsAsync()).Cast<AITool>().ToList();
 
-        _logger.LogInformation("Connected to MCP server at {Url}, loaded {Count} W365 tools", mcpUrl, _cachedTools.Count);
+                _allMcpClients.Add(client);
+                allTools.AddRange(tools);
+
+                // Use the W365 server's client for direct screenshot calls
+                var hasW365Tools = tools.Any(t => (t as AIFunction)?.Name?.StartsWith("W365_", StringComparison.OrdinalIgnoreCase) == true);
+                if (hasW365Tools)
+                    _cachedMcpClient = client;
+
+                _logger.LogInformation("Connected to MCP server at {Url}, loaded {Count} tools: {Names}",
+                    url, tools.Count, string.Join(", ", tools.Select(t => (t as AIFunction)?.Name ?? "?")));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to connect to MCP server at {Url}. Skipping.", url);
+            }
+        }
+
+        // Fallback: use first client if no W365 server found
+        _cachedMcpClient ??= _allMcpClients.FirstOrDefault();
+
+        _cachedTools = allTools;
+        _logger.LogInformation("Total tools from {ServerCount} MCP server(s): {ToolCount}", mcpUrls.Count, allTools.Count);
         return (_cachedTools, _cachedMcpClient);
     }
 
-    private async Task<ComputerUseResponse?> CallModelAsync(ConversationSession session, CancellationToken ct)
+    private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, CancellationToken ct)
     {
-        List<JsonElement> input;
-        string? previousResponseId = null;
-
-        if (session.LastResponseId != null)
-        {
-            // Send only the items added since the last model call
-            input = session.NewItems;
-            previousResponseId = session.LastResponseId;
-        }
-        else
-        {
-            // First call — send the full conversation history
-            input = session.ConversationHistory;
-        }
-
         var body = JsonSerializer.Serialize(new ComputerUseRequest
         {
             Model = _modelProvider.ModelName,
             Instructions = SystemInstructions,
-            PreviousResponseId = previousResponseId,
-            Input = input,
-            Tools = _tools,
+            Input = conversation,
+            Tools = tools,
             Truncation = "auto"
         }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
 
+        _logger.LogInformation("Model request (first 2000 chars): {Body}", body[..Math.Min(2000, body.Length)]);
+
         var responseJson = await _modelProvider.SendAsync(body, ct);
-        var response = JsonSerializer.Deserialize<ComputerUseResponse>(responseJson);
-
-        // Store the response ID for the next call and reset new items
-        session.LastResponseId = response?.Id;
-        session.NewItems.Clear();
-
-        return response;
+        _logger.LogInformation("Model response (first 2000 chars): {Response}", responseJson[..Math.Min(2000, responseJson.Length)]);
+        return JsonSerializer.Deserialize<ComputerUseResponse>(responseJson);
     }
 
     /// <summary>
@@ -512,7 +512,6 @@ public class ComputerUseOrchestrator
                     {
                         onStatus?.Invoke("Session lost — recovering...");
                         sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
-                        // Re-map with new sessionId and retry
                         (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
                         await InvokeToolAsync(tools, toolName, args, ct);
                     }
@@ -538,18 +537,8 @@ public class ComputerUseOrchestrator
             }
         }
 
-        // Always capture screenshot after action — with session recovery (same pattern as action tools)
-        string screenshot;
-        try
-        {
-            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
-        }
-        catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
-        {
-            onStatus?.Invoke("Session lost — recovering...");
-            sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
-            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
-        }
+        // Always capture screenshot after action
+        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
@@ -637,7 +626,7 @@ public class ComputerUseOrchestrator
         return (toolName, args);
     }
 
-    private async Task<string> CaptureScreenshotCoreAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
+    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
         var screenshotArgs = new Dictionary<string, object?>();
         if (!string.IsNullOrEmpty(sessionId))
@@ -663,11 +652,6 @@ public class ComputerUseOrchestrator
                 }
             }
 
-            // Check if the error is a session-not-found before throwing
-            var contentText = string.Join(" ", result.Content.Select(c => c.Text ?? ""));
-            if (IsSessionNotFoundError(contentText))
-                throw new InvalidOperationException($"Screenshot failed: no active session. Response: {contentText[..Math.Min(300, contentText.Length)]}");
-
             // Log full content for debugging
             foreach (var item in result.Content)
                 _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
@@ -682,10 +666,6 @@ public class ComputerUseOrchestrator
         _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
             aiResult?.GetType().Name ?? "null", str.Length, str[..Math.Min(200, str.Length)]);
 
-        // Detect session-not-found early so the retry wrapper can recover the session
-        if (IsSessionNotFoundError(str))
-            throw new InvalidOperationException($"Screenshot failed: no active session. Response: {str[..Math.Min(300, str.Length)]}");
-
         try
         {
             using var doc = JsonDocument.Parse(str);
@@ -699,8 +679,11 @@ public class ComputerUseOrchestrator
             {
                 foreach (var block in content.EnumerateArray())
                 {
-                    if (block.TryGetProperty("data", out var blockData) && !string.IsNullOrEmpty(blockData.GetString()))
-                        return blockData.GetString();
+                    if (block.TryGetProperty("data", out var blockData))
+                    {
+                        var data = blockData.GetString();
+                        if (!string.IsNullOrEmpty(data)) return data;
+                    }
                     if (block.TryGetProperty("text", out var blockText))
                     {
                         var extracted = ExtractBase64FromText(blockText.GetString());
@@ -775,7 +758,6 @@ public class ComputerUseOrchestrator
     {
         logger.LogWarning("Session lost for W365SessionId={SessionId}. Recovering — ending stale session and starting new one.", session.W365SessionId);
 
-        // Best-effort end the stale session
         try
         {
             await EndSessionAsync(tools, logger, session.W365SessionId, ct);
@@ -785,15 +767,9 @@ public class ComputerUseOrchestrator
             logger.LogWarning(ex, "Best-effort EndSession during recovery failed for {SessionId}", session.W365SessionId);
         }
 
-        // Start a fresh session
         var newSessionId = await StartSessionAsync(tools, logger, ct);
         session.W365SessionId = newSessionId;
         session.SessionStarted = true;
-        // Update subfolder to use new session ID
-        var safeSessionId = newSessionId != null
-            ? new string(newSessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
-            : "unknown";
-        session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
         logger.LogInformation("Session recovered. New W365SessionId={SessionId}", newSessionId);
         return newSessionId;
     }
@@ -827,10 +803,38 @@ public class ComputerUseOrchestrator
         content = new[] { new { type = "input_text", text } }
     });
 
-    private static JsonElement CreateFunctionOutput(string callId) => ToJsonElement(new
+    private static JsonElement CreateFunctionOutput(string callId, string output = "success") => ToJsonElement(new
     {
-        type = "function_call_output", call_id = callId, output = "success"
+        type = "function_call_output", call_id = callId, output
     });
+
+    /// <summary>
+    /// Invoke an MCP function tool from a model function_call and return the function_call_output.
+    /// </summary>
+    private async Task<JsonElement> InvokeFunctionCallAsync(JsonElement functionCall, IList<AITool> tools, CancellationToken ct)
+    {
+        var callId = functionCall.GetProperty("call_id").GetString()!;
+        var name = functionCall.GetProperty("name").GetString()!;
+        var argsStr = functionCall.GetProperty("arguments").GetString() ?? "{}";
+
+        _logger.LogInformation("Function call {Name} invoked. call_id={CallId}, args={Args}",
+            name, callId, Truncate(argsStr, 1000));
+
+        try
+        {
+            var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsStr) ?? [];
+            var result = await InvokeToolAsync(tools, name, args, ct);
+            var resultStr = result?.ToString() ?? "success";
+            _logger.LogInformation("Function call {Name} returned ({Length} chars): {Result}",
+                name, resultStr.Length, Truncate(resultStr, 2000));
+            return CreateFunctionOutput(callId, resultStr);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Function call {Name} threw. call_id={CallId}", name, callId);
+            return CreateFunctionOutput(callId, $"Error: {ex.Message}");
+        }
+    }
 
     private static JsonElement ToJsonElement(object obj) =>
         JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(obj));
@@ -878,11 +882,14 @@ public class ComputerUseOrchestrator
 
         try
         {
-            // Upload to /CUA-Sessions/{subfolder}/{fileName} — subfolder is per-conversation
+            // Use /me/drive for token owner, or /users/{id}/drive for a specific user
+            var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
+                ? "https://graph.microsoft.com/v1.0/me/drive"
+                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
             var folderPath = string.IsNullOrEmpty(subfolder)
                 ? _oneDriveFolder.TrimStart('/')
                 : $"{_oneDriveFolder.TrimStart('/')}/{subfolder}";
-            var url = $"https://graph.microsoft.com/v1.0/me/drive/root:/{folderPath}/{fileName}:/content";
+            var url = $"{driveBase}/root:/{folderPath}/{fileName}:/content";
 
             using var request = new HttpRequestMessage(HttpMethod.Put, url);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
@@ -927,9 +934,11 @@ public class ComputerUseOrchestrator
     {
         try
         {
-            // Get the folder's item ID
-            var folderUrl = $"https://graph.microsoft.com/v1.0/me/drive/root:/{folderPath}";
-            using var getRequest = new HttpRequestMessage(HttpMethod.Get, folderUrl);
+            var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
+                ? "https://graph.microsoft.com/v1.0/me/drive"
+                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
+
+            using var getRequest = new HttpRequestMessage(HttpMethod.Get, $"{driveBase}/root:/{folderPath}");
             getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
             var getResponse = await _httpClient.SendAsync(getRequest);
 
@@ -944,9 +953,7 @@ public class ComputerUseOrchestrator
             var folderId = doc.RootElement.GetProperty("id").GetString();
             var webUrl = doc.RootElement.TryGetProperty("webUrl", out var wu) ? wu.GetString() : null;
 
-            // Create an organization-scoped view link
-            var linkUrl = $"https://graph.microsoft.com/v1.0/me/drive/items/{folderId}/createLink";
-            using var linkRequest = new HttpRequestMessage(HttpMethod.Post, linkUrl);
+            using var linkRequest = new HttpRequestMessage(HttpMethod.Post, $"{driveBase}/items/{folderId}/createLink");
             linkRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
             linkRequest.Content = new StringContent(
                 JsonSerializer.Serialize(new { type = "view", scope = "organization" }),
@@ -965,7 +972,6 @@ public class ComputerUseOrchestrator
             {
                 var errorContent = await linkResponse.Content.ReadAsStringAsync();
                 _logger.LogWarning("Failed to create sharing link: {Status} {Content}", linkResponse.StatusCode, errorContent);
-                // Fall back to the folder's webUrl (user may not be able to access without sharing)
                 return webUrl;
             }
         }
@@ -985,10 +991,8 @@ public class ComputerUseOrchestrator
         public bool SessionStarted { get; set; }
         public string? W365SessionId { get; set; }
         public List<JsonElement> ConversationHistory { get; } = [];
-        public List<JsonElement> NewItems { get; } = [];
-        public string? LastResponseId { get; set; }
         public int ScreenshotCounter { get; set; }
-        public bool FolderShared { get; set; }
         public string? ScreenshotSubfolder { get; set; }
+        public bool FolderShared { get; set; }
     }
 }

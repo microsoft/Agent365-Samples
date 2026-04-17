@@ -80,7 +80,6 @@ export class A365Agent extends AgentApplication<TurnState> {
       new BaggageBuilder(),
       turnContext
     ).sessionDescription('Initial onboarding session')
-      .correlationId(`corr-${Date.now()}`)
       .build();
 
     // Preload/refresh exporter token
