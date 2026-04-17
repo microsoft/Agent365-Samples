@@ -41,6 +41,9 @@ public class ComputerUseRequest
     [JsonPropertyName("instructions")]
     public string? Instructions { get; set; }
 
+    [JsonPropertyName("previous_response_id")]
+    public string? PreviousResponseId { get; set; }
+
     [JsonPropertyName("input")]
     public List<JsonElement> Input { get; set; } = [];
 

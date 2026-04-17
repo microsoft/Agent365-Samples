@@ -197,6 +197,7 @@ public class MyAgent : AgentApplication
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                    var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
 
                     // Get MCP tools — direct connection in Dev, SDK in Production
                     var (w365Tools, additionalTools, mcpClient) = await GetToolsAsync(turnContext, ToolAuthHandlerName);
@@ -225,7 +226,6 @@ public class MyAgent : AgentApplication
                         }
 
                         // Run the CUA loop — session is managed per conversation
-                        var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
                         var response = await _orchestrator.RunAsync(
                             conversationId,
                             userText,

@@ -71,6 +71,8 @@ public class ComputerUseOrchestrator
         If you see browser setup or sign-in dialogs, dismiss them (Escape, X, or Skip).
         Once you have completed a computer use task, call the OnTaskComplete function.
         Do NOT continue looping after the task is done.
+        If the user wants to end, quit, or disconnect their session, call the EndSession function.
+        If the user sends a casual greeting or question that does not require computer use, reply with a helpful text message.
         """;
 
     public ComputerUseOrchestrator(
@@ -116,6 +118,11 @@ public class ComputerUseOrchestrator
             {
                 Name = "OnTaskComplete",
                 Description = "Call this function when the given task has been completed successfully."
+            },
+            new FunctionToolDefinition
+            {
+                Name = "EndSession",
+                Description = "Call this function when the user wants to end, quit, disconnect, or release their computer session."
             }
         ];
     }
@@ -163,19 +170,41 @@ public class ComputerUseOrchestrator
                 await onFolderLinkReady(folderUrlReuse);
             session.ConversationHistory.Add(ToJsonElement(new
             {
-                type = "message",
-                role = "user",
-                content = new object[]
+                lastCallOutput = entry;
+                // Find the matching computer_call by call_id
+                var outputCallId = entry.TryGetProperty("call_id", out var callIdProp) ? callIdProp.GetString() : null;
+                if (outputCallId != null)
                 {
-                    new { type = "input_text", text = userMessage },
-                    new { type = "input_image", image_url = $"data:image/png;base64,{initialScreenshot}" }
+                    for (var searchIdx = histIdx - 1; searchIdx >= 0; searchIdx--)
+                    {
+                        var earlier = session.ConversationHistory[searchIdx];
+                        if (earlier.TryGetProperty("type", out var earlierType) && earlierType.GetString() == "computer_call"
+                            && earlier.TryGetProperty("call_id", out var earlierCallId) && earlierCallId.GetString() == outputCallId)
+                        {
+                            lastCall = earlier;
+                            break;
+                        }
+                    }
                 }
-            }));
+                break;
+            }
         }
-        else
+        session.ConversationHistory.RemoveAll(item =>
         {
-            session.ConversationHistory.Add(CreateUserMessage(userMessage));
+            var itemType = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
+            return itemType is "computer_call" or "computer_call_output" or "function_call" or "function_call_output";
+        });
+        if (lastCall.HasValue && lastCallOutput.HasValue)
+        {
+            session.ConversationHistory.Add(lastCall.Value);
+            session.ConversationHistory.Add(lastCallOutput.Value);
         }
+        session.NewItems.Clear();
+        session.LastResponseId = null;
+
+        var userMsg = CreateUserMessage(userMessage);
+        session.ConversationHistory.Add(userMsg);
+        session.NewItems.Add(userMsg);
 
         // Build the model's tools list — computer + OnTaskComplete + any additional function tools
         var modelTools = new List<object>(_tools);
@@ -217,6 +246,9 @@ public class ComputerUseOrchestrator
                 if (type == "reasoning") continue;
 
                 session.ConversationHistory.Add(item);
+                // No need to add model output items to NewItems — the API reconstructs
+                // its own output from previous_response_id. We only need to send new
+                // user-side items (user messages, computer_call_output, function_call_output).
 
                 switch (type)
                 {
@@ -283,6 +315,26 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
+    /// Check if a conversation has an active W365 session.
+    /// </summary>
+    public bool HasActiveSession(string conversationId)
+    {
+        return _sessions.TryGetValue(conversationId, out var session) && session.SessionStarted;
+    }
+
+    /// <summary>
+    /// End the session for a specific conversation and clean up state.
+    /// </summary>
+    public async Task EndConversationSessionAsync(string conversationId, IList<AITool> tools, CancellationToken ct)
+    {
+        if (_sessions.TryRemove(conversationId, out var session) && session.SessionStarted)
+        {
+            _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+            await EndSessionAsync(tools, _logger, session.W365SessionId, ct);
+        }
+    }
+
+    /// <summary>
     /// End the W365 session. Called by the agent on shutdown or explicit end.
     /// </summary>
     public static async Task EndSessionAsync(IList<AITool> tools, ILogger logger, string? sessionId, CancellationToken ct)
@@ -298,6 +350,10 @@ public class ComputerUseOrchestrator
         catch (ObjectDisposedException)
         {
             logger.LogInformation("MCP client already disposed — W365 session will be released by server timeout");
+        }
+        catch (HttpRequestException httpEx) when (httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            logger.LogInformation("MCP transport session expired (404) — W365 session will be released by server timeout");
         }
         catch (Exception ex)
         {
@@ -444,6 +500,21 @@ public class ComputerUseOrchestrator
 
     private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, CancellationToken ct)
     {
+        List<JsonElement> input;
+        string? previousResponseId = null;
+
+        if (session.LastResponseId != null)
+        {
+            // Send only the items added since the last model call
+            input = session.NewItems;
+            previousResponseId = session.LastResponseId;
+        }
+        else
+        {
+            // First call — send the full conversation history
+            input = session.ConversationHistory;
+        }
+
         var body = JsonSerializer.Serialize(new ComputerUseRequest
         {
             Model = _modelProvider.ModelName,
@@ -482,7 +553,15 @@ public class ComputerUseOrchestrator
                 if (actionType != "screenshot")
                 {
                     var (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
-                    await InvokeToolAsync(tools, toolName, args, ct);
+                    var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                    if (sessionLost)
+                    {
+                        onStatus?.Invoke("Session lost — recovering...");
+                        sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+                        // Re-map with new sessionId and retry
+                        (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
+                        await InvokeToolAsync(tools, toolName, args, ct);
+                    }
                 }
             }
         }
@@ -494,12 +573,29 @@ public class ComputerUseOrchestrator
             if (actionType != "screenshot")
             {
                 var (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
-                await InvokeToolAsync(tools, toolName, args, ct);
+                var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                if (sessionLost)
+                {
+                    onStatus?.Invoke("Session lost — recovering...");
+                    sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+                    (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
+                    await InvokeToolAsync(tools, toolName, args, ct);
+                }
             }
         }
 
-        // Always capture screenshot after action
-        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
+        // Always capture screenshot after action — with session recovery (same pattern as action tools)
+        string screenshot;
+        try
+        {
+            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
+        }
+        catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
+        {
+            onStatus?.Invoke("Session lost — recovering...");
+            sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+            screenshot = await CaptureScreenshotCoreAsync(tools, mcpClient, sessionId, ct);
+        }
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName);
@@ -587,7 +683,7 @@ public class ComputerUseOrchestrator
         return (toolName, args);
     }
 
-    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
+    private async Task<string> CaptureScreenshotCoreAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
         var screenshotArgs = new Dictionary<string, object?>();
         if (!string.IsNullOrEmpty(sessionId))
@@ -613,6 +709,11 @@ public class ComputerUseOrchestrator
                 }
             }
 
+            // Check if the error is a session-not-found before throwing
+            var contentText = string.Join(" ", result.Content.Select(c => c.Text ?? ""));
+            if (IsSessionNotFoundError(contentText))
+                throw new InvalidOperationException($"Screenshot failed: no active session. Response: {contentText[..Math.Min(300, contentText.Length)]}");
+
             // Log full content for debugging
             foreach (var item in result.Content)
                 _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
@@ -626,6 +727,10 @@ public class ComputerUseOrchestrator
 
         _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
             aiResult?.GetType().Name ?? "null", str.Length, str[..Math.Min(200, str.Length)]);
+
+        // Detect session-not-found early so the retry wrapper can recover the session
+        if (IsSessionNotFoundError(str))
+            throw new InvalidOperationException($"Screenshot failed: no active session. Response: {str[..Math.Min(300, str.Length)]}");
 
         try
         {
@@ -680,6 +785,63 @@ public class ComputerUseOrchestrator
         var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Tool '{name}' not found.");
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
+    }
+
+    /// <summary>
+    /// Invoke a tool and detect session-not-found errors. Returns (result, isSessionLost).
+    /// </summary>
+    private static async Task<(object? Result, bool IsSessionLost)> InvokeToolCheckSessionAsync(
+        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    {
+        var result = await InvokeToolAsync(tools, name, args, ct);
+        var resultStr = result?.ToString() ?? "";
+        if (IsSessionNotFoundError(resultStr))
+            return (result, true);
+        return (result, false);
+    }
+
+    /// <summary>
+    /// Check if a tool response indicates the session is no longer valid.
+    /// </summary>
+    private static bool IsSessionNotFoundError(string response)
+    {
+        if (string.IsNullOrEmpty(response)) return false;
+        var lower = response.ToLowerInvariant();
+        return lower.Contains("no active session found") ||
+               lower.Contains("session not found") ||
+               lower.Contains("session expired") ||
+               lower.Contains("session has been terminated");
+    }
+
+    /// <summary>
+    /// Recover from a lost session: end the stale session (best-effort) and start a new one.
+    /// </summary>
+    private async Task<string?> RecoverSessionAsync(
+        ConversationSession session, IList<AITool> tools, ILogger logger, CancellationToken ct)
+    {
+        logger.LogWarning("Session lost for W365SessionId={SessionId}. Recovering — ending stale session and starting new one.", session.W365SessionId);
+
+        // Best-effort end the stale session
+        try
+        {
+            await EndSessionAsync(tools, logger, session.W365SessionId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Best-effort EndSession during recovery failed for {SessionId}", session.W365SessionId);
+        }
+
+        // Start a fresh session
+        var newSessionId = await StartSessionAsync(tools, logger, ct);
+        session.W365SessionId = newSessionId;
+        session.SessionStarted = true;
+        // Update subfolder to use new session ID
+        var safeSessionId = newSessionId != null
+            ? new string(newSessionId.Where(c => char.IsLetterOrDigit(c) || c == '-').ToArray())
+            : "unknown";
+        session.ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeSessionId}";
+        logger.LogInformation("Session recovered. New W365SessionId={SessionId}", newSessionId);
+        return newSessionId;
     }
 
     private static string[] ExtractKeys(JsonElement action)
@@ -899,6 +1061,8 @@ public class ComputerUseOrchestrator
         public bool SessionStarted { get; set; }
         public string? W365SessionId { get; set; }
         public List<JsonElement> ConversationHistory { get; } = [];
+        public List<JsonElement> NewItems { get; } = [];
+        public string? LastResponseId { get; set; }
         public int ScreenshotCounter { get; set; }
         public string? ScreenshotSubfolder { get; set; }
         public bool FolderShared { get; set; }
