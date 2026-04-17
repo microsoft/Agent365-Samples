@@ -57,7 +57,7 @@ Weather data is fetched from [Open-Meteo](https://open-meteo.com/) — no API ke
 ## Running the Agent
 
 ```bash
-dotnet run --project weather-agent/DotNetAutonomousBaseline.csproj
+dotnet run --project weather-agent/AgentFrameworkAutonomousAgent.csproj
 ```
 
 Or open `DotNetAutonomous.sln` in Visual Studio and press F5.
