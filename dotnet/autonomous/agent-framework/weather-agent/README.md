@@ -60,7 +60,7 @@ Weather data is fetched from [Open-Meteo](https://open-meteo.com/) — no API ke
 dotnet run --project weather-agent/AgentFrameworkAutonomousAgent.csproj
 ```
 
-Or open `DotNetAutonomous.sln` in Visual Studio and press F5.
+Or open `AgentFrameworkAutonomousAgent.sln` in Visual Studio and press F5.
 
 The agent starts on `http://localhost:3978` in Development mode. Console output will show:
 
