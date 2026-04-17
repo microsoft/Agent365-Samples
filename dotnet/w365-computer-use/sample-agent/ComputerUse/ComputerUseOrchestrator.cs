@@ -71,6 +71,8 @@ public class ComputerUseOrchestrator
         If you see browser setup or sign-in dialogs, dismiss them (Escape, X, or Skip).
         Once you have completed a computer use task, call the OnTaskComplete function.
         Do NOT continue looping after the task is done.
+        If the user wants to end, quit, or disconnect their session, call the EndSession function.
+        If the user sends a casual greeting or question that does not require computer use, reply with a helpful text message.
         """;
 
     public ComputerUseOrchestrator(
@@ -116,6 +118,11 @@ public class ComputerUseOrchestrator
             {
                 Name = "OnTaskComplete",
                 Description = "Call this function when the given task has been completed successfully."
+            },
+            new FunctionToolDefinition
+            {
+                Name = "EndSession",
+                Description = "Call this function when the user wants to end, quit, disconnect, or release their computer session."
             }
         ];
     }
@@ -264,6 +271,20 @@ public class ComputerUseOrchestrator
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                             return "Task completed successfully.";
                         }
+                        if (funcName == "EndSession")
+                        {
+                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
+                            if (session.SessionStarted)
+                            {
+                                _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
+                                onStatusUpdate?.Invoke("Ending session...");
+                                await EndSessionAsync(w365Tools, _logger, session.W365SessionId, cancellationToken);
+                                session.SessionStarted = false;
+                                session.W365SessionId = null;
+                                _sessions.TryRemove(conversationId, out _);
+                            }
+                            return "Session ended. The VM has been released back to the pool.";
+                        }
 
                         // Invoke additional MCP function tool
                         if (additionalTools != null)
@@ -298,6 +319,10 @@ public class ComputerUseOrchestrator
         catch (ObjectDisposedException)
         {
             logger.LogInformation("MCP client already disposed — W365 session will be released by server timeout");
+        }
+        catch (HttpRequestException httpEx) when (httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            logger.LogInformation("MCP transport session expired (404) — W365 session will be released by server timeout");
         }
         catch (Exception ex)
         {
@@ -482,7 +507,14 @@ public class ComputerUseOrchestrator
                 if (actionType != "screenshot")
                 {
                     var (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
-                    await InvokeToolAsync(tools, toolName, args, ct);
+                    var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                    if (sessionLost)
+                    {
+                        onStatus?.Invoke("Session lost — recovering...");
+                        sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+                        (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
+                        await InvokeToolAsync(tools, toolName, args, ct);
+                    }
                 }
             }
         }
@@ -494,7 +526,14 @@ public class ComputerUseOrchestrator
             if (actionType != "screenshot")
             {
                 var (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
-                await InvokeToolAsync(tools, toolName, args, ct);
+                var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                if (sessionLost)
+                {
+                    onStatus?.Invoke("Session lost — recovering...");
+                    sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
+                    (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
+                    await InvokeToolAsync(tools, toolName, args, ct);
+                }
             }
         }
 
@@ -640,8 +679,11 @@ public class ComputerUseOrchestrator
             {
                 foreach (var block in content.EnumerateArray())
                 {
-                    if (block.TryGetProperty("data", out var blockData) && !string.IsNullOrEmpty(blockData.GetString()))
-                        return blockData.GetString();
+                    if (block.TryGetProperty("data", out var blockData))
+                    {
+                        var data = blockData.GetString();
+                        if (!string.IsNullOrEmpty(data)) return data;
+                    }
                     if (block.TryGetProperty("text", out var blockText))
                     {
                         var extracted = ExtractBase64FromText(blockText.GetString());
@@ -680,6 +722,56 @@ public class ComputerUseOrchestrator
         var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Tool '{name}' not found.");
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
+    }
+
+    /// <summary>
+    /// Invoke a tool and detect session-not-found errors. Returns (result, isSessionLost).
+    /// </summary>
+    private static async Task<(object? Result, bool IsSessionLost)> InvokeToolCheckSessionAsync(
+        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    {
+        var result = await InvokeToolAsync(tools, name, args, ct);
+        var resultStr = result?.ToString() ?? "";
+        if (IsSessionNotFoundError(resultStr))
+            return (result, true);
+        return (result, false);
+    }
+
+    /// <summary>
+    /// Check if a tool response indicates the session is no longer valid.
+    /// </summary>
+    private static bool IsSessionNotFoundError(string response)
+    {
+        if (string.IsNullOrEmpty(response)) return false;
+        var lower = response.ToLowerInvariant();
+        return lower.Contains("no active session found") ||
+               lower.Contains("session not found") ||
+               lower.Contains("session expired") ||
+               lower.Contains("session has been terminated");
+    }
+
+    /// <summary>
+    /// Recover from a lost session: end the stale session (best-effort) and start a new one.
+    /// </summary>
+    private async Task<string?> RecoverSessionAsync(
+        ConversationSession session, IList<AITool> tools, ILogger logger, CancellationToken ct)
+    {
+        logger.LogWarning("Session lost for W365SessionId={SessionId}. Recovering — ending stale session and starting new one.", session.W365SessionId);
+
+        try
+        {
+            await EndSessionAsync(tools, logger, session.W365SessionId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Best-effort EndSession during recovery failed for {SessionId}", session.W365SessionId);
+        }
+
+        var newSessionId = await StartSessionAsync(tools, logger, ct);
+        session.W365SessionId = newSessionId;
+        session.SessionStarted = true;
+        logger.LogInformation("Session recovered. New W365SessionId={SessionId}", newSessionId);
+        return newSessionId;
     }
 
     private static string[] ExtractKeys(JsonElement action)
