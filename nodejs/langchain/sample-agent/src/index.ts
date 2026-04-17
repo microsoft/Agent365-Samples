@@ -24,11 +24,18 @@ server.get('/api/health', (req, res: Response) => {
 
 server.use(authorizeJWT(authConfig))
 
-server.post('/api/messages', (req: Request, res: Response) => {
+server.post('/api/messages', async (req: Request, res: Response) => {
   const adapter = agentApplication.adapter as CloudAdapter;
-  adapter.process(req, res, async (context) => {
-    await agentApplication.run(context)
-  })
+  try {
+    await adapter.process(req, res, async (context) => {
+      await agentApplication.run(context)
+    })
+  } catch (err) {
+    console.error('Error processing message:', (err as Error).message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
 })
 
 const port = Number(process.env.PORT) || 3978
