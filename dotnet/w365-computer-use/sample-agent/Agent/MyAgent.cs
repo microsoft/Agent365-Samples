@@ -177,22 +177,11 @@ public class MyAgent : AgentApplication
             async () =>
             {
                 // Typing indicator
+                // Single typing indicator. A background refresh loop was removed because it
+                // raced with the main reply path and triggered Kestrel request-body
+                // "Reading is already in progress" → ObjectDisposedException crashes post-response.
+                // Informative updates via onStatusUpdate keep the UI feedback flowing.
                 await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
-
-                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                var typingTask = Task.Run(async () =>
-                {
-                    try
-                    {
-                        while (!typingCts.IsCancellationRequested)
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
-                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
-                        }
-                    }
-                    catch (OperationCanceledException) { /* expected */ }
-                    catch (ObjectDisposedException) { /* CTS disposed before task finished */ }
-                }, typingCts.Token);
 
                 try
                 {
@@ -257,10 +246,6 @@ public class MyAgent : AgentApplication
                 }
                 finally
                 {
-                    try { typingCts.Cancel(); } catch (ObjectDisposedException) { }
-                    try { await typingTask.ConfigureAwait(false); }
-                    catch (OperationCanceledException) { /* expected */ }
-                    catch (ObjectDisposedException) { /* expected */ }
                     try { await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); }
                     catch (ObjectDisposedException) { /* stream already disposed */ }
                 }

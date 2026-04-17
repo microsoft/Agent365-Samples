@@ -82,6 +82,11 @@ app.UseAuthorization();
 // Map the /api/messages endpoint to the AgentApplication
 app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
+    // Allow multiple reads of the request body — tracing/observability middleware may
+    // re-read it after the adapter, which otherwise triggers
+    // "Reading is not allowed after reader was completed" on the Kestrel pipe reader.
+    request.EnableBuffering();
+
     await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
         await adapter.ProcessAsync(request, response, agent, cancellationToken);
