@@ -1,12 +1,14 @@
 {
 	"mcpServers": [
-		{
-			"mcpServerName": "mcp_W365ComputerUse",
-			"url": "mcp_W365ComputerUse"
-		},
-		{
-			"mcpServerName": "mcp_MailTools",
-			"url": "mcp_MailTools"
-		}
+		{ "mcpServerName": "mcp_W365ComputerUse", "url": "mcp_W365ComputerUse" },
+		{ "mcpServerName": "mcp_MailTools", "url": "mcp_MailTools" },
+		{ "mcpServerName": "mcp_MeServer", "url": "mcp_MeServer" },
+		{ "mcpServerName": "mcp_CalendarTools", "url": "mcp_CalendarTools" },
+		{ "mcpServerName": "mcp_TeamsServer", "url": "mcp_TeamsServer" },
+		{ "mcpServerName": "mcp_ODSPRemoteServer", "url": "mcp_ODSPRemoteServer" },
+		{ "mcpServerName": "mcp_SharepointListsTools", "url": "mcp_SharepointListsTools" },
+		{ "mcpServerName": "mcp_AdminTools", "url": "mcp_AdminTools" },
+		{ "mcpServerName": "mcp_WordServer", "url": "mcp_WordServer" },
+		{ "mcpServerName": "mcp_m365copilot", "url": "mcp_m365copilot" }
 	]
 }
