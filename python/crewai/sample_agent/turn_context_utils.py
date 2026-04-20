@@ -17,10 +17,9 @@ from typing import Optional
 from microsoft_agents.hosting.core import TurnContext
 from microsoft_agents_a365.observability.core import (
     AgentDetails,
-    TenantDetails,
     Request,
-    ExecutionType,
-    InvokeAgentDetails,
+    InvokeAgentScopeDetails,
+    UserDetails,
 )
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
@@ -120,13 +119,11 @@ def create_agent_details(details: TurnContextDetails, description: str = "AI age
     """
     return AgentDetails(
         agent_id=details.agent_id,
-        conversation_id=details.conversation_id,
         agent_name=details.agent_name,
         agent_description=description,
         tenant_id=details.tenant_id,
-        agent_upn=details.agent_upn,
         agent_blueprint_id=details.agent_blueprint_id,
-        agent_auid=details.agent_auid,
+        agentic_user_id=details.agent_auid,
     )
 
 
@@ -141,24 +138,27 @@ def create_caller_details(details: TurnContextDetails) -> CallerDetails:
         CallerDetails for observability
     """
     return CallerDetails(
-        caller_id=details.caller_id or "unknown-caller",
-        caller_upn=details.caller_name or "unknown-user",
-        caller_user_id=details.caller_aad_object_id or details.caller_id or "unknown-user-id",
-        caller_name=details.caller_name,
+        user_details=UserDetails(
+            user_id=details.caller_aad_object_id or details.caller_id or "unknown-caller",
+            user_name=details.caller_name,
+        ),
     )
 
 
-def create_tenant_details(details: TurnContextDetails) -> TenantDetails:
+def create_user_details(details: TurnContextDetails) -> UserDetails:
     """
-    Create TenantDetails from extracted TurnContextDetails.
+    Create UserDetails from extracted TurnContextDetails.
 
     Args:
         details: The extracted turn context details
 
     Returns:
-        TenantDetails for observability
+        UserDetails for observability
     """
-    return TenantDetails(tenant_id=details.tenant_id)
+    return UserDetails(
+        user_id=details.caller_aad_object_id or details.caller_id,
+        user_name=details.caller_name,
+    )
 
 
 def create_request(details: TurnContextDetails, message: str) -> Request:
@@ -174,27 +174,23 @@ def create_request(details: TurnContextDetails, message: str) -> Request:
     """
     return Request(
         content=message,
-        execution_type=ExecutionType.HUMAN_TO_AGENT,
         session_id=details.conversation_id,
+        conversation_id=details.conversation_id,
     )
 
 
-def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent powered by CrewAI framework") -> InvokeAgentDetails:
+def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent powered by CrewAI framework") -> InvokeAgentScopeDetails:
     """
-    Create InvokeAgentDetails from extracted TurnContextDetails.
+    Create InvokeAgentScopeDetails from extracted TurnContextDetails.
 
     Args:
         details: The extracted turn context details
         description: Description of the agent
 
     Returns:
-        InvokeAgentDetails for observability
+        InvokeAgentScopeDetails for observability
     """
-    agent_details = create_agent_details(details, description)
-    return InvokeAgentDetails(
-        details=agent_details,
-        session_id=details.conversation_id,
-    )
+    return InvokeAgentScopeDetails()
 
 
 def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = None) -> BaggageBuilder:
@@ -216,5 +212,5 @@ def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = 
     builder = BaggageBuilder()
     populate(builder, context)
     if correlation_id:
-        builder.correlation_id(correlation_id)
+        builder.session_id(correlation_id)
     return builder
