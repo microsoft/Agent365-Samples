@@ -107,9 +107,8 @@ The `PerplexityClient` uses `HttpClient` directly to call the Perplexity Respons
 
 The client supports multi-turn function calling:
 - Max 8 tool-call rounds per invocation
-- 90-second wall-clock limit
-- 30-second per-round timeout
+- 120-second wall-clock limit
+- 90-second per-round timeout
 - Nudge retry when model describes instead of calling tools
 - Auto-finalize for create→send workflows (e.g., draft created but not sent)
 - Argument enrichment from user message context
-```
