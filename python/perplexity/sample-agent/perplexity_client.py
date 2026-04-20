@@ -31,6 +31,99 @@ _MAX_TOTAL_SECONDS = 90
 # Timeout (seconds) for a single Perplexity API call.
 _PER_ROUND_TIMEOUT = 30
 
+# Tool-selection threshold: when more tools than this are available,
+# make a fast preliminary call to pick only the relevant ones.
+_TOOL_SELECTION_THRESHOLD = 20
+
+# Maximum tools the selector may return.
+_TOOL_SELECTION_MAX = 15
+
+# Timeout (seconds) for the tool-selection call.
+_TOOL_SELECTION_TIMEOUT = 15
+
+
+async def select_relevant_tools(
+    client: AsyncOpenAI,
+    model: str,
+    user_message: str,
+    all_tools: list[dict],
+) -> list[dict]:
+    """Use a fast LLM call to pick only the tools relevant to *user_message*.
+
+    Returns a filtered subset (≤ ``_TOOL_SELECTION_MAX``) of *all_tools*.
+    On any failure the full list is returned so the main flow is never blocked.
+    """
+    # Build a compact one-line-per-tool catalog for the selector prompt.
+    catalog_lines: list[str] = []
+    for idx, t in enumerate(all_tools):
+        name = t.get("name", "unknown")
+        desc = (t.get("description") or "")[:120]
+        catalog_lines.append(f"{idx}: {name} — {desc}")
+    catalog = "\n".join(catalog_lines)
+
+    selector_prompt = (
+        "Given the user's request, select ONLY the tools needed to fulfill it.\n"
+        "Return a JSON array of tool index numbers (integers). Include tools that "
+        "might be needed for follow-up steps (e.g., if creating a document and sharing "
+        "a link, include both create and share tools).\n"
+        f"Select at most {_TOOL_SELECTION_MAX} tools. Return ONLY a JSON array like "
+        "[0, 3, 7], no explanation.\n\n"
+        f'User request: "{user_message}"\n\n'
+        f"Available tools:\n{catalog}"
+    )
+
+    try:
+        resp = await asyncio.wait_for(
+            client.responses.create(
+                model=model,
+                instructions="You are a tool selector. Return ONLY a JSON array of integers.",
+                input=selector_prompt,
+                store=False,
+            ),
+            timeout=_TOOL_SELECTION_TIMEOUT,
+        )
+
+        raw_text = ""
+        for item in resp.output:
+            if item.type == "message":
+                for c in getattr(item, "content", []):
+                    if hasattr(c, "text") and c.text:
+                        raw_text += c.text
+        if not raw_text:
+            raw_text = str(resp.output_text or "")
+
+        # Strip markdown fences and extract the JSON array.
+        raw_text = raw_text.strip().strip("`").strip()
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:].strip()
+
+        match = re.search(r"\[[\d,\s]+\]", raw_text)
+        if not match:
+            logger.warning("Tool selector returned unparseable response — using all tools")
+            return all_tools
+
+        indices: list[int] = json.loads(match.group())
+        selected = [all_tools[i] for i in indices if 0 <= i < len(all_tools)]
+
+        if not selected:
+            logger.warning("Tool selector returned empty set — using all tools")
+            return all_tools
+
+        logger.info(
+            "Tool selector narrowed %d → %d tools: %s",
+            len(all_tools),
+            len(selected),
+            [t.get("name") for t in selected],
+        )
+        return selected
+
+    except asyncio.TimeoutError:
+        logger.warning("Tool selector timed out (%ds) — using all tools", _TOOL_SELECTION_TIMEOUT)
+        return all_tools
+    except Exception as exc:
+        logger.warning("Tool selector failed (%s) — using all tools", exc)
+        return all_tools
+
 
 class PerplexityClient:
     """Async client for Perplexity AI using the Agent API (Responses API)."""
@@ -65,6 +158,11 @@ class PerplexityClient:
         prompt) if the model rejects the ``tools`` parameter.
         """
         logger.info("Invoking Perplexity model=%s (tools=%d)", self.model, len(tools or []))
+
+        # When too many tools are registered, use a fast selector call to
+        # narrow down to just the relevant ones before the main API request.
+        if tools and len(tools) > _TOOL_SELECTION_THRESHOLD:
+            tools = await select_relevant_tools(self._client, self.model, user_message, tools)
 
         create_kwargs: dict[str, Any] = {
             "model": self.model,
@@ -107,7 +205,14 @@ class PerplexityClient:
                     if ctx:
                         create_kwargs["input"] = f"{user_message}\n\n{ctx}"
                     tools = None
-                    response = await self._client.responses.create(**create_kwargs)
+                    try:
+                        response = await asyncio.wait_for(
+                            self._client.responses.create(**create_kwargs),
+                            timeout=_PER_ROUND_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Perplexity API fallback round %d timed out (%ds) — returning partial answer", _round + 1, _PER_ROUND_TIMEOUT)
+                        break
                 else:
                     raise
 
@@ -186,9 +291,9 @@ class PerplexityClient:
                 arguments = self._enrich_arguments(fc.name, arguments, user_message, tools or [])
 
                 logger.info("Executing MCP tool: %s (round %d)", fc.name, _round + 1)
-                logger.info("Tool arguments: %s", json.dumps(arguments, indent=2, default=str))
+                logger.debug("Tool arguments: %s", json.dumps(arguments, indent=2, default=str))
                 result = await tool_executor(fc.name, arguments)
-                logger.info("Tool result (first 500 chars): %.500s", json.dumps(result, default=str) if not isinstance(result, str) else result)
+                logger.debug("Tool result (first 500 chars): %.500s", json.dumps(result, default=str) if not isinstance(result, str) else result)
 
                 # Track resource creation/finalization generically
                 tool_lower = fc.name.lower()

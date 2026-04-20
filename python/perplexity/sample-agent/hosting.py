@@ -144,16 +144,21 @@ class MyAgent(AgentApplication):
                 if self.auth_handler_name:
                     try:
                         recipient = context.activity.recipient
-                        tenant_id = getattr(recipient, "tenant_id", None) or ""
-                        agent_id = getattr(recipient, "agentic_app_id", None) or ""
+                        tenant_id = (getattr(recipient, "tenant_id", None) or "").strip()
+                        agent_id = (getattr(recipient, "agentic_app_id", None) or "").strip()
                         obs_token = await self.auth.exchange_token(
                             context,
                             scopes=get_observability_authentication_scope(),
                             auth_handler_id=self.auth_handler_name,
                         )
                         if obs_token and obs_token.token:
-                            cache_agentic_token(tenant_id, agent_id, obs_token.token)
-                            logger.info("Agentic token cached for observability exporter")
+                            if tenant_id and agent_id:
+                                cache_agentic_token(tenant_id, agent_id, obs_token.token)
+                                logger.info("Agentic token cached for observability exporter")
+                            else:
+                                logger.info(
+                                    "Skipping observability token cache because tenant_id or agent_id is missing"
+                                )
                     except Exception as token_err:
                         logger.warning("Failed to exchange/cache observability token: %s", token_err)
 

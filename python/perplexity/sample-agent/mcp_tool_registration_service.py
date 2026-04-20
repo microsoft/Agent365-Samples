@@ -290,6 +290,10 @@ class McpToolRegistrationService:
                     server_url,
                     exc,
                 )
+                try:
+                    await session.close()
+                except Exception:
+                    pass
                 return None
 
         results = await _asyncio.gather(
@@ -395,13 +399,17 @@ class McpToolRegistrationService:
                 "Tool '%s' failed after %d attempts — clearing MCP cache",
                 name, _MCP_MAX_RETRIES + 1,
             )
-            svc._initialized = False
+            await svc._invalidate_cache()
             return f"Error executing tool '{name}': {last_error}"
 
         return execute_tool
 
-    async def close(self) -> None:
-        """Close all cached MCP sessions (call on server shutdown)."""
+    async def _invalidate_cache(self) -> None:
+        """Close existing MCP sessions and clear all cached state.
+
+        Called when retries are exhausted so the next turn reconnects
+        from scratch instead of appending duplicates.
+        """
         for s in self._sessions:
             try:
                 await s.close()
@@ -411,3 +419,7 @@ class McpToolRegistrationService:
         self._tool_map.clear()
         self._openai_tools.clear()
         self._initialized = False
+
+    async def close(self) -> None:
+        """Close all cached MCP sessions (call on server shutdown)."""
+        await self._invalidate_cache()

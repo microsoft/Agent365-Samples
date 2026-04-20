@@ -107,7 +107,7 @@ class PerplexityAgent(AgentInterface):
         self,
         message: str,
         auth: Authorization,
-        auth_handler_name: str,
+        auth_handler_name: str | None,
         context: TurnContext,
     ) -> str:
         # Log the user identity
@@ -193,7 +193,7 @@ class PerplexityAgent(AgentInterface):
         self,
         message: str,
         auth: Authorization,
-        auth_handler_name: str,
+        auth_handler_name: str | None,
         context: TurnContext,
     ) -> str:
         """invoke_agent wrapped in an InferenceScope for observability."""
@@ -234,7 +234,7 @@ class PerplexityAgent(AgentInterface):
         self,
         message: str,
         auth: Authorization,
-        auth_handler_name: str,
+        auth_handler_name: str | None,
         context: TurnContext,
     ) -> str:
         # Extract identity from the activity recipient (populated by the platform).

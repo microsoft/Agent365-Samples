@@ -6,6 +6,7 @@ Defines the abstract base class that agents must inherit from to work with the g
 """
 
 from abc import ABC, abstractmethod
+from typing import Optional
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 
@@ -18,14 +19,14 @@ class AgentInterface(ABC):
     """
     @abstractmethod
     async def invoke_agent(
-        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
+        self, message: str, auth: Authorization, auth_handler_name: Optional[str], context: TurnContext
     ) -> str:
         """Process a user message and return a response."""
         pass
 
     @abstractmethod
     async def invoke_agent_with_scope(
-        self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
+        self, message: str, auth: Authorization, auth_handler_name: Optional[str], context: TurnContext
     ) -> str:
         """Process a user message within an observability scope and return a response."""
         pass
