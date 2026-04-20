@@ -7,7 +7,6 @@ A .NET sample showing how to use [Perplexity AI](https://docs.perplexity.ai/) as
 It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
-- **Notifications**: Services and models for managing user notifications
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
