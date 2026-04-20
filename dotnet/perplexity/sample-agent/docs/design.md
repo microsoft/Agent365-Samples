@@ -48,7 +48,7 @@ This sample demonstrates a Perplexity AI-powered agent built using the Microsoft
 │  │  └──────────────┘  └──────────────┘  └──────────────┘      ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │              McpToolRegistrationService                       ││
+│  │                  McpToolService                             ││
 │  │  ┌──────────────┐  ┌──────────────┐                         ││
 │  │  │Mail MCP      │  │Calendar MCP  │                         ││
 │  │  └──────────────┘  └──────────────┘                         ││
