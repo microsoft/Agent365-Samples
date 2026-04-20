@@ -21,6 +21,7 @@ builder.ConfigureOpenTelemetry();
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
+builder.Services.AddHttpClient("PerplexityClient", client => client.Timeout = TimeSpan.FromSeconds(180));
 // Extend default HttpClient timeout — the A365 Tooling SDK's gateway call can exceed the 30s default.
 builder.Services.ConfigureHttpClientDefaults(opts => opts.ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(180)));
 builder.Services.AddHttpContextAccessor();
@@ -39,7 +40,7 @@ builder.Services.AddSingleton<PerplexityClient>(sp =>
                 ?? Environment.GetEnvironmentVariable("PERPLEXITY_MODEL")
                 ?? "perplexity/sonar";
 
-    var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(180) };
+    var httpClient = sp.GetRequiredService<IHttpClientFactory>().CreateClient("PerplexityClient");
     var logger = sp.GetRequiredService<ILogger<PerplexityClient>>();
     return new PerplexityClient(httpClient, endpoint, apiKey, model, logger);
 });
@@ -73,7 +74,7 @@ builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new Trans
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
     app.UseDeveloperExceptionPage();
 }
@@ -107,7 +108,6 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp =
 if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
     app.MapGet("/", () => "Perplexity Sample Agent");
-    app.UseDeveloperExceptionPage();
     app.MapControllers().AllowAnonymous();
     app.Urls.Add("http://localhost:3978");
 }

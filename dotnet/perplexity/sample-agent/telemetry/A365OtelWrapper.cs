@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using Microsoft.Agents.A365.Observability.Caching;
@@ -22,6 +22,9 @@ public static class A365OtelWrapper
         ILogger? logger,
         Func<Task> func)
     {
+        ArgumentNullException.ThrowIfNull(turnContext);
+        ArgumentNullException.ThrowIfNull(func);
+
         await AgentMetrics.InvokeObservedAgentOperation(
             operationName,
             turnContext,

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using System.Text.Json;
@@ -11,6 +11,8 @@ namespace PerplexitySampleAgent;
 /// </summary>
 public sealed class McpSession : IAsyncDisposable
 {
+    private const string SseDataPrefix = "data: ";
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -207,11 +209,11 @@ public sealed class McpSession : IAsyncDisposable
     {
         foreach (var line in text.Split('\n'))
         {
-            if (line.StartsWith("data: "))
+            if (line.StartsWith(SseDataPrefix))
             {
                 try
                 {
-                    using var doc = JsonDocument.Parse(line.Substring(6));
+                    using var doc = JsonDocument.Parse(line[SseDataPrefix.Length..]);
                     if (doc.RootElement.TryGetProperty("result", out var result))
                     {
                         return result.Clone();
@@ -226,10 +228,10 @@ public sealed class McpSession : IAsyncDisposable
         return default;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
         _http.Dispose();
-        await ValueTask.CompletedTask;
+        return default;
     }
 }
 

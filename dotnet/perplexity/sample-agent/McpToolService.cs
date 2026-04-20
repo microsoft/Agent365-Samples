@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using System.Text.Json;
@@ -68,53 +68,63 @@ public sealed class McpToolService
         var toolMap = new Dictionary<string, McpSession>(StringComparer.OrdinalIgnoreCase);
         var sessions = new List<McpSession>();
 
-        // Connect to each MCP server and list tools.
-        // Use mcpToken (A365 Tools API audience) for MCP server communication.
-        foreach (var (name, url) in servers)
+        try
         {
-            _logger.LogDebug("Connecting to MCP server '{Name}' at {Url}", name, url);
-            if (string.IsNullOrEmpty(url))
+            // Connect to each MCP server and list tools.
+            // Use mcpToken (A365 Tools API audience) for MCP server communication.
+            foreach (var (name, url) in servers)
             {
-                _logger.LogWarning("Skipping MCP server '{Name}' — no URL configured", name);
-                continue;
-            }
-
-            try
-            {
-                var session = new McpSession(url, mcpToken, agentId, name, _logger);
-                await session.InitializeAsync(ct);
-                var tools = await session.ListToolsAsync(ct);
-                _logger.LogDebug("Server '{Name}' exposes {Count} tools", name, tools.Count);
-
-                sessions.Add(session);
-                foreach (var tool in tools)
+                _logger.LogDebug("Connecting to MCP server '{Name}' at {Url}", name, url);
+                if (string.IsNullOrEmpty(url))
                 {
-                    var toolName = tool.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                    if (string.IsNullOrEmpty(toolName)) continue;
+                    _logger.LogWarning("Skipping MCP server '{Name}' — no URL configured", name);
+                    continue;
+                }
 
-                    // Get the original MCP inputSchema and sanitize for Perplexity.
-                    var rawSchema = tool.TryGetProperty("inputSchema", out var schema) ? schema : default;
-                    var sanitized = SanitizeSchema(rawSchema);
-                    var description = tool.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+                try
+                {
+                    var session = new McpSession(url, mcpToken, agentId, name, _logger);
+                    await session.InitializeAsync(ct);
+                    var tools = await session.ListToolsAsync(ct);
+                    _logger.LogDebug("Server '{Name}' exposes {Count} tools", name, tools.Count);
 
-                    // Build Responses API format tool definition.
-                    var toolDef = new Dictionary<string, object?>
+                    sessions.Add(session);
+                    foreach (var tool in tools)
                     {
-                        ["type"] = "function",
-                        ["name"] = toolName,
-                        ["description"] = description,
-                        ["parameters"] = sanitized,
-                    };
+                        var toolName = tool.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                        if (string.IsNullOrEmpty(toolName)) continue;
 
-                    var json = JsonSerializer.Serialize(toolDef, JsonOpts);
-                    allTools.Add(JsonDocument.Parse(json).RootElement.Clone());
-                    toolMap[toolName] = session;
+                        // Get the original MCP inputSchema and sanitize for Perplexity.
+                        var rawSchema = tool.TryGetProperty("inputSchema", out var schema) ? schema : default;
+                        var sanitized = SanitizeSchema(rawSchema);
+                        var description = tool.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+
+                        // Build Responses API format tool definition.
+                        var toolDef = new Dictionary<string, object?>
+                        {
+                            ["type"] = "function",
+                            ["name"] = toolName,
+                            ["description"] = description,
+                            ["parameters"] = sanitized,
+                        };
+
+                        var json = JsonSerializer.Serialize(toolDef, JsonOpts);
+                        allTools.Add(JsonDocument.Parse(json).RootElement.Clone());
+                        toolMap[toolName] = session;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to connect to MCP server '{Name}' at {Url}", name, url);
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to connect to MCP server '{Name}' at {Url}", name, url);
-            }
+        }
+        catch
+        {
+            // Dispose all sessions on fatal error to prevent resource leaks.
+            foreach (var s in sessions)
+                await s.DisposeAsync();
+            throw;
         }
 
         _logger.LogInformation("Loaded {Count} MCP tools from {Sessions} servers", allTools.Count, sessions.Count);

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using System.Diagnostics;
@@ -19,6 +19,29 @@ public sealed class PerplexityClient
     private const int MaxToolRounds = 8;
     private const int MaxTotalSeconds = 120;
     private const int PerRoundTimeoutSeconds = 90;
+    private const int ToolFilterThreshold = 20;
+    private const int MaxSelectedTools = 15;
+    private const int MaxToolResultChars = 4000;
+
+    private static readonly Regex ActionVerbRegex = new(
+        @"\b(send|mail|email|schedule|create|book|set\s+up|arrange|cancel|delete|remove|move|forward|reply|update|add|invite)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex SendVerbRegex = new(
+        @"\b(send|mail|email|schedule|create|book|invite|forward|reply)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex DraftRegex = new(
+        @"\bdraft\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex EmailRegex = new(
+        @"[\w.+-]+@[\w.-]+\.\w+", RegexOptions.Compiled);
+
+    private static readonly HashSet<string> SkipEnrichFields = new(StringComparer.OrdinalIgnoreCase)
+        { "contenttype", "format", "encoding", "provider", "mode" };
+
+    private static readonly HashSet<string> SkipRegexFields = new(StringComparer.OrdinalIgnoreCase)
+        { "type", "format", "encoding", "provider", "mode" };
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -61,7 +84,7 @@ public sealed class PerplexityClient
 
         // Filter tools to only those relevant to the user's message.
         // 20+ tools can cause Perplexity API timeouts; filter down to ≤15.
-        if (tools is { Count: > 20 })
+        if (tools is { Count: > ToolFilterThreshold })
         {
             tools = await SelectRelevantToolsAsync(userMessage, tools, cancellationToken);
             _logger.LogDebug("After filtering: {Count} relevant tools selected", tools.Count);
@@ -246,7 +269,6 @@ public sealed class PerplexityClient
                 _logger.LogDebug("Tool result length={Len}", result.Length);
 
                 // Truncate tool results to prevent Perplexity timeouts on large MCP responses.
-                const int MaxToolResultChars = 4000;
                 var truncatedResult = result.Length > MaxToolResultChars
                     ? result[..MaxToolResultChars] + "\n... [truncated]"
                     : result;
@@ -348,7 +370,7 @@ public sealed class PerplexityClient
         var selectionPrompt = $"""
             Given the user's request, select ONLY the tools needed to fulfill it.
             Return a JSON array of tool index numbers (integers). Include tools that might be needed for follow-up steps (e.g., if creating a document and sharing a link, include both create and share tools).
-            Select at most 15 tools. Return ONLY a JSON array like [0, 3, 7], no explanation.
+            Select at most {MaxSelectedTools} tools. Return ONLY a JSON array like [0, 3, 7], no explanation.
 
             User request: "{userMessage}"
 
@@ -483,7 +505,7 @@ public sealed class PerplexityClient
 
             // Skip enum/format/type fields that shouldn't be inferred.
             var fieldLower = paramName.ToLowerInvariant();
-            if (new[] { "contenttype", "format", "encoding", "provider", "mode" }.Any(kw => fieldLower == kw))
+            if (SkipEnrichFields.Contains(fieldLower))
                 continue;
 
             missingParams[paramName] = $"{paramType}: {desc}";
@@ -599,7 +621,7 @@ public sealed class PerplexityClient
                 if (!prop.Value.TryGetProperty("type", out var typeEl) || typeEl.GetString() != "string") continue;
                 if (arguments.TryGetValue(prop.Name, out var val) && val is string s && !string.IsNullOrWhiteSpace(s)) continue;
                 var fieldLower = prop.Name.ToLowerInvariant();
-                if (new[] { "type", "format", "encoding", "provider", "mode" }.Any(kw => fieldLower.Contains(kw))) continue;
+                if (SkipRegexFields.Any(kw => fieldLower.Contains(kw))) continue;
                 if (bodyHints.Any(h => fieldLower.Contains(h)))
                 {
                     arguments[prop.Name] = content;
@@ -645,7 +667,7 @@ public sealed class PerplexityClient
     private static List<object?> ExtractEmails(string userMessage)
     {
         var emails = new List<object?>();
-        foreach (Match m in Regex.Matches(userMessage, @"[\w.+-]+@[\w.-]+\.\w+"))
+        foreach (Match m in EmailRegex.Matches(userMessage))
         {
             emails.Add(m.Value);
         }
@@ -811,11 +833,11 @@ public sealed class PerplexityClient
     }
 
     private static bool UserWantsAction(string userMessage) =>
-        Regex.IsMatch(userMessage, @"\b(send|mail|email|schedule|create|book|set\s+up|arrange|cancel|delete|remove|move|forward|reply|update|add|invite)\b", RegexOptions.IgnoreCase);
+        ActionVerbRegex.IsMatch(userMessage);
 
     private static bool UserWantsToSend(string userMessage) =>
-        Regex.IsMatch(userMessage, @"\b(send|mail|email|schedule|create|book|invite|forward|reply)\b", RegexOptions.IgnoreCase) &&
-        !Regex.IsMatch(userMessage, @"\bdraft\b", RegexOptions.IgnoreCase);
+        SendVerbRegex.IsMatch(userMessage) &&
+        !DraftRegex.IsMatch(userMessage);
 
     private static string? ExtractResourceId(string result)
     {

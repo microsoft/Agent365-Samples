@@ -54,6 +54,7 @@ This sample demonstrates a Perplexity AI-powered agent built using the Microsoft
 │  │  └──────────────┘  └──────────────┘                         ││
 │  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
+```
 
 ## Key Differences from Agent Framework Sample
 
