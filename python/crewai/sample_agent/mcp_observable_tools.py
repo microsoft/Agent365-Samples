@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 
-from microsoft_agents_a365.observability.core import ExecuteToolScope, ToolCallDetails
+from microsoft_agents_a365.observability.core import ExecuteToolScope, ToolCallDetails, Request
 from mcp_tool_registration_service import MCPToolDefinition
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ class MCPToolExecutor:
             tool_name: Name of the tool to call
             arguments: Tool arguments as a dictionary
             agent_details: AgentDetails for observability
-            tenant_details: TenantDetails for observability
+            tenant_details: UserDetails for observability
             
         Returns:
             The tool result as a string
@@ -86,11 +86,15 @@ class MCPToolExecutor:
             endpoint=endpoint,
         )
         
+        # Create a Request for the tool scope
+        tool_request = Request(content=args_str)
+        
         # Execute with ExecuteToolScope for observability
         with ExecuteToolScope.start(
+            request=tool_request,
             details=tool_call_details,
             agent_details=agent_details,
-            tenant_details=tenant_details,
+            user_details=tenant_details,
         ) as tool_scope:
             try:
                 logger.info(f"🔧 Calling MCP tool: {tool_name}")
