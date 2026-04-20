@@ -88,7 +88,7 @@ sample-agent/
 ├── appsettings.Playground.json # Local dev config
 ├── AspNetExtensions.cs         # JWT auth middleware
 ├── McpSession.cs               # Lightweight MCP JSON-RPC client
-├── McpToolRegistrationService.cs # MCP server discovery & tool registration
+├── McpToolService.cs          # MCP server discovery, tool registration, and invocation
 ├── PerplexityClient.cs         # Perplexity Responses API client
 ├── PerplexitySampleAgent.csproj # Project file
 ├── Program.cs                  # ASP.NET Core startup
