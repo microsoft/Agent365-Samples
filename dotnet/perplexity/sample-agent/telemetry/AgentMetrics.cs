@@ -31,7 +31,7 @@ public static class AgentMetrics
     public static readonly UpDownCounter<long> ActiveConversations = Meter.CreateUpDownCounter<long>(
         "agent.conversations.active", "conversations", "Number of active conversations");
 
-    public static Activity InitializeMessageHandlingActivity(string handlerName, ITurnContext context)
+    public static Activity? InitializeMessageHandlingActivity(string handlerName, ITurnContext context)
     {
         var activity = ActivitySource.StartActivity(handlerName);
         activity?.SetTag("Activity.Type", context.Activity.Type.ToString());
@@ -49,10 +49,10 @@ public static class AgentMetrics
             ["Message.Id"] = context.Activity.Id,
             ["Message.Text"] = context.Activity.Text
         }));
-        return activity!;
+        return activity;
     }
 
-    public static void FinalizeMessageHandlingActivity(Activity activity, ITurnContext context, long duration, bool success)
+    public static void FinalizeMessageHandlingActivity(Activity? activity, ITurnContext context, long duration, bool success)
     {
         MessageProcessingDuration.Record(duration,
             new("Conversation.Id", context.Activity.Conversation?.Id ?? "unknown"),
@@ -71,12 +71,12 @@ public static class AgentMetrics
         activity?.Dispose();
     }
 
-    public static Task InvokeObservedHttpOperation(string operationName, Action func)
+    public static async Task InvokeObservedHttpOperation(string operationName, Func<Task> func)
     {
         using var activity = ActivitySource.StartActivity(operationName);
         try
         {
-            func();
+            await func().ConfigureAwait(false);
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
         catch (Exception ex)
@@ -90,17 +90,18 @@ public static class AgentMetrics
             }));
             throw;
         }
-        return Task.CompletedTask;
     }
 
-    public static Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
+    public static async Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
     {
         MessageProcessedCounter.Add(1);
         var activity = InitializeMessageHandlingActivity(operationName, context);
         var routeStopwatch = Stopwatch.StartNew();
+        bool success = false;
         try
         {
-            return func();
+            await func().ConfigureAwait(false);
+            success = true;
         }
         catch (Exception ex)
         {
@@ -116,7 +117,7 @@ public static class AgentMetrics
         finally
         {
             routeStopwatch.Stop();
-            FinalizeMessageHandlingActivity(activity, context, routeStopwatch.ElapsedMilliseconds, true);
+            FinalizeMessageHandlingActivity(activity, context, routeStopwatch.ElapsedMilliseconds, success);
         }
     }
 }

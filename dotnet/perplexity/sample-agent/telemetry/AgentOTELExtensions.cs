@@ -28,7 +28,7 @@ public static class AgentOTELExtensions
             .ConfigureResource(r => r
                 .Clear()
                 .AddService(
-                    serviceName: "A365.Perplexity",
+                    serviceName: AgentMetrics.SourceName,
                     serviceVersion: "1.0.0",
                     serviceInstanceId: Environment.MachineName)
                 .AddAttributes(new Dictionary<string, object>
@@ -41,17 +41,13 @@ public static class AgentOTELExtensions
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation()
-                    .AddMeter("agent.messages.processed",
-                        "agent.routes.executed",
-                        "agent.conversations.active",
-                        "agent.route.execution.duration",
-                        "agent.message.processing.duration");
+                    .AddMeter(AgentMetrics.SourceName);
             })
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
                     .AddSource(
-                        "A365.Perplexity",
+                        AgentMetrics.SourceName,
                         "Microsoft.Agents.Builder",
                         "Microsoft.Agents.Hosting",
                         "A365.Perplexity.MyAgent",

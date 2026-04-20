@@ -24,7 +24,7 @@ public static class AspNetExtensions
 
         if (!tokenValidationSection.Exists() || !tokenValidationSection.GetValue("Enabled", true))
         {
-            System.Diagnostics.Trace.WriteLine("AddAgentAspNetAuthentication: Auth disabled");
+            Console.WriteLine("AddAgentAspNetAuthentication: Auth disabled");
             return;
         }
 
@@ -123,8 +123,18 @@ public static class AspNetExtensions
                         return;
                     }
 
-                    JwtSecurityToken token = new(parts[1]);
-                    string issuer = token.Claims.FirstOrDefault(claim => claim.Type == AuthenticationConstants.IssuerClaim)?.Value!;
+                    string? issuer;
+                    try
+                    {
+                        JwtSecurityToken token = new(parts[1]);
+                        issuer = token.Claims.FirstOrDefault(claim => claim.Type == AuthenticationConstants.IssuerClaim)?.Value;
+                    }
+                    catch (Exception)
+                    {
+                        context.Options.TokenValidationParameters.ConfigurationManager ??= options.ConfigurationManager as BaseConfigurationManager;
+                        await Task.CompletedTask.ConfigureAwait(false);
+                        return;
+                    }
 
                     if (validationOptions.AzureBotServiceTokenHandling && AuthenticationConstants.BotFrameworkTokenIssuer.Equals(issuer))
                     {
