@@ -156,7 +156,7 @@ def create_user_details(details: TurnContextDetails) -> UserDetails:
         UserDetails for observability
     """
     return UserDetails(
-        user_id=details.caller_aad_object_id or details.caller_id,
+        user_id=details.caller_aad_object_id or details.caller_id or "unknown-caller",
         user_name=details.caller_name,
     )
 
