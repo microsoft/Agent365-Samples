@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using Microsoft.AspNetCore.Builder;
@@ -11,6 +11,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Diagnostics;
 
 namespace Agent365AgentFrameworkSampleAgent.telemetry
 {
@@ -18,6 +19,29 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
     // This can be used by ASP.NET Core apps, Azure Functions, and other .NET apps using the Generic Host.
     // This allows you to use the local aspire desktop and monitor Agents SDK operations.
     // To learn more about using the local aspire desktop, see https://learn.microsoft.com/en-us/dotnet/aspire/fundamentals/dashboard/standalone?tabs=bash
+    /// <summary>
+    /// Logs every completed span to ILogger so you can see raw span data in the console/log output.
+    /// Add to the tracing pipeline with .AddProcessor&lt;SpanLoggingProcessor&gt;() for development debugging.
+    /// </summary>
+    public sealed class SpanLoggingProcessor(ILogger<SpanLoggingProcessor> logger) : BaseProcessor<Activity>
+    {
+        public override void OnEnd(Activity activity)
+        {
+            if (!logger.IsEnabled(LogLevel.Debug)) return;
+
+            var tags = string.Join(", ", activity.TagObjects.Select(t => $"{t.Key}={t.Value}"));
+            logger.LogDebug(
+                "[SPAN] {Source} | {Name} | {Status} | {Duration:N0}ms | TraceId={TraceId} SpanId={SpanId} | Tags: {Tags}",
+                activity.Source.Name,
+                activity.DisplayName,
+                activity.Status,
+                activity.Duration.TotalMilliseconds,
+                activity.TraceId,
+                activity.SpanId,
+                string.IsNullOrEmpty(tags) ? "(none)" : tags);
+        }
+    }
+
     public static class AgentOTELExtensions
     {
         private const string HealthEndpointPath = "/health";
@@ -82,15 +106,8 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                 })
                 .WithTracing(tracing =>
                 {
-                    tracing.AddSource(builder.Environment.ApplicationName)
-                        .AddSource(
-                            "A365.AgentFramework",
-                            "Microsoft.Agents.Builder",
-                            "Microsoft.Agents.Hosting",
-                            "A365.AgentFramework.MyAgent",
-                            "Microsoft.AspNetCore",
-                            "System.Net.Http"
-                        )
+                    tracing.AddSource("*")
+                        .AddProcessor<SpanLoggingProcessor>()
                         .AddAspNetCoreInstrumentation(tracing =>
                         {
                             // Exclude health check requests from tracing
@@ -148,7 +165,7 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                         });
                 });
 
-            //builder.AddOpenTelemetryExporters();
+            builder.AddOpenTelemetryExporters();
             return builder;
         }
 

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent;
@@ -6,13 +6,15 @@ using Agent365AgentFrameworkSampleAgent.Agent;
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Agents.A365.Observability;
+using Microsoft.Agents.A365.Observability.Hosting;
 using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
 using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Trace;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Transcript;
@@ -25,6 +27,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
 builder.ConfigureOpenTelemetry();
+builder.Services.AddSingleton<SpanLoggingProcessor>();
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
@@ -36,11 +39,23 @@ builder.Logging.AddConsole();
 // Configure observability (Service exporter for non-digital-worker agents).
 builder.Services.AddServiceTracingExporter(clusterCategory: "production");
 
-// Add A365 tracing with Agent Framework integration
+//// Add A365 tracing with Agent Framework integration
 builder.AddA365Tracing(config =>
 {
     config.WithAgentFramework();
 });
+
+// In Development, also export to local Aspire Dashboard (http://localhost:18888)
+//if (builder.Environment.IsDevelopment())
+//{
+//    builder.Services.AddOpenTelemetry()
+//        .WithTracing(t => t
+//            .AddSource(AgentMetrics.SourceName)  // "A365.AgentFramework" - custom spans
+//            .AddSource("A365Tracing")             // A365 SDK internal spans
+//            .AddOtlpExporter())
+//        .WithLogging(l => l.AddOtlpExporter());
+//}
+
 
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
@@ -125,11 +140,11 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playg
 {
     app.MapGet("/", () => "Agent Framework Example Weather Agent");
     app.UseDeveloperExceptionPage();
-    app.MapControllers().AllowAnonymous();
+    // app.MapControllers().AllowAnonymous();
 
     // Hard coded for brevity and ease of testing. 
     // In production, this should be set in configuration.
-    app.Urls.Add($"http://localhost:3978");
+    app.Urls.Add($"https://localhost:50972");
 }
 else
 {

@@ -3,7 +3,8 @@
 
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -83,30 +84,30 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         private static bool ShouldSkipToolingOnErrors()
         {
-            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? 
-                              Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? 
+            var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ??
+                              Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ??
                               "Production";
-            
+
             var skipToolingOnErrors = Environment.GetEnvironmentVariable("SKIP_TOOLING_ON_ERRORS");
-            
+
             // Only allow skipping tooling errors in Development mode AND when explicitly enabled
-            return environment.Equals("Development", StringComparison.OrdinalIgnoreCase) && 
-                   !string.IsNullOrEmpty(skipToolingOnErrors) && 
+            return environment.Equals("Development", StringComparison.OrdinalIgnoreCase) &&
+                   !string.IsNullOrEmpty(skipToolingOnErrors) &&
                    skipToolingOnErrors.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
-            IExporterTokenCache<string> serviceTokenCache,
             IMcpToolRegistrationService toolService,
+            IExporterTokenCache<string> serviceTokenCache,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
-            _serviceTokenCache = serviceTokenCache;
             _logger = logger;
             _toolService = toolService;
+            _serviceTokenCache = serviceTokenCache;
 
             // Read auth handler names from configuration (can be empty/null to disable)
             AgenticAuthHandlerName = _configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
@@ -179,10 +180,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <summary>
         /// General Message process for Teams and other channels.
         /// </summary>
-        /// <param name="turnContext"></param>
-        /// <param name="turnState"></param>
-        /// <param name="cancellationToken"></param>
-        /// <returns></returns>
         protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
             if (turnContext is null)
@@ -199,8 +196,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 fromAccount?.AadObjectId ?? "(none)");
 
             // Select the appropriate auth handler based on request type
-            // For agentic requests, use the agentic auth handler
-            // For non-agentic requests, use OBO auth handler (supports bearer token or configured auth)
             string? ToolAuthHandlerName;
             if (turnContext.IsAgenticRequest())
             {
@@ -208,7 +203,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             }
             else
             {
-                // Non-agentic: use OBO auth handler if configured
                 ToolAuthHandlerName = OboAuthHandlerName;
             }
 
@@ -221,41 +215,40 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger,
                 async () =>
             {
-                // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
-                // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
-                // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
-                //       use SendActivityAsync for any messages that must arrive immediately.
-                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
-
-                // Send typing indicator immediately on the main thread (awaited so it arrives before the LLM call starts).
-                await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
-
-                // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
-                // Only visible in 1:1 and small group chats.
-                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                var typingTask = Task.Run(async () =>
+                // Send an immediate acknowledgment for non-agentic requests only.
+                if (!turnContext.IsAgenticRequest())
                 {
-                    try
-                    {
-                        while (!typingCts.IsCancellationRequested)
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
-                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
-                        }
-                    }
-                    catch (OperationCanceledException) { /* expected on cancel */ }
-                }, typingCts.Token);
+                    await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+                }
 
-                // StreamingResponse is best-effort: in Teams with agentic identity the SDK may buffer/downscale it.
-                // The ack + typing loop above handle the immediate UX; streaming remains for non-Teams / WebChat clients.
+                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                Task typingTask = Task.CompletedTask;
+                if (!turnContext.IsAgenticRequest())
+                {
+                    await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
+
+                    typingTask = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            while (!typingCts.IsCancellationRequested)
+                            {
+                                await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
+                                await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
+                            }
+                        }
+                        catch (OperationCanceledException) { /* expected on cancel */ }
+                    }, typingCts.Token);
+                }
+
                 await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
                     var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
-                    // Read or Create the conversation thread for this conversation.
-                    AgentThread? thread = GetConversationThread(_agent, turnState);
+                    // Read or create the conversation session for this conversation.
+                    AgentSession session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
 
                     if (turnContext?.Activity?.Attachments?.Count > 0)
                     {
@@ -269,14 +262,17 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     }
 
                     // Stream the response back to the user as we receive it from the agent.
-                    await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
+                    await foreach (var response in _agent!.RunStreamingAsync(userText, session, (AgentRunOptions?)null, cancellationToken))
                     {
                         if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
                         {
                             turnContext?.StreamingResponse.QueueTextChunk(response.Text);
                         }
                     }
-                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
+
+                    // Persist the updated session state for the next turn.
+                    JsonElement sessionState = await _agent.SerializeSessionAsync(session, null, cancellationToken);
+                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(sessionState));
                 }
                 finally
                 {
@@ -294,13 +290,9 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             });
         }
 
-
         /// <summary>
-        /// Resolve the ChatClientAgent with tools and options for this turn operation. 
-        /// This will use the IChatClient registered in DI.
+        /// Resolve the ChatClientAgent with tools and options for this turn operation.
         /// </summary>
-        /// <param name="context"></param>
-        /// <returns></returns>
         private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName)
         {
             AssertionHelpers.ThrowIfNull(_configuration!, nameof(_configuration));
@@ -332,7 +324,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 _logger?.LogWarning("Access token was acquired but agent identity could not be resolved. MCP tools will not be loaded.");
             }
 
-            // Activity.From.Name is always available — no API call needed.
             var displayName = context.Activity.From?.Name;
 
             // Create the local tools:
@@ -359,8 +350,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     {
                         await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-                        // For the bearer token (development) flow, pass the token as an override and
-                        // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
                         var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
                             ? authHandlerName
                             : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
@@ -396,45 +385,61 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 Tools = toolList
             };
 
-            // Create the chat Client passing in agent instructions and tools:
-            return new ChatClientAgent(_chatClient!,
-                    new ChatClientAgentOptions
-                    {
-                        Instructions = GetAgentInstructions(displayName),
-                        ChatOptions = toolOptions,
-                        ChatMessageStoreFactory = ctx =>
-                        {
 #pragma warning disable MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                            return new InMemoryChatMessageStore(new MessageCountingChatReducer(10), ctx.SerializedState, ctx.JsonSerializerOptions);
-#pragma warning restore MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                        }
-                    })
-                .AsBuilder()
-                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
-                .Build();
+            // Create and return the agent with per-turn instructions, tools, and in-memory conversation history.
+            // ChatClientAgentOptions is used (not the string ctor) to support ChatHistoryProvider.
+            // Instructions are injected per-turn via InstructionsContextProvider (AIContextProvider subclass)
+            // because ChatClientAgentOptions has no Instructions property.
+            return new ChatClientAgent(
+                _chatClient!,
+                new ChatClientAgentOptions
+                {
+                    ChatOptions = toolOptions,
+                    ChatHistoryProvider = new InMemoryChatHistoryProvider(
+                        new InMemoryChatHistoryProviderOptions
+                        {
+                            ChatReducer = new MessageCountingChatReducer(10),
+                            ReducerTriggerEvent = InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded
+                        }),
+                    AIContextProviders = [new InstructionsContextProvider(GetAgentInstructions(displayName))]
+                },
+                loggerFactory: null,
+                services: null)
+            .AsBuilder()
+            .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
+            .Build();
+#pragma warning restore MEAI001
         }
 
         /// <summary>
-        /// Manage Agent threads against the conversation state.
+        /// Restore or create the agent session for this conversation from turn state.
         /// </summary>
-        /// <param name="agent">ChatAgent</param>
-        /// <param name="turnState">State Manager for the Agent.</param>
-        /// <returns></returns>
-        private static AgentThread GetConversationThread(AIAgent? agent, ITurnState turnState)
+        private static async Task<AgentSession> GetConversationSessionAsync(AIAgent? agent, ITurnState turnState, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(agent);
-            AgentThread thread;
-            string? agentThreadInfo = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
-            if (string.IsNullOrEmpty(agentThreadInfo))
+            string? agentSessionInfo = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
+            if (string.IsNullOrEmpty(agentSessionInfo))
+                return await agent.CreateSessionAsync(cancellationToken);
+
+            JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentSessionInfo);
+            return await agent.DeserializeSessionAsync(ele, null, cancellationToken);
+        }
+
+        /// <summary>
+        /// Injects per-turn system instructions into the LLM context via AIContextProvider.
+        /// Used because ChatClientAgentOptions has no Instructions property — only the string ctor does,
+        /// but it doesn't support ChatHistoryProvider. This provider bridges the gap.
+        /// </summary>
+        private sealed class InstructionsContextProvider(string instructions) : AIContextProvider
+        {
+            protected override ValueTask<AIContext> InvokingCoreAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken)
             {
-                thread = agent.GetNewThread();
+                // Modify the existing context in place so we don't lose messages/tools
+                // accumulated by other providers. Returning a new AIContext would replace
+                // the accumulated context and lose the user's current message.
+                context.AIContext.Instructions = instructions;
+                return ValueTask.FromResult(context.AIContext);
             }
-            else
-            {
-                JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentThreadInfo);
-                thread = agent.DeserializeThread(ele);
-            }
-            return thread;
         }
 
         private string GetToolCacheKey(ITurnState turnState)
