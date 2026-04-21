@@ -67,6 +67,7 @@ from constants import DEFAULT_AGENT_ID
 # without risk of concurrent request interference
 _current_agent_details: contextvars.ContextVar = contextvars.ContextVar('agent_details', default=None)
 _current_user_details: contextvars.ContextVar = contextvars.ContextVar('user_details', default=None)
+_current_conversation_id: contextvars.ContextVar = contextvars.ContextVar('conversation_id', default=None)
 
 
 class CrewAIAgent(AgentInterface):
@@ -140,7 +141,8 @@ class CrewAIAgent(AgentInterface):
             mcp_tools=self.mcp_tools,
             tool_executor=self.mcp_tool_executor,
             get_agent_details=lambda: _current_agent_details.get(),
-            get_tenant_details=lambda: _current_user_details.get(),
+            get_user_details=lambda: _current_user_details.get(),
+            get_conversation_id=lambda: _current_conversation_id.get(),
         )
 
     # =========================================================================
@@ -171,13 +173,13 @@ class CrewAIAgent(AgentInterface):
         try:
             logger.info(f"Processing message: {message[:100]}...")
 
-            with build_baggage_builder(context, ctx_details.correlation_id).build():
+            with build_baggage_builder(context, ctx_details.conversation_id).build():
                 # Create observability details
                 agent_details = create_agent_details(ctx_details, "AI agent powered by CrewAI framework")
                 caller_details = create_caller_details(ctx_details)
                 user_details = create_user_details(ctx_details)
                 request = create_request(ctx_details, message)
-                invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                invoke_details = create_invoke_agent_details()
 
                 with InvokeAgentScope.start(
                     request=request,
@@ -195,6 +197,7 @@ class CrewAIAgent(AgentInterface):
                     # This is thread/async-safe for concurrent request handling
                     agent_details_token = _current_agent_details.set(agent_details)
                     user_details_token = _current_user_details.set(user_details)
+                    conversation_id_token = _current_conversation_id.set(ctx_details.conversation_id)
 
                     try:
                         # Create observable MCP tool wrappers
@@ -215,6 +218,7 @@ class CrewAIAgent(AgentInterface):
                         # Reset context variables to previous values
                         _current_agent_details.reset(agent_details_token)
                         _current_user_details.reset(user_details_token)
+                        _current_conversation_id.reset(conversation_id_token)
 
                 logger.info("✅ Observability scopes closed successfully")
                 return full_response

@@ -207,7 +207,7 @@ class GenericAgentHost:
                 # Extract context from turn using shared utility
                 ctx_details = extract_turn_context_details(context)
 
-                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).session_id(ctx_details.correlation_id).build():
+                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).session_id(ctx_details.conversation_id).build():
                     if not self.agent_instance:
                         error_msg = "ERROR Sorry, the agent is not available."
                         logger.error(error_msg)
@@ -263,7 +263,7 @@ class GenericAgentHost:
                     typing_task = asyncio.create_task(_typing_loop())
                     try:
                         # Create observability details using shared utility
-                        invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                        invoke_details = create_invoke_agent_details()
                         caller_details = create_caller_details(ctx_details)
                         user_details = create_user_details(ctx_details)
                         request = create_request(ctx_details, user_message)
