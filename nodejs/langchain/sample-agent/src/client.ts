@@ -82,7 +82,7 @@ function createChatModel(): BaseChatModel {
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiInstanceName: endpoint.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
       azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
-      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview",
+      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview",
       temperature: 0,
     });
   }
