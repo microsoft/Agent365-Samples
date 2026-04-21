@@ -156,7 +156,7 @@ def create_user_details(details: TurnContextDetails) -> UserDetails:
         UserDetails for observability
     """
     return UserDetails(
-        user_id=details.caller_aad_object_id or details.caller_id or "unknown-caller",
+        user_id=details.caller_aad_object_id or details.caller_id,
         user_name=details.caller_name,
     )
 
@@ -179,13 +179,13 @@ def create_request(details: TurnContextDetails, message: str) -> Request:
     )
 
 
-def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent powered by CrewAI framework") -> InvokeAgentScopeDetails:
+def create_invoke_agent_details() -> InvokeAgentScopeDetails:
     """
-    Create InvokeAgentScopeDetails from extracted TurnContextDetails.
+    Create InvokeAgentScopeDetails for observability.
 
-    Args:
-        details: The extracted turn context details
-        description: Description of the agent
+    In the current SDK (0.3.0+), agent details and caller details are passed
+    directly to InvokeAgentScope.start() rather than bundled here.
+    InvokeAgentScopeDetails only carries an optional service endpoint.
 
     Returns:
         InvokeAgentScopeDetails for observability
@@ -193,7 +193,7 @@ def create_invoke_agent_details(details: TurnContextDetails, description: str = 
     return InvokeAgentScopeDetails()
 
 
-def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = None) -> BaggageBuilder:
+def build_baggage_builder(context: TurnContext, session_id: Optional[str] = None) -> BaggageBuilder:
     """
     Build a BaggageBuilder populated from TurnContext activity.
 
@@ -204,13 +204,13 @@ def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = 
 
     Args:
         context: The TurnContext from the Microsoft Agents SDK
-        correlation_id: Optional correlation id to override the one extracted by populate()
+        session_id: Optional session id (typically conversation_id) for telemetry correlation
 
     Returns:
         Populated BaggageBuilder instance ready to use with .build() context manager
     """
     builder = BaggageBuilder()
     populate(builder, context)
-    if correlation_id:
-        builder.session_id(correlation_id)
+    if session_id:
+        builder.session_id(session_id)
     return builder
