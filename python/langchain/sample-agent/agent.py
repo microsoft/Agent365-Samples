@@ -109,7 +109,6 @@ def _create_chat_model():
         "or OPENAI_API_KEY."
     )
 
-
 class LangChainAgent(AgentInterface):
     """Wrapper class for LangChain Agent with Microsoft Agent 365 integration."""
 
