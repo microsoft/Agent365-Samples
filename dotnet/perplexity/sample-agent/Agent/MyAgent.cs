@@ -275,6 +275,7 @@ public class MyAgent : AgentApplication
 
                     // Load MCP tools directly via McpToolService (no Semantic Kernel).
                     var (tools, toolExecutor) = await LoadMcpToolsAsync(turnContext, ToolAuthHandlerName, McpAuthHandlerName, cancellationToken);
+                   
                     _logger.LogInformation("Loaded {Count} tools from MCP servers", tools.Count);
 
                     // Invoke PerplexityClient with tools and tool executor.
