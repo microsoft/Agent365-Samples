@@ -74,7 +74,6 @@ ms_agents_logger.setLevel(logging.INFO)
 # Enable observability SDK logging to see exporter warnings
 observability_logger = logging.getLogger("microsoft_agents_a365.observability")
 observability_logger.setLevel(logging.INFO)
-
 logger = logging.getLogger(__name__)
 
 # Load configuration
