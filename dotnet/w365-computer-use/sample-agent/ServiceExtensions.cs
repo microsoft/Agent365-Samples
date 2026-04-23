@@ -24,10 +24,8 @@ public static class ServiceExtensions
                     .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation();
 
-                if (builder.Environment.IsDevelopment())
-                {
-                    tracing.AddConsoleExporter();
-                }
+                // Console exporter removed — dumps a full Activity block per HTTP request and
+                // swamped the console during bring-up. Re-add locally if you need trace output.
             })
             .WithMetrics(metrics =>
             {

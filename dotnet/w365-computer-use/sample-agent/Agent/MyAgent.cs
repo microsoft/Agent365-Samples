@@ -194,8 +194,14 @@ public class MyAgent : AgentApplication
                     {
                         if (w365Tools == null || w365Tools.Count == 0)
                         {
+                            // ATG wraps tools/list failures into a synthetic "Error" tool whose Description
+                            // carries the real reason (e.g. "no pool with an available session was found").
+                            // Extract it so the user sees the actionable message instead of the generic
+                            // "Unable to connect" placeholder.
+                            var errorMessage = ExtractW365ToolListError(additionalTools)
+                                ?? "Unable to connect to the W365 Computer Use service. Please check your configuration.";
                             await turnContext.SendActivityAsync(
-                                MessageFactory.Text("Unable to connect to the W365 Computer Use service. Please check your configuration."),
+                                MessageFactory.Text(errorMessage),
                                 cancellationToken);
                             return;
                         }
@@ -334,7 +340,7 @@ public class MyAgent : AgentApplication
         var w365Tools = allTools?.Where(t =>
         {
             var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
-            return name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
+            return ComputerUseOrchestrator.IsW365CuaTool(name);
         }).ToList();
 
         if (w365Tools != null && w365Tools.Count > 0)
@@ -354,7 +360,7 @@ public class MyAgent : AgentApplication
         var additionalTools = allTools?.Where(t =>
         {
             var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
-            return !name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
+            return !ComputerUseOrchestrator.IsW365CuaTool(name);
         }).ToList();
 
         if (additionalTools != null && additionalTools.Count > 0)
@@ -365,5 +371,48 @@ public class MyAgent : AgentApplication
         }
 
         return additionalTools;
+    }
+
+    /// <summary>
+    /// Looks for ATG's synthetic <c>Error</c> tool in the non-CUA tool list and extracts a
+    /// user-facing error reason from its description. ATG formats the description as:
+    /// <c>"Tool list retrieval failed. Message='...'. ExceptionType='...'. ExceptionMessage='...'. CorrelationId=..., TimeStamp=..."</c>.
+    /// We prefer the <c>ExceptionMessage</c> field because it carries the specific reason
+    /// (e.g. "Failed to acquire a W365 session: no pool with an available session was found.").
+    /// Returns null if no error tool is present or the description can't be parsed.
+    /// </summary>
+    private static string? ExtractW365ToolListError(IList<AITool>? additionalTools)
+    {
+        if (additionalTools == null || additionalTools.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var tool in additionalTools)
+        {
+            if (tool is not AIFunction fn) continue;
+            if (!string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var description = fn.Description ?? string.Empty;
+            var extracted = ExtractQuotedField(description, "ExceptionMessage=")
+                ?? ExtractQuotedField(description, "Message=")
+                ?? (string.IsNullOrWhiteSpace(description) ? null : description);
+            return extracted;
+        }
+
+        return null;
+    }
+
+    private static string? ExtractQuotedField(string source, string fieldPrefix)
+    {
+        var startMarker = fieldPrefix + "'";
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += startMarker.Length;
+        var end = source.IndexOf("'.", start, StringComparison.Ordinal);
+        if (end < 0) end = source.IndexOf('\'', start);
+        if (end < start) return null;
+        var value = source.Substring(start, end - start);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 }

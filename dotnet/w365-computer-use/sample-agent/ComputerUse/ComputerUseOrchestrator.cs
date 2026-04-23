@@ -17,6 +17,37 @@ namespace W365ComputerUseSample.ComputerUse;
 /// </summary>
 public class ComputerUseOrchestrator
 {
+    /// <summary>
+    /// Names of the CUA tools exposed by the W365 remote MCP server (as returned by its
+    /// tools/list). Used to identify which tools came from the W365 server vs other MCP servers
+    /// (mail, calendar, etc.) without per-server tracking. Includes ATG's local EndSession
+    /// mcptool. Update when W365 adds/renames tools.
+    /// </summary>
+    internal static readonly HashSet<string> W365CuaToolNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Desktop interaction
+        "take_screenshot", "click", "type_text", "press_keys", "scroll", "move_mouse",
+        "drag_mouse", "wait_milliseconds", "get_cursor_position", "get_screen_size",
+        // Window management
+        "list_windows", "activate_window", "close_window",
+        // Accessibility / OCR
+        "get_accessibility_tree", "find_ui_element", "analyze_screen",
+        // Browser
+        "browser_navigate", "browser_click", "browser_type", "browser_get_html",
+        "browser_get_text", "browser_get_url", "browser_get_title", "browser_query_text",
+        "browser_list_tabs", "browser_switch_tab", "browser_close_tab", "browser_new_tab",
+        "browser_back", "browser_forward", "browser_reload", "browser_wait_for",
+        "browser_eval_js", "browser_screenshot", "focus_browser",
+        // Code / shell execution
+        "execute_python_code", "execute_shell_command",
+        // ATG-local tool
+        "mcp_W365ComputerUse_EndSession",
+    };
+
+    /// <summary>Returns true when <paramref name="toolName"/> identifies a W365 CUA tool.</summary>
+    internal static bool IsW365CuaTool(string? toolName)
+        => !string.IsNullOrEmpty(toolName) && W365CuaToolNames.Contains(toolName);
+
     private readonly ICuaModelProvider _modelProvider;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly HttpClient _httpClient;
@@ -259,7 +290,21 @@ public class ComputerUseOrchestrator
                         }
 
                         _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
-                        session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
+                        try
+                        {
+                            session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
+                        }
+                        catch (InvalidOperationException toolEx)
+                        {
+                            _logger.LogError(toolEx, "Tool call in CUA iteration failed for conversation {ConversationId}", conversationId);
+                            // Pop the unpaired computer_call we added above so the next turn's conversation
+                            // history isn't malformed (Azure OpenAI 400s on "No tool output found for …").
+                            if (session.ConversationHistory.Count > 0)
+                            {
+                                session.ConversationHistory.RemoveAt(session.ConversationHistory.Count - 1);
+                            }
+                            return toolEx.Message;
+                        }
                         break;
 
                     case "function_call":
@@ -274,15 +319,19 @@ public class ComputerUseOrchestrator
                         if (funcName == "EndSession")
                         {
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
-                            if (session.SessionStarted)
-                            {
-                                _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
-                                onStatusUpdate?.Invoke("Ending session...");
-                                await EndSessionAsync(w365Tools, _logger, session.W365SessionId, cancellationToken);
-                                session.SessionStarted = false;
-                                session.W365SessionId = null;
-                                _sessions.TryRemove(conversationId, out _);
-                            }
+                            _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
+                            onStatusUpdate?.Invoke("Ending session...");
+
+                            // Always delegate to ATG regardless of session.SessionStarted: in V2 the
+                            // session can be acquired by ATG's hostname-discovery when the sample agent
+                            // calls tools/list at startup — before any computer_call flips SessionStarted.
+                            // Gating on SessionStarted would leak the pool slot. ATG's handler is
+                            // idempotent and returns "No active W365 session found." when there's nothing
+                            // to release, so this is safe on fresh conversations too.
+                            await EndSessionAsync(w365Tools, _logger, session.W365SessionId, cancellationToken);
+                            session.SessionStarted = false;
+                            session.W365SessionId = null;
+                            _sessions.TryRemove(conversationId, out _);
                             return "Session ended. The VM has been released back to the pool.";
                         }
 
@@ -310,11 +359,11 @@ public class ComputerUseOrchestrator
     {
         try
         {
+            // The ATG-local mcptool resolves the active W365 session via the v2: context key
+            // — no sessionId arg needed (session routing is transparent).
             var args = new Dictionary<string, object?>();
-            if (!string.IsNullOrEmpty(sessionId))
-                args["sessionId"] = sessionId;
-            await InvokeToolAsync(tools, "W365_EndSession", args, ct);
-            logger.LogInformation("W365 session ended (sessionId={SessionId})", sessionId);
+            await InvokeToolAsync(tools, "mcp_W365ComputerUse_EndSession", args, ct);
+            logger.LogInformation("W365 session ended");
         }
         catch (ObjectDisposedException)
         {
@@ -343,11 +392,17 @@ public class ComputerUseOrchestrator
 
         foreach (var (convId, session) in _sessions)
         {
-            if (session.SessionStarted)
-            {
-                _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, session.W365SessionId);
-                await EndSessionAsync(_cachedTools, _logger, session.W365SessionId, CancellationToken.None);
-            }
+            _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, session.W365SessionId);
+            await EndSessionAsync(_cachedTools, _logger, session.W365SessionId, CancellationToken.None);
+        }
+
+        // Even when _sessions is empty, ATG may hold a V2 session acquired by tools/list at
+        // startup. Invoke EndSession once unconditionally — the handler is idempotent and
+        // returns a no-op response when there's nothing to release.
+        if (_sessions.IsEmpty)
+        {
+            _logger.LogInformation("No per-conversation sessions tracked; invoking EndSession to clean up any startup-acquired session");
+            await EndSessionAsync(_cachedTools, _logger, sessionId: null, CancellationToken.None);
         }
 
         _sessions.Clear();
@@ -364,62 +419,45 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Start a W365 session and return the sessionId.
+    /// V2 has no explicit start-session tool — the W365 V2 session is acquired transparently
+    /// by ATG's hostname-discovery handler the first time this conversation issues any MCP
+    /// request (tools/list or tools/call). This method is kept for call-site compatibility
+    /// but is now a no-op that returns null.
     /// </summary>
-    public static async Task<string?> StartSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
+    public static Task<string?> StartSessionAsync(IList<AITool> tools, ILogger logger, CancellationToken ct)
     {
-        logger.LogInformation("Starting W365 session via QuickStartSession...");
-        try
-        {
-            var result = await InvokeToolAsync(tools, "W365_QuickStartSession", new Dictionary<string, object?>(), ct);
-            var resultStr = result?.ToString() ?? "";
-            logger.LogInformation("W365 QuickStartSession result: {Result}", resultStr[..Math.Min(500, resultStr.Length)]);
-
-            // Parse sessionId from response
-            try
-            {
-                using var doc = JsonDocument.Parse(resultStr);
-                if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var block in content.EnumerateArray())
-                    {
-                        if (block.TryGetProperty("text", out var text))
-                        {
-                            var textStr = text.GetString() ?? "";
-                            try
-                            {
-                                using var innerDoc = JsonDocument.Parse(textStr);
-                                if (innerDoc.RootElement.TryGetProperty("sessionId", out var sid))
-                                    return sid.GetString();
-                            }
-                            catch (JsonException) { }
-                        }
-                    }
-                }
-            }
-            catch (JsonException) { }
-
-            logger.LogWarning("Could not parse sessionId from QuickStartSession response — using default session");
-            return null;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "W365 QuickStartSession FAILED");
-            throw;
-        }
+        logger.LogInformation("W365 V2: session acquisition is transparent via hostname discovery — no explicit start.");
+        return Task.FromResult<string?>(null);
     }
 
     /// <summary>
     /// Get or create MCP clients and merged tool list. Connects to each server URL once on first call,
     /// then returns the cached result on subsequent calls. The SSE connections stay alive across
     /// messages (MyAgent is transient, but this orchestrator is singleton).
-    /// The primary MCP client (for W365 screenshot calls) is the one whose tools start with "W365_".
+    /// The primary MCP client (for W365 screenshot calls) is the one whose tools match the W365 CUA set (<see cref="W365CuaToolNames"/>).
     /// </summary>
     public async Task<(IList<AITool> Tools, IMcpClient? Client)> GetOrCreateMcpConnectionAsync(
         IList<string> mcpUrls, string accessToken)
     {
-        if (_cachedTools != null)
+        // Only reuse the cache if it actually contains W365 CUA tools. If the previous attempt landed
+        // on ATG's synthetic "Error" tool (W365 session acquisition failed upstream), a subsequent
+        // message should re-hit ATG rather than silently reuse the failure. Otherwise the sample
+        // agent becomes permanently wedged on a single bad connect.
+        if (_cachedTools != null && _cachedTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name)))
             return (_cachedTools, _cachedMcpClient);
+
+        // Stale caches from a failed prior attempt — clear before reconnecting.
+        if (_allMcpClients.Count > 0)
+        {
+            foreach (var c in _allMcpClients)
+            {
+                try { await c.DisposeAsync(); }
+                catch (Exception disposeEx) { _logger.LogDebug(disposeEx, "Ignoring error disposing stale MCP client."); }
+            }
+            _allMcpClients.Clear();
+            _cachedMcpClient = null;
+            _cachedTools = null;
+        }
 
         var allTools = new List<AITool>();
 
@@ -445,8 +483,8 @@ public class ComputerUseOrchestrator
                 _allMcpClients.Add(client);
                 allTools.AddRange(tools);
 
-                // Use the W365 server's client for direct screenshot calls
-                var hasW365Tools = tools.Any(t => (t as AIFunction)?.Name?.StartsWith("W365_", StringComparison.OrdinalIgnoreCase) == true);
+                // Use the W365 server's client for direct screenshot calls.
+                var hasW365Tools = tools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
                 if (hasW365Tools)
                     _cachedMcpClient = client;
 
@@ -462,9 +500,20 @@ public class ComputerUseOrchestrator
         // Fallback: use first client if no W365 server found
         _cachedMcpClient ??= _allMcpClients.FirstOrDefault();
 
-        _cachedTools = allTools;
+        // Only cache when we got at least one W365 CUA tool. Otherwise leave _cachedTools null so
+        // the next message retries the MCP connection and gives ATG another shot at session acquisition.
+        var cachingIsSafe = allTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
+        if (cachingIsSafe)
+        {
+            _cachedTools = allTools;
+        }
+        else
+        {
+            _logger.LogWarning("Not caching MCP tool list — no V2 CUA tools found (total {Count}). Next message will reconnect.", allTools.Count);
+        }
+
         _logger.LogInformation("Total tools from {ServerCount} MCP server(s): {ToolCount}", mcpUrls.Count, allTools.Count);
-        return (_cachedTools, _cachedMcpClient);
+        return (allTools, _cachedMcpClient);
     }
 
     private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, CancellationToken ct)
@@ -478,10 +527,10 @@ public class ComputerUseOrchestrator
             Truncation = "auto"
         }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
 
-        _logger.LogInformation("Model request (first 2000 chars): {Body}", body[..Math.Min(2000, body.Length)]);
+        _logger.LogDebug("Model request (first 2000 chars): {Body}", body[..Math.Min(2000, body.Length)]);
 
         var responseJson = await _modelProvider.SendAsync(body, ct);
-        _logger.LogInformation("Model response (first 2000 chars): {Response}", responseJson[..Math.Min(2000, responseJson.Length)]);
+        _logger.LogDebug("Model response (first 2000 chars): {Response}", responseJson[..Math.Min(2000, responseJson.Length)]);
         return JsonSerializer.Deserialize<ComputerUseResponse>(responseJson);
     }
 
@@ -507,13 +556,19 @@ public class ComputerUseOrchestrator
                 if (actionType != "screenshot")
                 {
                     var (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
-                    var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                    var (result, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
                     if (sessionLost)
                     {
                         onStatus?.Invoke("Session lost — recovering...");
                         sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
                         (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
-                        await InvokeToolAsync(tools, toolName, args, ct);
+                        await InvokeToolThrowOnErrorAsync(tools, toolName, args, ct);
+                    }
+                    else if (TryExtractToolError(result?.ToString(), out var errorText))
+                    {
+                        // Surface tool errors to the bot reply rather than silently continuing with
+                        // a no-op result. The model can otherwise loop or end with "No text was streamed".
+                        throw new InvalidOperationException($"Error calling tool '{toolName}': {errorText}");
                     }
                 }
             }
@@ -526,13 +581,17 @@ public class ComputerUseOrchestrator
             if (actionType != "screenshot")
             {
                 var (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
-                var (_, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                var (result, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
                 if (sessionLost)
                 {
                     onStatus?.Invoke("Session lost — recovering...");
                     sessionId = await RecoverSessionAsync(session, tools, _logger, ct);
                     (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
-                    await InvokeToolAsync(tools, toolName, args, ct);
+                    await InvokeToolThrowOnErrorAsync(tools, toolName, args, ct);
+                }
+                else if (TryExtractToolError(result?.ToString(), out var errorText))
+                {
+                    throw new InvalidOperationException($"Error calling tool '{toolName}': {errorText}");
                 }
             }
         }
@@ -570,72 +629,109 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Map OpenAI computer_call action types to W365 MCP tool names and arguments.
-    /// Includes sessionId so the MCP server uses the correct session.
+    /// Map OpenAI computer_call action types to W365 V2 MCP tool names and arguments.
+    /// V2 tool names/schemas come from the in-VM MCP server (as returned by its tools/list).
+    /// No sessionId arg is passed — V2 session routing is handled transparently by ATG's
+    /// hostname-discovery handler via the x-ms-computerId header.
     /// </summary>
     private static (string ToolName, Dictionary<string, object?> Args) MapActionToMcpTool(string actionType, JsonElement action, string? sessionId)
     {
-        var (toolName, args) = actionType.ToLowerInvariant() switch
+        // CUA model emits button names in lowercase ("left"/"right"); V2 click accepts PascalCase enum values.
+        static string NormalizeButton(string? button) => string.IsNullOrEmpty(button)
+            ? "Left"
+            : char.ToUpperInvariant(button[0]) + button.Substring(1).ToLowerInvariant();
+
+        return actionType.ToLowerInvariant() switch
         {
-            "click" => ("W365_Click2", new Dictionary<string, object?>
+            "click" => ("click", new Dictionary<string, object?>
             {
                 ["x"] = action.GetProperty("x").GetInt32(),
                 ["y"] = action.GetProperty("y").GetInt32(),
-                ["button"] = action.TryGetProperty("button", out var b) ? b.GetString() : "left"
+                ["button"] = NormalizeButton(action.TryGetProperty("button", out var b) ? b.GetString() : null),
+                ["clickCount"] = 1
             }),
-            "double_click" => ("W365_DoubleClick", new Dictionary<string, object?>
+            "double_click" => ("click", new Dictionary<string, object?>
+            {
+                ["x"] = action.GetProperty("x").GetInt32(),
+                ["y"] = action.GetProperty("y").GetInt32(),
+                ["button"] = "Left",
+                ["clickCount"] = 2
+            }),
+            "type" => ("type_text", new Dictionary<string, object?>
+            {
+                ["text"] = action.GetProperty("text").GetString()
+            }),
+            "key" or "keys" or "keypress" => ("press_keys", new Dictionary<string, object?>
+            {
+                // TEMP (2026-04-22): model emits uppercase key names like "CTRL"/"ESC", but W365's
+                // press_keys tool appears to reject them. Experimenting with lowercase — revert or
+                // normalize differently once Vishnu confirms the expected format.
+                ["keys"] = ExtractKeys(action).Select(k => k.ToLowerInvariant()).ToArray()
+            }),
+            "scroll" => ("scroll", new Dictionary<string, object?>
+            {
+                ["x"] = action.GetProperty("x").GetInt32(),
+                ["y"] = action.GetProperty("y").GetInt32(),
+                ["deltaX"] = action.TryGetProperty("scroll_x", out var sx) ? sx.GetInt32() : 0,
+                ["deltaY"] = action.TryGetProperty("scroll_y", out var sy) ? sy.GetInt32() : 0
+            }),
+            "move" => ("move_mouse", new Dictionary<string, object?>
             {
                 ["x"] = action.GetProperty("x").GetInt32(),
                 ["y"] = action.GetProperty("y").GetInt32()
             }),
-            "type" => ("W365_WriteText", new Dictionary<string, object?>
+            "drag" => ("drag_mouse", new Dictionary<string, object?>
             {
-                ["text"] = action.GetProperty("text").GetString()
+                ["startX"] = action.GetProperty("path")[0].GetProperty("x").GetInt32(),
+                ["startY"] = action.GetProperty("path")[0].GetProperty("y").GetInt32(),
+                ["endX"] = action.GetProperty("path")[action.GetProperty("path").GetArrayLength() - 1].GetProperty("x").GetInt32(),
+                ["endY"] = action.GetProperty("path")[action.GetProperty("path").GetArrayLength() - 1].GetProperty("y").GetInt32(),
+                ["button"] = "Left"
             }),
-            "key" or "keys" or "keypress" => ("W365_MultiKeyPress", new Dictionary<string, object?>
+            "wait" => ("wait_milliseconds", new Dictionary<string, object?>
             {
-                ["keys"] = ExtractKeys(action)
+                ["ms"] = action.TryGetProperty("ms", out var ms) ? ms.GetInt32() : 500
             }),
-            "scroll" => ("W365_Scroll", new Dictionary<string, object?>
-            {
-                ["atX"] = action.GetProperty("x").GetInt32(),
-                ["atY"] = action.GetProperty("y").GetInt32(),
-                ["deltaX"] = action.TryGetProperty("scroll_x", out var sx) ? sx.GetInt32() : 0,
-                ["deltaY"] = action.TryGetProperty("scroll_y", out var sy) ? sy.GetInt32() : 0
-            }),
-            "move" => ("W365_MoveMouse", new Dictionary<string, object?>
-            {
-                ["toX"] = action.GetProperty("x").GetInt32(),
-                ["toY"] = action.GetProperty("y").GetInt32()
-            }),
-            "wait" => ("W365_Wait", new Dictionary<string, object?>
-            {
-                ["milliseconds"] = action.TryGetProperty("ms", out var ms) ? ms.GetInt32() : 500
-            }),
-            "open_url" => ("W365_OpenUrl", new Dictionary<string, object?>
+            "open_url" => ("browser_navigate", new Dictionary<string, object?>
             {
                 ["url"] = action.GetProperty("url").GetString()
             }),
             _ => throw new NotSupportedException($"Unsupported action: {actionType}")
         };
-
-        // Add sessionId to all tool calls so the MCP server routes to the correct session
-        if (!string.IsNullOrEmpty(sessionId))
-            args["sessionId"] = sessionId;
-
-        return (toolName, args);
     }
 
     private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
+        // V2 take_screenshot takes optional crop args; empty dictionary = full screen.
+        // No sessionId — V2 session routing is handled by ATG's hostname-discovery handler.
         var screenshotArgs = new Dictionary<string, object?>();
-        if (!string.IsNullOrEmpty(sessionId))
-            screenshotArgs["sessionId"] = sessionId;
 
         // Use direct MCP client when available — AIFunction wrappers drop image content blocks
         if (mcpClient != null)
         {
-            var result = await mcpClient.CallToolAsync("W365_CaptureScreenshot", screenshotArgs, cancellationToken: ct);
+            var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
+
+            // Log full raw content on entry so we can diagnose new/unexpected shapes.
+            string? rawResultJson = null;
+            try
+            {
+                rawResultJson = JsonSerializer.Serialize(result);
+                _logger.LogDebug("take_screenshot returned {Count} content blocks. Raw JSON (truncated): {Raw}",
+                    result.Content.Count, rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
+            }
+            catch (Exception logEx)
+            {
+                _logger.LogWarning(logEx, "Failed to serialize take_screenshot response for logging.");
+            }
+
+            // Detect MCP error responses and surface the real reason (e.g. "no pool with an available
+            // session was found") instead of falling through to the image-extractor and reporting the
+            // misleading "no extractable image data" message.
+            if (!string.IsNullOrEmpty(rawResultJson) && TryExtractToolError(rawResultJson, out var toolErrorText))
+            {
+                throw new InvalidOperationException($"Error calling tool 'take_screenshot': {toolErrorText}");
+            }
+
             foreach (var item in result.Content)
             {
                 _logger.LogDebug("Screenshot content block: Type={Type}, DataLen={DataLen}, TextLen={TextLen}, MimeType={Mime}",
@@ -652,15 +748,34 @@ public class ComputerUseOrchestrator
                 }
             }
 
-            // Log full content for debugging
-            foreach (var item in result.Content)
-                _logger.LogWarning("Unhandled screenshot block: Type={Type}, Text={Preview}", item.Type, item.Text?[..Math.Min(200, item.Text.Length)]);
+            // Fallback: serialize to JSON and hunt for any base64-looking PNG payload in string fields.
+            // Covers MCP "resource" blocks (blob), embedded data URLs, or other unexpected shapes.
+            try
+            {
+                var rawJson = JsonSerializer.Serialize(result.Content);
+                var extracted = ExtractPngBase64FromJson(rawJson);
+                if (!string.IsNullOrEmpty(extracted))
+                {
+                    _logger.LogInformation("Extracted PNG base64 from take_screenshot via JSON scan ({Length} chars).", extracted.Length);
+                    return extracted;
+                }
+            }
+            catch (Exception scanEx)
+            {
+                _logger.LogWarning(scanEx, "JSON-scan fallback for take_screenshot threw.");
+            }
 
-            throw new InvalidOperationException($"Screenshot MCP response had {result.Content.Count} content blocks but no extractable image data.");
+            // Per-block warning with as much detail as possible before we give up.
+            foreach (var item in result.Content)
+                _logger.LogWarning("Unhandled screenshot block: Type={Type}, MimeType={Mime}, DataLen={DataLen}, TextLen={TextLen}, TextPreview={Preview}",
+                    item.Type, item.MimeType, item.Data?.Length ?? 0, item.Text?.Length ?? 0,
+                    item.Text?[..Math.Min(200, item.Text.Length)]);
+
+            throw new InvalidOperationException($"Screenshot MCP response had {result.Content.Count} content blocks but no extractable image data. See preceding log lines for the raw shape.");
         }
 
         // Fallback: AIFunction wrapper (may lose image content)
-        var aiResult = await InvokeToolAsync(tools, "W365_CaptureScreenshot", screenshotArgs, ct);
+        var aiResult = await InvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
         var str = aiResult?.ToString() ?? "";
 
         _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
@@ -716,12 +831,116 @@ public class ComputerUseOrchestrator
         return null;
     }
 
+    /// <summary>
+    /// Last-resort extractor that walks arbitrary JSON for the first string value that looks
+    /// like a PNG base64 payload. Checks for the PNG magic prefix (<c>iVBORw0KGgo</c>) or a
+    /// <c>data:image/png;base64,</c> data URL inside any string field. Used when <c>take_screenshot</c>
+    /// returns a content block shape we don't explicitly handle (e.g. MCP resource.blob).
+    /// </summary>
+    private static string? ExtractPngBase64FromJson(string json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return Walk(doc.RootElement);
+        }
+        catch (JsonException) { return null; }
+
+        static string? Walk(JsonElement el)
+        {
+            switch (el.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    foreach (var prop in el.EnumerateObject())
+                    {
+                        var found = Walk(prop.Value);
+                        if (!string.IsNullOrEmpty(found)) return found;
+                    }
+                    break;
+                case JsonValueKind.Array:
+                    foreach (var item in el.EnumerateArray())
+                    {
+                        var found = Walk(item);
+                        if (!string.IsNullOrEmpty(found)) return found;
+                    }
+                    break;
+                case JsonValueKind.String:
+                    var s = el.GetString();
+                    if (string.IsNullOrEmpty(s)) break;
+                    // Data URL form: strip the prefix, return the base64 body.
+                    var dataPrefix = "data:image/png;base64,";
+                    var dataIdx = s.IndexOf(dataPrefix, StringComparison.OrdinalIgnoreCase);
+                    if (dataIdx >= 0) return s.Substring(dataIdx + dataPrefix.Length);
+                    // Raw PNG base64 — starts with the PNG magic encoded as "iVBORw0KGgo".
+                    if (s.Length >= 16 && s.StartsWith("iVBORw0KGgo", StringComparison.Ordinal)) return s;
+                    break;
+            }
+            return null;
+        }
+    }
+
     internal static async Task<object?> InvokeToolAsync(
         IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
     {
         var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Tool '{name}' not found.");
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
+    }
+
+    /// <summary>
+    /// Invokes a tool and throws <see cref="InvalidOperationException"/> if the MCP result reports
+    /// <c>isError: true</c>. The exception message format is <c>"Error calling tool '{name}': {detail}"</c>
+    /// so the CUA loop can bubble a readable reason up to the bot reply instead of silently proceeding
+    /// with a bad state.
+    /// </summary>
+    internal static async Task<object?> InvokeToolThrowOnErrorAsync(
+        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    {
+        var result = await InvokeToolAsync(tools, name, args, ct);
+        if (TryExtractToolError(result?.ToString(), out var errorText))
+        {
+            throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Parses an MCP <c>CallToolResult</c>-shaped JSON payload and extracts the error text when
+    /// <c>isError</c> is <c>true</c>. Returns <c>true</c> if an error was found, <c>false</c> otherwise.
+    /// </summary>
+    private static bool TryExtractToolError(string? response, out string message)
+    {
+        message = string.Empty;
+        if (string.IsNullOrEmpty(response)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(response);
+            if (!doc.RootElement.TryGetProperty("isError", out var isErr) || isErr.ValueKind != JsonValueKind.True)
+            {
+                return false;
+            }
+
+            if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var block in content.EnumerateArray())
+                {
+                    if (block.TryGetProperty("text", out var text))
+                    {
+                        message = text.GetString() ?? "(unknown error)";
+                        return true;
+                    }
+                }
+            }
+
+            message = "(unknown error)";
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
