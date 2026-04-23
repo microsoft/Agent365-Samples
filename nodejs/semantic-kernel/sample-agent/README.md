@@ -14,7 +14,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Demonstrates
 
-This sample mirrors the [C#/.NET Semantic Kernel sample](../../dotnet/semantic-kernel/sample-agent/) and demonstrates:
+This sample mirrors the [C#/.NET Semantic Kernel sample](../../../dotnet/semantic-kernel/sample-agent/) and demonstrates:
 
 - **Semantic Kernel Agent Pattern**: Uses OpenAI Chat Completions with function calling (tools) in a loop — equivalent to the C# `ChatCompletionAgent` with `FunctionChoiceBehavior.Auto`
 - **Plugin System**: Local plugins for terms and conditions management, similar to the C# `KernelPlugin` pattern
