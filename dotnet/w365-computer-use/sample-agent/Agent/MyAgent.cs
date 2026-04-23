@@ -267,9 +267,9 @@ public class MyAgent : AgentApplication
                             // "Unable to connect" placeholder.
                             var errorMessage = ExtractW365ToolListError(additionalTools)
                                 ?? "Unable to connect to the W365 Computer Use service. Please check your configuration.";
-                            await turnContext.SendActivityAsync(
-                                MessageFactory.Text(errorMessage),
-                                cancellationToken);
+                            // Write the error into the streaming response so EndStreamAsync doesn't
+                            // emit a confusing 'No text was streamed' alongside the real message.
+                            turnContext.StreamingResponse.QueueTextChunk(errorMessage);
                             return;
                         }
 
