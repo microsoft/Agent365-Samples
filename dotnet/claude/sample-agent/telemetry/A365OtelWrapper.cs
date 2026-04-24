@@ -65,9 +65,9 @@ namespace Agent365ClaudeSampleAgent.telemetry
                 if (authSystem != null && !string.IsNullOrEmpty(authHandlerName))
                     agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
             }
-            agentId = agentId ?? Guid.Empty.ToString();
+            agentId = string.IsNullOrEmpty(agentId) ? Guid.Empty.ToString() : agentId;
             string? tempTenantId = turnContext?.Activity?.Conversation?.TenantId ?? turnContext?.Activity?.Recipient?.TenantId;
-            string tenantId = tempTenantId ?? Guid.Empty.ToString();
+            string tenantId = string.IsNullOrEmpty(tempTenantId) ? Guid.Empty.ToString() : tempTenantId;
 
             return (agentId, tenantId);
         }
