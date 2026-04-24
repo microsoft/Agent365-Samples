@@ -33,6 +33,7 @@
     "@microsoft/agents-a365-tooling-extensions-langchain": "^0.2.0-preview.1",
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
+    "@azure/msal-node": "^2.16.2",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "langchain": "^1.0.1",

@@ -82,8 +82,10 @@ export class A365Agent extends AgentApplication<TurnState> {
     ).sessionDescription('Initial onboarding session')
       .build();
 
-    // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
+    // S2S: MSAL handles token refresh internally — no per-turn preload needed
+    if (process.env.USE_S2S_AUTH !== 'true') {
+      await this.preloadObservabilityToken(turnContext);
+    }
 
     try {
       await baggageScope.run(async () => {
