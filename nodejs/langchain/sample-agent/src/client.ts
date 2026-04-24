@@ -78,6 +78,7 @@ function createChatModel(): BaseChatModel {
     }
 
     console.log('Using Azure OpenAI');
+    
     return new AzureChatOpenAI({
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiInstanceName: endpoint.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
