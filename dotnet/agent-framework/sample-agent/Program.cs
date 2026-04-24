@@ -6,9 +6,6 @@ using Agent365AgentFrameworkSampleAgent.Agent;
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Agents.A365.Observability;
-using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
-using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
@@ -17,14 +14,18 @@ using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Transcript;
 using Microsoft.Extensions.AI;
+using Microsoft.OpenTelemetry;
 using System.Reflection;
 
 
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
-builder.ConfigureOpenTelemetry();
+// Configure OpenTelemetry distro with Agent365 and Console exporters
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = ExportTarget.Agent365 | ExportTarget.Console;
+});
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
@@ -33,15 +34,6 @@ builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
-
-// Add A365 tracing with Agent Framework integration
-builder.AddA365Tracing(config =>
-{
-    config.WithAgentFramework();
-});
-
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
