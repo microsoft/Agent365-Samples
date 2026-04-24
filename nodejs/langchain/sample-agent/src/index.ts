@@ -23,7 +23,7 @@ useMicrosoftOpenTelemetry({
       : (agentId: string, tenantId: string) => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
   },
   instrumentationOptions: {
-    langchain: true,
+    langchain: {},
   },
 });
 
