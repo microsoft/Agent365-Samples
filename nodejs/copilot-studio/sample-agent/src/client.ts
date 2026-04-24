@@ -196,6 +196,5 @@ export async function getClient(
 
   // Create the Copilot Studio client with the token
   const copilotClient = new CopilotStudioClient(settings, tokenResult.token);
-
   return new McsClient(copilotClient);
 }
