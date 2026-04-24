@@ -50,6 +50,10 @@ const s2sTokenProvider = (scopes: string[]): Promise<string | null> =>
 export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
   const exporterOptions = new Agent365ExporterOptions();
   exporterOptions.maxQueueSize = 10;
+  if (useS2SAuth) {
+    // S2S telemetry must be routed to the S2S ingestion endpoint, not the OBO endpoint
+    exporterOptions.useS2SEndpoint = true;
+  }
 
   builder
     .withService('TypeScript Sample Agent', '1.0.0')
