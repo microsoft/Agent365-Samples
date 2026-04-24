@@ -21,10 +21,12 @@ using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure OpenTelemetry distro with Agent365 and Console exporters
+// Configure OpenTelemetry distro — Console exporter only in Development to avoid PII leaks
 builder.UseMicrosoftOpenTelemetry(o =>
 {
-    o.Exporters = ExportTarget.Agent365 | ExportTarget.Console;
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
 });
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
