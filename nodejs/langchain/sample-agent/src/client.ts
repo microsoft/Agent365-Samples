@@ -37,9 +37,9 @@ let msalApp: ConfidentialClientApplication | undefined;
 if (useS2SAuth) {
   msalApp = new ConfidentialClientApplication({
     auth: {
-      clientId: process.env.CLIENT_ID!,
-      clientSecret: process.env.CLIENT_SECRET!,
-      authority: `https://login.microsoftonline.com/${process.env.TENANT_ID}`,
+      clientId: process.env['connections__service_connection__settings__clientId']!,
+      clientSecret: process.env['connections__service_connection__settings__clientSecret']!,
+      authority: `https://login.microsoftonline.com/${process.env['connections__service_connection__settings__tenantId']}`,
     }
   });
 }
