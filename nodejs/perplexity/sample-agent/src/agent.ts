@@ -23,7 +23,6 @@ import { PerplexityClient } from "./perplexityClient";
 
 // Load environment variables from .env file FIRST
 config();
-
 /**
  * Create a cache key for the agentic token
  */
