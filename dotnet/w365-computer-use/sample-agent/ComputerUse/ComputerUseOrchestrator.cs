@@ -278,7 +278,7 @@ public class ComputerUseOrchestrator
         {
             var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
             var initialName = $"{conversationId[..8]}_{++session.ScreenshotCounter:D3}_initial";
-            SaveScreenshotToDisk(initialScreenshot!, initialName);
+            SaveScreenshotToDisk(initialScreenshot!, initialName, session.ScreenshotSubfolder);
             var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
             if (folderUrlReuse != null && onFolderLinkReady != null)
                 await onFolderLinkReady(folderUrlReuse);
@@ -774,7 +774,7 @@ public class ComputerUseOrchestrator
         var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
-        SaveScreenshotToDisk(screenshot!, stepName);
+        SaveScreenshotToDisk(screenshot!, stepName, session.ScreenshotSubfolder);
         var folderUrl = await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
         if (folderUrl != null && onFolderLinkReady != null)
             await onFolderLinkReady(folderUrl);
@@ -1234,13 +1234,18 @@ public class ComputerUseOrchestrator
 
     private static string Truncate(string v, int max) => v.Length <= max ? v : v[..max] + "...";
 
-    private void SaveScreenshotToDisk(string base64Data, string name)
+    private void SaveScreenshotToDisk(string base64Data, string name, string? subfolder = null)
     {
         if (string.IsNullOrEmpty(base64Data) || string.IsNullOrEmpty(_screenshotPath)) return;
         try
         {
-            Directory.CreateDirectory(_screenshotPath);
-            var path = Path.Combine(_screenshotPath, $"{name}.png");
+            // Match the OneDrive folder layout — per-session subfolder under ./Screenshots so
+            // counters from concurrent or sequential conversations don't clobber each other.
+            var dir = string.IsNullOrEmpty(subfolder)
+                ? _screenshotPath
+                : Path.Combine(_screenshotPath, subfolder);
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, $"{name}.png");
             File.WriteAllBytes(path, Convert.FromBase64String(base64Data));
             _logger.LogInformation("Screenshot saved: {Path}", path);
         }
