@@ -1,0 +1,32 @@
+{
+	"folders": [
+		{
+			"name": "Agent365-python",
+			"path": "../../../../Agent365-python"
+		},
+		{
+			"name": "Agent365-nodejs",
+			"path": "../../../../Agent365-nodejs"
+		},
+		{
+			"name": "Agent365-dotnet",
+			"path": "../../../../Agent365-dotnet"
+		},
+		{
+			"name": "Agent365-Samples",
+			"path": "../../.."
+		},
+		{
+			"name": "Agent365-devTools",
+			"path": "../../../../Agent365-devTools"
+		},
+		{
+			"name": "agent365-docs-pr",
+			"path": "../../../../agent365-docs-pr"
+		},
+		{
+			"path": "../../../../agent365-skills"
+		}
+	],
+	"settings": {}
+}
