@@ -36,10 +36,10 @@ internal sealed class ObservabilityTokenService : BackgroundService
         _tokenCache = tokenCache;
         _logger = logger;
         var obs = configuration.GetSection("Agent365Observability");
-        _tenantId              = obs["TenantId"]     ?? throw new InvalidOperationException("Agent365Observability:TenantId is required.");
-        _agentId               = obs["AgentId"]      ?? throw new InvalidOperationException("Agent365Observability:AgentId is required.");
-        _blueprintClientId     = obs["ClientId"]     ?? throw new InvalidOperationException("Agent365Observability:ClientId is required.");
-        _blueprintClientSecret = obs["ClientSecret"] ?? throw new InvalidOperationException("Agent365Observability:ClientSecret is required.");
+        _tenantId              = obs["TenantId"]     ?? "";
+        _agentId               = obs["AgentId"]      ?? "";
+        _blueprintClientId     = obs["ClientId"]     ?? "";
+        _blueprintClientSecret = obs["ClientSecret"] ?? "";
         _useManagedIdentity    = obs.GetValue<bool>("UseManagedIdentity", true);
     }
 

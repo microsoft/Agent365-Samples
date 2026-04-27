@@ -39,16 +39,22 @@ AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
 AZURE_OPENAI_API_KEY = os.environ["AZURE_OPENAI_API_KEY"]
 AZURE_OPENAI_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 
-TENANT_ID = os.environ["AGENT365_TENANT_ID"]
-AGENT_ID = os.environ["AGENT365_AGENT_ID"]
-BLUEPRINT_ID = os.environ["AGENT365_BLUEPRINT_ID"]
-CLIENT_ID = os.environ["AGENT365_CLIENT_ID"]
-CLIENT_SECRET = os.environ["AGENT365_CLIENT_SECRET"]
+# Agent 365 Observability — optional. When these are missing or set to placeholders,
+# the agent runs without A365 observability export (spans go to console only).
+TENANT_ID = os.environ.get("AGENT365_TENANT_ID", "")
+AGENT_ID = os.environ.get("AGENT365_AGENT_ID", "")
+BLUEPRINT_ID = os.environ.get("AGENT365_BLUEPRINT_ID", "")
+CLIENT_ID = os.environ.get("AGENT365_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("AGENT365_CLIENT_SECRET", "")
 AGENT_NAME = os.environ.get("AGENT365_AGENT_NAME", "github-trending")
 AGENT_DESCRIPTION = os.environ.get("AGENT365_AGENT_DESCRIPTION", "")
 # Default to MSI in production (matches .NET appsettings.json default of true).
 # Local dev .env sets this to "false" to use client secret instead.
 USE_MANAGED_IDENTITY = os.environ.get("AGENT365_USE_MANAGED_IDENTITY", "true").lower() == "true"
+
+def _has_a365_credentials() -> bool:
+    """Check whether Agent 365 observability credentials are fully configured."""
+    return all(v and not v.startswith("<<") for v in [TENANT_ID, AGENT_ID, CLIENT_ID, CLIENT_SECRET])
 
 LANGUAGE = os.environ.get("GITHUB_TRENDING_LANGUAGE", "python")
 MIN_STARS = int(os.environ.get("GITHUB_TRENDING_MIN_STARS", "5"))
@@ -59,20 +65,22 @@ PORT = int(os.environ.get("PORT", "3979"))
 # ── Agent Details (shared across all scopes) ─────────────────────────────────
 
 agent_details = AgentDetails(
-    agent_id=AGENT_ID,
+    agent_id=AGENT_ID or "local-dev",
     agent_name=AGENT_NAME,
     agent_description=AGENT_DESCRIPTION,
     agent_blueprint_id=BLUEPRINT_ID,
-    tenant_id=TENANT_ID,
+    tenant_id=TENANT_ID or "local-dev",
 )
 
+A365_ENABLED = _has_a365_credentials()
 
 # ── Microsoft OpenTelemetry Distro ───────────────────────────────────────────
 # Equivalent to .NET's builder.UseMicrosoftOpenTelemetry().
 # Token resolver reads from the in-memory cache populated by the background token service.
+# When A365 credentials are not configured, the A365 exporter is disabled.
 
 use_microsoft_opentelemetry(
-    enable_a365=True,
+    enable_a365=A365_ENABLED,
     enable_azure_monitor=False,
     a365_token_resolver=lambda agent_id, tenant_id: token_cache.get_cached_token(agent_id, tenant_id) or "",
 )
@@ -98,16 +106,23 @@ async def heartbeat_loop(interval_seconds: float) -> None:
 async def start_background_tasks(app: web.Application) -> None:
     interval_seconds = HEARTBEAT_INTERVAL_MS / 1000.0
 
-    # Background token service — acquires observability tokens via 3-hop FMI chain
-    app["token_task"] = asyncio.create_task(
-        run_token_service(
-            tenant_id=TENANT_ID,
-            agent_id=AGENT_ID,
-            blueprint_client_id=CLIENT_ID,
-            blueprint_client_secret=CLIENT_SECRET,
-            use_managed_identity=USE_MANAGED_IDENTITY,
+    # Background token service — acquires observability tokens via 3-hop FMI chain.
+    # Skipped when Agent 365 credentials are not configured.
+    if A365_ENABLED:
+        app["token_task"] = asyncio.create_task(
+            run_token_service(
+                tenant_id=TENANT_ID,
+                agent_id=AGENT_ID,
+                blueprint_client_id=CLIENT_ID,
+                blueprint_client_secret=CLIENT_SECRET,
+                use_managed_identity=USE_MANAGED_IDENTITY,
+            )
         )
-    )
+    else:
+        logger.warning(
+            "Agent365 credentials not configured — skipping token service. "
+            "Run 'a365 setup all' to enable A365 observability export."
+        )
 
     # Heartbeat
     app["heartbeat_task"] = asyncio.create_task(heartbeat_loop(interval_seconds))

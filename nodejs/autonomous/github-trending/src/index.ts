@@ -26,14 +26,23 @@ const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT!;
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY!;
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
 
-const TENANT_ID = process.env.AGENT365_TENANT_ID!;
-const AGENT_ID = process.env.AGENT365_AGENT_ID!;
-const BLUEPRINT_ID = process.env.AGENT365_BLUEPRINT_ID!;
-const CLIENT_ID = process.env.AGENT365_CLIENT_ID!;
-const CLIENT_SECRET = process.env.AGENT365_CLIENT_SECRET!;
+// Agent 365 Observability — optional. When these are missing or set to placeholders,
+// the agent runs without A365 observability export (spans go to console only).
+const TENANT_ID = process.env.AGENT365_TENANT_ID || '';
+const AGENT_ID = process.env.AGENT365_AGENT_ID || '';
+const BLUEPRINT_ID = process.env.AGENT365_BLUEPRINT_ID || '';
+const CLIENT_ID = process.env.AGENT365_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.AGENT365_CLIENT_SECRET || '';
 const AGENT_NAME = process.env.AGENT365_AGENT_NAME || 'github-trending';
 const AGENT_DESCRIPTION = process.env.AGENT365_AGENT_DESCRIPTION || '';
 const USE_MANAGED_IDENTITY = (process.env.AGENT365_USE_MANAGED_IDENTITY || 'true').toLowerCase() === 'true';
+
+function hasA365Credentials(): boolean {
+  return [TENANT_ID, AGENT_ID, CLIENT_ID, CLIENT_SECRET]
+    .every(v => v && !v.startsWith('<<'));
+}
+
+const A365_ENABLED = hasA365Credentials();
 
 const LANGUAGE = process.env.GITHUB_TRENDING_LANGUAGE || 'typescript';
 const MIN_STARS = parseInt(process.env.GITHUB_TRENDING_MIN_STARS || '5', 10);
@@ -46,11 +55,11 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 // ── Agent Details (shared across all scopes) ─────────────────────────────────
 
 const agentDetails: AgentDetails = {
-  agentId: AGENT_ID,
+  agentId: AGENT_ID || 'local-dev',
   agentName: AGENT_NAME,
   agentDescription: AGENT_DESCRIPTION,
   agentBlueprintId: BLUEPRINT_ID,
-  tenantId: TENANT_ID,
+  tenantId: TENANT_ID || 'local-dev',
 };
 
 // ── Observability ────────────────────────────────────────────────────────────
@@ -89,14 +98,22 @@ const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
 server.listen(PORT, host, () => {
   console.log(`\nServer listening on ${host}:${PORT} (NODE_ENV=${process.env.NODE_ENV})`);
 
-  // Start background services after server is listening
-  startTokenService({
-    tenantId: TENANT_ID,
-    agentId: AGENT_ID,
-    blueprintClientId: CLIENT_ID,
-    blueprintClientSecret: CLIENT_SECRET,
-    useManagedIdentity: USE_MANAGED_IDENTITY,
-  });
+  // Start background services after server is listening.
+  // Token service is skipped when Agent 365 credentials are not configured.
+  if (A365_ENABLED) {
+    startTokenService({
+      tenantId: TENANT_ID,
+      agentId: AGENT_ID,
+      blueprintClientId: CLIENT_ID,
+      blueprintClientSecret: CLIENT_SECRET,
+      useManagedIdentity: USE_MANAGED_IDENTITY,
+    });
+  } else {
+    console.warn(
+      'Agent365 credentials not configured — skipping token service. ' +
+      "Run 'a365 setup all' to enable A365 observability export."
+    );
+  }
 
   startHeartbeatService(HEARTBEAT_INTERVAL_MS);
 
