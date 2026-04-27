@@ -131,10 +131,28 @@ This file overrides production defaults for local development:
 
 ## Running the Agent
 
-### Local development
+### Quick start (Azure OpenAI only)
+
+You can run the agent with **just Azure OpenAI credentials** — no Agent 365 setup required. The agent will skip the observability token service and log a warning:
+
+```
+Agent365Observability credentials not configured — skipping token service.
+Run 'a365 setup all' to enable A365 observability export.
+```
+
+Set the Azure OpenAI values in `appsettings.json` (or via environment variables), then:
 
 ```bash
-cd dotnet/agent-framework/autonomous/github-trending
+cd dotnet/autonomous/github-trending
+ASPNETCORE_ENVIRONMENT=Development dotnet run
+```
+
+Tracing spans are still emitted to the console exporter, but not exported to the A365 service. To enable full A365 observability, complete the [Agent 365 Setup](#agent-365-setup) steps above.
+
+### Local development (with A365 observability)
+
+```bash
+cd dotnet/autonomous/github-trending
 ASPNETCORE_ENVIRONMENT=Development dotnet run
 ```
 

@@ -98,9 +98,37 @@ cp .env.template .env
 
 ## Running the Agent
 
-### Local development
+### Quick start (Azure OpenAI only)
 
-The `.env` file sets `AGENT365_USE_MANAGED_IDENTITY=false`, which tells the token service to authenticate using the blueprint's client secret instead of Managed Identity. This is the only auth difference between local dev and production — all other behavior is identical.
+You can run the agent with **just Azure OpenAI credentials** — no Agent 365 setup required. Create a minimal `.env`:
+
+```bash
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-api-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
+NODE_ENV=development
+```
+
+Then:
+
+```bash
+cd nodejs/autonomous/github-trending
+npm install
+npm run dev
+```
+
+The agent will skip the observability token service and log a warning:
+
+```
+Agent365 credentials not configured — skipping token service.
+Run 'a365 setup all' to enable A365 observability export.
+```
+
+To enable full A365 observability, complete the [Agent 365 Setup](#agent-365-setup) steps and fill in the remaining `.env` values.
+
+### Local development (with A365 observability)
+
+Copy `.env.template` to `.env` and fill in all values from `a365 setup all`. The template sets `AGENT365_USE_MANAGED_IDENTITY=false`, which tells the token service to authenticate using the blueprint's client secret instead of Managed Identity.
 
 ```bash
 cd nodejs/autonomous/github-trending
