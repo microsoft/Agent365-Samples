@@ -1,7 +1,31 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // It is important to load environment variables before importing other modules
 import { configDotenv } from 'dotenv';
 
 configDotenv();
+
+// Initialize Microsoft OpenTelemetry distro for observability.
+// Must be called before importing other modules so instrumentations can patch libraries.
+// See: https://github.com/microsoft/opentelemetry-distro-javascript
+import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { tokenResolver } from './token-cache';
+import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
+
+useMicrosoftOpenTelemetry({
+  a365: {
+    enabled: true,
+    // When Use_Custom_Resolver is true the sample populates a local token cache;
+    // otherwise agent.ts refreshes tokens into AgenticTokenCacheInstance.
+    tokenResolver: process.env.Use_Custom_Resolver === 'true'
+      ? (agentId: string, tenantId: string) => tokenResolver(agentId, tenantId) ?? ''
+      : (agentId: string, tenantId: string) => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
+  },
+  instrumentationOptions: {
+    langchain: {},
+  },
+});
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response, Express } from 'express'
