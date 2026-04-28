@@ -12,17 +12,20 @@ This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/mic
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
->
-> To run the template in your local dev machine, you will need:
->
-> - [Python](https://www.python.org/), supported versions: 3.11 or higher
-> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) latest version
-> - Prepare your own Azure OpenAI / OpenAI API credentials
-> - Azure CLI signed in with `az login`
 
-> - Microsoft Agent 365 SDK
-> - Agent Framework (agent-framework-azure-ai)
-> - A365 CLI: Required for agent deployment and management.
+> To run the sample on your local dev machine, you will need:
+>
+> - [Python](https://www.python.org/) 3.11 or higher
+> - [uv](https://docs.astral.sh/uv/) for dependency management
+> - Azure OpenAI resource with a deployed model
+> - Azure CLI signed in with `az login`
+> - [A365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) for agent provisioning and management
+> - [AgentsPlayground](https://www.npmjs.com/package/@microsoft/agentsplayground) for local testing (`npm install -g @microsoft/agentsplayground`)
+>
+> SDK packages (installed automatically by `uv sync`):
+> - Agent Framework (`agent-framework-openai`)
+> - Microsoft Agents SDK (`microsoft-agents-hosting-aiohttp`, `microsoft-agents-authentication-msal`)
+> - Microsoft Agent 365 SDK (`microsoft-agents-a365-observability-core`, `microsoft-agents-a365-tooling`, etc.)
 
 ## Python Environment Configuration
 
@@ -50,16 +53,36 @@ information — always available with no API calls or token acquisition:
 The sample logs these fields at the start of every message turn and injects the display name
 into the LLM system instructions for personalized responses.
 
+## Configuration
+
+1. Copy `.env.template` to `.env` and fill in the required values.
+2. Run `a365 setup all --agent-name <your-agent-name>` to provision the A365 blueprint, identity, and permissions. This stamps service connection and observability settings into your `.env` automatically.
+3. Key settings:
+
+| Variable | Description |
+|---|---|
+| `AZURE_OPENAI_ENDPOINT` | Your Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_DEPLOYMENT` | Model deployment name (e.g., `gpt-4o`) |
+| `AZURE_OPENAI_API_KEY` | API key (or omit to use Azure CLI credential) |
+| `AUTH_HANDLER_NAME` | Set to `AGENTIC` for production, leave empty for local emulator testing |
+| `ENABLE_A365_OBSERVABILITY_EXPORTER` | Set to `true` to export traces to A365 |
+
+> **Note:** `AZURE_OPENAI_API_VERSION` is optional. The SDK defaults to the v1 Responses API. Only set this if your deployment requires a specific dated version.
+
 ## Running the Agent in Microsoft 365 Agents Playground
 
-1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
-1. In file *env/.env.playground.user*, fill in your Azure OpenAI key `SECRET_AZURE_OPENAI_API_KEY=<your-key>`, endpoint `AZURE_OPENAI_ENDPOINT=<your-endpoint>`, and deployment name `AZURE_OPENAI_DEPLOYMENT_NAME=<your-deployment>` if you're using Azure OpenAI.
-1. In file *env/.env.playground.user*, fill in your OpenAI key `SECRET_OPENAI_API_KEY=<your-key>` if you're using OpenAI.
-1. In file *env/.env.playground*, fill in your custom app registration client id `CLIENT_APP_ID`.
-1. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
-1. You can send any message to get a response from the agent.
+1. Start the agent:
+   ```bash
+   uv sync
+   python start_with_generic_host.py
+   ```
+2. In a separate terminal, launch AgentsPlayground:
+   ```bash
+   agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"
+   ```
+3. Send any message in the playground to test your agent.
 
-**Congratulations**! You are running an agent that can now interact with users in Microsoft 365 Agents Playground.
+> **Note:** For local emulator testing, set `AUTH_HANDLER_NAME=` (empty) in your `.env`. The emulator does not support agentic token exchange. For MCP tooling in local mode, run `a365 develop get-token` to acquire a short-lived bearer token.
 
 ## Handling Agent Install and Uninstall
 
