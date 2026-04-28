@@ -6,7 +6,6 @@ using Azure.AI.OpenAI;
 using GitHubTrending;
 using GitHubTrending.Tools;
 using Microsoft.Agents.A365.Observability.Hosting.Caching;
-using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Extensions.AI;
 using Microsoft.OpenTelemetry;
 
@@ -14,11 +13,6 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddHttpClient();
 builder.Logging.AddConsole();
-
-// Agent Framework: token validation + adapter
-builder.Services.AddAuthentication();
-builder.Services.AddAuthorization();
-builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
 // A365 Observability — S2S token cache + background token service + AgentDetails context.
 // ObservabilityTokenService acquires tokens via a 3-hop FMI chain (Blueprint → Agent Identity → API)
@@ -71,8 +65,6 @@ var app = builder.Build();
 appRef = app;
 
 app.UseRouting();
-app.UseAuthentication();
-app.UseAuthorization();
 
 // Health check
 app.MapGet("/api/health", () => Results.Ok(new

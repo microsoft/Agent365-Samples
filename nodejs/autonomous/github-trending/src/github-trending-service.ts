@@ -19,7 +19,6 @@ import {
   InvokeAgentScope,
   InvokeAgentScopeDetails,
   Request,
-  ServiceEndpoint,
 } from '@microsoft/agents-a365-observability';
 
 import { getTrendingRepositories, TOOL_DEFINITION } from './tools/github-trending-tool';

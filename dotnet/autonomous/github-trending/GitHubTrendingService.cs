@@ -127,7 +127,15 @@ internal sealed class GitHubTrendingService : BackgroundService
 
                 _logger.LogInformation("Trending Digest:\n{Digest}", digest);
             }
-            catch (Exception ex)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(ex, "GitHubTrendingService cycle failed");
+            }
+            catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "GitHubTrendingService cycle failed");
             }

@@ -38,8 +38,18 @@ const AGENT_DESCRIPTION = process.env.AGENT365_AGENT_DESCRIPTION || '';
 const USE_MANAGED_IDENTITY = (process.env.AGENT365_USE_MANAGED_IDENTITY || 'true').toLowerCase() === 'true';
 
 function hasA365Credentials(): boolean {
-  return [TENANT_ID, AGENT_ID, CLIENT_ID, CLIENT_SECRET]
-    .every(v => v && !v.startsWith('<<'));
+  const requiredValues = [TENANT_ID, AGENT_ID, CLIENT_ID];
+  const hasRequiredValues = requiredValues.every(v => v && !v.startsWith('<<'));
+
+  if (!hasRequiredValues) {
+    return false;
+  }
+
+  if (USE_MANAGED_IDENTITY) {
+    return true;
+  }
+
+  return !!CLIENT_SECRET && !CLIENT_SECRET.startsWith('<<');
 }
 
 const A365_ENABLED = hasA365Credentials();
@@ -67,13 +77,16 @@ const agentDetails: AgentDetails = {
 // Token resolver reads from the in-memory cache populated by the background token service.
 
 const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  const exporterOptions = new Agent365ExporterOptions();
-  exporterOptions.maxQueueSize = 10;
+  builder.withService('TypeScript GitHub Trending Agent', '1.0.0');
 
-  builder
-    .withService('TypeScript GitHub Trending Agent', '1.0.0')
-    .withExporterOptions(exporterOptions)
-    .withTokenResolver(tokenResolver);
+  if (A365_ENABLED) {
+    const exporterOptions = new Agent365ExporterOptions();
+    exporterOptions.maxQueueSize = 10;
+
+    builder
+      .withExporterOptions(exporterOptions)
+      .withTokenResolver(tokenResolver);
+  }
 });
 
 a365Observability.start();

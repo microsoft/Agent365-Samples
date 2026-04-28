@@ -80,6 +80,8 @@ async def run_trending_service(
 
         try:
             await _run_cycle(client, deployment, agent_details, endpoint, language, min_stars, max_results)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning("GitHubTrendingService cycle failed", exc_info=True)
 

@@ -40,7 +40,7 @@ az login
 ### 3. Provision the agent
 
 ```bash
-cd python/autonomous/agent-framework/github-trending
+cd python/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 

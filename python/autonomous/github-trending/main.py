@@ -54,7 +54,14 @@ USE_MANAGED_IDENTITY = os.environ.get("AGENT365_USE_MANAGED_IDENTITY", "true").l
 
 def _has_a365_credentials() -> bool:
     """Check whether Agent 365 observability credentials are fully configured."""
-    return all(v and not v.startswith("<<") for v in [TENANT_ID, AGENT_ID, CLIENT_ID, CLIENT_SECRET])
+    required_values = [TENANT_ID, AGENT_ID, CLIENT_ID]
+    if not all(v and not v.startswith("<<") for v in required_values):
+        return False
+
+    if USE_MANAGED_IDENTITY:
+        return True
+
+    return bool(CLIENT_SECRET) and not CLIENT_SECRET.startswith("<<")
 
 LANGUAGE = os.environ.get("GITHUB_TRENDING_LANGUAGE", "python")
 MIN_STARS = int(os.environ.get("GITHUB_TRENDING_MIN_STARS", "5"))
@@ -157,7 +164,7 @@ async def cleanup_background_tasks(app: web.Application) -> None:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                pass  # Expected during shutdown — task cancellation is the normal cleanup path
 
 
 def main() -> None:

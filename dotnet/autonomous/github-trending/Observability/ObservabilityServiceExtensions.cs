@@ -45,12 +45,19 @@ public static class ObservabilityServiceExtensions
         services.AddHostedService(sp =>
         {
             var obs = sp.GetRequiredService<IConfiguration>().GetSection("Agent365Observability");
-            var hasCredentials = !string.IsNullOrEmpty(obs["TenantId"])
-                              && !string.IsNullOrEmpty(obs["AgentId"])
-                              && !string.IsNullOrEmpty(obs["ClientId"])
-                              && !string.IsNullOrEmpty(obs["ClientSecret"])
-                              && !obs["TenantId"]!.StartsWith("<<")
-                              && !obs["ClientSecret"]!.StartsWith("<<");
+            var useManagedIdentity = bool.TryParse(obs["UseManagedIdentity"], out var parsedUseManagedIdentity)
+                && parsedUseManagedIdentity;
+
+            var hasCommonCredentials = !string.IsNullOrEmpty(obs["TenantId"])
+                                    && !string.IsNullOrEmpty(obs["AgentId"])
+                                    && !string.IsNullOrEmpty(obs["ClientId"])
+                                    && !obs["TenantId"]!.StartsWith("<<");
+
+            var hasClientSecret = !string.IsNullOrEmpty(obs["ClientSecret"])
+                               && !obs["ClientSecret"]!.StartsWith("<<");
+
+            var hasCredentials = hasCommonCredentials
+                              && (useManagedIdentity || hasClientSecret);
 
             if (!hasCredentials)
             {

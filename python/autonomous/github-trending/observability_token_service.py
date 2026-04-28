@@ -20,7 +20,7 @@ import logging
 from datetime import timedelta
 
 import msal
-from azure.identity import ManagedIdentityCredential
+from azure.identity.aio import ManagedIdentityCredential
 
 import token_cache
 
@@ -46,6 +46,8 @@ async def run_token_service(
             await _acquire_and_register_token(
                 tenant_id, agent_id, blueprint_client_id, blueprint_client_secret, use_managed_identity
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
                 "Failed to acquire observability token; will retry in %d seconds.",
@@ -89,7 +91,8 @@ async def _acquire_and_register_token(
 async def _acquire_t1_via_msi(authority: str, blueprint_client_id: str, agent_id: str) -> str:
     """Acquire T1 token using Managed Identity (production)."""
     credential = ManagedIdentityCredential()
-    msi_token = credential.get_token("api://AzureADTokenExchange")
+    msi_token = await credential.get_token("api://AzureADTokenExchange")
+    await credential.close()
 
     blueprint_app = msal.ConfidentialClientApplication(
         client_id=blueprint_client_id,

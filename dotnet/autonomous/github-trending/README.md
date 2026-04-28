@@ -11,7 +11,7 @@ Every 60 seconds, the agent:
 3. The model summarizes the results into a readable digest
 4. The digest is logged to the console
 
-All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). Unlike interactive agents that get auto-instrumented by the Microsoft OpenTelemetry distro via the Agent Framework pipeline, this autonomous agent has no `AgentApplication` or turn handler — so each background cycle and tool call is explicitly wrapped with the appropriate scope. This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
+All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). This autonomous agent has no chat pipeline, turn handler, or incoming-message authentication — each background cycle and tool call is explicitly wrapped with the appropriate observability scope. This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
 
 For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
@@ -52,7 +52,7 @@ az login
 ### 3. Provision the agent
 
 ```bash
-cd dotnet/agent-framework/autonomous/github-trending
+cd dotnet/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 
@@ -97,9 +97,6 @@ All `<<PLACEHOLDER>>` values are written by `a365 setup all`. The `AzureOpenAI` 
 | | `AgentName` | CLI | Display name shown in traces |
 | | `AgentDescription` | CLI | Agent description shown in traces |
 | | `UseManagedIdentity` | Manual | `true` for production (MSI), `false` for local dev (client secret) |
-| `Connections:ServiceConnection` | `ClientId` | CLI | Blueprint app ID |
-| | `ClientSecret` | CLI | Blueprint client secret |
-| | `AuthorityEndpoint` | CLI | `https://login.microsoftonline.com/<tenant-id>` |
 | `AzureOpenAI` | `Endpoint` | Manual | Azure OpenAI resource endpoint |
 | | `ApiKey` | Manual | Azure OpenAI API key |
 | | `Deployment` | Manual | Model deployment name |
@@ -272,7 +269,7 @@ The GitHub Search API is unauthenticated — no API key required (rate limit: 10
 
 ```
 github-trending/
-  Program.cs                              # Entry point — DI, distro, services
+  Program.cs                              # Entry point — DI, OTel distro, background services
   GitHubTrendingService.cs                # Autonomous background service (InvokeAgent + Inference spans)
   HeartbeatService.cs                     # Periodic heartbeat logger
   Tools/
