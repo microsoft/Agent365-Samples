@@ -39,7 +39,7 @@ python main.py
 Expected output (truncated):
 
 - A one-line weather answer for Seattle.
-- Multiple JSON span dumps printed by `ConsoleSpanExporter`. Look for spans named `invoke_agent`, `inference`, and `execute_tool`.
+- Multiple JSON span dumps printed by `ConsoleSpanExporter`. Look for spans named `invoke_agent WeatherAgent`, `Chat gpt-4o-mini` (twice), and `execute_tool get_weather`.
 
 ## Swap to a real OTLP endpoint
 
@@ -50,11 +50,11 @@ In `main.py`, comment out the `ConsoleSpanExporter` lines and uncomment the `OTL
 The console output (or your OTLP backend) should contain a span tree:
 
 - `invoke_agent WeatherAgent` (the outer span — one per user turn)
-  - `inference` (first LLM call: the model decides to call the tool)
-  - `execute_tool get_weather` (the tool runs)
-  - `inference` (second LLM call: the model summarizes the tool result)
+  - `Chat <model>` — first LLM call (the model decides to call the tool); `gen_ai.operation.name` attribute is `Chat`
+  - `execute_tool get_weather` — the tool runs
+  - `Chat <model>` — second LLM call (the model summarizes the tool result)
 
-If those four spans show up, the integration is working.
+If those four spans show up, the integration is working. The `Chat` span name and `gen_ai.operation.name` attribute come from the `InferenceOperationType` passed to `InferenceScope.start(...)` (this sample uses `InferenceOperationType.CHAT`).
 
 ## Where the integration happens
 
