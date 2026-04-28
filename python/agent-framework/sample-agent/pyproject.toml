@@ -41,7 +41,7 @@ dependencies = [
 
     # Microsoft Agent 365 SDK packages
     "microsoft_agents_a365_tooling >= 0.1.0",
-    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0",
+    "microsoft_agents_a365_tooling_extensions_agentframework >= 0.3.0.dev6",
     "microsoft_agents_a365_observability_core >= 0.1.0",
     "microsoft-opentelemetry >= 0.1.0a3",
     "microsoft_agents_a365_runtime >= 0.1.0",
