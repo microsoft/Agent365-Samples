@@ -36,13 +36,13 @@ Expected stdout: a one-line weather answer for Seattle.
 
 ## What to look for
 
-In Azure Portal → your Application Insights resource → **Transaction search**, filter by:
+In Azure Portal → your Application Insights resource → **Transaction search**, look for spans with the custom-dimension attribute `gen_ai.operation.name`. You should see three values across one turn:
 
-- Operation name `invoke_agent` — the agent invocation span
-- Operation name `inference` — one or more LLM call spans
-- Operation name `execute_tool` — the `get_weather` tool span
+- `invoke_agent` — the agent invocation (root span; its display name is `invoke_agent WeatherAgent`)
+- `inference` — one or more LLM call spans
+- `execute_tool` — the `get_weather` tool span
 
-If you see those spans in App Insights, the integration is working. The Agent 365 backend receives the same spans (configured via the stub token resolver — replace with a real one for production).
+If you see those three operation values, the integration is working. The Agent 365 backend receives the same spans (configured via the stub token resolver — replace with a real one for production).
 
 ## Where the integration happens
 
