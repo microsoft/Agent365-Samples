@@ -46,7 +46,7 @@ If you see those spans in App Insights, the integration is working. The Agent 36
 
 ## Where the integration happens
 
-`main.py` is organized into four numbered sections:
+`main.py` is organized into the following sections (Step 2b is a sub-step that must run after Step 2):
 
 1. **Step 1 — Azure Monitor.** `configure_azure_monitor(...)` installs an OTel TracerProvider and the Azure Monitor exporter. This is the part of the file you'd already have in your real app.
 2. **Step 2 — Agent 365 `configure()`.** Detects the TracerProvider set by Step 1 and adds its processors to it. Both backends now receive spans. Replace `_stub_token_resolver` with your production token resolver.
