@@ -12,8 +12,8 @@ import {
   Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
-  InferenceDetails
+  InferenceDetails,
+  Request
 } from '@microsoft/agents-a365-observability';
 
 const modelName = 'claude-sonnet-4-20250514';
@@ -104,25 +104,23 @@ class VercelAiClient implements Client {
       model: modelName,
     };
 
-    const agentDetails: AgentDetails = {
-      agentId: 'vercel-ai-sdk-agent',
-      agentName: 'Vercel AI SDK Agent',
+    const request: Request = {
       conversationId: 'conv-12345',
     };
 
-    const tenantDetails: TenantDetails = {
-      tenantId: 'vercel-ai-sdk-sample-agent',
+    const agentDetails: AgentDetails = {
+      agentId: 'vercel-ai-sdk-agent',
+      agentName: 'Vercel AI SDK Agent',
     };
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => {
         try {
           response = await this.invokeAgent(prompt);
           scope.recordOutputMessages([response]);
           scope.recordInputMessages([prompt]);
-          scope.recordResponseId(`resp-${Date.now()}`);
           scope.recordInputTokens(45);
           scope.recordOutputTokens(78);
           scope.recordFinishReasons(['stop']);

@@ -11,40 +11,19 @@ import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
 // Observability Imports
 import {
-  ObservabilityManager,
   InferenceScope,
-  Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
-  Agent365ExporterOptions,
+  Request,
 } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
-import { tokenResolver } from './token-cache';
 
 export interface Client {
   invokeInferenceScope(prompt: string): Promise<string>;
 }
 
-export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  const exporterOptions = new Agent365ExporterOptions();
-  exporterOptions.maxQueueSize = 10;
-
-  builder
-    .withService('TypeScript Sample Agent', '1.0.0')
-    .withExporterOptions(exporterOptions);
-
-  if (process.env.Use_Custom_Resolver === 'true') {
-    builder.withTokenResolver(tokenResolver);
-  } else {
-    builder.withTokenResolver((agentId: string, tenantId: string) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
-  }
-});
-
-a365Observability.start();
+// Observability is initialized by the Microsoft OpenTelemetry distro in index.ts.
+// See: https://github.com/microsoft/opentelemetry-distro-javascript
 
 const toolService = new McpToolRegistrationService();
 
@@ -62,7 +41,7 @@ function createChatModel(): BaseChatModel {
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
       azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT?.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
       azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
-      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-12-01-preview",
+      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview",
       temperature: 0,
     });
   }
@@ -209,25 +188,24 @@ class LangChainClient implements Client {
       model: "gpt-4o-mini",
     };
 
-    const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
-      agentName: agentName,
+    const request: Request = {
       conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
-    const tenantDetails: TenantDetails = {
+    const agentDetails: AgentDetails = {
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
+      agentName: agentName,
       tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
     };
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => {
       response = await this.invokeAgent(prompt);
       // Record the inference response with token usage
       scope.recordOutputMessages([response]);
       scope.recordInputMessages([prompt]);
-      scope.recordResponseId(`resp-${Date.now()}`);
       scope.recordInputTokens(45);
       scope.recordOutputTokens(78);
       scope.recordFinishReasons(['stop']);

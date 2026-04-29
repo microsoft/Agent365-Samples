@@ -6,10 +6,12 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
     "eval": "node --env-file .env src/evals/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "dev:teamsfx:playground": "env-cmd --silent -f .localConfigs.playground npm run dev",
+    "dev:teamsfx:launch-playground": "env-cmd --silent -f env/.env.playground agentsplayground start"
   },
   "keywords": [
     "langchain",
@@ -23,14 +25,15 @@
     "@langchain/langgraph": "^1.0.2",
     "@langchain/mcp-adapters": "^1.0.0",
     "@langchain/openai": "^1.0.2",
-    "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-tooling-extensions-langchain": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-notifications": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-observability": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-observability-hosting": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-runtime": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-tooling": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-tooling-extensions-langchain": "^0.2.0-preview.1",
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
-    "@microsoft/agents-a365-observability-hosting": "^0.1.0-preview.64",
+    "@microsoft/opentelemetry": "^0.1.0-alpha.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "langchain": "^1.0.1",
@@ -46,6 +49,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
     "nodemon": "^3.1.10",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "env-cmd": "^11.0.0"
   }
 }

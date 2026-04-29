@@ -13,8 +13,8 @@ import {
   Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
+  Request,
   Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
 import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
@@ -141,24 +141,22 @@ class ClaudeClient implements Client {
       model: this.config.model || "",
     };
 
-    const agentDetails: AgentDetails = {
-      agentId: 'claude-travel-agent',
-      agentName: 'Claude Travel Agent',
+    const request: Request = {
       conversationId: 'conv-12345',
     };
 
-    const tenantDetails: TenantDetails = {
-      tenantId: 'claude-sample-tenant',
+    const agentDetails: AgentDetails = {
+      agentId: 'claude-travel-agent',
+      agentName: 'Claude Travel Agent',
     };
 
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
 
     const response = await this.invokeAgent(prompt);
 
     // Record the inference response with token usage
     scope?.recordOutputMessages([response]);
     scope?.recordInputMessages([prompt]);
-    scope?.recordResponseId(`resp-${Date.now()}`);
     scope?.recordInputTokens(45);
     scope?.recordOutputTokens(78);
     scope?.recordFinishReasons(['stop']);

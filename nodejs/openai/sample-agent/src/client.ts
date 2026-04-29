@@ -22,8 +22,8 @@ import {
   Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
+  Request,
   Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
 import { OpenAIAgentsTraceInstrumentor } from '@microsoft/agents-a365-observability-extensions-openai';
@@ -147,17 +147,16 @@ class OpenAIClient implements Client {
       model: this.agent.model.toString(),
     };
 
-    const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
-      agentName: 'TypeScript Compliance Agent',
+    const request: Request = {
       conversationId: 'conv-12345',
     };
 
-    const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+    const agentDetails: AgentDetails = {
+      agentId: 'typescript-compliance-agent',
+      agentName: 'TypeScript Compliance Agent',
     };
-    
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => { 
         try {
@@ -166,7 +165,6 @@ class OpenAIClient implements Client {
           // Record the inference response with token usage
           scope.recordOutputMessages([response]);
           scope.recordInputMessages([prompt]);
-          scope.recordResponseId(`resp-${Date.now()}`);
           scope.recordInputTokens(45);
           scope.recordOutputTokens(78);
           scope.recordFinishReasons(['stop']);
