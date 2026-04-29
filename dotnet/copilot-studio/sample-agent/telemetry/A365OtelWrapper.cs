@@ -46,7 +46,7 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
                     }
                     catch (Exception ex)
                     {
-                        logger?.LogWarning($"There was an error registering for observability: {ex.Message}");
+                        logger?.LogWarning(ex, "There was an error registering for observability.");
                     }
 
                     await func().ConfigureAwait(false);
