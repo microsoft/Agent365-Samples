@@ -48,8 +48,11 @@ builder.AddAgentApplicationOptions();
 // Add the agent (which is transient)
 builder.AddAgent<MyAgent>();
 
-// Uncomment to add transcript logging middleware
-builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
+// Uncomment to add transcript logging middleware (Development/Playground only — logs full conversation content to disk)
+// if (builder.Environment.IsDevelopment() || builder.Environment.EnvironmentName == "Playground")
+// {
+//     builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>([new TranscriptLoggerMiddleware(new FileTranscriptLogger())]);
+// }
 
 var app = builder.Build();
 
@@ -77,7 +80,6 @@ app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp =
 if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground")
 {
     app.MapGet("/", () => "Copilot Studio Sample Agent");
-    app.UseDeveloperExceptionPage();
     app.MapControllers().AllowAnonymous();
     app.Urls.Add($"http://localhost:3978");
 }
