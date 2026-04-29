@@ -53,7 +53,7 @@ public sealed class GitHubTrendingTool
             request,
             new ToolCallDetails(
                 toolName: nameof(GetTrendingRepositories),
-                arguments: language,
+                arguments: JsonSerializer.Serialize(new { language }),
                 toolType: ToolType.Function,
                 description: "Search GitHub for trending repositories by star count",
                 endpoint: GitHubApiEndpoint),

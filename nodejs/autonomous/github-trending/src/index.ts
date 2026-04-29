@@ -20,6 +20,12 @@ import { startTokenService } from './observability-token-service';
 import { startHeartbeatService } from './heartbeat-service';
 import { startTrendingService } from './github-trending-service';
 
+// Track interval/controller handles for graceful shutdown
+const shutdownHandles: { intervals: ReturnType<typeof setInterval>[]; controllers: AbortController[] } = {
+  intervals: [],
+  controllers: [],
+};
+
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT!;
@@ -113,14 +119,18 @@ server.listen(PORT, host, () => {
 
   // Start background services after server is listening.
   // Token service is skipped when Agent 365 credentials are not configured.
+  let tokenServiceDelayMs = 0;
   if (A365_ENABLED) {
-    startTokenService({
+    const tokenInterval = startTokenService({
       tenantId: TENANT_ID,
       agentId: AGENT_ID,
       blueprintClientId: CLIENT_ID,
       blueprintClientSecret: CLIENT_SECRET,
       useManagedIdentity: USE_MANAGED_IDENTITY,
     });
+    shutdownHandles.intervals.push(tokenInterval);
+    // Give the token service time to cache the first token before the first LLM cycle
+    tokenServiceDelayMs = 10_000;
   } else {
     console.warn(
       'Agent365 credentials not configured — skipping token service. ' +
@@ -128,9 +138,9 @@ server.listen(PORT, host, () => {
     );
   }
 
-  startHeartbeatService(HEARTBEAT_INTERVAL_MS);
+  shutdownHandles.intervals.push(startHeartbeatService(HEARTBEAT_INTERVAL_MS));
 
-  startTrendingService({
+  const trendingController = startTrendingService({
     endpoint: AZURE_OPENAI_ENDPOINT,
     apiKey: AZURE_OPENAI_API_KEY,
     deployment: AZURE_OPENAI_DEPLOYMENT,
@@ -139,11 +149,26 @@ server.listen(PORT, host, () => {
     minStars: MIN_STARS,
     maxResults: MAX_RESULTS,
     intervalMs: HEARTBEAT_INTERVAL_MS,
-  });
+  }, tokenServiceDelayMs);
+  shutdownHandles.controllers.push(trendingController);
 }).on('error', (err: unknown) => {
   console.error(err);
   process.exit(1);
-}).on('close', () => {
-  console.log('Server closed');
-  process.exit(0);
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+function shutdown(signal: string) {
+  console.log(`\n${signal} received — shutting down gracefully...`);
+  for (const interval of shutdownHandles.intervals) {
+    clearInterval(interval);
+  }
+  for (const controller of shutdownHandles.controllers) {
+    controller.abort();
+  }
+  a365Observability.shutdown().finally(() => {
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

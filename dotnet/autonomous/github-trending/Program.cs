@@ -3,6 +3,7 @@
 
 using Azure;
 using Azure.AI.OpenAI;
+using Azure.Identity;
 using GitHubTrending;
 using GitHubTrending.Tools;
 using Microsoft.Agents.A365.Observability.Hosting.Caching;
@@ -21,7 +22,8 @@ builder.Services.AddAgent365Observability();
 
 // Microsoft OpenTelemetry distro — configures OTel tracing pipeline + A365 exporter.
 // The token resolver reads from the ServiceTokenCache populated by ObservabilityTokenService.
-WebApplication? appRef = null;
+// Note: tokenCache is resolved lazily after Build() via the closure over the local variable.
+IExporterTokenCache<string>? tokenCache = null;
 builder.UseMicrosoftOpenTelemetry(o =>
 {
     o.Exporters = builder.Environment.IsDevelopment()
@@ -30,17 +32,25 @@ builder.UseMicrosoftOpenTelemetry(o =>
 
     o.Agent365.Exporter.TokenResolver = async (agentId, tenantId) =>
     {
-        var cache = appRef?.Services.GetService<IExporterTokenCache<string>>();
-        return cache != null
-            ? await cache.GetObservabilityToken(agentId, tenantId)
+        return tokenCache != null
+            ? await tokenCache.GetObservabilityToken(agentId, tenantId)
             : null;
     };
 });
 
-// Azure OpenAI client
-var aoaiEndpoint = builder.Configuration["AzureOpenAI:Endpoint"]!;
-var aoaiKey = builder.Configuration["AzureOpenAI:ApiKey"]!;
-builder.Services.AddSingleton(new AzureOpenAIClient(new Uri(aoaiEndpoint), new AzureKeyCredential(aoaiKey)));
+// Azure OpenAI client — supports both API key and DefaultAzureCredential (e.g. MSI)
+var aoaiEndpoint = builder.Configuration["AzureOpenAI:Endpoint"]
+    ?? throw new InvalidOperationException("AzureOpenAI:Endpoint configuration is required.");
+var aoaiKey = builder.Configuration["AzureOpenAI:ApiKey"];
+
+if (!string.IsNullOrEmpty(aoaiKey))
+{
+    builder.Services.AddSingleton(new AzureOpenAIClient(new Uri(aoaiEndpoint), new AzureKeyCredential(aoaiKey)));
+}
+else
+{
+    builder.Services.AddSingleton(new AzureOpenAIClient(new Uri(aoaiEndpoint), new DefaultAzureCredential()));
+}
 
 // IChatClient with function invocation — lets the model call registered tools
 builder.Services.AddSingleton<IChatClient>(sp =>
@@ -62,7 +72,7 @@ builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddHostedService<GitHubTrendingService>();
 
 var app = builder.Build();
-appRef = app;
+tokenCache = app.Services.GetService<IExporterTokenCache<string>>();
 
 app.UseRouting();
 

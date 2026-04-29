@@ -62,9 +62,25 @@ internal sealed class ObservabilityTokenService : BackgroundService
         string authority = $"https://login.microsoftonline.com/{_tenantId}";
 
         // Hop 1+2: Blueprint → T1 via FMI path
-        string t1Token = _useManagedIdentity
-            ? await AcquireT1ViaMsiAsync(authority, ct)
-            : await AcquireT1ViaClientSecretAsync(authority, ct);
+        // When UseManagedIdentity is true, try MSI first and fall back to client secret
+        // on AuthenticationFailedException (e.g. when running locally without MSI).
+        string t1Token;
+        if (_useManagedIdentity)
+        {
+            try
+            {
+                t1Token = await AcquireT1ViaMsiAsync(authority, ct);
+            }
+            catch (AuthenticationFailedException ex)
+            {
+                _logger.LogWarning(ex, "MSI authentication failed; falling back to client secret.");
+                t1Token = await AcquireT1ViaClientSecretAsync(authority, ct);
+            }
+        }
+        else
+        {
+            t1Token = await AcquireT1ViaClientSecretAsync(authority, ct);
+        }
 
         // Hop 3: Agent Identity uses T1 → Observability API token
         var obsResult = await ConfidentialClientApplicationBuilder

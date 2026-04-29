@@ -21,7 +21,7 @@ export function cacheToken(agentId: string, tenantId: string, token: string, exp
     token,
     expiresAt: Date.now() + expiresInMs,
   });
-  console.log(`Token cached for agent ${agentId}, tenant ${tenantId}`);
+  // Avoid logging agentId/tenantId on every cache write to reduce log noise
 }
 
 export function getCachedToken(agentId: string, tenantId: string): string | null {

@@ -26,7 +26,7 @@ export async function getTrendingRepositories(
   const request: Request = { content: language };
   const toolDetails: ToolCallDetails = {
     toolName: 'get_trending_repositories',
-    arguments: language,
+    arguments: JSON.stringify({ language }),
     toolType: 'function',
     description: 'Search GitHub for trending repositories by star count',
     endpoint: GITHUB_API_ENDPOINT,

@@ -45,8 +45,8 @@ public static class ObservabilityServiceExtensions
         services.AddHostedService(sp =>
         {
             var obs = sp.GetRequiredService<IConfiguration>().GetSection("Agent365Observability");
-            var useManagedIdentity = bool.TryParse(obs["UseManagedIdentity"], out var parsedUseManagedIdentity)
-                && parsedUseManagedIdentity;
+            var useManagedIdentity = !bool.TryParse(obs["UseManagedIdentity"], out var parsedUseManagedIdentity)
+                || parsedUseManagedIdentity; // default true — matches ObservabilityTokenService
 
             var hasCommonCredentials = !string.IsNullOrEmpty(obs["TenantId"])
                                     && !string.IsNullOrEmpty(obs["AgentId"])
@@ -59,25 +59,32 @@ public static class ObservabilityServiceExtensions
             var hasCredentials = hasCommonCredentials
                               && (useManagedIdentity || hasClientSecret);
 
-            if (!hasCredentials)
-            {
-                var logger = sp.GetRequiredService<ILogger<ObservabilityTokenService>>();
-                logger.LogWarning(
+            return new OptionalHostedService(
+                hasCredentials ? sp.GetRequiredService<ObservabilityTokenService>() : null,
+                sp.GetRequiredService<ILogger<ObservabilityTokenService>>(),
+                hasCredentials ? null :
                     "Agent365Observability credentials not configured — skipping token service. " +
                     "Run 'a365 setup all' to enable A365 observability export.");
-            }
-
-            return new OptionalHostedService(
-                hasCredentials ? sp.GetRequiredService<ObservabilityTokenService>() : null);
         });
 
         return services;
     }
 
     // Wrapper that conditionally starts a hosted service, allowing graceful skip.
-    private sealed class OptionalHostedService(IHostedService? inner) : IHostedService
+    // When skipped, logs the warning at StartAsync time (after logging is initialized).
+    private sealed class OptionalHostedService(IHostedService? inner, ILogger logger, string? skipWarning = null) : IHostedService
     {
-        public Task StartAsync(CancellationToken ct) => inner?.StartAsync(ct) ?? Task.CompletedTask;
+        public Task StartAsync(CancellationToken ct)
+        {
+            if (inner != null)
+                return inner.StartAsync(ct);
+
+            if (skipWarning != null)
+                logger.LogWarning("{Warning}", skipWarning);
+
+            return Task.CompletedTask;
+        }
+
         public Task StopAsync(CancellationToken ct) => inner?.StopAsync(ct) ?? Task.CompletedTask;
     }
 }

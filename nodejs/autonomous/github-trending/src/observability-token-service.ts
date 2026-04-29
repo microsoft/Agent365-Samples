@@ -31,7 +31,7 @@ export interface TokenServiceConfig {
   useManagedIdentity: boolean;
 }
 
-export function startTokenService(config: TokenServiceConfig): void {
+export function startTokenService(config: TokenServiceConfig): ReturnType<typeof setInterval> {
   console.log(`ObservabilityTokenService started (useManagedIdentity=${config.useManagedIdentity}).`);
 
   const run = async () => {
@@ -44,7 +44,7 @@ export function startTokenService(config: TokenServiceConfig): void {
 
   // Acquire immediately, then on interval
   run();
-  setInterval(run, REFRESH_INTERVAL_MS);
+  return setInterval(run, REFRESH_INTERVAL_MS);
 }
 
 async function acquireAndRegisterToken(config: TokenServiceConfig): Promise<void> {
@@ -72,8 +72,11 @@ async function acquireAndRegisterToken(config: TokenServiceConfig): Promise<void
     throw new Error('Failed to acquire observability token: no access token returned');
   }
 
-  // Cache with 55 minute expiry (token typically valid for 60-75 minutes)
-  cacheToken(config.agentId, config.tenantId, obsResult.accessToken, 55 * 60 * 1000);
+  // Use the actual token expiry from MSAL when available, otherwise fall back to 55 minutes
+  const expiresInMs = obsResult.expiresOn
+    ? obsResult.expiresOn.getTime() - Date.now()
+    : 55 * 60 * 1000;
+  cacheToken(config.agentId, config.tenantId, obsResult.accessToken, expiresInMs);
   console.log(`Observability token registered for agent ${config.agentId}.`);
 }
 

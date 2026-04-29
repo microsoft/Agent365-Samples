@@ -51,19 +51,13 @@ internal sealed class GitHubTrendingService : BackgroundService
         _logger.LogInformation("GitHubTrendingService started. Interval: {Interval}", _interval);
 
         using var timer = new PeriodicTimer(_interval);
-        var firstRun = true;
 
-        while (!stoppingToken.IsCancellationRequested)
+        while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
-            if (firstRun)
-                firstRun = false;
-            else
-                await timer.WaitForNextTickAsync(stoppingToken);
-
             try
             {
                 // A365 Observability — propagate baggage context for this cycle
-                new BaggageBuilder()
+                using var baggage = new BaggageBuilder()
                     .AgentId(_agentDetails.AgentId)
                     .TenantId(_agentDetails.TenantId)
                     .Build();
@@ -138,6 +132,10 @@ internal sealed class GitHubTrendingService : BackgroundService
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "GitHubTrendingService cycle failed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "GitHubTrendingService cycle failed with unexpected error");
             }
         }
 

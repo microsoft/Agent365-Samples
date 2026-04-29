@@ -39,7 +39,14 @@ export interface TrendingServiceConfig {
   intervalMs: number;
 }
 
-export function startTrendingService(config: TrendingServiceConfig): void {
+/**
+ * Starts the trending service. Returns an AbortController that can be used to
+ * stop the background loop (e.g. on SIGTERM).
+ *
+ * @param config Service configuration
+ * @param delayFirstRunMs Optional delay (ms) before the first cycle, e.g. to let token service warm up.
+ */
+export function startTrendingService(config: TrendingServiceConfig, delayFirstRunMs: number = 0): AbortController {
   const client = new AzureOpenAI({
     endpoint: config.endpoint,
     apiKey: config.apiKey,
@@ -49,24 +56,35 @@ export function startTrendingService(config: TrendingServiceConfig): void {
 
   console.log(`GitHubTrendingService started. Interval: ${config.intervalMs}ms`);
 
-  const run = async () => {
-    try {
-      await runCycle(client, config);
-    } catch (error) {
-      console.warn('GitHubTrendingService cycle failed', error);
-    }
-  };
+  const controller = new AbortController();
 
-  // First run immediately, then on interval
-  run();
-  setInterval(run, config.intervalMs);
+  // Sequential loop: waits for each cycle to finish before scheduling the next,
+  // preventing overlapping cycles (CRM-031).
+  (async () => {
+    if (delayFirstRunMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayFirstRunMs));
+    }
+
+    while (!controller.signal.aborted) {
+      try {
+        await runCycle(client, config);
+      } catch (error) {
+        console.warn('GitHubTrendingService cycle failed', error);
+      }
+      // Wait for the interval before the next cycle
+      await new Promise(resolve => setTimeout(resolve, config.intervalMs));
+    }
+  })();
+
+  return controller;
 }
 
 async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Promise<void> {
   const { deployment, agentDetails, endpoint, language, minStars, maxResults } = config;
 
-  // A365 Observability — propagate baggage context for this cycle
-  new BaggageBuilder()
+  // A365 Observability — propagate baggage context for this cycle.
+  // The returned disposable must be held so baggage propagates to child spans.
+  const baggage = new BaggageBuilder()
     .agentId(agentDetails.agentId)
     .tenantId(agentDetails.tenantId)
     .build();
@@ -79,7 +97,8 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
 
   // A365 Observability — InvokeAgent span wraps the entire autonomous cycle
   const request: Request = { content: userPrompt };
-  const endpointHost = endpoint.replace('https://', '').replace('http://', '').replace(/\/$/, '');
+  const parsedUrl = new URL(endpoint);
+  const endpointHost = parsedUrl.hostname;
 
   const scopeDetails: InvokeAgentScopeDetails = {
     endpoint: { host: endpointHost, protocol: 'https' },
@@ -110,6 +129,10 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
         await inferenceScope.withActiveSpanAsync(async () => {
           inferenceScope.recordInputMessages([SYSTEM_PROMPT, userPrompt]);
 
+          // Track cumulative token usage across all LLM round-trips
+          let totalInputTokens = 0;
+          let totalOutputTokens = 0;
+
           // Initial LLM call with tools
           let response = await client.chat.completions.create({
             model: deployment,
@@ -117,6 +140,11 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
             tools,
             tool_choice: 'auto',
           });
+
+          if (response.usage) {
+            totalInputTokens += response.usage.prompt_tokens;
+            totalOutputTokens += response.usage.completion_tokens;
+          }
 
           let choice = response.choices[0];
 
@@ -126,14 +154,26 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
 
             for (const toolCall of choice.message.tool_calls || []) {
               if (toolCall.function.name === 'get_trending_repositories') {
-                const args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
+                let args: Record<string, unknown> = {};
+                try {
+                  args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
+                } catch {
+                  console.warn(`Failed to parse tool call arguments: ${toolCall.function.arguments}`);
+                }
                 const toolResult = await getTrendingRepositories(
                   agentDetails,
-                  args.language || language,
+                  (args.language as string) || language,
                   minStars,
                   maxResults,
                 );
                 messages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult });
+              } else {
+                // Always push a tool result for every tool_call_id so the API doesn't reject the request
+                messages.push({
+                  role: 'tool',
+                  tool_call_id: toolCall.id,
+                  content: `Error: unrecognized tool '${toolCall.function.name}'`,
+                });
               }
             }
 
@@ -142,15 +182,21 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
               model: deployment,
               messages,
             });
+
+            if (response.usage) {
+              totalInputTokens += response.usage.prompt_tokens;
+              totalOutputTokens += response.usage.completion_tokens;
+            }
+
             choice = response.choices[0];
           }
 
           const digest = choice.message.content || '';
 
-          // Record token usage if available
-          if (response.usage) {
-            inferenceScope.recordInputTokens(response.usage.prompt_tokens);
-            inferenceScope.recordOutputTokens(response.usage.completion_tokens);
+          // Record accumulated token usage across all round-trips
+          if (totalInputTokens > 0 || totalOutputTokens > 0) {
+            inferenceScope.recordInputTokens(totalInputTokens);
+            inferenceScope.recordOutputTokens(totalOutputTokens);
           }
 
           inferenceScope.recordOutputMessages([digest]);

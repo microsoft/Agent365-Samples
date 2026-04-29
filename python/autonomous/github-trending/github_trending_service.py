@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from openai import AsyncAzureOpenAI
 
@@ -96,83 +97,95 @@ async def _run_cycle(
     max_results: int,
 ) -> None:
     # A365 Observability — propagate baggage context for this cycle
-    BaggageBuilder().agent_id(agent_details.agent_id).tenant_id(agent_details.tenant_id).build()
+    with BaggageBuilder().agent_id(agent_details.agent_id).tenant_id(agent_details.tenant_id).build():
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        user_prompt = (
+            f"It is {now} UTC. "
+            "Fetch today's trending repositories and produce a digest. "
+            "Highlight what makes the top repos interesting and any notable patterns."
+        )
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    user_prompt = (
-        f"It is {now} UTC. "
-        "Fetch today's trending repositories and produce a digest. "
-        "Highlight what makes the top repos interesting and any notable patterns."
-    )
+        # A365 Observability — InvokeAgent span wraps the entire autonomous cycle
+        request = Request(content=user_prompt)
+        endpoint_host = urlparse(endpoint).hostname or endpoint
 
-    # A365 Observability — InvokeAgent span wraps the entire autonomous cycle
-    request = Request(content=user_prompt)
-    endpoint_host = endpoint.replace("https://", "").replace("http://", "").rstrip("/")
-
-    with InvokeAgentScope.start(
-        request=request,
-        scope_details=InvokeAgentScopeDetails(endpoint=ServiceEndpoint(hostname=endpoint_host)),
-        agent_details=agent_details,
-    ) as agent_scope:
-        agent_scope.record_input_messages([SYSTEM_PROMPT, user_prompt])
-
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        # A365 Observability — InferenceCall span wraps the LLM invocation
-        with InferenceScope.start(
+        with InvokeAgentScope.start(
             request=request,
-            details=InferenceCallDetails(
-                operationName=InferenceOperationType.CHAT,
-                model=deployment,
-                providerName="AzureOpenAI",
-            ),
+            scope_details=InvokeAgentScopeDetails(endpoint=ServiceEndpoint(hostname=endpoint_host)),
             agent_details=agent_details,
-        ) as inference_scope:
-            inference_scope.record_input_messages([SYSTEM_PROMPT, user_prompt])
+        ) as agent_scope:
+            agent_scope.record_input_messages([SYSTEM_PROMPT, user_prompt])
 
-            # Initial LLM call with tools
-            response = await client.chat.completions.create(
-                model=deployment,
-                messages=messages,
-                tools=TOOLS,
-                tool_choice="auto",
-            )
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ]
 
-            choice = response.choices[0]
+            # A365 Observability — InferenceCall span wraps the LLM invocation
+            with InferenceScope.start(
+                request=request,
+                details=InferenceCallDetails(
+                    operationName=InferenceOperationType.CHAT,
+                    model=deployment,
+                    providerName="AzureOpenAI",
+                ),
+                agent_details=agent_details,
+            ) as inference_scope:
+                inference_scope.record_input_messages([SYSTEM_PROMPT, user_prompt])
 
-            # Handle tool calls if the model requests them
-            while choice.finish_reason == "tool_calls":
-                messages.append(choice.message.model_dump())
+                # Accumulate token counts across all LLM round-trips
+                total_prompt_tokens = 0
+                total_completion_tokens = 0
 
-                for tool_call in choice.message.tool_calls:
-                    if tool_call.function.name == "get_trending_repositories":
-                        args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-                        tool_result = await get_trending_repositories(
-                            agent_details=agent_details,
-                            language=args.get("language", language),
-                            min_stars=min_stars,
-                            max_results=max_results,
-                        )
-                        messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": tool_result})
-
-                # Follow-up LLM call with tool results
+                # Initial LLM call with tools
                 response = await client.chat.completions.create(
                     model=deployment,
                     messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
                 )
+
+                if response.usage:
+                    total_prompt_tokens += response.usage.prompt_tokens
+                    total_completion_tokens += response.usage.completion_tokens
+
                 choice = response.choices[0]
+                digest = choice.message.content or ""
 
-            digest = choice.message.content or ""
+                # Handle tool calls if the model requests them
+                while choice.finish_reason == "tool_calls":
+                    messages.append(choice.message.model_dump(exclude_none=True, exclude_unset=True))
 
-            # Record token usage if available
-            if response.usage:
-                inference_scope.record_input_tokens(response.usage.prompt_tokens)
-                inference_scope.record_output_tokens(response.usage.completion_tokens)
+                    for tool_call in choice.message.tool_calls:
+                        if tool_call.function.name == "get_trending_repositories":
+                            args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
+                            tool_result = await get_trending_repositories(
+                                agent_details=agent_details,
+                                language=args.get("language", language),
+                                min_stars=min_stars,
+                                max_results=max_results,
+                            )
+                            messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": tool_result})
 
-            inference_scope.record_output_messages([digest])
+                    # Follow-up LLM call with tool results
+                    response = await client.chat.completions.create(
+                        model=deployment,
+                        messages=messages,
+                    )
 
-        agent_scope.record_response(digest)
-        logger.info("Trending Digest:\n%s", digest)
+                    if response.usage:
+                        total_prompt_tokens += response.usage.prompt_tokens
+                        total_completion_tokens += response.usage.completion_tokens
+
+                    choice = response.choices[0]
+                    digest = choice.message.content or ""
+
+                # Record accumulated token usage
+                if total_prompt_tokens or total_completion_tokens:
+                    inference_scope.record_input_tokens(total_prompt_tokens)
+                    inference_scope.record_output_tokens(total_completion_tokens)
+
+                inference_scope.record_output_messages([digest])
+
+            agent_scope.record_response(digest)
+            logger.info("Trending Digest:\n%s", digest)

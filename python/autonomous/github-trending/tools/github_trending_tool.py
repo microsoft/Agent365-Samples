@@ -6,6 +6,7 @@ Tool that fetches trending repositories from the GitHub Search API.
 Uses the unauthenticated search endpoint (no API key required, 10 req/min rate limit).
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API_ENDPOINT = ServiceEndpoint(hostname="api.github.com")
 
+# Module-level httpx client — reused across tool calls to avoid per-call overhead
+_http_client = httpx.AsyncClient(headers={"User-Agent": "GitHubTrendingAgent/1.0"})
+
 
 async def get_trending_repositories(
     agent_details: AgentDetails,
@@ -39,7 +43,7 @@ async def get_trending_repositories(
         request=request,
         details=ToolCallDetails(
             tool_name="get_trending_repositories",
-            arguments=language,
+            arguments=json.dumps({"language": language, "min_stars": min_stars, "max_results": max_results}),
             tool_type="function",
             description="Search GitHub for trending repositories by star count",
             endpoint=GITHUB_API_ENDPOINT,
@@ -57,8 +61,7 @@ async def get_trending_repositories(
             f"?q={quote(query)}&sort=stars&order=desc&per_page={max_results}"
         )
 
-        async with httpx.AsyncClient(headers={"User-Agent": "GitHubTrendingAgent/1.0"}) as client:
-            response = await client.get(url)
+        response = await _http_client.get(url)
 
         if response.status_code != 200:
             error_result = f"GitHub API request failed: HTTP {response.status_code}"

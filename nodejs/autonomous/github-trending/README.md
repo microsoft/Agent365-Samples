@@ -106,6 +106,7 @@ You can run the agent with **just Azure OpenAI credentials** — no Agent 365 se
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-api-key
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
+AGENT365_USE_MANAGED_IDENTITY=false
 NODE_ENV=development
 ```
 

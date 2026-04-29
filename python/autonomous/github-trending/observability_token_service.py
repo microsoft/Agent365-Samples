@@ -31,6 +31,19 @@ OBSERVABILITY_SCOPES = ["api://9b975845-388f-4429-889e-eab1ef63949c/.default"]
 REFRESH_INTERVAL_SECONDS = 50 * 60  # 50 minutes
 
 
+async def acquire_initial_token(
+    tenant_id: str,
+    agent_id: str,
+    blueprint_client_id: str,
+    blueprint_client_secret: str,
+    use_managed_identity: bool,
+) -> None:
+    """Acquire the first observability token before the trending service starts."""
+    await _acquire_and_register_token(
+        tenant_id, agent_id, blueprint_client_id, blueprint_client_secret, use_managed_identity
+    )
+
+
 async def run_token_service(
     tenant_id: str,
     agent_id: str,
@@ -90,9 +103,8 @@ async def _acquire_and_register_token(
 
 async def _acquire_t1_via_msi(authority: str, blueprint_client_id: str, agent_id: str) -> str:
     """Acquire T1 token using Managed Identity (production)."""
-    credential = ManagedIdentityCredential()
-    msi_token = await credential.get_token("api://AzureADTokenExchange")
-    await credential.close()
+    async with ManagedIdentityCredential() as credential:
+        msi_token = await credential.get_token("api://AzureADTokenExchange")
 
     blueprint_app = msal.ConfidentialClientApplication(
         client_id=blueprint_client_id,

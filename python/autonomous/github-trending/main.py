@@ -22,7 +22,7 @@ from microsoft_agents_a365.observability.core import AgentDetails
 
 import token_cache
 from github_trending_service import run_trending_service
-from observability_token_service import run_token_service
+from observability_token_service import acquire_initial_token, run_token_service
 
 # Load .env (local dev) — no-op if file doesn't exist
 load_dotenv()
@@ -35,8 +35,13 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-AZURE_OPENAI_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
-AZURE_OPENAI_API_KEY = os.environ["AZURE_OPENAI_API_KEY"]
+AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
+if not AZURE_OPENAI_ENDPOINT:
+    raise SystemExit("AZURE_OPENAI_ENDPOINT environment variable is required but not set.")
+
+AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
+if not AZURE_OPENAI_API_KEY:
+    raise SystemExit("AZURE_OPENAI_API_KEY environment variable is required but not set.")
 AZURE_OPENAI_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
 
 # Agent 365 Observability — optional. When these are missing or set to placeholders,
@@ -116,6 +121,19 @@ async def start_background_tasks(app: web.Application) -> None:
     # Background token service — acquires observability tokens via 3-hop FMI chain.
     # Skipped when Agent 365 credentials are not configured.
     if A365_ENABLED:
+        # Acquire first token before starting trending service so the first cycle
+        # has valid observability credentials (CRM-005).
+        try:
+            await acquire_initial_token(
+                tenant_id=TENANT_ID,
+                agent_id=AGENT_ID,
+                blueprint_client_id=CLIENT_ID,
+                blueprint_client_secret=CLIENT_SECRET,
+                use_managed_identity=USE_MANAGED_IDENTITY,
+            )
+        except Exception:
+            logger.warning("Initial token acquisition failed; continuing with background refresh.", exc_info=True)
+
         app["token_task"] = asyncio.create_task(
             run_token_service(
                 tenant_id=TENANT_ID,
@@ -134,12 +152,13 @@ async def start_background_tasks(app: web.Application) -> None:
     # Heartbeat
     app["heartbeat_task"] = asyncio.create_task(heartbeat_loop(interval_seconds))
 
-    # Azure OpenAI client
+    # Azure OpenAI client — stored on the app for proper shutdown
     client = AsyncAzureOpenAI(
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
         api_key=AZURE_OPENAI_API_KEY,
         api_version="2024-12-01-preview",
     )
+    app["openai_client"] = client
 
     # Trending digest service
     app["trending_task"] = asyncio.create_task(
@@ -165,6 +184,11 @@ async def cleanup_background_tasks(app: web.Application) -> None:
                 await task
             except asyncio.CancelledError:
                 pass  # Expected during shutdown — task cancellation is the normal cleanup path
+
+    # Close the Azure OpenAI client to release underlying httpx connections
+    client = app.get("openai_client")
+    if client:
+        await client.close()
 
 
 def main() -> None:
