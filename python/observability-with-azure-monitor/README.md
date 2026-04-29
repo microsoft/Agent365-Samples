@@ -24,6 +24,8 @@ This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github
    cp .env.template .env
    ```
 
+   The template includes `ENABLE_OBSERVABILITY=true` — leave this as-is. Without it, the SDK silently emits zero spans.
+
 2. Create a virtualenv and install:
 
    ```bash
@@ -69,6 +71,7 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 
 ## Troubleshooting
 
+- **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **`SystemExit: APPLICATIONINSIGHTS_CONNECTION_STRING is not set`** — set the env var via `.env`. The connection string is on your App Insights resource → **Overview** → **Connection String**.
 - **No spans visible in App Insights** — wait 1–2 minutes for ingestion; confirm the connection string targets the right resource. If the agent ran successfully but spans never appear, temporarily add a `ConsoleSpanExporter` (see [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration)) to prove the SDK is producing them.
 - **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step (most often a missing or unreachable token resolver in production; the sample uses a stub).

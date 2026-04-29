@@ -28,6 +28,8 @@ No collector or external service is required — the sample defaults to `Console
    cp .env.template .env
    ```
 
+   The template includes `ENABLE_OBSERVABILITY=true` — leave this as-is. Without it, the SDK silently emits zero spans.
+
 2. Create a virtualenv and install:
 
    ```bash
@@ -85,6 +87,7 @@ To diff against your own app: copy Step 1 (replace with whatever exporter / reso
 
 ## Troubleshooting
 
+- **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **No spans printed to stdout** — `BatchSpanProcessor` may not have flushed; the sample calls `force_flush()` on exit, so make sure the script ran to completion. If the model answered without calling the tool, the sample skips the `execute_tool` span and returns the model's text directly.
 - **`KeyError` or auth error from OpenAI** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The raw `openai` client reads these directly.
 - **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. See [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration).
