@@ -39,14 +39,14 @@ from microsoft_agents_a365.notifications.agent_notification import (
 )
 from microsoft_agents_a365.notifications import EmailResponse
 
-from microsoft_agents_a365.observability.core.config import configure
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
     BaggageBuilder,
 )
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
-from token_cache import cache_agentic_token
+from token_cache import cache_agentic_token, get_cached_agentic_token
 
 # --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -72,9 +72,17 @@ def create_and_run_host(
             f"Agent class {agent_class.__name__} must inherit from AgentInterface"
         )
 
-    configure(
-        service_name="AgentFrameworkTracingWithAzureOpenAI",
-        service_namespace="AgentFrameworkTesting",
+    # Initialize Microsoft OpenTelemetry distro for observability.
+    # Replaces the legacy configure() call with a single entrypoint that sets up
+    # tracing, metrics, and logging pipelines including A365 telemetry export.
+    # See: https://github.com/microsoft/opentelemetry-distro-python
+    use_microsoft_opentelemetry(
+        enable_a365=True,
+        enable_azure_monitor=False,
+        a365_token_resolver=lambda agent_id, tenant_id: get_cached_agentic_token(
+            tenant_id, agent_id
+        )
+        or "",
     )
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
