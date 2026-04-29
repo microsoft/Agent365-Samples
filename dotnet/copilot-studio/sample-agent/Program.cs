@@ -16,7 +16,7 @@ using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup OpenTelemetry, Service Discovery, Resilience, and Health Checks
+// Setup OpenTelemetry
 builder.ConfigureOpenTelemetry();
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
