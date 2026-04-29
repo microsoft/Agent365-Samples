@@ -57,7 +57,7 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
                 ["Caller.Id"] = context.Activity.From?.Id,
                 ["Channel.Id"] = context.Activity.ChannelId?.ToString(),
                 ["Message.Id"] = context.Activity.Id,
-                ["Message.Text"] = context.Activity.Text
+                ["Message.Text.Length"] = context.Activity.Text?.Length ?? 0
             }));
             return activity!;
         }
@@ -84,12 +84,12 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
             activity?.Dispose();
         }
 
-        public static Task InvokeObservedHttpOperation(string operationName, Action func)
+        public static async Task InvokeObservedHttpOperation(string operationName, Func<Task> func)
         {
             using var activity = ActivitySource.StartActivity(operationName);
             try
             {
-                func();
+                await func();
                 activity?.SetStatus(ActivityStatusCode.Ok);
             }
             catch (Exception ex)
@@ -103,17 +103,18 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
                 }));
                 throw;
             }
-            return Task.CompletedTask;
         }
 
-        public static Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
+        public static async Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
         {
             MessageProcessedCounter.Add(1);
             var activity = InitializeMessageHandlingActivity(operationName, context);
             var routeStopwatch = Stopwatch.StartNew();
+            bool success = false;
             try
             {
-                return func();
+                await func();
+                success = true;
             }
             catch (Exception ex)
             {
@@ -129,7 +130,7 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
             finally
             {
                 routeStopwatch.Stop();
-                FinalizeMessageHandlingActivity(activity, context, routeStopwatch.ElapsedMilliseconds, true);
+                FinalizeMessageHandlingActivity(activity, context, routeStopwatch.ElapsedMilliseconds, success);
             }
         }
     }

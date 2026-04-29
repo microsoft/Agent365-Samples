@@ -26,11 +26,13 @@ namespace Agent365CopilotStudioSampleAgent.Client
     public class CopilotStudioAgentClient : ICopilotStudioAgentClient
     {
         private readonly CopilotClient _client;
+        private readonly ILogger _logger;
         private string _conversationId = string.Empty;
 
-        public CopilotStudioAgentClient(CopilotClient client)
+        public CopilotStudioAgentClient(CopilotClient client, ILogger logger)
         {
             _client = client;
+            _logger = logger;
         }
 
         /// <summary>
@@ -74,7 +76,7 @@ namespace Agent365CopilotStudioSampleAgent.Client
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"Error sending message to Copilot Studio: {ex}");
+                _logger.LogError(ex, "Error sending message to Copilot Studio");
                 throw;
             }
         }
@@ -122,7 +124,7 @@ namespace Agent365CopilotStudioSampleAgent.Client
             };
 
             var copilotClient = new CopilotClient(settings, httpClientFactory, tokenProvider, logger, "WebClient");
-            return Task.FromResult<ICopilotStudioAgentClient>(new CopilotStudioAgentClient(copilotClient));
+            return Task.FromResult<ICopilotStudioAgentClient>(new CopilotStudioAgentClient(copilotClient, logger));
         }
 
         private static ConnectionSettings LoadConnectionSettings(IConfiguration configuration)

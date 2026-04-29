@@ -40,11 +40,7 @@ namespace Agent365CopilotStudioSampleAgent.telemetry
                     metrics.AddAspNetCoreInstrumentation()
                         .AddHttpClientInstrumentation()
                         .AddRuntimeInstrumentation()
-                        .AddMeter("agent.messages.processed",
-                            "agent.routes.executed",
-                            "agent.conversations.active",
-                            "agent.route.execution.duration",
-                            "agent.message.processing.duration");
+                        .AddMeter("A365.CopilotStudio");
                 })
                 .WithTracing(tracing =>
                 {
