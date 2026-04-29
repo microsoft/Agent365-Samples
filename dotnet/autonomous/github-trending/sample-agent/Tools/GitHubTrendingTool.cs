@@ -4,8 +4,8 @@
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts; // A365 Observability — ToolCallDetails, AgentDetails, etc.
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;    // A365 Observability — ExecuteToolScope
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 
 namespace GitHubTrending.Tools;
 

@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import httpx
 
-from microsoft_agents_a365.observability.core import (
+from microsoft.opentelemetry.a365.core import (
     AgentDetails,
     ExecuteToolScope,
     Request,

@@ -9,11 +9,10 @@ configDotenv();
 import express, { Response, Request } from 'express';
 
 import {
-  ObservabilityManager,
-  Builder,
-  AgentDetails,
-  Agent365ExporterOptions,
-} from '@microsoft/agents-a365-observability';
+  useMicrosoftOpenTelemetry,
+  shutdownMicrosoftOpenTelemetry,
+} from '@microsoft/opentelemetry';
+import type { AgentDetails } from '@microsoft/opentelemetry';
 
 import { tokenResolver } from './token-cache';
 import { startTokenService } from './observability-token-service';
@@ -82,20 +81,14 @@ const agentDetails: AgentDetails = {
 // Configure Microsoft OpenTelemetry distro with A365 exporter.
 // Token resolver reads from the in-memory cache populated by the background token service.
 
-const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  builder.withService('TypeScript GitHub Trending Agent', '1.0.0');
-
-  if (A365_ENABLED) {
-    const exporterOptions = new Agent365ExporterOptions();
-    exporterOptions.maxQueueSize = 10;
-
-    builder
-      .withExporterOptions(exporterOptions)
-      .withTokenResolver(tokenResolver);
-  }
+useMicrosoftOpenTelemetry({
+  a365: A365_ENABLED
+    ? {
+        enabled: true,
+        tokenResolver: (agentId, tenantId) => tokenResolver(agentId, tenantId) ?? '',
+      }
+    : undefined,
 });
-
-a365Observability.start();
 
 // ── Express server ───────────────────────────────────────────────────────────
 
@@ -165,7 +158,7 @@ function shutdown(signal: string) {
   for (const controller of shutdownHandles.controllers) {
     controller.abort();
   }
-  a365Observability.shutdown().finally(() => {
+  shutdownMicrosoftOpenTelemetry().finally(() => {
     process.exit(0);
   });
 }

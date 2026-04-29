@@ -11,15 +11,17 @@ import { AzureOpenAI } from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 
 import {
-  AgentDetails,
   BaggageBuilder,
   InferenceScope,
-  InferenceDetails,
   InferenceOperationType,
   InvokeAgentScope,
+} from '@microsoft/opentelemetry';
+import type {
+  AgentDetails,
+  InferenceDetails,
   InvokeAgentScopeDetails,
-  Request,
-} from '@microsoft/agents-a365-observability';
+  A365Request,
+} from '@microsoft/opentelemetry';
 
 import { getTrendingRepositories, TOOL_DEFINITION } from './tools/github-trending-tool';
 
@@ -96,7 +98,7 @@ async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Pro
     'Highlight what makes the top repos interesting and any notable patterns.';
 
   // A365 Observability — InvokeAgent span wraps the entire autonomous cycle
-  const request: Request = { content: userPrompt };
+  const request: A365Request = { content: userPrompt };
   const parsedUrl = new URL(endpoint);
   const endpointHost = parsedUrl.hostname;
 

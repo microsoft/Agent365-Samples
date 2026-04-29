@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
 
 from microsoft.opentelemetry import use_microsoft_opentelemetry
-from microsoft_agents_a365.observability.core import AgentDetails
+from microsoft.opentelemetry.a365.core import AgentDetails
 
 import token_cache
 from github_trending_service import run_trending_service

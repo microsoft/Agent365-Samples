@@ -2,9 +2,9 @@
 // Licensed under the MIT License.
 
 using GitHubTrending.Tools;
-using Microsoft.Agents.A365.Observability.Runtime.Common;           // A365 Observability — BaggageBuilder
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts; // A365 Observability — AgentDetails, Request, etc.
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;    // A365 Observability — InvokeAgentScope, InferenceScope
+using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Extensions.AI;
 
 namespace GitHubTrending;

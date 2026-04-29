@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from openai import AsyncAzureOpenAI
 
-from microsoft_agents_a365.observability.core import (
+from microsoft.opentelemetry.a365.core import (
     AgentDetails,
     BaggageBuilder,
     InferenceCallDetails,

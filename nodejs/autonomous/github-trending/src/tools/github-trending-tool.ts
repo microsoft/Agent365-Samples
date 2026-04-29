@@ -6,13 +6,13 @@
  * Uses the unauthenticated search endpoint (no API key required, 10 req/min rate limit).
  */
 
-import {
+import { ExecuteToolScope } from '@microsoft/opentelemetry';
+import type {
   AgentDetails,
-  ExecuteToolScope,
-  Request,
+  A365Request,
   ToolCallDetails,
   ServiceEndpoint,
-} from '@microsoft/agents-a365-observability';
+} from '@microsoft/opentelemetry';
 
 const GITHUB_API_ENDPOINT: ServiceEndpoint = { host: 'api.github.com', protocol: 'https' };
 
@@ -23,7 +23,7 @@ export async function getTrendingRepositories(
   maxResults: number = 10,
 ): Promise<string> {
   // A365 Observability — ExecuteTool span wraps the GitHub API call
-  const request: Request = { content: language };
+  const request: A365Request = { content: language };
   const toolDetails: ToolCallDetails = {
     toolName: 'get_trending_repositories',
     arguments: JSON.stringify({ language }),

@@ -12,8 +12,7 @@ dependencies = [
     "aiohttp>=3.13.5",
     "azure-identity>=1.25.3",
     "msal>=1.36.0",
-    "microsoft-opentelemetry>=0.1.0a4",
-    "microsoft_agents_a365_observability_core>=0.3.0.dev6",
+    "microsoft-opentelemetry>=0.1.0b1",
 ]
 
 [tool.uv]
