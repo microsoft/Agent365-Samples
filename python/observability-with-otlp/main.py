@@ -72,11 +72,15 @@ def _stub_token_resolver(agent_id: str, tenant_id: str) -> str | None:
     return "stub-token"
 
 
-configure(
+_configure_ok = configure(
     service_name=os.environ.get("AGENT_SERVICE_NAME", "sample-agent-otlp"),
     service_namespace="agent365-samples",
     token_resolver=_stub_token_resolver,
 )
+if not _configure_ok:
+    raise SystemExit(
+        "Agent 365 observability configuration failed. See logs for details."
+    )
 
 # ---------------------------------------------------------------------------
 # Step 3 — Agent setup: raw OpenAI client + a fake tool.
@@ -144,6 +148,12 @@ def run_one_turn(user_message: str) -> str:
             )
             assistant_msg = first.choices[0].message
             inf_scope.record_response(assistant_msg.content or "<tool_call>")
+
+        # If the model answered without calling the tool, return its text.
+        if not assistant_msg.tool_calls:
+            final = assistant_msg.content or ""
+            invoke_scope.record_response(final)
+            return final
 
         tool_call = assistant_msg.tool_calls[0]
         args = json.loads(tool_call.function.arguments)

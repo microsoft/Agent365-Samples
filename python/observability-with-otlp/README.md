@@ -7,6 +7,12 @@ This sample shows two patterns at once:
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 
+## Demonstrates
+
+- The recommended init order: existing OTel SDK → Agent 365 `configure()`.
+- Manual instrumentation using `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` around a hand-rolled OpenAI tool-calling loop.
+- Default `ConsoleSpanExporter` for zero external setup, with a one-line swap to `OTLPSpanExporter` for real backends.
+
 ## Prerequisites
 
 - Python 3.11+
@@ -76,3 +82,10 @@ To diff against your own app: copy Step 1 (replace with whatever exporter / reso
 
 - Integration patterns and pitfalls: [Integrating with existing OpenTelemetry](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md) (in the SDK repo)
 - Auto-instrumented OpenAI Agents SDK example: [`python/observability-with-azure-monitor`](../observability-with-azure-monitor)
+
+## Troubleshooting
+
+- **No spans printed to stdout** — `BatchSpanProcessor` may not have flushed; the sample calls `force_flush()` on exit, so make sure the script ran to completion. If the model answered without calling the tool, the sample skips the `execute_tool` span and returns the model's text directly.
+- **`KeyError` or auth error from OpenAI** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The raw `openai` client reads these directly.
+- **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. See [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration).
+- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step.

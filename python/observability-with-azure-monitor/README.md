@@ -4,6 +4,12 @@ This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 
+## Demonstrates
+
+- The recommended init order: existing OTel → Agent 365 `configure()` → OpenAI Agents SDK instrumentor.
+- Auto-instrumentation via `microsoft-agents-a365-observability-extensions-openai` — no manual span code in the agent body.
+- Both Azure Monitor and the Agent 365 backend receive every span produced by the agent.
+
 ## Prerequisites
 
 - Python 3.11+
@@ -60,3 +66,10 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 
 - Integration patterns and pitfalls: [Integrating with existing OpenTelemetry](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md) (in the SDK repo)
 - Manual instrumentation example (no agent framework): [`python/observability-with-otlp`](../observability-with-otlp)
+
+## Troubleshooting
+
+- **`SystemExit: APPLICATIONINSIGHTS_CONNECTION_STRING is not set`** — set the env var via `.env`. The connection string is on your App Insights resource → **Overview** → **Connection String**.
+- **No spans visible in App Insights** — wait 1–2 minutes for ingestion; confirm the connection string targets the right resource. If the agent ran successfully but spans never appear, temporarily add a `ConsoleSpanExporter` (see [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration)) to prove the SDK is producing them.
+- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step (most often a missing or unreachable token resolver in production; the sample uses a stub).
+- **OpenAI auth errors** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The OpenAI Agents SDK reads these directly.

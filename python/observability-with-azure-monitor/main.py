@@ -27,9 +27,14 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 from azure.monitor.opentelemetry import configure_azure_monitor
 
-configure_azure_monitor(
-    connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
-)
+_app_insights_conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+if not _app_insights_conn:
+    raise SystemExit(
+        "APPLICATIONINSIGHTS_CONNECTION_STRING is not set. "
+        "Copy .env.template to .env and fill in your Application Insights "
+        "connection string. See README.md for setup steps."
+    )
+configure_azure_monitor(connection_string=_app_insights_conn)
 
 # ---------------------------------------------------------------------------
 # Step 2 — Agent 365 SDK `configure()`.
@@ -45,11 +50,15 @@ def _stub_token_resolver(agent_id: str, tenant_id: str) -> str | None:
     return "stub-token"
 
 
-configure(
+_configure_ok = configure(
     service_name=os.environ.get("AGENT_SERVICE_NAME", "sample-agent-azure-monitor"),
     service_namespace="agent365-samples",
     token_resolver=_stub_token_resolver,
 )
+if not _configure_ok:
+    raise SystemExit(
+        "Agent 365 observability configuration failed. See logs for details."
+    )
 
 # ---------------------------------------------------------------------------
 # Step 2b — Install the OpenAI Agents SDK instrumentor.
