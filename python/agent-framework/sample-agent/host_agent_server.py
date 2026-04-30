@@ -78,7 +78,6 @@ def create_and_run_host(
     # See: https://github.com/microsoft/opentelemetry-distro-python
     use_microsoft_opentelemetry(
         enable_a365=True,
-        enable_azure_monitor=False,
         a365_token_resolver=lambda agent_id, tenant_id: get_cached_agentic_token(
             tenant_id, agent_id
         )
