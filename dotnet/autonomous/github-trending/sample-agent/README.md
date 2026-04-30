@@ -1,8 +1,6 @@
-# Autonomous GitHub Trending Agent — Agent Framework Sample
+# Autonomous Agent — .NET Sample
 
-## Overview
-
-This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK. Unlike the interactive agent samples, this agent has **no chat functionality** — it runs entirely as a background service.
+This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for .NET. Unlike the interactive agent samples, this agent has **no chat functionality** — it runs entirely as a background service using the `BackgroundService` pattern.
 
 Every 60 seconds, the agent:
 
@@ -23,36 +21,27 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 | AI function tool registered as a model plugin | `Tools/GitHubTrendingTool.cs` |
 | IChatClient with function invocation | `Program.cs` |
 | A365 observability with manual tracing scopes | `GitHubTrendingService.cs`, `Tools/GitHubTrendingTool.cs` |
-| Microsoft OpenTelemetry distro integration | `Program.cs` |
+| Microsoft OpenTelemetry distro with S2S exporter | `Program.cs` |
 | 3-hop FMI/FIC token flow for observability export | `Observability/ObservabilityTokenService.cs` |
 | Periodic heartbeat service | `HeartbeatService.cs` |
 
 ## Prerequisites
 
-- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or higher
+- [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) or higher
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)
+- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 
-## Agent 365 Setup
+## Environment Configuration
 
-### 1. Install the Agent 365 CLI
+### Agent 365 Setup
 
-```bash
-dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease
-```
-
-### 2. Log in to Azure
+1. Log in to Azure: `az login`
+2. Provision the agent:
 
 ```bash
-az login
-```
-
-### 3. Provision the agent
-
-```bash
-cd dotnet/autonomous/github-trending
+cd dotnet/autonomous/github-trending/sample-agent
 a365 setup all --agent-name <your-agent-name>
 ```
 
@@ -60,20 +49,15 @@ This command:
 - Creates the **blueprint** app registration in Entra ID
 - Creates the **agent identity** service principal
 - Configures **inheritable permissions** for the Observability API (`Agent365.Observability.OtelWrite`) and Power Platform API
-- Grants **admin consent** (requires Global Admin, or use `a365 setup admin` separately)
 - Writes all provisioned values into `appsettings.json`
 
-### 4. Admin consent (if required)
-
-If the signed-in user does not have Global Admin, the setup output will include a permission grants action item. Have a Global Admin run:
+3. If required, have a Global Admin grant admin consent:
 
 ```bash
-a365 setup admin --blueprint-id <blueprint-id>
+a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
 ```
 
-### 5. Configure Azure OpenAI
-
-The CLI does not configure Azure OpenAI settings. Set these manually in `appsettings.json` or via environment variables:
+4. Configure Azure OpenAI — the CLI does not configure Azure OpenAI settings. Set these manually in `appsettings.json` or via environment variables:
 
 ```bash
 export AzureOpenAI__Endpoint="https://your-resource.openai.azure.com/"
@@ -81,9 +65,9 @@ export AzureOpenAI__ApiKey="your-api-key"
 export AzureOpenAI__Deployment="gpt-4o"
 ```
 
-## Configuration Reference
+### Configuration Reference
 
-### appsettings.json (production defaults)
+#### appsettings.json (production defaults)
 
 All `<<PLACEHOLDER>>` values are written by `a365 setup all`. The `AzureOpenAI` section must be set manually.
 
@@ -100,33 +84,21 @@ All `<<PLACEHOLDER>>` values are written by `a365 setup all`. The `AzureOpenAI` 
 | `AzureOpenAI` | `Endpoint` | Manual | Azure OpenAI resource endpoint |
 | | `ApiKey` | Manual | Azure OpenAI API key |
 | | `Deployment` | Manual | Model deployment name |
+| `EnableAgent365Exporter` | — | Manual | `true` to enable the A365 span exporter |
 
-### appsettings.Development.json (local dev overrides)
+### GitHub Trending Configuration
 
-This file overrides production defaults for local development:
+The `GitHubTrending` section in `appsettings.json` controls search parameters:
 
-```json
-{
-  "Agent365Observability": {
-    "UseManagedIdentity": false
-  },
-  "Logging": {
-    "LogLevel": {
-      "Microsoft.Agents.A365.Observability": "Debug",
-      "OpenTelemetry": "Debug"
-    }
-  }
-}
-```
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `Language` | Programming language filter (e.g., `csharp`, `python`, `typescript`) | `csharp` |
+| `MinStars` | Minimum star count for repositories | `5` |
+| `MaxResults` | Number of repositories per digest | `10` |
 
-| Override | Production | Local Dev |
-|----------|-----------|-----------|
-| `UseManagedIdentity` | `true` — MSI authenticates the blueprint | `false` — client secret authenticates the blueprint |
-| Observability logging | `Information` | `Debug` — shows span export details |
-| Console exporter | Off | On — spans printed to console (set in `Program.cs`) |
-| A365 exporter | On | On — traces also exported to A365 service |
+The GitHub Search API is unauthenticated — no API key required (rate limit: 10 requests/minute).
 
-## Running the Agent
+## Running the Agent Locally
 
 ### Quick start (Azure OpenAI only)
 
@@ -140,7 +112,7 @@ Run 'a365 setup all' to enable A365 observability export.
 Set the Azure OpenAI values in `appsettings.json` (or via environment variables), then:
 
 ```bash
-cd dotnet/autonomous/github-trending
+cd dotnet/autonomous/github-trending/sample-agent
 ASPNETCORE_ENVIRONMENT=Development dotnet run
 ```
 
@@ -149,11 +121,11 @@ Tracing spans are still emitted to the console exporter, but not exported to the
 ### Local development (with A365 observability)
 
 ```bash
-cd dotnet/autonomous/github-trending
+cd dotnet/autonomous/github-trending/sample-agent
 ASPNETCORE_ENVIRONMENT=Development dotnet run
 ```
 
-The agent starts on `http://localhost:5000`. Console output shows:
+The agent starts on `http://localhost:3979`. Console output shows:
 - **Observability token registration** on startup
 - **Trending digest** immediately, then every 60 seconds
 - **Heartbeat** log every 60 seconds
@@ -161,7 +133,7 @@ The agent starts on `http://localhost:5000`. Console output shows:
 
 The polling interval is controlled by `HeartbeatIntervalMs` in `appsettings.json` (default: 60000 ms).
 
-### Production
+## Deploying the Agent
 
 Deploy to your hosting provider (Azure App Service, Container Apps, etc.) and ensure:
 
@@ -169,6 +141,7 @@ Deploy to your hosting provider (Azure App Service, Container Apps, etc.) and en
 2. The MSI has a **Federated Identity Credential (FIC)** configured against the blueprint app — this is set up by `a365 setup all` when deploying to Azure
 3. `ASPNETCORE_ENVIRONMENT` is set to `Production` (or omitted — it's the default)
 4. The `AzureOpenAI` settings are configured via environment variables or app settings
+5. `EnableAgent365Exporter` is set to `true` in `appsettings.json`
 
 No client secrets are needed in production — MSI handles authentication.
 
@@ -192,19 +165,19 @@ The `ObservabilityTokenService` background service acquires tokens for the A365 
 
 ```
 Production (MSI):
-  MSI → ManagedIdentityCredential.GetToken("api://AzureADTokenExchange")
-      → Blueprint ConfidentialClient + assertion + .WithFmiPath(agentId)
-      → T1 token (targeted at Agent Identity)
-      → Agent Identity ConfidentialClient + T1 as assertion
-      → AcquireTokenForClient("api://9b975845-.../. default")
-      → Observability API token
+  MSI -> ManagedIdentityCredential.GetToken("api://AzureADTokenExchange")
+      -> Blueprint ConfidentialClient + assertion + .WithFmiPath(agentId)
+      -> T1 token (targeted at Agent Identity)
+      -> Agent Identity ConfidentialClient + T1 as assertion
+      -> AcquireTokenForClient("api://9b975845-.../.default")
+      -> Observability API token
 
 Local dev (client secret):
   Blueprint ConfidentialClient + ClientSecret + .WithFmiPath(agentId)
-      → T1 token (targeted at Agent Identity)
-      → Agent Identity ConfidentialClient + T1 as assertion
-      → AcquireTokenForClient("api://9b975845-.../.default")
-      → Observability API token
+      -> T1 token (targeted at Agent Identity)
+      -> Agent Identity ConfidentialClient + T1 as assertion
+      -> AcquireTokenForClient("api://9b975845-.../.default")
+      -> Observability API token
 ```
 
 The token is refreshed every 50 minutes and cached in the `ServiceTokenCache`. The A365 exporter's `TokenResolver` reads from this cache when exporting spans.
@@ -213,89 +186,34 @@ The token is refreshed every 50 minutes and cached in the `ServiceTokenCache`. T
 - The **blueprint** owns the client credentials and the `OtelWrite` app role
 - The **agent identity** inherits permissions from the blueprint via **consent inheritance**
 - Entra requires app-only tokens for the observability resource to be issued to the **agent identity**, not the blueprint directly
-- The FMI path (`WithFmiPath`) bridges the blueprint's credentials to the agent identity without the agent identity needing its own client secret
+- The FMI path (`.WithFmiPath`) bridges the blueprint's credentials to the agent identity without the agent identity needing its own client secret
 
 For more details on the observability SDK and instrumentation patterns, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
 
-## How It Works
-
-```
-+---------------------------------+
-|     GitHubTrendingService       |
-|     (BackgroundService)         |
-|                                 |
-|  1. Timer fires                 |
-|  2. InvokeAgentScope started    |
-|  3. Send prompt to IChatClient  |
-|     with tool registered        |
-|                                 |
-|  +---------------------------+  |
-|  | Azure OpenAI (IChatClient)|  |
-|  | InferenceScope started    |  |
-|  |                           |  |
-|  |  4. Model calls           |  |
-|  |     GetTrendingRepositories  |
-|  |                           |  |
-|  |  +---------------------+  |  |
-|  |  | GitHubTrendingTool  |  |  |
-|  |  | ExecuteToolScope    |  |  |
-|  |  |                     |  |  |
-|  |  | 5. GET github.com/  |  |  |
-|  |  |    search/repos     |  |  |
-|  |  +---------------------+  |  |
-|  |                           |  |
-|  |  6. Model summarizes      |  |
-|  |     results into digest   |  |
-|  +---------------------------+  |
-|                                 |
-|  7. Log digest to console       |
-|  8. Spans exported to A365      |
-+---------------------------------+
-```
-
-## GitHub Trending Configuration
-
-The `GitHubTrending` section in `appsettings.json` controls search parameters:
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `Language` | Programming language filter (e.g., `csharp`, `python`, `typescript`) | `csharp` |
-| `MinStars` | Minimum star count for repositories | `5` |
-| `MaxResults` | Number of repositories per digest | `10` |
-
-The GitHub Search API is unauthenticated — no API key required (rate limit: 10 requests/minute).
-
-## Project Structure
-
-```
-github-trending/
-  Program.cs                              # Entry point — DI, OTel distro, background services
-  GitHubTrendingService.cs                # Autonomous background service (InvokeAgent + Inference spans)
-  HeartbeatService.cs                     # Periodic heartbeat logger
-  Tools/
-    GitHubTrendingTool.cs                 # GitHub Search API tool (ExecuteTool span)
-  Observability/
-    ObservabilityServiceExtensions.cs     # DI registration for token cache + context
-    ObservabilityTokenService.cs          # Background FMI token acquisition service
-  appsettings.json                        # Production config (placeholders, MSI enabled)
-  appsettings.Development.json            # Local dev overrides (client secret, debug logging)
-```
-
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues)
-- **Documentation**: [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Security**: See [SECURITY.md](../../../../SECURITY.md)
+For issues, questions, or feedback:
+
+- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 
 ## Contributing
 
-This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA). For details, visit <https://cla.opensource.microsoft.com>.
+This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Additional Resources
+
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
 
 ## Trademarks
 
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries.*
+*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
 
 ## License
 
