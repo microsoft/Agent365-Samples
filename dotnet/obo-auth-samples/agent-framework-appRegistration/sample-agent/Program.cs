@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent;
@@ -6,28 +6,46 @@ using Agent365AgentFrameworkSampleAgent.Agent;
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Agents.A365.Observability.Hosting;
-using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
-using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core;
-using OpenTelemetry.Logs;
-using OpenTelemetry.Trace;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Transcript;
 using Microsoft.Extensions.AI;
+using Microsoft.Identity.Client;
+using Microsoft.OpenTelemetry;
 using System.Reflection;
 
 
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
-builder.ConfigureOpenTelemetry();
-builder.Services.AddSingleton<SpanLoggingProcessor>();
+// Configure OpenTelemetry via Microsoft.OpenTelemetry distro.
+// The distro replaces all A365.Observability.* packages and standalone OTel packages.
+// TokenResolver provides client-credentials tokens for the A365 observability endpoint.
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = ExportTarget.Agent365;
+    o.Agent365.Exporter.TokenResolver = async (agentId, tenantId) =>
+    {
+        var config = builder.Configuration;
+        var clientId = config["Connections:ServiceConnection:Settings:ClientId"] ?? string.Empty;
+        var clientSecret = config["Connections:ServiceConnection:Settings:ClientSecret"] ?? string.Empty;
+        var authority = config["Connections:ServiceConnection:Settings:AuthorityEndpoint"] ?? string.Empty;
+        var scope = "api://9b975845-388f-4429-889e-eab1ef63949c/.default";
+
+        var cca = ConfidentialClientApplicationBuilder
+            .Create(clientId)
+            .WithClientSecret(clientSecret)
+            .WithAuthority(authority)
+            .Build();
+
+        var tokenResult = await cca.AcquireTokenForClient(new[] { scope }).ExecuteAsync();
+        return tokenResult.AccessToken;
+    };
+});
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
@@ -36,27 +54,6 @@ builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability (Service exporter for non-digital-worker agents).
-builder.Services.AddServiceTracingExporter(clusterCategory: "production");
-
-//// Add A365 tracing with Agent Framework integration
-builder.AddA365Tracing(config =>
-{
-    config.WithAgentFramework();
-});
-
-// In Development, also export to local Aspire Dashboard (http://localhost:18888)
-//if (builder.Environment.IsDevelopment())
-//{
-//    builder.Services.AddOpenTelemetry()
-//        .WithTracing(t => t
-//            .AddSource(AgentMetrics.SourceName)  // "A365.AgentFramework" - custom spans
-//            .AddSource("A365Tracing")             // A365 SDK internal spans
-//            .AddOtlpExporter())
-//        .WithLogging(l => l.AddOtlpExporter());
-//}
-
-
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
@@ -85,13 +82,9 @@ builder.Services.AddSingleton<IChatClient>(sp => {
     var apiKey = confSvc["AIServices:AzureOpenAI:ApiKey"] ?? string.Empty;
     var deployment = confSvc["AIServices:AzureOpenAI:DeploymentName"] ?? string.Empty;
 
-    // Validate OpenWeatherAPI key. 
-    var openWeatherApiKey = confSvc["OpenWeatherApiKey"] ?? string.Empty;
-
     AssertionHelpers.ThrowIfNullOrEmpty(endpoint, "AIServices:AzureOpenAI:Endpoint configuration is missing and required.");
     AssertionHelpers.ThrowIfNullOrEmpty(apiKey, "AIServices:AzureOpenAI:ApiKey configuration is missing and required.");
     AssertionHelpers.ThrowIfNullOrEmpty(deployment, "AIServices:AzureOpenAI:DeploymentName configuration is missing and required.");
-    AssertionHelpers.ThrowIfNullOrEmpty(openWeatherApiKey, "OpenWeatherApiKey configuration is missing and required.");
 
     // Convert endpoint to Uri
     var endpointUri = new Uri(endpoint);
@@ -106,7 +99,7 @@ builder.Services.AddSingleton<IChatClient>(sp => {
         .AsBuilder()
         .UseFunctionInvocation()
         .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
-        .Build(); 
+        .Build();
 });
 
 // Uncomment to add transcript logging middleware to log all conversations to files
@@ -142,7 +135,7 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playg
     app.UseDeveloperExceptionPage();
     // app.MapControllers().AllowAnonymous();
 
-    // Hard coded for brevity and ease of testing. 
+    // Hard coded for brevity and ease of testing.
     // In production, this should be set in configuration.
     app.Urls.Add($"https://localhost:50972");
 }

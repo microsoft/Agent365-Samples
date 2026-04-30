@@ -3,8 +3,6 @@
 
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -60,7 +58,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         private readonly IChatClient? _chatClient = null;
         private readonly IConfiguration? _configuration = null;
-        private readonly IExporterTokenCache<string>? _serviceTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
@@ -100,14 +97,12 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             IChatClient chatClient,
             IConfiguration configuration,
             IMcpToolRegistrationService toolService,
-            IExporterTokenCache<string> serviceTokenCache,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
             _logger = logger;
             _toolService = toolService;
-            _serviceTokenCache = serviceTokenCache;
 
             // Read auth handler names from configuration (can be empty/null to disable)
             AgenticAuthHandlerName = _configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
@@ -210,8 +205,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 "MessageProcessor",
                 turnContext,
                 turnState,
-                _serviceTokenCache,
-                _configuration,
                 _logger,
                 async () =>
             {

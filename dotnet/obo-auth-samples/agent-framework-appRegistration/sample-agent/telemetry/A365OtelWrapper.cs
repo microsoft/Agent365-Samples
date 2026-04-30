@@ -1,13 +1,9 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.State;
-using Microsoft.Identity.Client;
 
 namespace Agent365AgentFrameworkSampleAgent.telemetry
 {
@@ -17,8 +13,6 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
             string operationName,
             ITurnContext turnContext,
             ITurnState turnState,
-            IExporterTokenCache<string>? serviceTokenCache,
-            IConfiguration? configuration,
             ILogger? logger,
             Func<Task> func
             )
@@ -42,57 +36,8 @@ namespace Agent365AgentFrameworkSampleAgent.telemetry
                     .AgentId(agentId)
                     .Build();
 
-                    try
-                    {
-                        // Acquire a client credentials token for the observability endpoint.
-                        var clientId = configuration?["Connections:ServiceConnection:Settings:ClientId"] ?? string.Empty;
-                        var clientSecret = configuration?["Connections:ServiceConnection:Settings:ClientSecret"] ?? string.Empty;
-                        var authority = configuration?["Connections:ServiceConnection:Settings:AuthorityEndpoint"] ?? string.Empty;
-                        var observabilityScope = "https://api.powerplatform.com/.default";
-
-                        var cca = ConfidentialClientApplicationBuilder
-                            .Create(clientId)
-                            .WithClientSecret(clientSecret)
-                            .WithAuthority(authority)
-                            .Build();
-
-                        var tokenResult = await cca.AcquireTokenForClient(new[] { observabilityScope }).ExecuteAsync();
-                        var token = tokenResult.AccessToken;
-
-                        serviceTokenCache?.RegisterObservability(agentId, tenantId, token, new[] { observabilityScope });
-                    }
-                    catch (Exception ex)
-                    {
-                        logger?.LogWarning(ex, "There was an error registering for observability: {Message}", ex.Message);
-                    }
-
                     // Invoke the actual operation.
                     await func().ConfigureAwait(false);
-
-                    var agentDetails = new AgentDetails(
-                        agentId: agentId,
-                        agentBlueprintId: string.Empty,
-                        tenantId: tenantId,
-                        agentName: "MyAgent",
-                        agentDescription: string.Empty,
-                        agentVersion: string.Empty,
-                        providerName: string.Empty,
-                        agentType: null,
-                        agentClientIP: null,
-                        agenticUserId: string.Empty,
-                        agenticUserEmail: string.Empty,
-                        agentPlatformId: string.Empty);
-
-                    var scopeDetails = new InvokeAgentScopeDetails(new Uri("https://api.powerplatform.com"));
-                    var request = new Request(
-                        conversationId: turnContext?.Activity?.Conversation?.Id ?? string.Empty,
-                        content: string.Empty,
-                        channel: default,
-                        sessionId: string.Empty,
-                        operationSource: operationName);
-
-                    using var scope = InvokeAgentScope.Start(request, scopeDetails, agentDetails, null, null, null);
-                    scope.RecordResponse("The agent replied");
                 }).ConfigureAwait(false);
         }
     }

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
 
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
@@ -12,11 +12,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Microsoft OpenTelemetry Distro (replaces all A365.Observability.* and standalone OTel packages) -->
+		<PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.0-beta.1" />
+
 		<!-- A365 SDK Packages  -->
 		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="0.2.151-beta" />
 		<PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.AgentFramework" Version="0.2.151-beta" />
-		<PackageReference Include="Microsoft.Agents.A365.Observability.Hosting" Version="0.2.151-beta" />
-		<PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.AgentFramework" Version="0.2.151-beta" />
 
 		<!-- Agent Framework Packages -->
 		<PackageReference Include="AdaptiveCards" Version="3.1.0" />
@@ -26,15 +27,6 @@
 		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.5.90-beta" />
 		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.5.90-beta" />
 		<PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1" />
-
-		<!-- Telemetry Packages -->
-		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.4.0" />
-		<PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="10.4.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.1" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.1" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.15.0" />
 
 		<!-- Additional Packages -->
 		<PackageReference Include="OpenWeatherMapSharp" Version="4.2.0" />
