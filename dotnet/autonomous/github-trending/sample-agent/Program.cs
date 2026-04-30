@@ -30,6 +30,7 @@ builder.UseMicrosoftOpenTelemetry(o =>
         ? ExportTarget.Agent365 | ExportTarget.Console
         : ExportTarget.Agent365;
 
+    o.Agent365.Exporter.UseS2SEndpoint = true;
     o.Agent365.Exporter.TokenResolver = async (agentId, tenantId) =>
     {
         return tokenCache != null

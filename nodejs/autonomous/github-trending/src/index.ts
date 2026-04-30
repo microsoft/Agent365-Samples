@@ -11,8 +11,11 @@ import express, { Response, Request } from 'express';
 import {
   useMicrosoftOpenTelemetry,
   shutdownMicrosoftOpenTelemetry,
+  Agent365Exporter,
+  A365SpanProcessor,
 } from '@microsoft/opentelemetry';
-import type { AgentDetails } from '@microsoft/opentelemetry';
+import type { AgentDetails, Agent365ExporterOptions } from '@microsoft/opentelemetry';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
 
 import { tokenResolver } from './token-cache';
 import { startTokenService } from './observability-token-service';
@@ -81,13 +84,22 @@ const agentDetails: AgentDetails = {
 // Configure Microsoft OpenTelemetry distro with A365 exporter.
 // Token resolver reads from the in-memory cache populated by the background token service.
 
-useMicrosoftOpenTelemetry({
-  a365: A365_ENABLED
-    ? {
-        enabled: true,
+// Build A365 span processors manually so we can set useS2SEndpoint (autonomous S2S scenario).
+// The distro's a365 option doesn't yet expose useS2SEndpoint, so we create the exporter ourselves
+// and pass it via spanProcessors, leaving a365 unset to avoid a duplicate exporter.
+const a365SpanProcessors = A365_ENABLED
+  ? [
+      new A365SpanProcessor(),
+      new BatchSpanProcessor(new Agent365Exporter({
+        useS2SEndpoint: true,
+        clusterCategory: 'prod',
         tokenResolver: (agentId, tenantId) => tokenResolver(agentId, tenantId) ?? '',
-      }
-    : undefined,
+      } as Agent365ExporterOptions)),
+    ]
+  : [];
+
+useMicrosoftOpenTelemetry({
+  spanProcessors: a365SpanProcessors,
 });
 
 // ── Express server ───────────────────────────────────────────────────────────

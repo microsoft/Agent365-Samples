@@ -94,6 +94,7 @@ A365_ENABLED = _has_a365_credentials()
 use_microsoft_opentelemetry(
     enable_a365=A365_ENABLED,
     enable_azure_monitor=False,
+    a365_use_s2s_endpoint=True,
     a365_token_resolver=lambda agent_id, tenant_id: token_cache.get_cached_token(agent_id, tenant_id) or "",
 )
 
