@@ -40,10 +40,10 @@ from microsoft_agents_a365.notifications.agent_notification import (
 from microsoft_agents_a365.notifications import EmailResponse
 
 from microsoft.opentelemetry import use_microsoft_opentelemetry
-from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
+from microsoft.opentelemetry.a365.core.middleware.baggage_builder import (
     BaggageBuilder,
 )
-from microsoft_agents_a365.runtime.environment_utils import (
+from microsoft.opentelemetry.a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
 from token_cache import cache_agentic_token, get_cached_agentic_token
@@ -78,6 +78,7 @@ def create_and_run_host(
     # See: https://github.com/microsoft/opentelemetry-distro-python
     use_microsoft_opentelemetry(
         enable_a365=True,
+
         a365_token_resolver=lambda agent_id, tenant_id: get_cached_agentic_token(
             tenant_id, agent_id
         )
