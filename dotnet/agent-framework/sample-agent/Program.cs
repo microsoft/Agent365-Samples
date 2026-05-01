@@ -6,8 +6,10 @@ using Agent365AgentFrameworkSampleAgent.Agent;
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
+using Microsoft.Agents.AI.Purview;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Hosting.AspNetCore;
@@ -79,13 +81,40 @@ builder.Services.AddSingleton<IChatClient>(sp => {
     var apiKeyCredential = new AzureKeyCredential(apiKey);
 
     // Create and return the AzureOpenAIClient's ChatClient
-    return new AzureOpenAIClient(endpointUri, apiKeyCredential)
+    var chatClientBuilder = new AzureOpenAIClient(endpointUri, apiKeyCredential)
         .GetChatClient(deployment)
         .AsIChatClient()
-        .AsBuilder()
+        .AsBuilder();
+
+    // Add Purview middleware if configured
+    var purviewClientAppId = confSvc["Purview:ClientAppId"];
+    var purviewAppName = confSvc["Purview:AppName"];
+    var purviewTenantId = confSvc["Purview:TenantId"];
+    var purviewClientSecret = confSvc["Purview:ClientSecret"];
+    var purviewUserId = confSvc["Purview:UserId"];
+
+    if (!string.IsNullOrEmpty(purviewClientAppId) &&
+        !string.IsNullOrEmpty(purviewAppName) &&
+        !string.IsNullOrEmpty(purviewTenantId) &&
+        !string.IsNullOrEmpty(purviewClientSecret))
+    {
+        // Stamp each user message with the Purview userId so the Purview middleware
+        // can identify the user when authenticating with app-level credentials.
+        if (!string.IsNullOrEmpty(purviewUserId))
+        {
+            chatClientBuilder = chatClientBuilder.Use((innerClient) =>
+                new PurviewUserIdStampingClient(innerClient, purviewUserId));
+        }
+
+        var purviewCredential = new ClientSecretCredential(purviewTenantId, purviewClientAppId, purviewClientSecret);
+        var purviewSettings = new PurviewSettings(purviewAppName);
+        chatClientBuilder = chatClientBuilder.WithPurview(purviewCredential, purviewSettings);
+    }
+
+    return chatClientBuilder
         .UseFunctionInvocation()
         .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
-        .Build(); 
+        .Build();
 });
 
 // Uncomment to add transcript logging middleware to log all conversations to files

@@ -33,8 +33,8 @@ Each section follows this pattern:
 
 ```python
 # AgentFramework SDK
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework import ChatAgent
+from agent_framework.openai import OpenAIChatClient
+from agent_framework import Agent
 from azure.identity import AzureCliCredential
 
 # Agent Interface
@@ -119,11 +119,11 @@ def _create_chat_client(self):
     if not api_version:
         raise ValueError("AZURE_OPENAI_API_VERSION environment variable is required")
 
-    self.chat_client = AzureOpenAIChatClient(
-        endpoint=endpoint,
+    self.chat_client = OpenAIChatClient(
+        model=deployment,
+        azure_endpoint=endpoint,
+        api_version=api_version,
         credential=AzureCliCredential(),
-        deployment_name=deployment,
-        api_version=api_version
     )
 ```
 
@@ -149,8 +149,8 @@ def _create_agent(self):
     try:
         logger.info("Creating AgentFramework agent...")
 
-        self.agent = ChatAgent(
-            chat_client=self.chat_client,
+        self.agent = Agent(
+            client=self.chat_client,
             instructions="You are a helpful assistant with access to tools.",
             tools=[]  # Tools will be added dynamically by MCP setup
         )

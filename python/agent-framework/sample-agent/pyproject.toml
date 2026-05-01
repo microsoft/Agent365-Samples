@@ -6,8 +6,10 @@ authors = [
     { name = "Microsoft", email = "support@microsoft.com" }
 ]
 dependencies = [
-    # AgentFramework SDK - The official package
+    # AgentFramework SDK
+    "agent-framework",
     "agent-framework-azure-ai",
+    "agent-framework-purview",
     
     # Azure AI Projects - explicitly require pre-release version
     "azure-ai-agents>=1.2.0b5",

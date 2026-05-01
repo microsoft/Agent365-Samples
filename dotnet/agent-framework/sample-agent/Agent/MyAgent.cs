@@ -15,6 +15,7 @@ using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Core.Serialization;
 using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text.Json;
 
 namespace Agent365AgentFrameworkSampleAgent.Agent
@@ -256,8 +257,12 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
                     var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
-                    // Read or Create the conversation thread for this conversation.
-                    AgentThread? thread = GetConversationThread(_agent, turnState);
+                    // Snapshot the persisted thread before the run. If Purview blocks this turn
+                    // we restore this snapshot so the blocked prompt is not baked into history.
+                    string? threadSnapshot = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
+
+                    // Read or Create the conversation session for this conversation.
+                    AgentSession? thread = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
 
                     if (turnContext?.Activity?.Attachments?.Count > 0)
                     {
@@ -270,15 +275,43 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         }
                     }
 
-                    // Stream the response back to the user as we receive it from the agent.
+                    // Stream the response back to the user. Purview wraps its block message in a
+                    // PurviewTextContent / PurviewBinaryContent (Microsoft.Agents.AI.Purview namespace);
+                    // detecting that content type tells us the turn was blocked by policy.
+                    const string PurviewContentNamespace = "Microsoft.Agents.AI.Purview";
+                    var purviewBlocked = false;
                     await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
                     {
-                        if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
+                        if (string.IsNullOrEmpty(response.Text))
                         {
-                            turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                            continue;
+                        }
+
+                        turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                        if (response.Contents is not null &&
+                            response.Contents.Any(c => c.GetType().FullName?.StartsWith(PurviewContentNamespace, StringComparison.Ordinal) == true))
+                        {
+                            purviewBlocked = true;
                         }
                     }
-                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
+
+                    // On a Purview block, restore the pre-turn snapshot so the blocked exchange is
+                    // not persisted to history (otherwise Purview re-blocks every subsequent turn).
+                    if (purviewBlocked)
+                    {
+                        if (threadSnapshot is null)
+                        {
+                            turnState.Conversation.DeleteValue("conversation.threadInfo");
+                        }
+                        else
+                        {
+                            turnState.Conversation.SetValue("conversation.threadInfo", threadSnapshot);
+                        }
+                    }
+                    else
+                    {
+                        turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(await _agent!.SerializeSessionAsync(thread, jsonSerializerOptions: null, cancellationToken)));
+                    }
                 }
                 finally
                 {
@@ -391,25 +424,20 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
             }
 
-            // Create Chat Options with tools:
+            // Create Chat Options with instructions, tools, and temperature.
             var toolOptions = new ChatOptions
             {
+                Instructions = GetAgentInstructions(displayName),
                 Temperature = (float?)0.2,
                 Tools = toolList
             };
 
-            // Create the chat Client passing in agent instructions and tools:
-            return new ChatClientAgent(_chatClient!,
+            // Create the chat agent with the configured options.
+            return new ChatClientAgent(
+                    _chatClient!,
                     new ChatClientAgentOptions
                     {
-                        Instructions = GetAgentInstructions(displayName),
                         ChatOptions = toolOptions,
-                        ChatMessageStoreFactory = ctx =>
-                        {
-#pragma warning disable MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                            return new InMemoryChatMessageStore(new MessageCountingChatReducer(10), ctx.SerializedState, ctx.JsonSerializerOptions);
-#pragma warning restore MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                        }
                     })
                 .AsBuilder()
                 .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
@@ -417,26 +445,27 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         }
 
         /// <summary>
-        /// Manage Agent threads against the conversation state.
+        /// Manage Agent sessions against the conversation state.
         /// </summary>
         /// <param name="agent">ChatAgent</param>
         /// <param name="turnState">State Manager for the Agent.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
         /// <returns></returns>
-        private static AgentThread GetConversationThread(AIAgent? agent, ITurnState turnState)
+        private static async Task<AgentSession> GetConversationSessionAsync(AIAgent? agent, ITurnState turnState, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(agent);
-            AgentThread thread;
-            string? agentThreadInfo = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
-            if (string.IsNullOrEmpty(agentThreadInfo))
+            AgentSession session;
+            string? agentSessionInfo = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
+            if (string.IsNullOrEmpty(agentSessionInfo))
             {
-                thread = agent.GetNewThread();
+                session = await agent.CreateSessionAsync(cancellationToken);
             }
             else
             {
-                JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentThreadInfo);
-                thread = agent.DeserializeThread(ele);
+                JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentSessionInfo);
+                session = await agent.DeserializeSessionAsync(ele, jsonSerializerOptions: null, cancellationToken);
             }
-            return thread;
+            return session;
         }
 
         private string GetToolCacheKey(ITurnState turnState)
