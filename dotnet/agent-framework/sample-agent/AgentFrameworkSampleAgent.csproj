@@ -13,7 +13,7 @@
 
 	<ItemGroup>
 		<!-- Microsoft OpenTelemetry Distro -->
-		<PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.0-alpha.3" />
+		<PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.1" />
 
 		<!-- A365 SDK Packages  -->
 		<PackageReference Include="Microsoft.Agents.A365.Notifications" Version="*-beta.*" />
