@@ -1,23 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// IMPORTANT: Load environment variables FIRST before any other imports
-// This ensures NODE_ENV and other config is available when AgentApplication initializes
-import { configDotenv } from 'dotenv';
-configDotenv();
-
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { Activity, ActivityTypes } from '@microsoft/agents-activity';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import {AgenticTokenCacheInstance, BaggageBuilderUtils} from '@microsoft/agents-a365-observability-hosting'
-import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
-
-import { Client, getClient } from './client';
+// Observability Imports
+import { BaggageBuilder, OpenTelemetryConstants } from '@microsoft/opentelemetry';
+import { AgenticTokenCacheInstance, BaggageBuilderUtils, TurnContextLike } from '@microsoft/opentelemetry';
+import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
+import { Client, getClient } from './client';
 
 export class MyAgent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -27,19 +22,19 @@ export class MyAgent extends AgentApplication<TurnState> {
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
-          type: 'agentic',
-        } // scopes set in the .env file...
+          type: 'AgenticUserAuthorization',
+        }
       }
     });
 
     // Route agent notifications
     this.onAgentNotification("agents:*", async (context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
       await this.handleAgentNotificationActivity(context, state, agentNotificationActivity);
-    }, 1, [MyAgent.authHandlerName]);
+    });
 
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
-    }, [MyAgent.authHandlerName]);
+    });
 
     // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
     this.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: TurnState) => {
@@ -85,27 +80,35 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
-    // Populate baggage consistently from TurnContext using hosting utilities
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
-      new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Initial onboarding session')
-      .build();
+    const blueprintId = turnContext.activity?.recipient?.agenticAppBlueprintId
+      || process.env.connections__service_connection__settings__clientId;
 
-    // Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
-      await this.preloadObservabilityToken(turnContext);
+    const baggageBuilder = BaggageBuilderUtils.fromTurnContext(
+      new BaggageBuilder(),
+      turnContext as unknown as TurnContextLike
+    ).sessionDescription('Initial onboarding session');
+
+    if (blueprintId) {
+      baggageBuilder.setPairs([[OpenTelemetryConstants.GEN_AI_AGENT_BLUEPRINT_ID_KEY, blueprintId]]);
+    }
+
+    const baggageScope = baggageBuilder.build();
+
+    // Preload/refresh exporter token
+    await this.preloadObservabilityToken(turnContext);
 
     try {
       await baggageScope.run(async () => {
-        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
-        const response = await client.invokeAgentWithScope(userMessage);
-        // Message 2: the LLM response
-        await turnContext.sendActivity(response);
+        try {
+          const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
+          const response = await client.invoke(userMessage);
+          await turnContext.sendActivity(response);
+        } catch (error) {
+          console.error('LLM query error:', error);
+          const err = error as any;
+          await turnContext.sendActivity(`Error: ${err.message || err}`);
+        }
       });
-    } catch (error) {
-      console.error('LLM query error:', error);
-      const err = error as any;
-      await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
       stopTypingLoop();
       baggageScope.dispose();
@@ -133,24 +136,19 @@ export class MyAgent extends AgentApplication<TurnState> {
     const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
     const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
 
-    // Set Use_Custom_Resolver === 'true' to use a custom token resolver and a custom token cache (see token-cache.ts).
-    // Otherwise: use the default AgenticTokenCache via RefreshObservabilityToken.
     if (process.env.Use_Custom_Resolver === 'true') {
       const aauToken = await this.authorization.exchangeToken(turnContext, 'agentic', {
         scopes: getObservabilityAuthenticationScope()
       });
-
       console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId} token=${aauToken?.token?.substring(0, 10)}...`);
       const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
       tokenCache.set(cacheKey, aauToken?.token || '');
     } else {
-      // Preload/refresh the observability token into the built-in AgenticTokenCache.
-      // We don't immediately need the token here, and if acquisition fails we continue (non-fatal for this demo sample).
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      await AgenticTokenCacheInstance.refreshObservabilityToken(
         agentId,
         tenantId,
-        turnContext,
-        this.authorization,
+        turnContext as unknown as TurnContextLike,
+        this.authorization as any,
         getObservabilityAuthenticationScope()
       );
     }
@@ -179,13 +177,13 @@ export class MyAgent extends AgentApplication<TurnState> {
       const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, context);
 
       // First, retrieve the email content
-      const emailContent = await client.invokeAgentWithScope(
+      const emailContent = await client.invoke(
         `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
         `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`
       );
 
       // Then process the email
-      const response = await client.invokeAgentWithScope(
+      const response = await client.invoke(
         `You have received the following email. Please follow any instructions in it. ${emailContent}`
       );
 

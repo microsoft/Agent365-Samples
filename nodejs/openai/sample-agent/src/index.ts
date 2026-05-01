@@ -6,16 +6,34 @@
 import { configDotenv } from 'dotenv';
 configDotenv();
 
+// Initialize Microsoft OpenTelemetry distro for observability.
+// Must be called before importing other modules so instrumentations can patch libraries.
+// See: https://github.com/microsoft/opentelemetry-distro-javascript
+import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { tokenResolver } from './token-cache';
+import { AgenticTokenCacheInstance } from '@microsoft/opentelemetry';
+
+useMicrosoftOpenTelemetry({
+  a365: {
+    enabled: true,
+    tokenResolver: process.env.Use_Custom_Resolver === 'true'
+      ? (agentId: string, tenantId: string) => tokenResolver(agentId, tenantId) ?? ''
+      : (agentId: string, tenantId: string) => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
+  },
+  enableConsoleExporters: true,
+  instrumentationOptions: {
+    openaiAgents: { enabled: true },
+    langchain: { enabled: false },
+  },
+});
+
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
 
-// Only NODE_ENV=development explicitly disables authentication
-// All other cases (production, test, unset, etc.) require authentication
-const isDevelopment = process.env.NODE_ENV === 'development';
-const authConfig: AuthConfiguration = isDevelopment ? {} : loadAuthConfigFromEnv();
-
-console.log(`Environment: NODE_ENV=${process.env.NODE_ENV}, isDevelopment=${isDevelopment}`);
+// Use request validation middleware only if hosting publicly
+const isProduction = Boolean(process.env.WEBSITE_SITE_NAME) || process.env.NODE_ENV === 'production';
+const authConfig: AuthConfiguration = isProduction ? loadAuthConfigFromEnv() : {};
 
 const server = express()
 server.use(express.json())
@@ -38,10 +56,9 @@ server.post('/api/messages', (req: Request, res: Response) => {
 })
 
 const port = Number(process.env.PORT) || 3978
-// Host is configurable; default to localhost for development, 0.0.0.0 for everything else
-const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
+const host = process.env.HOST || (isProduction ? '0.0.0.0' : '127.0.0.1');
 server.listen(port, host, async () => {
-  console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
+  console.log(`\nServer listening on http://${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
 }).on('error', async (err: unknown) => {
   console.error(err);
   process.exit(1);
