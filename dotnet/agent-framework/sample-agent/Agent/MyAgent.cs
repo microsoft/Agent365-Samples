@@ -4,6 +4,9 @@
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
 using Microsoft.Agents.A365.Observability.Hosting.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Extensions;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -254,10 +257,18 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                    using var invokeScope = InvokeAgentScope.Start(
+                        request: new Request(userText),
+                        scopeDetails: new InvokeAgentScopeDetails(endpoint: new Uri("http://localhost:3978")),
+                        agentDetails: BuildAgentDetails())
+                        .FromTurnContext(turnContext);
+
+                    invokeScope.RecordInputMessages(new[] { userText });
+
                     var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
-                    // Read or Create the conversation thread for this conversation.
-                    AgentThread? thread = GetConversationThread(_agent, turnState);
+                    // Read or Create the conversation session for this conversation.
+                    AgentSession? thread = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
 
                     if (turnContext?.Activity?.Attachments?.Count > 0)
                     {
@@ -270,15 +281,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         }
                     }
 
+                    var collectedOutput = new System.Text.StringBuilder();
                     // Stream the response back to the user as we receive it from the agent.
                     await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
                     {
                         if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
                         {
                             turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                            collectedOutput.Append(response.Text);
                         }
                     }
-                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(thread.Serialize()));
+                    invokeScope.RecordOutputMessages(new[] { collectedOutput.ToString() });
+                    var serializedSession = await _agent!.SerializeSessionAsync(thread!);
+                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
                 }
                 finally
                 {
@@ -340,7 +355,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Create the local tools:
             var toolList = new List<AITool>();
             WeatherLookupTool weatherLookupTool = new(context, _configuration!);
-            toolList.Add(AIFunctionFactory.Create(DateTimeFunctionTool.getDate));
+            DateTimeFunctionTool dateTimeTool = new(_configuration!);
+            toolList.Add(AIFunctionFactory.Create(dateTimeTool.GetCurrentDateTime));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetCurrentWeatherForLocation));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLocation));
 
@@ -391,25 +407,25 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
             }
 
-            // Create Chat Options with tools:
+            // Create Chat Options with tools and instructions:
             var toolOptions = new ChatOptions
             {
                 Temperature = (float?)0.2,
-                Tools = toolList
+                Tools = toolList,
+                Instructions = GetAgentInstructions(displayName)
             };
 
             // Create the chat Client passing in agent instructions and tools:
             return new ChatClientAgent(_chatClient!,
                     new ChatClientAgentOptions
                     {
-                        Instructions = GetAgentInstructions(displayName),
                         ChatOptions = toolOptions,
-                        ChatMessageStoreFactory = ctx =>
+                        ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
                         {
 #pragma warning disable MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                            return new InMemoryChatMessageStore(new MessageCountingChatReducer(10), ctx.SerializedState, ctx.JsonSerializerOptions);
+                            ChatReducer = new MessageCountingChatReducer(10)
 #pragma warning restore MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                        }
+                        })
                     })
                 .AsBuilder()
                 .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
@@ -422,21 +438,19 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// <param name="agent">ChatAgent</param>
         /// <param name="turnState">State Manager for the Agent.</param>
         /// <returns></returns>
-        private static AgentThread GetConversationThread(AIAgent? agent, ITurnState turnState)
+        private static async Task<AgentSession> GetConversationSessionAsync(AIAgent? agent, ITurnState turnState, CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(agent);
-            AgentThread thread;
             string? agentThreadInfo = turnState.Conversation.GetValue<string?>("conversation.threadInfo", () => null);
             if (string.IsNullOrEmpty(agentThreadInfo))
             {
-                thread = agent.GetNewThread();
+                return await agent.CreateSessionAsync(cancellationToken);
             }
             else
             {
                 JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentThreadInfo);
-                thread = agent.DeserializeThread(ele);
+                return await agent.DeserializeSessionAsync(ele, cancellationToken: cancellationToken);
             }
-            return thread;
         }
 
         private string GetToolCacheKey(ITurnState turnState)
@@ -450,5 +464,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             }
             return userToolCacheKey;
         }
+
+        private AgentDetails BuildAgentDetails() =>
+            new AgentDetails(
+                agentId:          _configuration?["Agent365Observability:AgentId"]          ?? "local-dev",
+                agentName:        _configuration?["Agent365Observability:AgentName"]        ?? "my-agent",
+                agentDescription: _configuration?["Agent365Observability:AgentDescription"] ?? "",
+                agentBlueprintId: _configuration?["Agent365Observability:AgentBlueprintId"] ?? "",
+                tenantId:         _configuration?["Agent365Observability:TenantId"]         ?? "local-dev");
     }
 }

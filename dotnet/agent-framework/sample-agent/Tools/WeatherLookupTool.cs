@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Core.Models;
@@ -38,6 +40,19 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
         public async Task<WeatherRoot?> GetCurrentWeatherForLocation(string location, string state)
         {
             AssertionHelpers.ThrowIfNull(turnContext, nameof(turnContext));
+
+            var toolCallDetails = new ToolCallDetails(
+                toolName: nameof(GetCurrentWeatherForLocation),
+                arguments: $"{{\"location\":\"{location}\",\"state\":\"{state}\"}}",
+                toolCallId: Guid.NewGuid().ToString(),
+                description: "Retrieves current weather for a city/state",
+                toolType: "function",
+                endpoint: new Uri("https://api.openweathermap.org")
+            );
+            using var toolScope = ExecuteToolScope.Start(
+                request: new Request($"Get current weather for {location}, {state}"),
+                details: toolCallDetails,
+                agentDetails: BuildAgentDetails());
 
             // Notify the user that we are looking up the weather
             Console.WriteLine($"Looking up the Current Weather in {location}");
@@ -80,6 +95,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
                 if (weather.IsSuccess)
                 {
                     WeatherRoot wInfo = weather.Response;
+                    toolScope.RecordResponse(System.Text.Json.JsonSerializer.Serialize(wInfo));
                     return wInfo;
                 }
             }
@@ -87,8 +103,17 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             {
                 System.Diagnostics.Trace.WriteLine($"Failed to complete API Call to OpenWeather: {openWeatherLocation!.Error}");
             }
+            toolScope.RecordResponse("null");
             return null;
         }
+
+        private AgentDetails BuildAgentDetails() =>
+            new AgentDetails(
+                agentId:          configuration["Agent365Observability:AgentId"]          ?? "local-dev",
+                agentName:        configuration["Agent365Observability:AgentName"]        ?? "my-agent",
+                agentDescription: configuration["Agent365Observability:AgentDescription"] ?? "",
+                agentBlueprintId: configuration["Agent365Observability:AgentBlueprintId"] ?? "",
+                tenantId:         configuration["Agent365Observability:TenantId"]         ?? "local-dev");
 
         /// <summary>
         /// Retrieves the weather forecast for a specified location.
@@ -115,6 +140,19 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
         [Description("Retrieves the Weather forecast for a location, location is a city name")]
         public async Task<List<ForecastItem>?> GetWeatherForecastForLocation(string location, string state)
         {
+            var toolCallDetails = new ToolCallDetails(
+                toolName: nameof(GetWeatherForecastForLocation),
+                arguments: $"{{\"location\":\"{location}\",\"state\":\"{state}\"}}",
+                toolCallId: Guid.NewGuid().ToString(),
+                description: "Retrieves weather forecast for a city/state",
+                toolType: "function",
+                endpoint: new Uri("https://api.openweathermap.org")
+            );
+            using var toolScope = ExecuteToolScope.Start(
+                request: new Request($"Get weather forecast for {location}, {state}"),
+                details: toolCallDetails,
+                agentDetails: BuildAgentDetails());
+
             // Notify the user that we are looking up the weather
             Console.WriteLine($"Looking up the Weather Forecast in {location}");
 
@@ -145,6 +183,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
                 if (weather.IsSuccess)
                 {
                     var result = weather.Response.Items;
+                    toolScope.RecordResponse(System.Text.Json.JsonSerializer.Serialize(result));
                     return result;
                 }
             }
@@ -152,6 +191,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             {
                 System.Diagnostics.Trace.WriteLine($"Failed to complete API Call to OpenWeather: {openWeatherLocation!.Error}");
             }
+            toolScope.RecordResponse("null");
             return null;
         }
     }

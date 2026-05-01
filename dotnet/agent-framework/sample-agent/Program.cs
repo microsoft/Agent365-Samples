@@ -15,6 +15,7 @@ using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Transcript;
 using Microsoft.Extensions.AI;
 using Microsoft.OpenTelemetry;
+using OpenTelemetry;
 using System.Reflection;
 
 
@@ -28,6 +29,10 @@ builder.UseMicrosoftOpenTelemetry(o =>
         ? ExportTarget.Agent365 | ExportTarget.Console
         : ExportTarget.Agent365;
 });
+
+// Register custom activity source so spans from AgentMetrics are captured by the TracerProvider
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource(AgentMetrics.SourceName));
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
