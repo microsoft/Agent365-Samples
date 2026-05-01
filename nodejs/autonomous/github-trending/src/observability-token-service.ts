@@ -97,7 +97,7 @@ async function acquireT1ViaMsi(authority: string, blueprintClientId: string, age
     scopes: FMI_SCOPES,
     azureRegion: undefined,
     fmiPath: agentId,
-  } as any); // fmiPath is available in MSAL Node but not yet in stable types
+  } as any); // fmiPath not yet in stable MSAL types
 
   if (!result?.accessToken) {
     throw new Error('FMI T1 via MSI failed: no access token returned');
@@ -106,22 +106,32 @@ async function acquireT1ViaMsi(authority: string, blueprintClientId: string, age
 }
 
 async function acquireT1ViaClientSecret(authority: string, blueprintClientId: string, blueprintClientSecret: string, agentId: string): Promise<string> {
-  const blueprintApp = new ConfidentialClientApplication({
-    auth: {
-      clientId: blueprintClientId,
-      authority,
-      clientSecret: blueprintClientSecret,
-    },
+  // Raw HTTP token request — MSAL doesn't support fmipath in current versions,
+  // so we POST directly to the Entra ID token endpoint with the parameter.
+  const tokenUrl = `${authority}/oauth2/v2.0/token`;
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: blueprintClientId,
+    client_secret: blueprintClientSecret,
+    scope: FMI_SCOPES[0],
+    fmi_path: agentId,
   });
 
-  const result = await blueprintApp.acquireTokenByClientCredential({
-    scopes: FMI_SCOPES,
-    azureRegion: undefined,
-    fmiPath: agentId,
-  } as any); // fmiPath is available in MSAL Node but not yet in stable types
+  const response = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
 
-  if (!result?.accessToken) {
-    throw new Error('FMI T1 via client secret failed: no access token returned');
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`FMI T1 via client secret failed (${response.status}): ${errorBody}`);
   }
-  return result.accessToken;
+
+  const json = await response.json() as { access_token?: string };
+  if (!json.access_token) {
+    throw new Error('FMI T1 via client secret failed: no access_token in response');
+  }
+  return json.access_token;
 }
+
