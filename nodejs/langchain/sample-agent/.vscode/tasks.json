@@ -81,6 +81,26 @@
             }
         },
         {
+            "label": "Start Dev Tunnel (langchain-agent-debug)",
+            "type": "shell",
+            "command": "devtunnel host langchain-agent-debug --allow-anonymous",
+            "isBackground": true,
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".",
+                    "endsPattern": "Ready to accept|Connect via|Hosting port"
+                }
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated"
+            }
+        },
+        {
             "label": "Start Microsoft 365 Agents Playground",
             "type": "shell",
             "command": "npm run dev:teamsfx:launch-playground",

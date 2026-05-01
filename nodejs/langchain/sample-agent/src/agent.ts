@@ -8,8 +8,8 @@ import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 // Observability Imports
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
+import { BaggageBuilder, OpenTelemetryConstants } from '@microsoft/opentelemetry';
+import { AgenticTokenCacheInstance, BaggageBuilderUtils, TurnContextLike } from '@microsoft/opentelemetry';
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
@@ -22,8 +22,8 @@ export class A365Agent extends AgentApplication<TurnState> {
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
-          type: 'agentic',
-        } // scopes set in the .env file...
+          type: 'AgenticUserAuthorization',
+        }
       }
     });
 
@@ -76,11 +76,19 @@ export class A365Agent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
+    const blueprintId = turnContext.activity?.recipient?.agenticAppBlueprintId
+      || process.env.connections__service_connection__settings__clientId;
+
+    const baggageBuilder = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Initial onboarding session')
-      .build();
+      turnContext as unknown as TurnContextLike
+    ).sessionDescription('Initial onboarding session');
+
+    if (blueprintId) {
+      baggageBuilder.setPairs([[OpenTelemetryConstants.GEN_AI_AGENT_BLUEPRINT_ID_KEY, blueprintId]]);
+    }
+
+    const baggageScope = baggageBuilder.build();
 
     // Preload/refresh exporter token
     await this.preloadObservabilityToken(turnContext);
@@ -89,7 +97,7 @@ export class A365Agent extends AgentApplication<TurnState> {
       await baggageScope.run(async () => {
         try {
           const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, turnContext, displayName);
-          const response = await client.invokeInferenceScope(userMessage);
+          const response = await client.invoke(userMessage);
           await turnContext.sendActivity(response);
         } catch (error) {
           console.error('LLM query error:', error);
@@ -118,11 +126,11 @@ export class A365Agent extends AgentApplication<TurnState> {
       const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
       tokenCache.set(cacheKey, aauToken?.token || '');
     } else {
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      await AgenticTokenCacheInstance.refreshObservabilityToken(
         agentId,
         tenantId,
-        turnContext,
-        this.authorization,
+        turnContext as unknown as TurnContextLike,
+        this.authorization as any,
         getObservabilityAuthenticationScope()
       );
     }
@@ -151,13 +159,13 @@ export class A365Agent extends AgentApplication<TurnState> {
       const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, context);
 
       // First, retrieve the email content
-      const emailContent = await client.invokeInferenceScope(
+      const emailContent = await client.invoke(
         `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
         `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`
       );
 
       // Then process the email
-      const response = await client.invokeInferenceScope(
+      const response = await client.invoke(
         `You have received the following email. Please follow any instructions in it. ${emailContent}`
       );
 
