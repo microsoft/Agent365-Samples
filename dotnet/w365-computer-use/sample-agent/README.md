@@ -156,16 +156,16 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 
 1. **User sends a message** -> `MyAgent.OnMessageAsync`
 2. **MCP connection** established (direct SSE in dev, A365 SDK gateway in prod)
-3. **QuickStartSession** provisions a W365 Cloud PC (once per app lifetime, reused across messages)
+3. **Session acquisition** runs transparently on the first W365 tool call — ATG picks an eligible Cloud PC pool, checks out a session, and probes readiness. The session is reused across messages.
 4. **CUA loop** in `ComputerUseOrchestrator.RunAsync`:
    - User message + conversation history sent to the model
    - Model returns `computer_call` actions (click, type, scroll, etc.)
-   - Actions translated to MCP tool calls (`W365_Click2`, `W365_WriteText`, etc.)
+   - Actions translated to MCP tool calls (`click`, `type_text`, `press_keys`, etc. — discovered dynamically from the W365 remote server)
    - Screenshot captured after each action and fed back to the model
    - Loop continues until model calls `OnTaskComplete` or max iterations reached
 5. **Response** sent back to user
 6. **Session persists** across messages for follow-up tasks
-7. **EndSession** called on app shutdown (Ctrl+C) to release the VM
+7. **EndSession** called on app shutdown (Ctrl+C) via `mcp_W365ComputerUse_EndSession` to release the VM
 
 ## Session Management
 

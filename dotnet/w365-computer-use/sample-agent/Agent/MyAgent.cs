@@ -29,6 +29,21 @@ public class MyAgent : AgentApplication
     private readonly ComputerUseOrchestrator _orchestrator;
     private readonly string[] _mcpServerUrls;
 
+    /// <summary>
+    /// Subset of <see cref="_mcpServerUrls"/> whose path names the W365 Computer-Use server.
+    /// Loaded only when the intent classifier determines CUA is required — otherwise the
+    /// tools/list call on this URL triggers ATG's hostname discovery and acquires a Cloud PC
+    /// session (10-30s). Match is by URL substring; relies on ATG's path convention of
+    /// keeping the server name in the path.
+    /// </summary>
+    private readonly string[] _w365McpServerUrls;
+
+    /// <summary>
+    /// All non-W365 MCP server URLs (mail, calendar, etc.). Loaded eagerly — these don't
+    /// acquire a W365 session.
+    /// </summary>
+    private readonly string[] _otherMcpServerUrls;
+
     private readonly string? AgenticAuthHandlerName;
     private readonly string? OboAuthHandlerName;
 
@@ -79,6 +94,12 @@ public class MyAgent : AgentApplication
             if (!string.IsNullOrEmpty(singleUrl))
                 _mcpServerUrls = [singleUrl];
         }
+
+        // Split into W365 vs other servers by URL path — W365 load is deferred until the
+        // intent classifier decides CUA is needed. Avoids paying the 10-30s session
+        // acquisition cost on chit-chat / mail-only messages.
+        _w365McpServerUrls = _mcpServerUrls.Where(u => u.Contains("/mcp_W365ComputerUse", StringComparison.OrdinalIgnoreCase)).ToArray();
+        _otherMcpServerUrls = _mcpServerUrls.Where(u => !u.Contains("/mcp_W365ComputerUse", StringComparison.OrdinalIgnoreCase)).ToArray();
 
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
         OboAuthHandlerName = configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
@@ -186,17 +207,65 @@ public class MyAgent : AgentApplication
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                    var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
 
-                    // Get MCP tools — direct connection in Dev, SDK in Production
-                    var (w365Tools, additionalTools, mcpClient) = await GetToolsAsync(turnContext, ToolAuthHandlerName);
+                    // Step 1: classify intent with a cheap tool-less LLM call. If the message
+                    // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
+                    // W365 tool loading entirely so ATG never acquires a Cloud PC session.
+                    var needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+
+                    if (!needsCua)
+                    {
+                        // Non-CUA fast path: load only non-W365 tools, run orchestrator with the
+                        // computer tool withheld. Supports function-tool paths (mail/calendar/etc.)
+                        // without touching W365.
+                        var (_, nonCuaAdditionalTools, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false);
+                        var directResponse = await _orchestrator.RunAsync(
+                            conversationId,
+                            userText,
+                            w365Tools: [],
+                            additionalTools: nonCuaAdditionalTools,
+                            mcpClient: null,
+                            graphAccessToken: null,
+                            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
+                            onCuaStarting: null,
+                            onFolderLinkReady: null,
+                            includeCuaTool: false,
+                            cancellationToken: cancellationToken);
+                        turnContext.StreamingResponse.QueueTextChunk(directResponse);
+                        return;
+                    }
+
+                    // CUA path: SendActivity the "Got it" acknowledgment FIRST, before the streaming
+                    // response begins. If we send it later (e.g. from inside onCuaStarting), Teams/
+                    // Emulator orders it visually AFTER the streaming activity's final text since
+                    // the streaming activity was created earlier in the turn — the user sees the
+                    // result before the acknowledgment. SendActivity here gets an earlier ID than
+                    // the streaming activity that starts on the next line.
+                    await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+
+                    // Get MCP tools — direct connection in Dev, SDK in Production.
+                    //
+                    // No "Acquiring…" bubble: GetToolsAsync may take >2s even on cache reuse
+                    // (OBO token + headers + S2S add up), and the agent has no reliable way to
+                    // distinguish reuse from fresh checkout in advance. A misleading bubble on
+                    // every reuse was worse than no bubble at all. The "Got it — working on it…"
+                    // bubble already provides feedback that the agent is working.
+                    var (w365Tools, additionalTools, mcpClient) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true);
 
                     try
                     {
                         if (w365Tools == null || w365Tools.Count == 0)
                         {
-                            await turnContext.SendActivityAsync(
-                                MessageFactory.Text("Unable to connect to the W365 Computer Use service. Please check your configuration."),
-                                cancellationToken);
+                            // ATG wraps tools/list failures into a synthetic "Error" tool whose Description
+                            // carries the real reason (e.g. "no pool with an available session was found").
+                            // Extract it so the user sees the actionable message instead of the generic
+                            // "Unable to connect" placeholder.
+                            var errorMessage = ExtractW365ToolListError(additionalTools)
+                                ?? "Unable to connect to the W365 Computer Use service. Please check your configuration.";
+                            // Write the error into the streaming response so EndStreamAsync doesn't
+                            // emit a confusing 'No text was streamed' alongside the real message.
+                            turnContext.StreamingResponse.QueueTextChunk(errorMessage);
                             return;
                         }
 
@@ -214,7 +283,6 @@ public class MyAgent : AgentApplication
                         }
 
                         // Run the CUA loop — session is managed per conversation
-                        var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
                         var response = await _orchestrator.RunAsync(
                             conversationId,
                             userText,
@@ -225,14 +293,13 @@ public class MyAgent : AgentApplication
                             onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
                             onCuaStarting: async (isNewSession) =>
                             {
-                                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
                                 if (isNewSession)
                                 {
                                     await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Starting a session to a Windows 365 Cloud PC…");
                                 }
                             },
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
-                                MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
+                                MessageFactory.Text($"📸 Screenshots for this request: [View folder]({url})"), cancellationToken),
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -256,8 +323,10 @@ public class MyAgent : AgentApplication
     /// Get MCP tools, separated into W365 (CUA) and additional (function) tools.
     /// In Development mode with a bearer token, connects directly to the MCP server URL.
     /// In Production, uses the A365 SDK to discover servers via the Tooling Gateway.
+    /// When <paramref name="includeW365"/> is <c>false</c>, the W365 server(s) are skipped —
+    /// used on the non-CUA fast path so ATG never acquires a Cloud PC session for chit-chat.
     /// </summary>
-    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client)> GetToolsAsync(ITurnContext context, string? authHandlerName)
+    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client)> GetToolsAsync(ITurnContext context, string? authHandlerName, bool includeW365)
     {
         // Acquire access token
         string? accessToken = null;
@@ -291,11 +360,26 @@ public class MyAgent : AgentApplication
             {
                 if (_mcpServerUrls.Length == 0)
                     throw new InvalidOperationException("McpServers (or McpServer:Url) is required in appsettings for Development mode.");
-                (allTools, mcpClient) = await _orchestrator.GetOrCreateMcpConnectionAsync(_mcpServerUrls, accessToken!);
+
+                if (includeW365)
+                {
+                    // Full load: W365 + everything else. The orchestrator's cache covers both.
+                    (allTools, mcpClient) = await _orchestrator.GetOrCreateMcpConnectionAsync(_mcpServerUrls, accessToken!);
+                }
+                else
+                {
+                    // Non-CUA fast path: skip W365 entirely. Non-W365 tools have their own cache
+                    // in the orchestrator so we don't reconnect on every non-CUA message.
+                    allTools = await _orchestrator.GetOrCreateNonW365McpConnectionAsync(_otherMcpServerUrls, accessToken!);
+                }
             }
             else
             {
-                // Production: use the A365 SDK's tooling gateway for server discovery
+                // Production: use the A365 SDK's tooling gateway for server discovery.
+                // NOTE: The SDK loads all registered servers' tools in one call, including W365.
+                // The includeW365 flag can't suppress the W365 load in prod today — the SDK has
+                // no per-server loading API. The CUA gate still saves compute on the non-CUA
+                // branch (no CUA loop, no screenshots), but not the Cloud PC session.
                 var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
                     ? authHandlerName
                     : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
@@ -304,7 +388,7 @@ public class MyAgent : AgentApplication
                 allTools = await _toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
             }
 
-            var w365Tools = FilterW365Tools(allTools);
+            var w365Tools = includeW365 ? FilterW365Tools(allTools) : null;
             var additionalTools = FilterAdditionalTools(allTools);
             return (w365Tools, additionalTools, mcpClient);
         }
@@ -334,7 +418,7 @@ public class MyAgent : AgentApplication
         var w365Tools = allTools?.Where(t =>
         {
             var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
-            return name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
+            return ComputerUseOrchestrator.IsW365CuaTool(name);
         }).ToList();
 
         if (w365Tools != null && w365Tools.Count > 0)
@@ -354,7 +438,7 @@ public class MyAgent : AgentApplication
         var additionalTools = allTools?.Where(t =>
         {
             var name = (t as AIFunction)?.Name ?? t.ToString() ?? string.Empty;
-            return !name.StartsWith("W365_", StringComparison.OrdinalIgnoreCase);
+            return !ComputerUseOrchestrator.IsW365CuaTool(name);
         }).ToList();
 
         if (additionalTools != null && additionalTools.Count > 0)
@@ -365,5 +449,48 @@ public class MyAgent : AgentApplication
         }
 
         return additionalTools;
+    }
+
+    /// <summary>
+    /// Looks for ATG's synthetic <c>Error</c> tool in the non-CUA tool list and extracts a
+    /// user-facing error reason from its description. ATG formats the description as:
+    /// <c>"Tool list retrieval failed. Message='...'. ExceptionType='...'. ExceptionMessage='...'. CorrelationId=..., TimeStamp=..."</c>.
+    /// We prefer the <c>ExceptionMessage</c> field because it carries the specific reason
+    /// (e.g. "Failed to acquire a W365 session: no pool with an available session was found.").
+    /// Returns null if no error tool is present or the description can't be parsed.
+    /// </summary>
+    private static string? ExtractW365ToolListError(IList<AITool>? additionalTools)
+    {
+        if (additionalTools == null || additionalTools.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var tool in additionalTools)
+        {
+            if (tool is not AIFunction fn) continue;
+            if (!string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var description = fn.Description ?? string.Empty;
+            var extracted = ExtractQuotedField(description, "ExceptionMessage=")
+                ?? ExtractQuotedField(description, "Message=")
+                ?? (string.IsNullOrWhiteSpace(description) ? null : description);
+            return extracted;
+        }
+
+        return null;
+    }
+
+    private static string? ExtractQuotedField(string source, string fieldPrefix)
+    {
+        var startMarker = fieldPrefix + "'";
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        if (start < 0) return null;
+        start += startMarker.Length;
+        var end = source.IndexOf("'.", start, StringComparison.Ordinal);
+        if (end < 0) end = source.IndexOf('\'', start);
+        if (end < start) return null;
+        var value = source.Substring(start, end - start);
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 }
