@@ -52,7 +52,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             using var toolScope = ExecuteToolScope.Start(
                 request: new Request($"Get current weather for {location}, {state}"),
                 details: toolCallDetails,
-                agentDetails: BuildAgentDetails());
+                agentDetails: AgentDetailsHelper.Build(configuration));
 
             // Notify the user that we are looking up the weather
             Console.WriteLine($"Looking up the Current Weather in {location}");
@@ -107,14 +107,6 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             return null;
         }
 
-        private AgentDetails BuildAgentDetails() =>
-            new AgentDetails(
-                agentId:          configuration["Agent365Observability:AgentId"]          ?? "local-dev",
-                agentName:        configuration["Agent365Observability:AgentName"]        ?? "my-agent",
-                agentDescription: configuration["Agent365Observability:AgentDescription"] ?? "",
-                agentBlueprintId: configuration["Agent365Observability:AgentBlueprintId"] ?? "",
-                tenantId:         configuration["Agent365Observability:TenantId"]         ?? "local-dev");
-
         /// <summary>
         /// Retrieves the weather forecast for a specified location.
         /// This method uses the OpenWeatherMap API to fetch the weather forecast data for a given city and state.
@@ -151,7 +143,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             using var toolScope = ExecuteToolScope.Start(
                 request: new Request($"Get weather forecast for {location}, {state}"),
                 details: toolCallDetails,
-                agentDetails: BuildAgentDetails());
+                agentDetails: AgentDetailsHelper.Build(configuration));
 
             // Notify the user that we are looking up the weather
             Console.WriteLine($"Looking up the Weather Forecast in {location}");

@@ -23,19 +23,12 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
             using var toolScope = ExecuteToolScope.Start(
                 request: new Request("Get current date and time"),
                 details: toolCallDetails,
-                agentDetails: BuildAgentDetails());
+                agentDetails: AgentDetailsHelper.Build(configuration));
 
             string date = DateTimeOffset.Now.ToString("D", null);
             toolScope.RecordResponse(date);
             return date;
         }
 
-        private AgentDetails BuildAgentDetails() =>
-            new AgentDetails(
-                agentId:          configuration["Agent365Observability:AgentId"]          ?? "local-dev",
-                agentName:        configuration["Agent365Observability:AgentName"]        ?? "my-agent",
-                agentDescription: configuration["Agent365Observability:AgentDescription"] ?? "",
-                agentBlueprintId: configuration["Agent365Observability:AgentBlueprintId"] ?? "",
-                tenantId:         configuration["Agent365Observability:TenantId"]         ?? "local-dev");
     }
 }
