@@ -4,9 +4,6 @@
 using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
 using Microsoft.Agents.A365.Observability.Hosting.Caching;
-using Microsoft.Agents.A365.Observability.Hosting.Extensions;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
-using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -257,18 +254,10 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 try
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
-                    using var invokeScope = InvokeAgentScope.Start(
-                        request: new Request(userText),
-                        scopeDetails: new InvokeAgentScopeDetails(endpoint: new Uri("http://localhost:3978")),
-                        agentDetails: BuildAgentDetails())
-                        .FromTurnContext(turnContext);
-
-                    invokeScope.RecordInputMessages(new[] { userText });
-
                     var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
                     // Read or Create the conversation session for this conversation.
-                    AgentSession? thread = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
+                    AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
 
                     if (turnContext?.Activity?.Attachments?.Count > 0)
                     {
@@ -281,18 +270,15 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         }
                     }
 
-                    var collectedOutput = new System.Text.StringBuilder();
                     // Stream the response back to the user as we receive it from the agent.
-                    await foreach (var response in _agent!.RunStreamingAsync(userText, thread, cancellationToken: cancellationToken))
+                    await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
                     {
                         if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
                         {
                             turnContext?.StreamingResponse.QueueTextChunk(response.Text);
-                            collectedOutput.Append(response.Text);
                         }
                     }
-                    invokeScope.RecordOutputMessages(new[] { collectedOutput.ToString() });
-                    var serializedSession = await _agent!.SerializeSessionAsync(thread!);
+                    var serializedSession = await _agent!.SerializeSessionAsync(session!);
                     turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
                 }
                 finally
@@ -465,12 +451,5 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             return userToolCacheKey;
         }
 
-        private AgentDetails BuildAgentDetails() =>
-            new AgentDetails(
-                agentId:          _configuration?["Agent365Observability:AgentId"]          ?? "local-dev",
-                agentName:        _configuration?["Agent365Observability:AgentName"]        ?? "my-agent",
-                agentDescription: _configuration?["Agent365Observability:AgentDescription"] ?? "",
-                agentBlueprintId: _configuration?["Agent365Observability:AgentBlueprintId"] ?? "",
-                tenantId:         _configuration?["Agent365Observability:TenantId"]         ?? "local-dev");
     }
 }

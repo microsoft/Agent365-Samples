@@ -43,7 +43,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
 
             var toolCallDetails = new ToolCallDetails(
                 toolName: nameof(GetCurrentWeatherForLocation),
-                arguments: $"{{\"location\":\"{location}\",\"state\":\"{state}\"}}",
+                arguments: System.Text.Json.JsonSerializer.Serialize(new { location, state }),
                 toolCallId: Guid.NewGuid().ToString(),
                 description: "Retrieves current weather for a city/state",
                 toolType: "function",
@@ -142,7 +142,7 @@ namespace Agent365AgentFrameworkSampleAgent.Tools
         {
             var toolCallDetails = new ToolCallDetails(
                 toolName: nameof(GetWeatherForecastForLocation),
-                arguments: $"{{\"location\":\"{location}\",\"state\":\"{state}\"}}",
+                arguments: System.Text.Json.JsonSerializer.Serialize(new { location, state }),
                 toolCallId: Guid.NewGuid().ToString(),
                 description: "Retrieves weather forecast for a city/state",
                 toolType: "function",
