@@ -129,7 +129,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            foreach (ChannelAccount member in (turnContext.Activity.MembersAdded ?? [])
+            foreach (var _ in (turnContext.Activity.MembersAdded ?? [])
                 .Where(m => m.Id != turnContext.Activity.Recipient.Id))
             {
                 await turnContext.SendActivityAsync(AgentWelcomeMessage);
