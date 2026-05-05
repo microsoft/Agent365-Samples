@@ -1,0 +1,56 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.22",
+  "version": "1.0.0",
+  "id": "${{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "Microsoft, Inc.",
+    "websiteUrl": "https://example.azurewebsites.net",
+    "privacyUrl": "https://example.azurewebsites.net/privacy",
+    "termsOfUseUrl": "https://example.azurewebsites.net/termsofuse"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "W365 Computer Use",
+    "full": "W365 Computer Use Sample Agent"
+  },
+  "description": {
+    "short": "Sample demonstrating Agent 365 SDK with Windows 365 Computer Use",
+    "full": "Sample demonstrating an Agent 365 agent that controls a Windows 365 Cloud PC via the W365 Computer Use MCP server using Azure OpenAI's computer-use model."
+  },
+  "accentColor": "#FFFFFF",
+  "copilotAgents": {
+    "customEngineAgents": [
+      {
+        "id": "${{AAD_APP_CLIENT_ID}}",
+        "type": "bot"
+      }
+    ]
+  },
+  "bots": [
+    {
+      "botId": "${{AAD_APP_CLIENT_ID}}",
+      "scopes": [
+        "personal"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "<<BOT_DOMAIN>>"
+  ],
+  "agenticUserTemplates": [
+    {
+      "id": "${{AGENTIC_USER_TEMPLATE_ID}}",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}
