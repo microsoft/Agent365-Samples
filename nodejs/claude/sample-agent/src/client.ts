@@ -92,6 +92,10 @@ class ClaudeClient implements Client {
   }
 
   async invokeAgentWithScope(prompt: string): Promise<string> {
+    // InferenceScope is added explicitly because the Claude Agent SDK spawns a child process
+    // to execute inference — the actual HTTPS call to api.anthropic.com happens in that subprocess,
+    // not in this process. HTTP auto-instrumentation cannot cross process boundaries, so without
+    // this scope there would be no span covering the LLM call and no gen_ai.* attributes in traces.
     const scope = InferenceScope.start(
       {},
       { operationName: InferenceOperationType.CHAT, model: 'claude', providerName: 'anthropic' },
