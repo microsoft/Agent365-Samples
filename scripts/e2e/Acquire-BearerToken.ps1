@@ -33,16 +33,19 @@
 #>
 
 param(
-    [Parameter(Mandatory = $true)]
+    # Parameters are non-mandatory so PowerShell does not emit a binding error when
+    # called with empty strings (e.g. from a fork PR where GitHub secrets are absent).
+    # Explicit validation below provides a clear, actionable error message instead.
+    [Parameter(Mandatory = $false)]
     [string]$ClientId,
     
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$TenantId,
     
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$Username,
     
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [string]$Password,
     
     [Parameter(Mandatory = $false)]
@@ -50,6 +53,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Validate required parameters before attempting the token request
+$missingParams = @()
+if ([string]::IsNullOrEmpty($ClientId))  { $missingParams += 'ClientId' }
+if ([string]::IsNullOrEmpty($TenantId))  { $missingParams += 'TenantId' }
+if ([string]::IsNullOrEmpty($Username))  { $missingParams += 'Username' }
+if ([string]::IsNullOrEmpty($Password))  { $missingParams += 'Password' }
+if ($missingParams.Count -gt 0) {
+    Write-Error "Cannot acquire bearer token: the following required parameters are missing or empty: $($missingParams -join ', '). Ensure the required secrets (MCP_CLIENT_ID, MCP_TENANT_ID, MCP_TEST_USERNAME, MCP_TEST_PASSWORD) are configured for this workflow run."
+    exit 1
+}
 
 Write-Host "Acquiring bearer token for MCP servers using ROPC flow..." -ForegroundColor Cyan
 Write-Host "MCP servers require delegated (user) tokens, not service principal tokens" -ForegroundColor Gray

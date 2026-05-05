@@ -58,6 +58,8 @@ jobs:
 
       - name: Acquire Bearer Token (ROPC)
         id: token
+        # Only run when all required secrets are present (skipped on fork PRs where secrets are unavailable)
+        if: ${{ secrets.MCP_CLIENT_ID != '' && secrets.MCP_TENANT_ID != '' && secrets.MCP_TEST_USERNAME != '' && secrets.MCP_TEST_PASSWORD != '' }}
         shell: pwsh
         run: |
           $token = & "${{ env.SCRIPTS_PATH }}/Acquire-BearerToken.ps1" `
@@ -67,6 +69,13 @@ jobs:
             -Password "${{ secrets.MCP_TEST_PASSWORD }}"
           echo "BEARER_TOKEN=$token" >> $env:GITHUB_OUTPUT
           echo "::add-mask::$token"
+
+      - name: Skip E2E (missing secrets)
+        # Runs when any required secret is absent (e.g. fork PRs) to provide a clear explanation
+        if: ${{ secrets.MCP_CLIENT_ID == '' || secrets.MCP_TENANT_ID == '' || secrets.MCP_TEST_USERNAME == '' || secrets.MCP_TEST_PASSWORD == '' }}
+        shell: pwsh
+        run: |
+          Write-Host "E2E secrets (MCP_CLIENT_ID, MCP_TENANT_ID, MCP_TEST_USERNAME, MCP_TEST_PASSWORD) are not available for this run (e.g. fork PR). Skipping token acquisition and E2E steps." -ForegroundColor Yellow
 
       - name: Copy ToolingManifest.json
         shell: pwsh
@@ -94,6 +103,8 @@ jobs:
 
       - name: Start Agent
         id: start-agent
+        # Only run when the bearer token was successfully acquired
+        if: ${{ steps.token.outputs.BEARER_TOKEN != '' }}
         shell: pwsh
         run: |
           $agentPid = & "${{ env.SCRIPTS_PATH }}/Start-Agent.ps1" `
@@ -106,6 +117,7 @@ jobs:
           echo "AGENT_PID=$agentPid" >> $env:GITHUB_OUTPUT
 
       - name: Verify Agent Running
+        if: ${{ steps.token.outputs.BEARER_TOKEN != '' }}
         shell: pwsh
         run: |
           $agentPid = "${{ steps.start-agent.outputs.AGENT_PID }}"
@@ -122,9 +134,11 @@ jobs:
           Write-Host "Health: $($response.StatusCode)" -ForegroundColor Green
 
       - name: Restore E2E Test Dependencies
+        if: ${{ steps.token.outputs.BEARER_TOKEN != '' }}
         run: dotnet restore "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj"
 
       - name: Run .NET E2E Tests
+        if: ${{ steps.token.outputs.BEARER_TOKEN != '' }}
         shell: pwsh
         run: |
           dotnet test "${{ env.E2E_TESTS_PATH }}/Agent365.E2E.Tests.csproj" `
