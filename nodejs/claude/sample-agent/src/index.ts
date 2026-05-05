@@ -1,12 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// It is important to load environment variables before importing other modules
-import { configDotenv } from 'dotenv';
-
-configDotenv();
-
-import './otel';
+import './otel'; // must be first — loads .env and initialises OpenTelemetry before any HTTP modules
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express';
 import { agentApplication } from './agent';

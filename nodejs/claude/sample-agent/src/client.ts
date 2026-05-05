@@ -52,7 +52,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
     console.warn('Failed to register MCP tool servers:', error);
   }
 
-  const tenantId = turnContext.activity.conversation?.tenantId ?? '';
+  const tenantId = turnContext.activity.conversation?.tenantId ?? turnContext.activity.recipient?.tenantId ?? '';
   return new ClaudeClient(requestConfig, tenantId);
 }
 
