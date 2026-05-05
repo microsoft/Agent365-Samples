@@ -13,6 +13,7 @@ using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Core.Serialization;
 using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 
 namespace Agent365AgentFrameworkSampleAgent.Agent
@@ -128,12 +129,10 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            foreach (ChannelAccount member in turnContext.Activity.MembersAdded)
+            foreach (ChannelAccount member in (turnContext.Activity.MembersAdded ?? [])
+                .Where(m => m.Id != turnContext.Activity.Recipient.Id))
             {
-                if (member.Id != turnContext.Activity.Recipient.Id)
-                {
-                    await turnContext.SendActivityAsync(AgentWelcomeMessage);
-                }
+                await turnContext.SendActivityAsync(AgentWelcomeMessage);
             }
         }
 
@@ -225,29 +224,30 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
             try
             {
-                var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                var userTextBuilder = new StringBuilder(turnContext.Activity.Text?.Trim() ?? string.Empty);
                 var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
 
                 // Read or Create the conversation session for this conversation.
                 AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
 
-                if (turnContext?.Activity?.Attachments?.Count > 0)
+                if (turnContext.Activity?.Attachments?.Count > 0)
                 {
                     foreach (var attachment in turnContext.Activity.Attachments)
                     {
                         if (attachment.ContentType == "application/vnd.microsoft.teams.file.download.info" && !string.IsNullOrEmpty(attachment.ContentUrl))
                         {
-                            userText += $"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]";
+                            userTextBuilder.Append($"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]");
                         }
                     }
                 }
+                var userText = userTextBuilder.ToString();
 
                 // Stream the response back to the user as we receive it from the agent.
                 await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
                 {
                     if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
                     {
-                        turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                        turnContext.StreamingResponse.QueueTextChunk(response.Text);
                     }
                 }
                 var serializedSession = await _agent!.SerializeSessionAsync(session!);
