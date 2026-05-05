@@ -6,6 +6,7 @@ import { configDotenv } from 'dotenv';
 
 configDotenv();
 
+import './otel';
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express';
 import { agentApplication } from './agent';
