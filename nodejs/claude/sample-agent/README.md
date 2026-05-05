@@ -2,7 +2,7 @@
 
 This sample demonstrates how to build an agent using Claude in Node.js with the Microsoft Agent 365 SDK. It covers:
 
-- **Observability**: End-to-end tracing, caching, and monitoring for agent applications
+- **Observability**: Auto-instrumentation via `@microsoft/opentelemetry` distro with explicit `InferenceScope` for LLM call tracing
 - **Notifications**: Services and models for managing user notifications
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
@@ -21,7 +21,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 > - Azure CLI signed in with `az login`
 
 > - Microsoft Agent 365 SDK
-> - Claude Agent SDK 0.1.1 or higher
+> - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
 > - A365 CLI: Required for agent deployment and management.
 
 ## Working with User Identity
@@ -66,6 +66,7 @@ Required values:
 |---|---|
 | `ANTHROPIC_API_KEY` | Your Anthropic API key — get one at [console.anthropic.com](https://console.anthropic.com/settings/keys) |
 | `NODE_ENV` | Set to `production` so JWT validation is enabled (Teams always sends auth tokens) |
+| `OTEL_SERVICE_NAME` | Service name shown in traces (e.g. `Claude Sample Agent`) |
 | `connections__service_connection__settings__clientId` | Blueprint App ID from `a365.generated.config.json` (`agentBlueprintId`) |
 | `connections__service_connection__settings__clientSecret` | Blueprint client secret value (not the secret ID) |
 | `connections__service_connection__settings__tenantId` | Your Azure AD tenant ID |
@@ -161,6 +162,37 @@ try {
 ```
 
 > **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
+
+## Observability
+
+This sample uses the [`@microsoft/opentelemetry`](https://www.npmjs.com/package/@microsoft/opentelemetry) distro, initialised in `src/otel.ts`:
+
+```typescript
+import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+useMicrosoftOpenTelemetry();
+```
+
+This file is imported first in `src/index.ts` so instrumentation patches are applied before any HTTP modules load.
+
+### Auto-instrumented spans
+
+| Span | What it captures |
+|---|---|
+| `POST /api/messages` | Inbound request — method, path, status code |
+| `POST login.microsoftonline.com` | MSAL token acquisition |
+| `POST smba.trafficmanager.net` | Outbound Teams messages |
+
+### Why `InferenceScope` is explicit
+
+The `@anthropic-ai/claude-agent-sdk` executes inference by spawning the Claude CLI as a **child process**. The actual HTTPS call to `api.anthropic.com` happens inside that subprocess — it is invisible to the parent process's HTTP auto-instrumentation. `InferenceScope` in `src/client.ts` manually brackets the `query()` call to produce a span with `gen_ai.*` attributes (model, provider, agent ID) that would otherwise be missing entirely.
+
+### Service Name
+
+Set `OTEL_SERVICE_NAME` in `.env` to give your service a meaningful name in traces:
+
+```bash
+OTEL_SERVICE_NAME=Claude Sample Agent
+```
 
 ## Running the Agent
 
