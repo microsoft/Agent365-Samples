@@ -12,22 +12,22 @@ This sample demonstrates a weather-focused agent built using the Microsoft Agent
 - Streaming responses to clients
 - Conversation thread management
 - Dual authentication (agentic and OBO handlers)
-- Microsoft Agent 365 observability integration
+- Auto-instrumentation via `Microsoft.OpenTelemetry` distro
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Program.cs                                │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────────┐ │
-│  │ OpenTelemetry│  │ A365 Tracing│  │ ASP.NET Authentication │ │
-│  └─────────────┘  └─────────────┘  └──────────────────────────┘ │
+│  ┌──────────────────────┐  ┌──────────────────────────────────┐  │
+│  │ Microsoft.OpenTelemetry│  │ ASP.NET Authentication           │  │
+│  └──────────────────────┘  └──────────────────────────────────┘  │
 │                           │                                      │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │              Dependency Injection Container                  ││
-│  │  ┌─────────┐ ┌───────────┐ ┌──────────┐ ┌───────────────┐  ││
-│  │  │IChatClient│ │IMcpToolSvc│ │IStorage │ │ITokenCache    │  ││
-│  │  └─────────┘ └───────────┘ └──────────┘ └───────────────┘  ││
+│  │  ┌─────────┐ ┌───────────┐ ┌──────────┐                    ││
+│  │  │IChatClient│ │IMcpToolSvc│ │IStorage │                    ││
+│  │  └─────────┘ └───────────┘ └──────────┘                    ││
 │  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -58,7 +58,7 @@ This sample demonstrates a weather-focused agent built using the Microsoft Agent
 
 ### Program.cs
 Entry point that configures:
-- OpenTelemetry and Agent 365 tracing
+- `Microsoft.OpenTelemetry` distro (`UseMicrosoftOpenTelemetry`)
 - MCP tool services (`IMcpToolRegistrationService`, `IMcpToolServerConfigurationService`)
 - Authentication middleware
 - IChatClient with Azure OpenAI
@@ -79,36 +79,28 @@ Local tool implementation for weather queries:
 ### Tools/DateTimeFunctionTool.cs
 Utility tool for date/time queries.
 
-### telemetry/AgentMetrics.cs
-Custom observability helpers for tracing agent operations.
-
 ## Message Flow
 
 ```
-1. HTTP POST /api/messages
+1. HTTP POST /api/messages  [auto-instrumented by ASP.NET Core]
    │
-2. AgentMetrics.InvokeObservedHttpOperation()
+2. adapter.ProcessAsync() → MyAgent.OnMessageAsync()
    │
-3. adapter.ProcessAsync() → MyAgent.OnMessageAsync()
+3. Send ack + typing indicator to Teams
    │
-4. A365OtelWrapper.InvokeObservedAgentOperation()
-   │  └── Observability context setup
-   │
-5. StreamingResponse.QueueInformativeUpdateAsync("Just a moment...")
-   │
-6. GetClientAgent()
+4. GetClientAgent()
    │  ├── Create local tools (DateTime, Weather)
    │  ├── GetMcpToolsAsync() from MCP servers
    │  └── Build ChatClientAgent with instructions
    │
-7. GetConversationThread() - Load or create thread
+5. GetConversationSessionAsync() - Load or create session
    │
-8. agent.RunStreamingAsync()
+6. agent.RunStreamingAsync()  [auto-instrumented: gen_ai.* on chat span]
    │  └── Stream responses to client
    │
-9. Save thread state
+7. Save session state
    │
-10. StreamingResponse.EndStreamAsync()
+8. StreamingResponse.EndStreamAsync()
 ```
 
 ## Tool Integration
@@ -169,25 +161,38 @@ var a365Tools = await toolService.GetMcpToolsAsync(
 ### Environment Variables
 ```bash
 ASPNETCORE_ENVIRONMENT=Development
-BEARER_TOKEN=your-bearer-token  # Development only
-SKIP_TOOLING_ON_ERRORS=true     # Development fallback
+OTEL_SERVICE_NAME=Agent Framework Sample   # Sets service.name in traces
+BEARER_TOKEN=your-bearer-token             # Development only
+SKIP_TOOLING_ON_ERRORS=true                # Development fallback
 ```
 
 ## Observability
 
-### Tracing Setup
+Observability is provided entirely by the `Microsoft.OpenTelemetry` distro — no custom tracing code in this sample.
+
+### Setup
 ```csharp
-builder.ConfigureOpenTelemetry();
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
-builder.AddA365Tracing(config => {
-    config.WithAgentFramework();
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
+
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
 });
 ```
 
-### Observed Operations
-- `agent.process_message` - HTTP endpoint
-- `MessageProcessor` - Message handling
-- `WelcomeMessage` - Welcome flow
+### Auto-instrumented Spans
+- `POST /api/messages` — inbound request (ASP.NET Core)
+- `POST login.microsoftonline.com` — MSAL token acquisition (HttpClient)
+- `POST smba.trafficmanager.net` — outbound Teams messages (HttpClient)
+- `POST …openai.azure.com/…/chat/completions` — Azure OpenAI HTTP call (HttpClient)
+- `chat <model>` — `gen_ai.*` semantic attributes: model, tools, messages, tokens (Microsoft.Extensions.AI)
+- `invoke_agent <id>` — agent-level span with agent ID and token counts (Microsoft.Agents.AI)
+
+The `gen_ai.*` attributes come from `.UseOpenTelemetry(sourceName: null, ...)` on the `ChatClientAgent` builder — the only explicit instrumentation call in the sample.
 
 ## Authentication
 
@@ -238,8 +243,8 @@ turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerialize
 ```xml
 <PackageReference Include="Microsoft.Agents.Builder" />
 <PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" />
-<PackageReference Include="Microsoft.Agents.A365.Observability" />
-<PackageReference Include="Microsoft.Agents.A365.Observability.Extensions.AgentFramework" />
+<PackageReference Include="Microsoft.OpenTelemetry" />
 <PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.AgentFramework" />
+<PackageReference Include="Microsoft.Agents.A365.Notifications" />
 <PackageReference Include="Azure.AI.OpenAI" />
 ```

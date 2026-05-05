@@ -1,9 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Agent365AgentFrameworkSampleAgent.telemetry;
 using Agent365AgentFrameworkSampleAgent.Tools;
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -59,7 +57,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         private readonly IChatClient? _chatClient = null;
         private readonly IConfiguration? _configuration = null;
-        private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
@@ -98,13 +95,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
-            IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
-            _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
 
@@ -133,19 +128,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
 
         protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            await AgentMetrics.InvokeObservedAgentOperation(
-                "WelcomeMessage",
-                turnContext,
-                async () =>
+            foreach (ChannelAccount member in turnContext.Activity.MembersAdded)
             {
-                foreach (ChannelAccount member in turnContext.Activity.MembersAdded)
+                if (member.Id != turnContext.Activity.Recipient.Id)
                 {
-                    if (member.Id != turnContext.Activity.Recipient.Id)
-                    {
-                        await turnContext.SendActivityAsync(AgentWelcomeMessage);
-                    }
+                    await turnContext.SendActivityAsync(AgentWelcomeMessage);
                 }
-            });
+            }
         }
 
         /// <summary>
@@ -154,26 +143,20 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
         {
-            await AgentMetrics.InvokeObservedAgentOperation(
-                "InstallationUpdate",
-                turnContext,
-                async () =>
-            {
-                _logger?.LogInformation(
-                    "InstallationUpdate received — Action: '{Action}', DisplayName: '{Name}', UserId: '{Id}'",
-                    turnContext.Activity.Action ?? "(none)",
-                    turnContext.Activity.From?.Name ?? "(unknown)",
-                    turnContext.Activity.From?.Id ?? "(unknown)");
+            _logger?.LogInformation(
+                "InstallationUpdate received — Action: '{Action}', DisplayName: '{Name}', UserId: '{Id}'",
+                turnContext.Activity.Action ?? "(none)",
+                turnContext.Activity.From?.Name ?? "(unknown)",
+                turnContext.Activity.From?.Id ?? "(unknown)");
 
-                if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
-                {
-                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
-                }
-                else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
-                {
-                    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
-                }
-            });
+            if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+            {
+                await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+            }
+            else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+            {
+                await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+            }
         }
 
         /// <summary>
@@ -201,100 +184,88 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Select the appropriate auth handler based on request type
             // For agentic requests, use the agentic auth handler
             // For non-agentic requests, use OBO auth handler (supports bearer token or configured auth)
-            string? ObservabilityAuthHandlerName;
             string? ToolAuthHandlerName;
             if (turnContext.IsAgenticRequest())
             {
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticAuthHandlerName;
+                ToolAuthHandlerName = AgenticAuthHandlerName;
             }
             else
             {
                 // Non-agentic: use OBO auth handler if configured
-                ObservabilityAuthHandlerName = ToolAuthHandlerName = OboAuthHandlerName;
+                ToolAuthHandlerName = OboAuthHandlerName;
             }
 
-            await A365OtelWrapper.InvokeObservedAgentOperation(
-                "MessageProcessor",
-                turnContext,
-                turnState,
-                _agentTokenCache,
-                UserAuthorization,
-                ObservabilityAuthHandlerName ?? string.Empty,
-                _logger,
-                async () =>
+            // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
+            // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
+            // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+            //       use SendActivityAsync for any messages that must arrive immediately.
+            await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
+
+            // Send typing indicator immediately on the main thread (awaited so it arrives before the LLM call starts).
+            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
+
+            // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+            // Only visible in 1:1 and small group chats.
+            using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var typingTask = Task.Run(async () =>
             {
-                // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
-                // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
-                // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
-                //       use SendActivityAsync for any messages that must arrive immediately.
-                await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
-
-                // Send typing indicator immediately on the main thread (awaited so it arrives before the LLM call starts).
-                await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken).ConfigureAwait(false);
-
-                // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
-                // Only visible in 1:1 and small group chats.
-                using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                var typingTask = Task.Run(async () =>
-                {
-                    try
-                    {
-                        while (!typingCts.IsCancellationRequested)
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
-                            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
-                        }
-                    }
-                    catch (OperationCanceledException) { /* expected on cancel */ }
-                }, typingCts.Token);
-
-                // StreamingResponse is best-effort: in Teams with agentic identity the SDK may buffer/downscale it.
-                // The ack + typing loop above handle the immediate UX; streaming remains for non-Teams / WebChat clients.
-                await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
                 try
                 {
-                    var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
-                    var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
-
-                    // Read or Create the conversation session for this conversation.
-                    AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
-
-                    if (turnContext?.Activity?.Attachments?.Count > 0)
+                    while (!typingCts.IsCancellationRequested)
                     {
-                        foreach (var attachment in turnContext.Activity.Attachments)
-                        {
-                            if (attachment.ContentType == "application/vnd.microsoft.teams.file.download.info" && !string.IsNullOrEmpty(attachment.ContentUrl))
-                            {
-                                userText += $"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]";
-                            }
-                        }
+                        await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token).ConfigureAwait(false);
+                        await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token).ConfigureAwait(false);
                     }
-
-                    // Stream the response back to the user as we receive it from the agent.
-                    await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
-                    {
-                        if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
-                        {
-                            turnContext?.StreamingResponse.QueueTextChunk(response.Text);
-                        }
-                    }
-                    var serializedSession = await _agent!.SerializeSessionAsync(session!);
-                    turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
                 }
-                finally
+                catch (OperationCanceledException) { /* expected on cancel */ }
+            }, typingCts.Token);
+
+            // StreamingResponse is best-effort: in Teams with agentic identity the SDK may buffer/downscale it.
+            // The ack + typing loop above handle the immediate UX; streaming remains for non-Teams / WebChat clients.
+            await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Just a moment please..").ConfigureAwait(false);
+            try
+            {
+                var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
+                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
+
+                // Read or Create the conversation session for this conversation.
+                AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
+
+                if (turnContext?.Activity?.Attachments?.Count > 0)
                 {
-                    typingCts.Cancel();
-                    try
+                    foreach (var attachment in turnContext.Activity.Attachments)
                     {
-                        await typingTask.ConfigureAwait(false);
+                        if (attachment.ContentType == "application/vnd.microsoft.teams.file.download.info" && !string.IsNullOrEmpty(attachment.ContentUrl))
+                        {
+                            userText += $"\n\n[User has attached a file: {attachment.Name}. The file can be downloaded from {attachment.ContentUrl}]";
+                        }
                     }
-                    catch (OperationCanceledException)
-                    {
-                        // Expected: typingTask is canceled when typingCts is canceled; no further action required.
-                    }
-                    await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
                 }
-            });
+
+                // Stream the response back to the user as we receive it from the agent.
+                await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
+                {
+                    if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
+                    {
+                        turnContext?.StreamingResponse.QueueTextChunk(response.Text);
+                    }
+                }
+                var serializedSession = await _agent!.SerializeSessionAsync(session!);
+                turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
+            }
+            finally
+            {
+                typingCts.Cancel();
+                try
+                {
+                    await typingTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected: typingTask is canceled when typingCts is canceled; no further action required.
+                }
+                await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
 
@@ -341,7 +312,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             // Create the local tools:
             var toolList = new List<AITool>();
             WeatherLookupTool weatherLookupTool = new(context, _configuration!);
-            DateTimeFunctionTool dateTimeTool = new(_configuration!);
+            DateTimeFunctionTool dateTimeTool = new();
             toolList.Add(AIFunctionFactory.Create(dateTimeTool.GetCurrentDateTime));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetCurrentWeatherForLocation));
             toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLocation));
@@ -414,7 +385,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                         })
                     })
                 .AsBuilder()
-                .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, (cfg) => cfg.EnableSensitiveData = true)
+                .UseOpenTelemetry(sourceName: null, (cfg) => cfg.EnableSensitiveData = true)
                 .Build();
         }
 
