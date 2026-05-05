@@ -1,0 +1,31 @@
+{
+  "tenantId": "<<YOUR_TENANT_ID>>",
+  "subscriptionId": "<<YOUR_SUBSCRIPTION_ID>>",
+  "resourceGroup": "<<YOUR_RESOURCE_GROUP>>",
+  "location": "westus2",
+  "environment": "prod",
+  "messagingEndpoint": "https://<<YOUR_WEBAPP_NAME>>.azurewebsites.net/api/messages",
+  "needDeployment": true,
+  "webAppName": "<<YOUR_WEBAPP_NAME>>",
+  "appServicePlanName": "<<YOUR_APP_SERVICE_PLAN>>",
+  "appServicePlanSku": "B1",
+  "graphBaseUrl": "https://graph.microsoft.com",
+  "agentIdentityDisplayName": "W365 Computer Use Identity",
+  "agentBlueprintDisplayName": "W365_ComputerUse_Blueprint",
+  "agentUserPrincipalName": "w365cua@<<YOUR_TENANT>>.onmicrosoft.com",
+  "agentUserDisplayName": "W365 Computer Use Agent User",
+  "managerEmail": "<<YOUR_MANAGER_EMAIL>>",
+  "agentUserUsageLocation": "US",
+  "agentDescription": "W365 Computer Use sample agent",
+  "useBlueprint": false,
+  "customBlueprintPermissions": [
+    {
+      "resourceAppId": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1",
+      "resourceName": "Agent 365 Tools",
+      "scopes": [
+        "McpServersMetadata.Read.All",
+        "McpServers.W365ComputerUse.All"
+      ]
+    }
+  ]
+}
