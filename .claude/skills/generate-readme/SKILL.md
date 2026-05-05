@@ -72,7 +72,7 @@ This section describes the authentication and identity model used by the agent. 
 |------------|-------------|-------------|
 | Agent user | The agent authenticates as its own agentic user identity. | AI Teammates with Teams/Copilot chat capabilities. |
 | On behalf of the user | The agent acts on behalf of the signed-in user via OBO token exchange. | Interactive or autonomous agents that call resources as the user. |
-| App token | The agent authenticates using application credentials with no user context. | Interactive or autonomous agents that call resources as the app. |
+| App-based | The agent authenticates using application credentials with no user context. | Interactive or autonomous agents that call resources as the app. |
 
 **Identity models** (pick one):
 
@@ -109,7 +109,7 @@ Write the section as:
 <Configuration reference — either a table of .env variables or appsettings.json keys. Include "Set by" column (CLI or Manual).>
 ```
 
-For all samples, include `ENABLE_A365_OBSERVABILITY_EXPORTER`, `ENABLE_A365_OBSERVABILITY`, `OTEL_LOG_LEVEL`, and `A365_OBSERVABILITY_LOG_LEVEL` in the configuration table. If they are not set, prompt the user and ask if they would like them to be added. If yes, add them. Default values are `ENABLE_A365_OBSERVABILITY_EXPORTER`=true, `ENABLE_A365_OBSERVABILITY`=true, `A365_OBSERVABILITY_LOG_LEVEL`=info, and `OTEL_LOG_LEVEL`=Debug. `ENABLE_A365_OBSERVABILITY_EXPORTER` is a Python and JavaScript concept. In .NET, the Agent 365 exporter is controlled entirely in code via `ExportTarget.Agent365`. Update this if needed.
+For Python and Node.js samples, include `ENABLE_A365_OBSERVABILITY_EXPORTER`, `ENABLE_A365_OBSERVABILITY`, `OTEL_LOG_LEVEL`, and `A365_OBSERVABILITY_LOG_LEVEL` in the configuration table. If they are not set, prompt the user and ask if they would like them to be added. If yes, add them. Default values are `ENABLE_A365_OBSERVABILITY_EXPORTER`=true, `ENABLE_A365_OBSERVABILITY`=true, `A365_OBSERVABILITY_LOG_LEVEL`=info, and `OTEL_LOG_LEVEL`=Debug. For .NET samples, these environment variables do not apply — the A365 exporter is controlled in code via `ExportTarget.Agent365`, and log levels are configured in `appsettings.json` under `Logging:LogLevel`. The .NET equivalents are: `Logging:LogLevel:OpenTelemetry` (equivalent of `OTEL_LOG_LEVEL`) and `Logging:LogLevel:Microsoft.Agents.A365.Observability` (equivalent of `A365_OBSERVABILITY_LOG_LEVEL`).
 
 ### 6. Running the Agent Locally
 
@@ -214,7 +214,7 @@ Adjust the relative path to `LICENSE.md` based on the sample's depth in the repo
 ### Auth + Identity Detection
 - Has `TurnContext` with `Activity.From` + agentic user references → Agent user auth + Agent user with own identity
 - Has `exchangeToken` / OBO flow → On behalf of the user
-- Has only client credentials / MSI with no user context → App-based auth + Agent identity
+- Has only client credentials / MSI with no user context → App-based + Agent identity
 - Has `WithFmiPath` / `fmi_path` / FMI chain → Agent identity
 - Has simple `ClientSecretCredential` with no FMI → Entra app service principal
 

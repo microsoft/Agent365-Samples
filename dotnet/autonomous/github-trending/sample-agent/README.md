@@ -1,6 +1,6 @@
 # Autonomous Agent — .NET Sample
 
-This sample demonstrates a **purely autonomous agent** built for Microsoft Agent 365 with the Microsoft OpenTelemetry distribution for .NET.
+This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for .NET. Unlike the interactive agent samples, this agent has **no chat functionality** — it runs entirely as a background service using the `BackgroundService` pattern.
 
 Every 60 seconds, the agent prompts Azure OpenAI to fetch trending GitHub repositories using a registered tool. The model calls the `GetTrendingRepositories` tool, which queries the GitHub Search API, then summarizes the results into a readable digest that is logged to the console. All operations are **manually instrumented** with Agent 365 observability using the tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`), making this a useful reference for instrumenting any non-interactive or custom agent loop.
 
@@ -30,7 +30,7 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 
 | Aspect | Model |
 |--------|-------|
-| **Authentication** | App token |
+| **Authentication** | App-based |
 | **Identity** | Agent identity |
 
 The agent authenticates using application credentials with no user context. In `Observability/ObservabilityTokenService.cs`, a 3-hop FMI chain bridges the blueprint's credentials to the agent identity via `.WithFmiPath(agentId)`, allowing the agent identity to acquire tokens for the A365 Observability API.
