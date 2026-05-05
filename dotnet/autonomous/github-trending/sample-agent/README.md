@@ -141,7 +141,7 @@ No client secrets are needed in production — MSI handles authentication via th
 
 Each autonomous cycle produces three nested spans: an `InvokeAgentScope` wrapping the full cycle, an `InferenceScope` wrapping the LLM call (which may include multiple round-trips for function invocation), and an `ExecuteToolScope` wrapping the GitHub API tool call. These are emitted manually in `GitHubTrendingService.cs` and `Tools/GitHubTrendingTool.cs` using the OpenTelemetry distribution scopes.
 
-The `ObservabilityTokenService` acquires tokens for the A365 exporter via a 3-hop FMI chain: the blueprint authenticates (MSI in production, client secret locally), exchanges for a T1 token targeting the agent identity via `.WithFmiPath`, then the agent identity uses T1 as an assertion to acquire an Observability API token. This token is cached in `ServiceTokenCache` and refreshed every 50 minutes. `UseManagedIdentity: true` in `appsettings.json` controls which path is used; it automatically falls back to client secret if MSI is unavailable.
+The `ObservabilityTokenService` acquires tokens for the A365 exporter via a 3-hop FMI chain: the blueprint authenticates (MSI in production, client secret locally), exchanges for a T1 token targeting the agent identity via `.WithFmiPath`, then the agent identity uses T1 as an assertion to acquire an Observability API token. This token is cached in `ServiceTokenCache` and refreshed every 50 minutes. `UseManagedIdentity: true` in `appsettings.json` controls whether the managed identity path or the client secret path is used.
 
 For details on the observability SDK and instrumentation patterns, see the [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
 

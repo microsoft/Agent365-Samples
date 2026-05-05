@@ -79,7 +79,7 @@ This section describes the authentication and identity model used by the agent. 
 | Identity Model | Description | When to use |
 |----------------|-------------|-------------|
 | Agent user with own identity | The agent has an agentic user account in the tenant. | AI Teammates with Teams/Copilot chat capabilities. |
-| Agent identity | The agent has an identity service principal that serves as an instance of the blueprint. | Agent . |
+| Agent identity | The agent has an identity service principal that serves as an instance of the blueprint. | Agent 365 blueprint-based agents that use the Agent identity model (service principal instance of the blueprint). |
 | Entra app service principal | The agent authenticates as a standard Entra app registration (no blueprint, no FMI). | Simple agents using direct client credentials without the A365 identity model. |
 
 Write the section as:
