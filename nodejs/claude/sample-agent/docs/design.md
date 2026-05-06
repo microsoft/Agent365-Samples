@@ -6,10 +6,10 @@ This sample demonstrates an agent built using Anthropic's Claude AI as the orche
 
 ## What This Sample Demonstrates
 
-- Anthropic Claude SDK integration (`@anthropic-ai/sdk`)
-- Claude tool use (function calling) patterns
-- MCP server tool registration for Claude
-- Microsoft Agent 365 observability
+- Anthropic Claude Agent SDK integration (`@anthropic-ai/claude-agent-sdk`)
+- Auto-instrumentation via `@microsoft/opentelemetry` distro
+- Explicit `InferenceScope` for LLM call tracing (required due to Claude SDK subprocess model)
+- MCP server tool registration via `@microsoft/agents-a365-tooling-extensions-claude`
 - TypeScript type safety
 
 ## Architecture
@@ -17,10 +17,16 @@ This sample demonstrates an agent built using Anthropic's Claude AI as the orche
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                       index.ts                                   │
+│  import './otel'  ← must be first, patches HTTP at load time     │
 │  Express server + /api/messages endpoint                         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       otel.ts                                    │
+│  useMicrosoftOpenTelemetry() — auto-instruments HTTP, Express    │
+└─────────────────────────────────────────────────────────────────┘
+
 ┌─────────────────────────────────────────────────────────────────┐
 │                       agent.ts                                   │
 │  MyAgent extends AgentApplication<TurnState>                     │
@@ -31,106 +37,136 @@ This sample demonstrates an agent built using Anthropic's Claude AI as the orche
 │                       client.ts                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │              ClaudeClient                                    ││
-│  │  Anthropic SDK → messages.create() → Tool Use Loop           ││
+│  │  InferenceScope → query() → Claude CLI subprocess            ││
+│  │                   [api.anthropic.com call happens here]       ││
 │  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Components
 
+### src/otel.ts
+Initialises the `@microsoft/opentelemetry` distro. Must be imported first in `index.ts` so auto-instrumentation patches are applied before any HTTP modules load:
+
+```typescript
+import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+
+useMicrosoftOpenTelemetry();
+```
+
 ### src/index.ts
-Application entry point with Express server.
+Application entry point. Imports `./otel` before all other modules, then starts the Express server.
 
 ### src/agent.ts
-Agent application routing messages to Claude client.
+Agent application routing messages to the Claude client. Handles `message` and `installationUpdate` activities.
 
 ### src/client.ts
 Claude-specific client implementation:
-- Anthropic SDK configuration
-- Tool use handling
-- MCP tool conversion to Claude format
+- Uses `query()` from `@anthropic-ai/claude-agent-sdk` — the SDK spawns the Claude CLI as a subprocess to handle inference
+- Wraps `query()` in `InferenceScope` to produce a span covering the LLM call (required because the actual HTTPS call to `api.anthropic.com` happens in the subprocess, invisible to HTTP auto-instrumentation)
+- MCP tools are registered via `McpToolRegistrationService.addToolServersToAgent()` before each query
 
-## Claude-Specific Patterns
+## Claude Agent SDK — Subprocess Model
 
-### Tool Use Loop
+The `@anthropic-ai/claude-agent-sdk` executes inference by spawning `dist/cli.js` as a child process. The `api.anthropic.com` HTTPS call happens inside that subprocess — it is invisible to the parent process's HTTP auto-instrumentation.
+
+This is why `InferenceScope` is added explicitly in `invokeAgentWithScope`:
+
 ```typescript
-class ClaudeClient implements Client {
-  private anthropic: Anthropic;
-
-  async invokeAgent(prompt: string): Promise<string> {
-    let messages: MessageParam[] = [
-      { role: 'user', content: prompt }
-    ];
-
-    while (true) {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1024,
-        system: this.systemPrompt,
-        tools: this.tools,
-        messages,
-      });
-
-      // Check for tool use
-      if (response.stop_reason === 'tool_use') {
-        const toolUse = response.content.find(c => c.type === 'tool_use');
-        const toolResult = await this.executeTool(toolUse);
-
-        messages.push({ role: 'assistant', content: response.content });
-        messages.push({
-          role: 'user',
-          content: [{
-            type: 'tool_result',
-            tool_use_id: toolUse.id,
-            content: toolResult,
-          }]
-        });
-      } else {
-        // Extract text response
-        const textBlock = response.content.find(c => c.type === 'text');
-        return textBlock?.text || '';
-      }
-    }
-  }
+// InferenceScope is added explicitly because the Claude Agent SDK spawns a child process
+// to execute inference — the actual HTTPS call to api.anthropic.com happens in that subprocess,
+// not in this process. HTTP auto-instrumentation cannot cross process boundaries, so without
+// this scope there would be no span covering the LLM call and no gen_ai.* attributes in traces.
+const scope = InferenceScope.start(
+  {},
+  { operationName: InferenceOperationType.CHAT, model: 'claude', providerName: 'anthropic' },
+  { agentId: 'claude-sample-agent', tenantId: this.tenantId }
+);
+try {
+  return await scope.withActiveSpanAsync(() => this.invokeAgent(prompt));
+} catch (error) {
+  scope.recordError(error as Error);
+  throw error;
+} finally {
+  scope.dispose();
 }
 ```
 
-### MCP to Claude Tool Conversion
+## Observability
+
+Observability has two layers:
+
+### 1. Auto-instrumentation (`otel.ts`)
+`useMicrosoftOpenTelemetry()` instruments the following automatically — no custom code required:
+
+| Span | What it captures |
+|---|---|
+| `POST /api/messages` | Inbound request — method, path, status code (Express) |
+| `POST login.microsoftonline.com` | MSAL token acquisition (HttpClient) |
+| `POST smba.trafficmanager.net` | Outbound Teams messages (HttpClient) |
+
+### 2. Explicit `InferenceScope` (`client.ts`)
+Because the Claude Agent SDK uses a subprocess, the LLM call is not auto-instrumented. `InferenceScope` manually brackets the `query()` call to produce a `gen_ai.*` span with model, provider, and agent identity attributes.
+
+### Service Name
+Set `OTEL_SERVICE_NAME` in `.env` to give your service a meaningful name in traces. Defaults to the package name if not set.
+
+## MCP Tool Registration
+
+MCP tools are injected into the `Options` object before each `query()` call:
+
 ```typescript
-function convertMcpToolsToClaude(mcpTools: MCPTool[]): Tool[] {
-  return mcpTools.map(tool => ({
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.inputSchema,
-  }));
-}
+await toolService.addToolServersToAgent(
+  requestConfig,       // Options object passed to query()
+  authorization,       // Auth handler
+  authHandlerName,
+  turnContext,
+  process.env.BEARER_TOKEN || "",
+);
 ```
+
+`McpToolRegistrationService` from `@microsoft/agents-a365-tooling-extensions-claude` handles fetching and formatting tools for the Claude Agent SDK format.
 
 ## Configuration
 
 ### .env file
 ```bash
-# Claude Configuration
-ANTHROPIC_API_KEY=sk-ant-...
-CLAUDE_MODEL=claude-3-5-sonnet-20241022
+# Anthropic
+ANTHROPIC_API_KEY=
 
-# Authentication
-BEARER_TOKEN=...
-CLIENT_ID=...
-TENANT_ID=...
+# MCP Tooling
+BEARER_TOKEN=                         # Development bearer token
 
-# Observability
-ENABLE_OBSERVABILITY=true
+# OpenTelemetry
+OTEL_SERVICE_NAME=Claude Sample Agent # Service name in traces
+OTEL_EXPORTER_OTLP_ENDPOINT=          # OTLP collector (leave empty for console)
+ENABLE_A365_OBSERVABILITY_EXPORTER=   # Set to 'false' for console-only
+
+# Environment
+NODE_ENV=development                   # 'production' for Teams (enables JWT validation)
+
+# Service Connection (auth)
+connections__service_connection__settings__clientId=
+connections__service_connection__settings__clientSecret=
+connections__service_connection__settings__tenantId=
 ```
 
 ## Message Flow
 
 ```
-1. HTTP POST /api/messages
-2. MyAgent routes to Claude client
-3. Claude processes message
-4. Tool use loop (if tools requested)
-5. Final text response returned
+1. import './otel'  [patches HTTP instrumentation at startup]
+   │
+2. HTTP POST /api/messages  [auto-instrumented by Express]
+   │
+3. MyAgent.handleAgentMessageActivity()
+   │  └── getClient() — registers MCP tools into Options
+   │
+4. ClaudeClient.invokeAgentWithScope()
+   │  └── InferenceScope.start()  [explicit — subprocess boundary]
+   │      └── query()  [spawns Claude CLI subprocess]
+   │              └── api.anthropic.com  [in subprocess]
+   │
+5. Send response via sendActivity()  [auto-instrumented outbound HTTP]
 ```
 
 ## Dependencies
@@ -138,26 +174,21 @@ ENABLE_OBSERVABILITY=true
 ```json
 {
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.30.0",
-    "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "^0.0.1",
-    "@microsoft/agents-a365-tooling": "^0.0.1",
-    "express": "^4.18.0"
+    "@anthropic-ai/claude-agent-sdk": "^0.1.1",
+    "@microsoft/agents-a365-notifications": "1.0.0",
+    "@microsoft/agents-a365-tooling": "1.0.0",
+    "@microsoft/agents-a365-tooling-extensions-claude": "1.0.0",
+    "@microsoft/agents-activity": "^1.2.2",
+    "@microsoft/agents-hosting": "^1.2.2",
+    "@microsoft/opentelemetry": "1.0.1",
+    "express": "^5.1.0"
   }
 }
 ```
 
-## Running the Agent
-
-```bash
-npm install
-npm run build
-npm start
-```
-
 ## Extension Points
 
-1. **Model Selection**: Choose different Claude models
-2. **Tool Definitions**: Add custom Claude tools
-3. **System Prompts**: Customize agent behavior
-4. **Streaming**: Enable streaming responses
+1. **Model Selection**: Set `model` in `Options` passed to `query()`
+2. **System Prompt**: Modify `agentConfig.systemPrompt` in `client.ts`
+3. **Max Turns**: Adjust `maxTurns` in `agentConfig`
+4. **Additional MCP Servers**: Configure in the tool manifest; automatic registration via `addToolServersToAgent`
