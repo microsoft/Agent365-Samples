@@ -2,14 +2,7 @@
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for .NET. Unlike the interactive agent samples, this agent has **no chat functionality** — it runs entirely as a background service using the `BackgroundService` pattern.
 
-Every 60 seconds, the agent:
-
-1. Prompts Azure OpenAI to fetch trending GitHub repositories using a registered tool
-2. The model calls the `GetTrendingRepositories` tool, which queries the GitHub Search API
-3. The model summarizes the results into a readable digest
-4. The digest is logged to the console
-
-All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). This autonomous agent has no chat pipeline, turn handler, or incoming-message authentication — each background cycle and tool call is explicitly wrapped with the appropriate observability scope. This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
+Every 60 seconds, the agent prompts Azure OpenAI to fetch trending GitHub repositories using a registered tool. The model calls the `GetTrendingRepositories` tool, which queries the GitHub Search API, then summarizes the results into a readable digest that is logged to the console. All operations are **manually instrumented** with Agent 365 observability using the tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`), making this a useful reference for instrumenting any non-interactive or custom agent loop.
 
 For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
@@ -32,6 +25,15 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 - [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
+
+## Authentication + Identity
+
+| Aspect | Model |
+|--------|-------|
+| **Authentication** | App-based |
+| **Identity** | Agent identity |
+
+The agent authenticates using application credentials with no user context. In `Observability/ObservabilityTokenService.cs`, a 3-hop FMI chain bridges the blueprint's credentials to the agent identity via `.WithFmiPath(agentId)`, allowing the agent identity to acquire tokens for the A365 Observability API.
 
 ## Environment Configuration
 
@@ -65,38 +67,29 @@ export AzureOpenAI__ApiKey="your-api-key"
 export AzureOpenAI__Deployment="gpt-4o"
 ```
 
-### Configuration Reference
-
-#### appsettings.json (production defaults)
+### Configuration
 
 All `<<PLACEHOLDER>>` values are written by `a365 setup all`. The `AzureOpenAI` section must be set manually.
 
-| Section | Key | Set by | Description |
-|---------|-----|--------|-------------|
-| `Agent365Observability` | `TenantId` | CLI | Entra tenant ID |
-| | `AgentBlueprintId` | CLI | Blueprint app registration ID |
-| | `AgentId` | CLI | Agent identity ID (separate from blueprint) |
-| | `ClientId` | CLI | Blueprint app ID (same as `AgentBlueprintId`) |
-| | `ClientSecret` | CLI | Blueprint client secret |
-| | `AgentName` | CLI | Display name shown in traces |
-| | `AgentDescription` | CLI | Agent description shown in traces |
-| | `UseManagedIdentity` | Manual | `true` for production (MSI), `false` for local dev (client secret) |
-| `AzureOpenAI` | `Endpoint` | Manual | Azure OpenAI resource endpoint |
-| | `ApiKey` | Manual | Azure OpenAI API key |
-| | `Deployment` | Manual | Model deployment name |
-| `EnableAgent365Exporter` | — | Manual | `true` to enable the A365 span exporter |
-
-### GitHub Trending Configuration
-
-The `GitHubTrending` section in `appsettings.json` controls search parameters:
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| `Language` | Programming language filter (e.g., `csharp`, `python`, `typescript`) | `csharp` |
-| `MinStars` | Minimum star count for repositories | `5` |
-| `MaxResults` | Number of repositories per digest | `10` |
-
-The GitHub Search API is unauthenticated — no API key required (rate limit: 10 requests/minute).
+| Section | Key | Set by | Default | Description |
+|---------|-----|--------|---------|-------------|
+| `Agent365Observability` | `TenantId` | CLI | — | Entra tenant ID |
+| | `AgentBlueprintId` | CLI | — | Blueprint app registration ID |
+| | `AgentId` | CLI | — | Agent identity ID (separate from blueprint) |
+| | `ClientId` | CLI | — | Blueprint app ID (same as `AgentBlueprintId`) |
+| | `ClientSecret` | CLI | — | Blueprint client secret (local dev only) |
+| | `AgentName` | CLI | — | Display name shown in traces |
+| | `AgentDescription` | CLI | — | Agent description shown in traces |
+| | `UseManagedIdentity` | Manual | `true` | `true` for production (MSI), `false` for local dev (client secret) |
+| `AzureOpenAI` | `Endpoint` | Manual | — | Azure OpenAI resource endpoint |
+| | `ApiKey` | Manual | — | Azure OpenAI API key (omit to use `DefaultAzureCredential`) |
+| | `Deployment` | Manual | `gpt-4o` | Model deployment name |
+| `GitHubTrending` | `Language` | Manual | `csharp` | Programming language filter (e.g., `python`, `typescript`) |
+| | `MinStars` | Manual | `5` | Minimum star count for repositories |
+| | `MaxResults` | Manual | `10` | Number of repositories per digest |
+| — | `HeartbeatIntervalMs` | Manual | `60000` | Polling interval in milliseconds |
+| `Logging:LogLevel` | `Microsoft.Agents.A365.Observability` | Manual | `Debug` | A365 observability log level |
+| | `OpenTelemetry` | Manual | `Debug` | OTel log level |
 
 ## Running the Agent Locally
 
@@ -138,57 +131,19 @@ The polling interval is controlled by `HeartbeatIntervalMs` in `appsettings.json
 Deploy to your hosting provider (Azure App Service, Container Apps, etc.) and ensure:
 
 1. **Managed Identity is enabled** on the hosting resource
-2. The MSI has a **Federated Identity Credential (FIC)** configured against the blueprint app — this is set up by `a365 setup all` when deploying to Azure
+2. The MSI has a **Federated Identity Credential (FIC)** configured against the blueprint app — this is set up by `a365 setup all`
 3. `ASPNETCORE_ENVIRONMENT` is set to `Production` (or omitted — it's the default)
 4. The `AzureOpenAI` settings are configured via environment variables or app settings
-5. `EnableAgent365Exporter` is set to `true` in `appsettings.json`
 
-No client secrets are needed in production — MSI handles authentication.
+No client secrets are needed in production — MSI handles authentication via the FMI chain.
 
-## Observability Architecture
+## Observability
 
-### Tracing spans
+Each autonomous cycle produces three nested spans: an `InvokeAgentScope` wrapping the full cycle, an `InferenceScope` wrapping the LLM call (which may include multiple round-trips for function invocation), and an `ExecuteToolScope` wrapping the GitHub API tool call. These are emitted manually in `GitHubTrendingService.cs` and `Tools/GitHubTrendingTool.cs` using the OpenTelemetry distribution scopes.
 
-Each autonomous cycle produces three nested spans:
+The `ObservabilityTokenService` acquires tokens for the A365 exporter via a 3-hop FMI chain: the blueprint authenticates (MSI in production, client secret locally), exchanges for a T1 token targeting the agent identity via `.WithFmiPath`, then the agent identity uses T1 as an assertion to acquire an Observability API token. This token is cached in `ServiceTokenCache` and refreshed every 50 minutes. `UseManagedIdentity: true` in `appsettings.json` controls whether the managed identity path or the client secret path is used.
 
-```
-InvokeAgentScope                        (root — wraps the entire cycle)
-  |-- InferenceScope                    (child — wraps the LLM call)
-  |-- ExecuteToolScope                  (child — wraps the GitHub API tool call)
-```
-
-These spans are emitted by the [Microsoft OpenTelemetry distro](https://github.com/microsoft/opentelemetry-distro-dotnet) and exported to the Agent 365 observability service.
-
-### Token flow — 3-hop FMI chain
-
-The `ObservabilityTokenService` background service acquires tokens for the A365 observability exporter using a 3-hop Federated Managed Identity (FMI) chain. This is required because Entra's agentic application enforcement (`AADSTS82001`) prevents blueprints from directly requesting app-only tokens for the observability resource.
-
-```
-Production (MSI):
-  MSI -> ManagedIdentityCredential.GetToken("api://AzureADTokenExchange")
-      -> Blueprint ConfidentialClient + assertion + .WithFmiPath(agentId)
-      -> T1 token (targeted at Agent Identity)
-      -> Agent Identity ConfidentialClient + T1 as assertion
-      -> AcquireTokenForClient("api://9b975845-.../.default")
-      -> Observability API token
-
-Local dev (client secret):
-  Blueprint ConfidentialClient + ClientSecret + .WithFmiPath(agentId)
-      -> T1 token (targeted at Agent Identity)
-      -> Agent Identity ConfidentialClient + T1 as assertion
-      -> AcquireTokenForClient("api://9b975845-.../.default")
-      -> Observability API token
-```
-
-The token is refreshed every 50 minutes and cached in the `ServiceTokenCache`. The A365 exporter's `TokenResolver` reads from this cache when exporting spans.
-
-**Why this flow?**
-- The **blueprint** owns the client credentials and the `OtelWrite` app role
-- The **agent identity** inherits permissions from the blueprint via **consent inheritance**
-- Entra requires app-only tokens for the observability resource to be issued to the **agent identity**, not the blueprint directly
-- The FMI path (`.WithFmiPath`) bridges the blueprint's credentials to the agent identity without the agent identity needing its own client secret
-
-For more details on the observability SDK and instrumentation patterns, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+For details on the observability SDK and instrumentation patterns, see the [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
 
 ## Support
 
