@@ -5,7 +5,6 @@ using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
 using AgentNotification;
 using Microsoft.Agents.A365.Notifications.Models;
-using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App;
@@ -27,7 +26,6 @@ public class MyAgent : AgentApplication
 {
     private readonly Kernel _kernel;
     private readonly IMcpToolRegistrationService _toolsService;
-    private readonly IExporterTokenCache<AgenticTokenStruct> _agentTokenCache;
     private readonly ILogger<MyAgent> _logger;
     private readonly IConfiguration _configuration;
     // Setup reusable auto sign-in handlers
@@ -38,12 +36,11 @@ public class MyAgent : AgentApplication
     internal static bool IsApplicationInstalled { get; set; } = false;
     internal static bool TermsAndConditionsAccepted { get; set; } = false;
 
-    public MyAgent(AgentApplicationOptions options, IConfiguration configuration, Kernel kernel, IMcpToolRegistrationService toolService, IExporterTokenCache<AgenticTokenStruct> agentTokenCache, ILogger<MyAgent> logger) : base(options)
+    public MyAgent(AgentApplicationOptions options, IConfiguration configuration, Kernel kernel, IMcpToolRegistrationService toolService, ILogger<MyAgent> logger) : base(options)
     {
         _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
         _toolsService = toolService ?? throw new ArgumentNullException(nameof(toolService));
-        _agentTokenCache = agentTokenCache ?? throw new ArgumentNullException(nameof(agentTokenCache));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
         // Disable for development purpose. In production, you would typically want to have the user accept the terms and conditions on first use and then store that in a retrievable location.
@@ -100,7 +97,6 @@ public class MyAgent : AgentApplication
          "MessageProcessor",
          turnContext,
          turnState,
-         _agentTokenCache,
          UserAuthorization,
          ObservabilityAuthHandlerName,
          _logger,
@@ -187,7 +183,6 @@ public class MyAgent : AgentApplication
          "AgentNotificationActivityAsync",
          turnContext,
          turnState,
-         _agentTokenCache,
          UserAuthorization,
          ObservabilityAuthHandlerName,
          _logger,
@@ -302,7 +297,6 @@ public class MyAgent : AgentApplication
          "OnHireMessageAsync",
          turnContext,
          turnState,
-         _agentTokenCache,
          UserAuthorization,
          ObservabilityAuthHandlerName,
          _logger,
