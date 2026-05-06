@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
@@ -19,7 +18,6 @@ namespace Agent365SemanticKernelSampleAgent.telemetry
             string operationName,
             ITurnContext turnContext,
             ITurnState turnState,
-            IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
             UserAuthorization authSystem,
             string authHandlerName,
             ILogger? logger,
@@ -39,20 +37,6 @@ namespace Agent365SemanticKernelSampleAgent.telemetry
                     .TenantId(tenantId)
                     .AgentId(agentId)
                     .Build();
-
-                    try
-                    {
-                        agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
-                        {
-                            UserAuthorization = authSystem,
-                            TurnContext = turnContext,
-                            AuthHandlerName = authHandlerName
-                        }, EnvironmentUtils.GetObservabilityAuthenticationScope());
-                    }
-                    catch (Exception ex)
-                    {
-                        logger?.LogWarning($"There was an error registering for observability: {ex.Message}");
-                    }
 
                     // Invoke the actual operation.
                     await func().ConfigureAwait(false);
