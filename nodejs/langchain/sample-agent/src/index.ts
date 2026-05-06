@@ -11,7 +11,7 @@ configDotenv();
 // See: https://github.com/microsoft/opentelemetry-distro-javascript
 import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
 import { tokenResolver } from './token-cache';
-import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
+import { AgenticTokenCacheInstance } from '@microsoft/opentelemetry';
 
 useMicrosoftOpenTelemetry({
   a365: {
@@ -22,8 +22,10 @@ useMicrosoftOpenTelemetry({
       ? (agentId: string, tenantId: string) => tokenResolver(agentId, tenantId) ?? ''
       : (agentId: string, tenantId: string) => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
   },
+  enableConsoleExporters: true,
   instrumentationOptions: {
-    langchain: {},
+    langchain: { enabled: true },
+    openaiAgents: { enabled: false },
   },
 });
 
@@ -56,7 +58,7 @@ server.post('/api/messages', (req: Request, res: Response) => {
 })
 
 const port = Number(process.env.PORT) || 3978
-const host = isProduction ? '0.0.0.0' : '127.0.0.1';
+const host = process.env.HOST || (isProduction ? '0.0.0.0' : '127.0.0.1');
 server.listen(port, host, async () => {
   console.log(`\nServer listening on http://${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
 }).on('error', async (err: unknown) => {

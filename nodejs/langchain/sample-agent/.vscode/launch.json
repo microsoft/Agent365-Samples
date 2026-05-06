@@ -2,6 +2,32 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Debug (Agentic Auth + Dev Tunnel)",
+            "type": "node",
+            "request": "launch",
+            "runtimeArgs": ["-r", "ts-node/register"],
+            "args": ["${workspaceFolder}/src/index.ts"],
+            "env": {
+                "NODE_ENV": "production",
+                "PORT": "3978",
+                "HOST": "0.0.0.0",
+                "DEBUG": "agents:*",
+                "USE_AGENTIC_AUTH": "true",
+                "agentic_type": "agentic",
+                "agentic_altBlueprintConnectionName": "service_connection",
+                "agentic_scopes": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default",
+                "connectionsMap__0__serviceUrl": "*",
+                "connectionsMap__0__connection": "service_connection",
+                "connections__service_connection__settings__clientId": "037c994d-fc58-49e3-8b44-816dfe8e4a26"
+            },
+            "envFile": "${workspaceFolder}/.env",
+            "sourceMaps": true,
+            "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "preLaunchTask": "Start Dev Tunnel (langchain-agent-debug)"
+        },
+        {
             "name": "Attach to Local Service",
             "type": "node",
             "request": "attach",

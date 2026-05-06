@@ -197,6 +197,12 @@ agentic_altBlueprintConnectionName=service_connection
 agentic_scopes=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default
 ```
 
+> **Note**: The above environment variable names are deprecated. Use the new format:
+> ```
+> AgentApplication__UserAuthorization__Handlers__agentic__Settings__altBlueprintConnectionName=service_connection
+> AgentApplication__UserAuthorization__Handlers__agentic__Settings__scopes=ea9ffc3e-8a23-4a7d-836d-234d7c7565c1/.default
+> ```
+
 #### B. LangChainClient Wrapper
 ```typescript
 class LangChainClient implements Client {
