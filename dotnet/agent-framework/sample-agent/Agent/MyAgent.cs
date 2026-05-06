@@ -38,7 +38,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         You may ask follow up questions until you have enough information to answer the customers question, but once you have the current weather or a forecast, make sure to format it nicely in text.
         - For current weather, Use the {{WeatherLookupTool.GetCurrentWeatherForLocation}}, you should include the current temperature, low and high temperatures, wind speed, humidity, and a short description of the weather.
         - For forecast's, Use the {{WeatherLookupTool.GetWeatherForecastForLocation}}, you should report on the next 5 days, including the current day, and include the date, high and low temperatures, and a short description of the weather.
-        - You should use the {{DateTimePlugin.GetDateTime}} to get the current date and time.
+        - You should use the {{DateTimeFunctionTool.GetCurrentDateTime}} to get the current date and time.
 
         Otherwise you should use the tools available to you to help answer the user's questions.
         """;
