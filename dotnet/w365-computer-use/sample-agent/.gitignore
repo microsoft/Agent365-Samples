@@ -1,0 +1,9 @@
+appsettings.Development.json
+appsettings.Production.json
+Screenshots/
+a365.config.json
+a365.generated.config.json
+app.zip
+manifest/
+publish/
+.vscode/.env

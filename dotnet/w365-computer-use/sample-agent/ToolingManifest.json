@@ -1,0 +1,11 @@
+{
+  "mcpServers": [
+    {
+      "mcpServerName": "mcp_W365ComputerUse",
+      "mcpServerUniqueName": "mcp_W365ComputerUse",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse",
+      "scope": "McpServers.W365ComputerUse.All",
+      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    }
+  ]
+}
