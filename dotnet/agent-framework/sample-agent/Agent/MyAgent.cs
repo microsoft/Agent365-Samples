@@ -334,14 +334,15 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     {
                         await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
 
-                        // For the bearer token (development) flow, pass the token as an override and
-                        // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
+                        // The SDK's token provider (AgenticMcpTokenProvider in production,
+                        // DevMcpTokenProvider in dev) resolves per-server tokens automatically:
+                        // - Dev:  reads BEARER_TOKEN_<SERVER_NAME> (V2) or BEARER_TOKEN (V1 fallback)
+                        // - Prod: performs per-audience OBO exchange for each V2 server
                         var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
                             ? authHandlerName
                             : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-                        var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
 
-                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
+                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context).ConfigureAwait(false);
 
                         if (a365Tools != null && a365Tools.Count > 0)
                         {
