@@ -20,7 +20,7 @@
     <!-- Microsoft OpenTelemetry Distro — includes A365 observability types
          (BaggageBuilder, InvokeAgentScope, InferenceScope, ExecuteToolScope,
           IExporterTokenCache, ServiceTokenCache, AgentDetails, etc.) -->
-    <PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.0-beta.1" />
+    <PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.1" />
   </ItemGroup>
 
 
