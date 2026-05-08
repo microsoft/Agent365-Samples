@@ -36,10 +36,31 @@ const agentName = "LangChainA365Agent";
 function createChatModel(): BaseChatModel {
   // Check for Azure OpenAI configuration first
   if (process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT) {
+    const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+
+    // Azure AI Foundry endpoints use a /v1 path and are OpenAI-compatible.
+    // They do not accept the api-version query parameter, so use ChatOpenAI
+    // with a custom baseURL instead of AzureChatOpenAI.
+    if (endpoint.includes('/v1')) {
+      console.log('Using Azure AI Foundry OpenAI-compatible endpoint');
+      const baseURL = endpoint.substring(0, endpoint.indexOf('/v1') + 3);
+      return new ChatOpenAI({
+        openAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+        modelName: process.env.AZURE_OPENAI_DEPLOYMENT,
+        temperature: 0,
+        configuration: {
+          baseURL,
+          apiKey: process.env.AZURE_OPENAI_API_KEY,
+          defaultHeaders: { 'api-key': process.env.AZURE_OPENAI_API_KEY },
+        },
+      });
+    }
+
     console.log('Using Azure OpenAI');
+    
     return new AzureChatOpenAI({
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
-      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT?.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
+      azureOpenAIApiInstanceName: endpoint.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
       azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
       azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview",
       temperature: 0,
@@ -183,13 +204,13 @@ class LangChainClient implements Client {
   }
 
   async invokeInferenceScope(prompt: string) {
+    const request: Request = {
+      conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
+    };
+
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: "gpt-4o-mini",
-    };
-
-    const request: Request = {
-      conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
     const agentDetails: AgentDetails = {

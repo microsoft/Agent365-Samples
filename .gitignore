@@ -119,3 +119,7 @@ publish/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Agent 365 generated config (contains secrets and environment-specific values)
+a365.config.json
+a365.generated.config.json
