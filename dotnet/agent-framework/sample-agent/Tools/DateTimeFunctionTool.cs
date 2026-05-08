@@ -1,17 +1,16 @@
-﻿// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 using System.ComponentModel;
 
 namespace Agent365AgentFrameworkSampleAgent.Tools
 {
-    public static class DateTimeFunctionTool
+    public class DateTimeFunctionTool
     {
         [Description("Use this tool to get the current date and time")]
-        public static string getDate(string input)
+        public string GetCurrentDateTime()
         {
-            string date = DateTimeOffset.Now.ToString("D", null);
-            return date;
+            return DateTimeOffset.Now.ToString("D", null);
         }
     }
 }

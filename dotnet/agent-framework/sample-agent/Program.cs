@@ -3,7 +3,6 @@
 
 using Agent365AgentFrameworkSampleAgent;
 using Agent365AgentFrameworkSampleAgent.Agent;
-using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
@@ -27,6 +26,12 @@ builder.UseMicrosoftOpenTelemetry(o =>
     o.Exporters = builder.Environment.IsDevelopment()
         ? ExportTarget.Agent365 | ExportTarget.Console
         : ExportTarget.Agent365;
+
+    // Agent365-only export suppresses infrastructure instrumentation by default.
+    // Re-enable explicitly so HTTP calls (Azure OpenAI, auth, Teams) appear in traces.
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
 });
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
@@ -84,7 +89,7 @@ builder.Services.AddSingleton<IChatClient>(sp => {
         .AsIChatClient()
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: null, configure: (cfg) => cfg.EnableSensitiveData = true)
         .Build(); 
 });
 
@@ -106,10 +111,7 @@ app.UseAuthorization();
 // Map the /api/messages endpoint to the AgentApplication
 app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
-    {
-        await adapter.ProcessAsync(request, response, agent, cancellationToken);
-    }).ConfigureAwait(false);
+    await adapter.ProcessAsync(request, response, agent, cancellationToken);
 });
 
 // Health check endpoint for CI/CD pipelines and monitoring
