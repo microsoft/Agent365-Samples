@@ -8,7 +8,9 @@ import {
   InferenceOperationType,
   InferenceScope,
   InvokeAgentScope,
+  InvokeAgentScopeDetails,
   ObservabilityManager,
+  Request,
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import { ClusterCategory } from "@microsoft/agents-a365-runtime";
@@ -93,15 +95,21 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         const baggageScope = new BaggageBuilder()
           .tenantId(tenantDetails.tenantId)
           .agentId(invokeAgentDetails.agentId)
-          .correlationId(uuidv4())
           .agentName(invokeAgentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();
 
         await baggageScope.run(async () => {
+          const request: Request = {
+            conversationId: context.activity.conversation?.id,
+            sessionId: context.activity.conversation?.id,
+            content: context.activity.text || undefined,
+          };
+          const invokeScopeDetails: InvokeAgentScopeDetails = {};
           const invokeAgentScope = InvokeAgentScope.start(
-            invokeAgentDetails,
-            tenantDetails
+            request,
+            invokeScopeDetails,
+            { ...invokeAgentDetails, tenantId: tenantDetails.tenantId }
           );
 
           await invokeAgentScope.withActiveSpanAsync(async () => {
@@ -181,6 +189,7 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     // Each sendActivity call produces a discrete Teams message.
     // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
     //       use sendActivity for any messages that must arrive immediately.
+    
     await turnContext.sendActivity('Got it — working on it…');
 
     // Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
@@ -197,50 +206,62 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
 
     startTypingLoop();
 
+    let inferenceScope!: ReturnType<typeof InferenceScope.start>;
     try {
       const inferenceDetails: InferenceDetails = {
         operationName: InferenceOperationType.CHAT,
         model: "claude-3-7-sonnet-20250219",
         providerName: "cognition-ai",
         inputTokens: Math.ceil(userMessage.length / 4), // Rough estimate
-        responseId: `resp-${Date.now()}`,
         outputTokens: 0, // Will be updated after response
         finishReasons: undefined,
       };
 
-      const inferenceScope = InferenceScope.start(
+      inferenceScope = InferenceScope.start(
+        { conversationId: turnContext.activity.conversation?.id },
         inferenceDetails,
-        agentDetails,
-        tenantDetails
+        { ...agentDetails, tenantId: agentDetails.tenantId || tenantDetails.tenantId }
       );
       inferenceScope.recordInputMessages([userMessage]);
 
+      const chunks: string[] = [];
+      let streamErrorMessage: string | undefined;
       let totalResponseLength = 0;
       const responseStream = new Stream()
-        .on("data", async (chunk) => {
-          totalResponseLength += (chunk as string).length;
-          invokeAgentScope.recordOutputMessages([`LLM Response: ${chunk}`]);
-          inferenceScope.recordOutputMessages([`LLM Response: ${chunk}`]);
-          await turnContext.sendActivity(chunk);
+        .on("data", (chunk) => {
+          const text = chunk as string;
+          totalResponseLength += text.length;
+          chunks.push(text);
+          invokeAgentScope.recordOutputMessages([`LLM Response: ${text}`]);
+          inferenceScope.recordOutputMessages([`LLM Response: ${text}`]);
         })
-        .on("error", async (error) => {
+        .on("error", (error) => {
+          streamErrorMessage = String(error);
           invokeAgentScope.recordOutputMessages([`Streaming error: ${error}`]);
           inferenceScope.recordOutputMessages([`Streaming error: ${error}`]);
-          await turnContext.sendActivity(error);
         })
         .on("close", () => {
-          inferenceScope.recordOutputTokens(Math.ceil(totalResponseLength / 4)); // Rough estimate
+          inferenceScope.recordOutputTokens(Math.ceil(totalResponseLength / 4));
           inferenceScope.recordFinishReasons(["stop"]);
         });
 
       await devinClient.invokeAgent(userMessage, responseStream);
+      stopTypingLoop();
+      if (streamErrorMessage) {
+        await turnContext.sendActivity("There was an error processing your request, please try again.");
+      } else if (chunks.length > 0) {
+        await turnContext.sendActivity(chunks.join("\n\n"));
+      } else {
+        await turnContext.sendActivity("Devin did not return a response. Please try again.");
+      }
     } catch (error) {
+      stopTypingLoop();
       invokeAgentScope.recordOutputMessages([`LLM error: ${error}`]);
       await turnContext.sendActivity(
         "There was an error processing your request"
       );
     } finally {
-      stopTypingLoop();
+      inferenceScope?.dispose();
     }
   }
 
