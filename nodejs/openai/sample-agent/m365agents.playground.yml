@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://aka.ms/m365-agents-toolkits/v1.11/yaml.schema.json
+# Visit https://aka.ms/teamsfx-v5.0-guide for details on this file
+# Visit https://aka.ms/teamsfx-actions for details on actions
+version: v1.11
+
+environmentFolderPath: ./env
+
+deploy:
+  # Install development tool(s)
+  - uses: devTool/install
+    with:
+      testTool:
+        version: ~0.2.7
+        symlinkDir: ./devTools/playground
+
+  # Run npm command
+  - uses: cli/runNpmCommand
+    with:
+      args: install
+
+  - uses: file/createOrUpdateEnvironmentFile
+    with:
+      target: ./.localConfigs.playground
+      envs:
+        NODE_ENV: local
+        PORT: 3978
+        HOST: 127.0.0.1
+        TEAMSFX_NOTIFICATION_STORE_FILENAME: ${{TEAMSFX_NOTIFICATION_STORE_FILENAME}}
+        OPENAI_API_KEY: ${{SECRET_OPENAI_API_KEY}}
+        OPENAI_MODEL: ${{OPENAI_MODEL}}
+        AZURE_OPENAI_API_KEY: ${{SECRET_AZURE_OPENAI_API_KEY}}
+        AZURE_OPENAI_ENDPOINT: ${{AZURE_OPENAI_ENDPOINT}}
+        AZURE_OPENAI_DEPLOYMENT: ${{AZURE_OPENAI_DEPLOYMENT}}
+        AZURE_OPENAI_API_VERSION: ${{AZURE_OPENAI_API_VERSION}}
+        BEARER_TOKEN: ${{SECRET_BEARER_TOKEN}}
+        USE_AGENTIC_AUTH: ${{USE_AGENTIC_AUTH}}
+        connectionsMap__0__serviceUrl: ${{connectionsMap__0__serviceUrl}}
+        connectionsMap__0__connection: ${{connectionsMap__0__connection}}
+        agentic_type: ${{agentic_type}}
+        agentic_altBlueprintConnectionName: ${{agentic_altBlueprintConnectionName}}
+        agentic_scopes: ${{agentic_scopes}}
+        connections__service_connection__settings__clientId: ""
+        connections__service_connection__settings__clientSecret: ""
+        connections__service_connection__settings__tenantId: ""
