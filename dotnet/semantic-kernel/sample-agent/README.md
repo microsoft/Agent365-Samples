@@ -48,6 +48,72 @@ Simplified profile for early local development using bearer token authentication
 
 > **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop get-token`.
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `Activity.From` with basic user information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn and injects the display name into the LLM system instructions for personalized responses.
+
+## Handling Agent Install and Uninstall
+
+When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity. The sample handles this in `OnHireMessageAsync` ([Agents/MyAgent.cs](Agents/MyAgent.cs)):
+
+| Action | Description |
+|---|---|
+| `add` | Agent was installed — send a welcome message |
+| `remove` | Agent was uninstalled — send a farewell message |
+
+```csharp
+if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text("Thank you for hiring me! Looking forward to assisting you in your professional journey!"), cancellationToken);
+}
+else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text("Thank you for your time, I enjoyed working with you."), cancellationToken);
+}
+```
+
+To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `SendActivityAsync` multiple times within a single turn.
+
+> **Important**: Streaming responses are buffered by the SDK for Teams agentic identities and delivered as a single message. Use `SendActivityAsync` directly to send immediate, discrete messages to the user.
+
+The ack and typing indicator are sent in `MessageActivityAsync` **before** agent initialization ([Agents/MyAgent.cs](Agents/MyAgent.cs)). This guarantees they arrive as discrete messages before the streaming connection opens:
+
+```csharp
+// Message 1: immediate ack
+await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken);
+
+// Typing indicator — visible while agent initializes, before the streaming response opens.
+// Only visible in 1:1 and small group chats, not in channels.
+await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), cancellationToken);
+```
+
+Once agent initialization completes, the streaming response opens and takes over as the visual indicator:
+
+```csharp
+// Streaming response — arrives as message 2, buffered by the SDK for Teams agentic identities.
+await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Working on a response for you", cancellationToken);
+// LLM call streams response chunks via QueueTextChunk...
+await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
+```
+
+### Typing Indicators
+
+Typing indicators show a `...` animation in Teams while the agent is working. They have a ~5-second visual timeout and must be re-sent to stay visible for long-running operations. For this sample, a single typing indicator is sent before the streaming response opens — once streaming starts, it takes over as the progress indicator.
+
+> **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

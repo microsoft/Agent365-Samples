@@ -30,6 +30,19 @@ This sample uses the [@microsoft/agents-copilotstudio-client](https://github.com
 - A published Copilot Studio agent with Web channel enabled
 - Azure/Microsoft 365 tenant with administrative permissions
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `activity.from` with basic user
+information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `activity.from.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from.name` | Display name as known to the channel |
+| `activity.from.aadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn.
+
 ## Copilot Studio Setup
 
 Before running this sample, you need a Copilot Studio agent:
@@ -142,6 +155,49 @@ connections__service_connection__settings__tenantId=<<TENANT_ID>>
    ```
 
 The agent will start listening on `http://localhost:3978/api/messages`.
+
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `sendActivity` multiple times within a single turn.
+
+> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `sendActivity` directly to send immediate, discrete messages to the user.
+
+The sample demonstrates this in `handleAgentMessageActivity` ([agent.ts](src/agent.ts)):
+
+```typescript
+// Message 1: immediate ack — reaches the user right away
+await turnContext.sendActivity('Got it — working on it…');
+
+// ... LLM processing (forwarded to Copilot Studio) ...
+
+// Message 2: the Copilot Studio response
+await turnContext.sendActivity(response);
+```
+
+Each `sendActivity` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+
+### Typing Indicators
+
+The agent sends typing indicators in a loop every ~4 seconds to keep the `...` animation alive while Copilot Studio processes the request:
+
+```typescript
+let typingInterval: ReturnType<typeof setInterval> | undefined;
+const startTypingLoop = () => {
+  typingInterval = setInterval(async () => {
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+  }, 4000);
+};
+const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+startTypingLoop();
+try {
+  // ... LLM processing ...
+} finally {
+  stopTypingLoop();
+}
+```
+
+> **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
 
 ## Testing
 

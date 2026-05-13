@@ -1,23 +1,9 @@
 # Microsoft Agent 365 SDK Samples and Prompts
 
-[![E2E Tests](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-orchestrator.yml?branch=main&label=E2E%20All%20Samples)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-orchestrator.yml)
-
 This repository contains sample agents and prompts for building with the Microsoft Agent 365 SDK. The Microsoft Agent 365 SDK extends the Microsoft 365 Agents SDK with enterprise-grade capabilities for building sophisticated agents. It provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
 - **Sample agents** are available in C# (.NET), Python, and Node.js/TypeScript
 - **Prompts** to help you get started with AI-powered development tools like Cursor IDE
-
-## E2E Test Status
-
-| Sample | Status |
-|--------|--------|
-| Python OpenAI | [![Python OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-openai.yml) |
-| Python Agent Framework | [![Python AF](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-agent-framework.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-agent-framework.yml) |
-| Python Google ADK | [![Python Google ADK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-python-google-adk.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-python-google-adk.yml) |
-| Node.js OpenAI | [![Node.js OpenAI](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-openai.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-openai.yml) |
-| Node.js LangChain | [![Node.js LangChain](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-nodejs-langchain.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-nodejs-langchain.yml) |
-| .NET Semantic Kernel | [![.NET SK](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-dotnet-semantic-kernel.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-dotnet-semantic-kernel.yml) |
-| .NET Agent Framework | [![.NET AF](https://img.shields.io/github/actions/workflow/status/microsoft/Agent365-Samples/e2e-dotnet-agent-framework.yml?branch=main&label=E2E)](https://github.com/microsoft/Agent365-Samples/actions/workflows/e2e-dotnet-agent-framework.yml) |
 
 ## SDK Versions
 

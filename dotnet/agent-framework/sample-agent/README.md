@@ -21,6 +21,141 @@ For comprehensive documentation and guidance on building agents with the Microso
 - OpenWeather Credentials (if using the OpenWeather Tool) 
     - see: https://openweathermap.org/price - You will need to create a free account to get an API key (its at the bottom of the page).
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `Activity.From` with basic user information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every turn in `OnMessageAsync` ([MyAgent.cs](Agent/MyAgent.cs)) and injects `Activity.From.Name` into the LLM system instructions for personalized responses:
+
+```csharp
+var fromAccount = turnContext.Activity.From;
+_logger?.LogInformation(
+    "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+    fromAccount?.Name ?? "(unknown)",
+    fromAccount?.Id ?? "(unknown)",
+    fromAccount?.AadObjectId ?? "(none)");
+```
+
+## Handling Agent Install and Uninstall
+
+When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `OnInstallationUpdateAsync` ([MyAgent.cs](Agent/MyAgent.cs)):
+
+| Action | Description |
+|---|---|
+| `add` | Agent was installed — send a welcome message |
+| `remove` | Agent was uninstalled — send a farewell message |
+
+```csharp
+if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+}
+else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
+{
+    await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+}
+```
+
+The handler is registered twice in the constructor — once for agentic (A365 production) requests and once for non-agentic (Agents Playground / WebChat) requests, enabling local testing without a full A365 deployment.
+
+To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt in Teams. This is achieved by calling `SendActivityAsync` multiple times within a single turn.
+
+> **Important**: Streaming responses are not supported for agentic identities in Teams. The SDK detects agentic identity and buffers the stream into a single message. Use `SendActivityAsync` directly to send immediate, discrete messages to the user.
+
+The sample demonstrates this in `OnMessageAsync` ([MyAgent.cs](Agent/MyAgent.cs)) by sending an immediate acknowledgment before the LLM response:
+
+```csharp
+// Message 1: immediate ack — reaches the user right away
+await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken);
+
+// ... LLM processing ...
+
+// Message 2: the LLM response (via StreamingResponse, buffered into one message for Teams agentic)
+await turnContext.StreamingResponse.EndStreamAsync(cancellationToken);
+```
+
+Each `SendActivityAsync` call produces a separate Teams message. You can call it as many times as needed to send progress updates, partial results, or a final answer.
+
+### Typing Indicators
+
+For long-running operations, send a typing indicator to show a "..." progress animation in Teams:
+
+```csharp
+// Typing indicator loop — refreshes every ~4s for long-running operations.
+using var typingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+var typingTask = Task.Run(async () =>
+{
+    try
+    {
+        while (!typingCts.IsCancellationRequested)
+        {
+            await turnContext.SendActivityAsync(Activity.CreateTypingActivity(), typingCts.Token);
+            await Task.Delay(TimeSpan.FromSeconds(4), typingCts.Token);
+        }
+    }
+    catch (OperationCanceledException) { /* expected on cancel */ }
+}, typingCts.Token);
+
+try { /* ... do work ... */ }
+finally
+{
+    typingCts.Cancel();
+    try { await typingTask; } catch (OperationCanceledException) { }
+}
+```
+
+> **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
+
+## Observability
+
+This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro, configured in `Program.cs` with a single call:
+
+```csharp
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
+
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
+});
+```
+
+This produces the following spans automatically — no custom tracing code required:
+
+| Span | Source | What it captures |
+|---|---|---|
+| `POST /api/messages` | ASP.NET Core | Inbound request — method, path, status code |
+| `POST login.microsoftonline.com` | HttpClient | MSAL token acquisition |
+| `POST smba.trafficmanager.net` | HttpClient | Outbound Teams messages |
+| `POST …openai.azure.com/…/chat/completions` | HttpClient | Raw Azure OpenAI HTTP call |
+| `chat <model>` | `Microsoft.Extensions.AI` | Full `gen_ai.*` semantics — model, tool definitions, system prompt, input/output messages, token counts, finish reason |
+| `invoke_agent <id>` | `Microsoft.Agents.AI` | Agent-level span — agent ID, input/output, token counts |
+
+The `gen_ai.*` attributes on the `chat` span come from `.UseOpenTelemetry()` on the `ChatClientAgent` builder in `Program.cs`. This is the only non-distro observability call in the sample and is worth keeping — it enriches every LLM call with structured semantic data at no cost.
+
+### Service Name
+
+By default the OTel SDK sets `service.name` to `unknown_service:<process-name>`. Set the standard `OTEL_SERVICE_NAME` environment variable to give your service a meaningful name in traces:
+
+```bash
+OTEL_SERVICE_NAME="Agent Framework Sample"
+```
+
+Set this in your local launch profile, deployment environment, or container configuration to match your service catalog.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

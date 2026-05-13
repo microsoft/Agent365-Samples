@@ -1,4 +1,5 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 from typing import Optional
 import logging
@@ -74,9 +75,15 @@ class McpToolRegistrationService:
         }
 
         for server_config in mcp_server_configs:
+            if not server_config.url:
+                self._logger.warning(
+                    "Skipping MCP server '%s' — no URL configured (dev mode or manifest-only config).",
+                    server_config.mcp_server_unique_name,
+                )
+                continue
             server_info = McpToolset(
                 connection_params=StreamableHTTPConnectionParams(
-                    url=server_config.mcp_server_unique_name,
+                    url=server_config.url,
                     headers=mcp_server_headers
                 )
             )
@@ -89,5 +96,6 @@ class McpToolRegistrationService:
             name=agent.name,
             model=agent.model,
             description=agent.description,
+            instruction=agent.instruction,
             tools=all_tools,
         )

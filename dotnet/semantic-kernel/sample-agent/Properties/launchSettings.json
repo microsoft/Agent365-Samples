@@ -4,7 +4,8 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "SKIP_TOOLING_ON_ERRORS": "true"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     },
@@ -14,6 +15,7 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "BEARER_TOKEN": "",
+        "SKIP_TOOLING_ON_ERRORS": "true",
         "MCP_PLATFORM_ENDPOINT": "http://localhost:52857" //"https://test.agent365.svc.cloud.dev.microsoft" // ATG - Mail and all other
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
