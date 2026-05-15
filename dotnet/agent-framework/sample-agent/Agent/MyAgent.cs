@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent.Tools;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
+using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -15,6 +19,7 @@ using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using ObsRequest = Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts.Request;
 
 namespace Agent365AgentFrameworkSampleAgent.Agent
 {
@@ -60,6 +65,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IConfiguration? _configuration = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
+        private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
@@ -96,11 +102,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
+            IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
+            _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
 
@@ -194,6 +202,69 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 ToolAuthHandlerName = OboAuthHandlerName;
             }
 
+            // A365 Observability: resolve the agent identity for this turn. For agentic requests
+            // (Teams agent instances), the ID comes from the activity itself. For non-agentic
+            // requests (Playground / WebChat), decode it from the OBO token via the existing
+            // Utility.ResolveAgentIdentity helper. Mirrors A365OtelWrapper.ResolveTenantAndAgentId
+            // in the official distro demo.
+            string? resolvedAgentId = null;
+            if (turnContext.Activity.IsAgenticRequest())
+            {
+                resolvedAgentId = turnContext.Activity.GetAgenticInstanceId();
+            }
+            else if (!string.IsNullOrEmpty(ToolAuthHandlerName))
+            {
+                try
+                {
+                    var oboToken = await UserAuthorization.GetTurnTokenAsync(turnContext, ToolAuthHandlerName, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(oboToken))
+                    {
+                        resolvedAgentId = Utility.ResolveAgentIdentity(turnContext, oboToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(ex, "Could not resolve agent id from OBO token; A365 observability skipped for this turn.");
+                }
+            }
+
+            var resolvedTenantId = turnContext.Activity.Conversation?.TenantId
+                                ?? turnContext.Activity.Recipient?.TenantId;
+
+            // Only set baggage / register a token / open InvokeAgentScope when we have a real
+            // (agent, tenant) tuple. Falling back to Guid.Empty creates a synthetic identity
+            // group the exporter cannot authenticate and pollutes the trace with orphan spans.
+            var hasObservabilityIdentity = !string.IsNullOrEmpty(resolvedAgentId)
+                                        && !string.IsNullOrEmpty(resolvedTenantId);
+
+            using IDisposable? observabilityBaggage = hasObservabilityIdentity
+                ? new BaggageBuilder()
+                    .TenantId(resolvedTenantId!)
+                    .AgentId(resolvedAgentId!)
+                    .Build()
+                : null;
+
+            // Register an OBO token resolver for this (agent, tenant) tuple so the Agent365 exporter
+            // can authenticate when POSTing traces. Mirrors the demo's A365OtelWrapper.
+            if (hasObservabilityIdentity)
+            {
+                try
+                {
+                    _agentTokenCache?.RegisterObservability(
+                        resolvedAgentId!,
+                        resolvedTenantId!,
+                        new AgenticTokenStruct(
+                            userAuthorization: UserAuthorization,
+                            turnContext: turnContext,
+                            authHandlerName: ToolAuthHandlerName ?? string.Empty),
+                        EnvironmentUtils.GetObservabilityAuthenticationScope());
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning("Failed to register observability token: {Message}", ex.Message);
+                }
+            }
+
             // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
             // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
             // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
@@ -225,7 +296,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             try
             {
                 var userTextBuilder = new StringBuilder(turnContext.Activity.Text?.Trim() ?? string.Empty);
-                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
+                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName, resolvedAgentId);
 
                 // Read or Create the conversation session for this conversation.
                 AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
@@ -242,14 +313,75 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
                 var userText = userTextBuilder.ToString();
 
-                // Stream the response back to the user as we receive it from the agent.
-                await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
+                // A365 Observability: open an InvokeAgentScope so an "InvokeAgent" event is emitted
+                // (required for MAC portal Advanced Hunting to render the agent turn UI and anchor
+                // InferenceCall / ExecuteToolBySDK children). Only open the scope when we have a real
+                // (agent, tenant) identity — otherwise the export would group spans under an identity
+                // the exporter cannot authenticate.
+                InvokeAgentScope? invokeScope = null;
+                if (hasObservabilityIdentity)
                 {
-                    if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
-                    {
-                        turnContext.StreamingResponse.QueueTextChunk(response.Text);
-                    }
+                    var obsConfig = _configuration!.GetSection("Agent365Observability");
+                    var blueprintName = obsConfig["AgentName"]
+                        ?? _configuration["agentBlueprintDisplayName"]
+                        ?? "Agent Blueprint";
+                    var agentDetails = new AgentDetails(
+                        agentId:          resolvedAgentId!,
+                        agentName:        blueprintName,
+                        agentDescription: obsConfig["AgentDescription"] ?? string.Empty,
+                        agentBlueprintId: obsConfig["AgentBlueprintId"] ?? string.Empty,
+                        tenantId:         resolvedTenantId!);
+
+                    var from = turnContext.Activity?.From;
+                    var callerDetails = new CallerDetails(
+                        userDetails: new UserDetails(
+                            userId:    from?.AadObjectId ?? from?.Id ?? "unknown",
+                            userName:  from?.Name ?? "unknown",
+                            userEmail: string.Empty));
+
+                    var scopeRequest = new ObsRequest(
+                        content:        userText,
+                        sessionId:      turnContext.Activity?.Conversation?.Id ?? "unknown",
+                        channel:        new Channel(turnContext.Activity?.ChannelId ?? "msteams"),
+                        conversationId: turnContext.Activity?.Conversation?.Id ?? "unknown");
+
+                    // Endpoint is metadata for the trace; use the blueprint ID (a GUID, always URI-safe)
+                    // under the RFC 2606 reserved `.invalid` TLD. Avoids UriFormatException risk from
+                    // free-form display names that may contain characters invalid in a hostname.
+                    var blueprintForUri = obsConfig["AgentBlueprintId"];
+                    var endpointUri = !string.IsNullOrEmpty(blueprintForUri)
+                        ? new Uri($"https://{blueprintForUri}.agent.invalid/")
+                        : new Uri("https://agent.invalid/");
+
+                    invokeScope = InvokeAgentScope.Start(
+                        request:       scopeRequest,
+                        scopeDetails:  new InvokeAgentScopeDetails(endpoint: endpointUri),
+                        agentDetails:  agentDetails,
+                        callerDetails: callerDetails);
+
+                    invokeScope.RecordInputMessages(new[] { userText });
                 }
+
+                try
+                {
+                    var responseBuilder = new StringBuilder();
+                    // Stream the response back to the user as we receive it from the agent.
+                    await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
+                    {
+                        if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
+                        {
+                            turnContext.StreamingResponse.QueueTextChunk(response.Text);
+                            responseBuilder.Append(response.Text);
+                        }
+                    }
+
+                    invokeScope?.RecordOutputMessages(new[] { responseBuilder.ToString() });
+                }
+                finally
+                {
+                    invokeScope?.Dispose();
+                }
+
                 var serializedSession = await _agent!.SerializeSessionAsync(session!);
                 turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
             }
@@ -275,7 +407,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName)
+        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName, string? chatAgentId)
         {
             AssertionHelpers.ThrowIfNull(_configuration!, nameof(_configuration));
             AssertionHelpers.ThrowIfNull(context, nameof(context));
@@ -372,18 +504,32 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 Instructions = GetAgentInstructions(displayName)
             };
 
-            // Create the chat Client passing in agent instructions and tools:
-            return new ChatClientAgent(_chatClient!,
-                    new ChatClientAgentOptions
-                    {
-                        ChatOptions = toolOptions,
-                        ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
-                        {
+            // Create the chat Client passing in agent instructions and tools.
+            // When chatAgentId is provided (i.e. observability identity was resolved), set it as the
+            // ChatClientAgent.Id so the AI SDK's auto-instrumentation tags gen_ai spans with the same
+            // agent.id as our BaggageBuilder/InvokeAgentScope, instead of a randomly auto-generated
+            // N-format GUID per turn. If no real id is available we leave Id null and let the SDK
+            // handle it (those spans won't be exported to A365 anyway since we skipped baggage).
+            var configuredAgentName = _configuration?["Agent365Observability:AgentName"]
+                ?? _configuration?["agentBlueprintDisplayName"]
+                ?? "Agent Blueprint";
+            var chatClientOptions = new ChatClientAgentOptions
+            {
+                Name = configuredAgentName,
+                ChatOptions = toolOptions,
+                ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
+                {
 #pragma warning disable MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                            ChatReducer = new MessageCountingChatReducer(10)
+                    ChatReducer = new MessageCountingChatReducer(10)
 #pragma warning restore MEAI001 // MessageCountingChatReducer is for evaluation purposes only and is subject to change or removal in future updates
-                        })
-                    })
+                })
+            };
+            if (!string.IsNullOrEmpty(chatAgentId))
+            {
+                chatClientOptions.Id = chatAgentId;
+            }
+
+            return new ChatClientAgent(_chatClient!, chatClientOptions)
                 .AsBuilder()
                 .UseOpenTelemetry(sourceName: null, (cfg) => cfg.EnableSensitiveData = true)
                 .Build();
