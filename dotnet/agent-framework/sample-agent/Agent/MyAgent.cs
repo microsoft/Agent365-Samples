@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent.Tools;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
+using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.AI;
@@ -15,6 +19,7 @@ using Microsoft.Extensions.AI;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using ObsRequest = Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts.Request;
 
 namespace Agent365AgentFrameworkSampleAgent.Agent
 {
@@ -60,6 +65,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IConfiguration? _configuration = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
+        private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
@@ -96,11 +102,13 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
+            IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
+            _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
 
@@ -194,6 +202,40 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 ToolAuthHandlerName = OboAuthHandlerName;
             }
 
+            // A365 Observability: set tenant + agent baggage on the current activity context so that
+            // gen_ai LLM child spans inherit identity attributes. Without this, the Agent365 exporter
+            // logs "spans skipped due to missing tenant or agent ID" and nothing reaches the backend.
+            // Pattern mirrors A365OtelWrapper.InvokeObservedAgentOperation in the official distro demo.
+            var resolvedAgentId = turnContext.Activity.IsAgenticRequest()
+                ? turnContext.Activity.GetAgenticInstanceId() ?? Guid.Empty.ToString()
+                : Guid.Empty.ToString();
+            var resolvedTenantId = turnContext.Activity.Conversation?.TenantId
+                                ?? turnContext.Activity.Recipient?.TenantId
+                                ?? Guid.Empty.ToString();
+            using var observabilityBaggage = new BaggageBuilder()
+                .TenantId(resolvedTenantId)
+                .AgentId(resolvedAgentId)
+                .Build();
+
+            // Register an OBO token resolver for this (agent, tenant) tuple so the Agent365 exporter
+            // can authenticate when POSTing traces. Eliminates "No token obtained" warnings for spans
+            // that pick up this baggage. Mirrors the demo's A365OtelWrapper.InvokeObservedAgentOperation.
+            try
+            {
+                _agentTokenCache?.RegisterObservability(
+                    resolvedAgentId,
+                    resolvedTenantId,
+                    new AgenticTokenStruct(
+                        userAuthorization: UserAuthorization,
+                        turnContext: turnContext,
+                        authHandlerName: ToolAuthHandlerName ?? string.Empty),
+                    EnvironmentUtils.GetObservabilityAuthenticationScope());
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning("Failed to register observability token: {Message}", ex.Message);
+            }
+
             // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
             // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.
             // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
@@ -225,7 +267,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             try
             {
                 var userTextBuilder = new StringBuilder(turnContext.Activity.Text?.Trim() ?? string.Empty);
-                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName);
+                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName, resolvedAgentId);
 
                 // Read or Create the conversation session for this conversation.
                 AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
@@ -242,14 +284,57 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 }
                 var userText = userTextBuilder.ToString();
 
+                // A365 Observability: open an InvokeAgentScope so an "InvokeAgent" event is emitted
+                // (required for MAC portal Advanced Hunting to render the agent turn UI and anchor
+                // InferenceCall / ExecuteToolBySDK children). CallerDetails is required for visibility.
+                var obsConfig = _configuration!.GetSection("Agent365Observability");
+                var blueprintName = obsConfig["AgentName"]
+                    ?? _configuration["agentBlueprintDisplayName"]
+                    ?? "Agent Blueprint";
+                var agentDetails = new AgentDetails(
+                    agentId:          resolvedAgentId,
+                    agentName:        blueprintName,
+                    agentDescription: obsConfig["AgentDescription"] ?? string.Empty,
+                    agentBlueprintId: obsConfig["AgentBlueprintId"] ?? string.Empty,
+                    tenantId:         resolvedTenantId);
+
+                var from = turnContext!.Activity.From;
+                var callerDetails = new CallerDetails(
+                    userDetails: new UserDetails(
+                        userId:    from?.AadObjectId ?? from?.Id ?? "unknown",
+                        userName:  from?.Name ?? "unknown",
+                        userEmail: string.Empty));
+
+                var scopeRequest = new ObsRequest(
+                    content:        userText,
+                    sessionId:      turnContext.Activity.Conversation?.Id ?? "unknown",
+                    channel:        new Channel(turnContext.Activity.ChannelId ?? "msteams"),
+                    conversationId: turnContext.Activity.Conversation?.Id ?? "unknown");
+
+                var scopeDetails = new InvokeAgentScopeDetails(
+                    endpoint: new Uri($"https://{(obsConfig["AgentName"] ?? "agent").Replace(" ", "-").ToLowerInvariant()}/"));
+
+                using var invokeScope = InvokeAgentScope.Start(
+                    request:       scopeRequest,
+                    scopeDetails:  scopeDetails,
+                    agentDetails:  agentDetails,
+                    callerDetails: callerDetails);
+
+                invokeScope.RecordInputMessages(new[] { userText });
+
+                var responseBuilder = new StringBuilder();
                 // Stream the response back to the user as we receive it from the agent.
                 await foreach (var response in _agent!.RunStreamingAsync(userText, session, cancellationToken: cancellationToken))
                 {
                     if (response.Role == ChatRole.Assistant && !string.IsNullOrEmpty(response.Text))
                     {
                         turnContext.StreamingResponse.QueueTextChunk(response.Text);
+                        responseBuilder.Append(response.Text);
                     }
                 }
+
+                invokeScope.RecordOutputMessages(new[] { responseBuilder.ToString() });
+
                 var serializedSession = await _agent!.SerializeSessionAsync(session!);
                 turnState.Conversation.SetValue("conversation.threadInfo", ProtocolJsonSerializer.ToJson(serializedSession));
             }
@@ -275,7 +360,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName)
+        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName, string chatAgentId)
         {
             AssertionHelpers.ThrowIfNull(_configuration!, nameof(_configuration));
             AssertionHelpers.ThrowIfNull(context, nameof(context));
@@ -372,10 +457,18 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 Instructions = GetAgentInstructions(displayName)
             };
 
-            // Create the chat Client passing in agent instructions and tools:
+            // Create the chat Client passing in agent instructions and tools.
+            // Setting Id = chatAgentId (the real Teams agent instance ID) so the auto-instrumentation
+            // tags gen_ai spans with the same agent.id as our BaggageBuilder/InvokeAgentScope, instead
+            // of a randomly auto-generated N-format GUID per turn.
+            var configuredAgentName = _configuration?["Agent365Observability:AgentName"]
+                ?? _configuration?["agentBlueprintDisplayName"]
+                ?? "Agent Blueprint";
             return new ChatClientAgent(_chatClient!,
                     new ChatClientAgentOptions
                     {
+                        Id = chatAgentId,
+                        Name = configuredAgentName,
                         ChatOptions = toolOptions,
                         ChatHistoryProvider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
                         {
