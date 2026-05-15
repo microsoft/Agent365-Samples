@@ -15,8 +15,8 @@ import {
   InferenceOperationType,
   AgentDetails,
   InferenceDetails,
-  Request,
-} from '@microsoft/agents-a365-observability';
+  A365Request,
+} from '@microsoft/opentelemetry';
 
 export interface Client {
   invokeInferenceScope(prompt: string): Promise<string>;
@@ -37,11 +37,14 @@ function createChatModel(): BaseChatModel {
   // Check for Azure OpenAI configuration first
   if (process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT) {
     console.log('Using Azure OpenAI');
+    const endpoint = process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '');
+    const deployment = process.env.AZURE_OPENAI_DEPLOYMENT;
+    const apiVersion = process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview";
     return new AzureChatOpenAI({
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
-      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT?.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
-      azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
-      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview",
+      azureOpenAIBasePath: `${endpoint}/openai/deployments`,
+      azureOpenAIApiDeploymentName: deployment,
+      azureOpenAIApiVersion: apiVersion,
       temperature: 0,
     });
   }
@@ -152,7 +155,7 @@ class LangChainClient implements Client {
    * @param {string} userMessage - The message or prompt to send to the agent.
    * @returns {Promise<string>} The response from the agent, or an error message if the query fails.
    */
-  async invokeAgent(userMessage: string): Promise<string> {
+  async invokeAgent(userMessage: string): Promise<{ content: string; inputTokens: number; outputTokens: number; finishReason: string }> {
     const result = await this.agent.invoke({
       messages: [
         {
@@ -162,33 +165,45 @@ class LangChainClient implements Client {
       ],
     });
 
-    let agentMessage: any = '';
+    let content = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let finishReason = 'stop';
 
-    // Extract the content from the LangChain response
     if (result.messages && result.messages.length > 0) {
+      // Sum usage_metadata across every AI message in the React loop so the
+      // manual InferenceScope reflects total work, matching the auto-instrumented invoke_agent span.
+      for (const msg of result.messages) {
+        const usage = (msg as any).usage_metadata;
+        if (usage) {
+          inputTokens += usage.input_tokens ?? 0;
+          outputTokens += usage.output_tokens ?? 0;
+        }
+      }
       const lastMessage = result.messages[result.messages.length - 1];
-      agentMessage = lastMessage.content || "No content in response";
+      content = (lastMessage.content as string) || "No content in response";
+      finishReason = (lastMessage as any).response_metadata?.finish_reason ?? 'stop';
     }
 
-    // Fallback if result is already a string
     if (typeof result === 'string') {
-      agentMessage = result;
+      content = result;
     }
 
-    if (!agentMessage) {
-      return "Sorry, I couldn't get a response from the agent :(";
+    if (!content) {
+      content = "Sorry, I couldn't get a response from the agent :(";
     }
 
-    return agentMessage;
+    return { content, inputTokens, outputTokens, finishReason };
   }
 
   async invokeInferenceScope(prompt: string) {
+    const model = process.env.AZURE_OPENAI_DEPLOYMENT || process.env.OPENAI_MODEL || 'unknown';
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
-      model: "gpt-4o-mini",
+      model,
     };
 
-    const request: Request = {
+    const request: A365Request = {
       conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
     };
 
@@ -202,13 +217,13 @@ class LangChainClient implements Client {
     const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => {
-      response = await this.invokeAgent(prompt);
-      // Record the inference response with token usage
-      scope.recordOutputMessages([response]);
-      scope.recordInputMessages([prompt]);
-      scope.recordInputTokens(45);
-      scope.recordOutputTokens(78);
-      scope.recordFinishReasons(['stop']);
+        const result = await this.invokeAgent(prompt);
+        response = result.content;
+        scope.recordInputMessages([prompt]);
+        scope.recordOutputMessages([response]);
+        scope.recordInputTokens(result.inputTokens);
+        scope.recordOutputTokens(result.outputTokens);
+        scope.recordFinishReasons([result.finishReason]);
       });
     } catch (error) {
       scope.recordError(error as Error);
