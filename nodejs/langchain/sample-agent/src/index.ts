@@ -9,11 +9,11 @@ configDotenv();
 // Initialize Microsoft OpenTelemetry distro for observability.
 // Must be called before importing other modules so instrumentations can patch libraries.
 // See: https://github.com/microsoft/opentelemetry-distro-javascript
-import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { useMicrosoftOpenTelemetry, AgenticTokenCacheInstance } from '@microsoft/opentelemetry';
 import { tokenResolver } from './token-cache';
-import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
 
 useMicrosoftOpenTelemetry({
+  enableConsoleExporters: true,
   a365: {
     enabled: true,
     // When Use_Custom_Resolver is true the sample populates a local token cache;
