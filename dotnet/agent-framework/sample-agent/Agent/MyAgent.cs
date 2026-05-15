@@ -311,8 +311,15 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     channel:        new Channel(turnContext.Activity.ChannelId ?? "msteams"),
                     conversationId: turnContext.Activity.Conversation?.Id ?? "unknown");
 
-                var scopeDetails = new InvokeAgentScopeDetails(
-                    endpoint: new Uri($"https://{(obsConfig["AgentName"] ?? "agent").Replace(" ", "-").ToLowerInvariant()}/"));
+                // Endpoint is metadata for the trace; use the blueprint ID (a GUID, always URI-safe)
+                // under the RFC 2606 reserved `.invalid` TLD. Avoids UriFormatException risk from
+                // free-form display names that may contain characters invalid in a hostname.
+                var blueprintForUri = obsConfig["AgentBlueprintId"];
+                var endpointUri = !string.IsNullOrEmpty(blueprintForUri)
+                    ? new Uri($"https://{blueprintForUri}.agent.invalid/")
+                    : new Uri("https://agent.invalid/");
+
+                var scopeDetails = new InvokeAgentScopeDetails(endpoint: endpointUri);
 
                 using var invokeScope = InvokeAgentScope.Start(
                     request:       scopeRequest,
