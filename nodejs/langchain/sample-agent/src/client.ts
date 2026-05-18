@@ -149,11 +149,14 @@ class LangChainClient implements Client {
   }
 
   /**
-   * Sends a user message to the LangChain agent and returns the AI's response.
-   * Handles streaming results and error reporting.
+   * Sends a user message to the LangChain agent and returns the AI's response
+   * along with aggregated token usage and finish reason from the React loop.
    *
    * @param {string} userMessage - The message or prompt to send to the agent.
-   * @returns {Promise<string>} The response from the agent, or an error message if the query fails.
+   * @returns {Promise<{ content: string; inputTokens: number; outputTokens: number; finishReason: string }>}
+   *   The agent's final content, summed input/output token counts across all
+   *   AI messages in the loop, and the final message's finish reason. On failure,
+   *   `content` contains a user-facing error message.
    */
   async invokeAgent(userMessage: string): Promise<{ content: string; inputTokens: number; outputTokens: number; finishReason: string }> {
     const result = await this.agent.invoke({
@@ -197,10 +200,12 @@ class LangChainClient implements Client {
   }
 
   async invokeInferenceScope(prompt: string) {
-    const model = process.env.AZURE_OPENAI_DEPLOYMENT || process.env.OPENAI_MODEL || 'unknown';
+    // Mirror createChatModel()'s defaults so the manual InferenceScope records
+    // the same model identifier the underlying client actually uses.
+    const modelName = process.env.AZURE_OPENAI_DEPLOYMENT || process.env.OPENAI_MODEL || 'gpt-4o';
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
-      model,
+      model: modelName,
     };
 
     const request: A365Request = {

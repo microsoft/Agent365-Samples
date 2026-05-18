@@ -12,8 +12,12 @@ configDotenv();
 import { useMicrosoftOpenTelemetry, AgenticTokenCacheInstance } from '@microsoft/opentelemetry';
 import { tokenResolver } from './token-cache';
 
+// Console exporters are useful for local development but noisy and potentially
+// sensitive (gen-ai content) in production. Enable only outside production.
+const enableConsoleExporters = process.env.NODE_ENV !== 'production' && !process.env.WEBSITE_SITE_NAME;
+
 useMicrosoftOpenTelemetry({
-  enableConsoleExporters: true,
+  enableConsoleExporters,
   a365: {
     enabled: true,
     // When Use_Custom_Resolver is true the sample populates a local token cache;
