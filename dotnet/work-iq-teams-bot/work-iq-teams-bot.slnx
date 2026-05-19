@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="work-iq-teams-bot.TeamsApp/work-iq-teams-bot.TeamsApp.csproj" />
+  <Project Path="work-iq-teams-bot.AppHost/work-iq-teams-bot.AppHost.csproj" />
+  <Project Path="work-iq-teams-bot.ServiceDefaults/work-iq-teams-bot.ServiceDefaults.csproj" />
+
+</Solution>

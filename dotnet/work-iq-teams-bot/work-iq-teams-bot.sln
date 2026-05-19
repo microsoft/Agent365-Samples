@@ -1,0 +1,37 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.6.11806.211 stable
+MinimumVisualStudioVersion = 17.8.0.0
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "work-iq-teams-bot.AppHost", "work-iq-teams-bot.AppHost\work-iq-teams-bot.AppHost.csproj", "{8E10E2B4-8580-4D17-B83E-2E0286FD3BA4}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "work-iq-teams-bot.ServiceDefaults", "work-iq-teams-bot.ServiceDefaults\work-iq-teams-bot.ServiceDefaults.csproj", "{BCEF1286-B692-4111-9810-CF6642F3B133}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "work-iq-teams-bot.TeamsApp", "work-iq-teams-bot.TeamsApp\work-iq-teams-bot.TeamsApp.csproj", "{0AC5B080-D062-4AC6-9D26-73B340437E1A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8E10E2B4-8580-4D17-B83E-2E0286FD3BA4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8E10E2B4-8580-4D17-B83E-2E0286FD3BA4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8E10E2B4-8580-4D17-B83E-2E0286FD3BA4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8E10E2B4-8580-4D17-B83E-2E0286FD3BA4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BCEF1286-B692-4111-9810-CF6642F3B133}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BCEF1286-B692-4111-9810-CF6642F3B133}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BCEF1286-B692-4111-9810-CF6642F3B133}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BCEF1286-B692-4111-9810-CF6642F3B133}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0AC5B080-D062-4AC6-9D26-73B340437E1A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0AC5B080-D062-4AC6-9D26-73B340437E1A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0AC5B080-D062-4AC6-9D26-73B340437E1A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0AC5B080-D062-4AC6-9D26-73B340437E1A}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {AD2E809D-7A77-458A-8887-6626D8A078DE}
+	EndGlobalSection
+EndGlobal
