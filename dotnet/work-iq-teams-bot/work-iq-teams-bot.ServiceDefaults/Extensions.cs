@@ -7,6 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ServiceDiscovery;
+using Microsoft.Identity.Abstractions;
+using Microsoft.Identity.Web;
 using Microsoft.OpenTelemetry;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
@@ -26,9 +28,10 @@ public static class Extensions
     public static TBuilder AddServiceDefaults<TBuilder>(
         this TBuilder builder,
         string[]? activitySources = null,
-        string[]? meterNames = null) where TBuilder : IHostApplicationBuilder
+        string[]? meterNames = null,
+        Func<IServiceProvider>? rootProviderAccessor = null) where TBuilder : IHostApplicationBuilder
     {
-        builder.ConfigureOpenTelemetry(activitySources, meterNames);
+        builder.ConfigureOpenTelemetry(activitySources, meterNames, rootProviderAccessor);
 
         builder.AddDefaultHealthChecks();
 
@@ -49,7 +52,8 @@ public static class Extensions
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(
         this TBuilder builder,
         string[]? activitySources = null,
-        string[]? meterNames = null) where TBuilder : IHostApplicationBuilder
+        string[]? meterNames = null,
+        Func<IServiceProvider>? rootProviderAccessor = null) where TBuilder : IHostApplicationBuilder
     {
         builder.Logging.AddOpenTelemetry(logging =>
         {
@@ -68,9 +72,22 @@ public static class Extensions
                 }))
             .UseMicrosoftOpenTelemetry(o =>
             {
-                o.Exporters = ExportTarget.Otlp | ExportTarget.AzureMonitor;
+                o.Exporters = ExportTarget.Otlp | ExportTarget.AzureMonitor | ExportTarget.Agent365;
                 o.Instrumentation.EnableHttpClientInstrumentation = true;
                 o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+                o.Agent365.Exporter.UseS2SEndpoint = true;
+                if (rootProviderAccessor is not null)
+                {
+                    o.Agent365.Exporter.TokenResolver = async (agentId, tenantId) =>
+                    {
+                        var provider = rootProviderAccessor().GetRequiredService<IAuthorizationHeaderProvider>();
+                        var options = new AuthorizationHeaderProviderOptions { AcquireTokenOptions = new() { AuthenticationOptionsName = "AzureAd", Tenant = tenantId } };
+                        options.WithAgentIdentity(agentId);
+                        var token = await provider.CreateAuthorizationHeaderForAppAsync(
+                            "api://9b975845-388f-4429-889e-eab1ef63949c/.default", options);
+                        return token.Substring("Bearer".Length).Trim();
+                    };
+                }
             })
             .WithMetrics(metrics =>
             {
