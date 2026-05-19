@@ -18,7 +18,7 @@ namespace work_iq_teams_bot.TeamsApp;
 /// </summary>
 internal sealed class WorkIQTeamsBotApp : TeamsBotApplication
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public WorkIQTeamsBotApp(
         ConversationClient conversationClient,
@@ -26,12 +26,11 @@ internal sealed class WorkIQTeamsBotApp : TeamsBotApplication
         ApiClient teamsApiClient,
         IHttpContextAccessor httpContextAccessor,
         ILogger<TeamsBotApplication> logger,
-        IServiceScopeFactory scopeFactory,
         BotApplicationOptions? options = null,
         TeamsBotApplicationOptions? teamsOptions = null)
         : base(conversationClient, userTokenClient, teamsApiClient, httpContextAccessor, logger, options, teamsOptions)
     {
-        _scopeFactory = scopeFactory;
+        _httpContextAccessor = httpContextAccessor;
 
         this.OnMessage(HandleMessageAsync);
     }
@@ -40,12 +39,12 @@ internal sealed class WorkIQTeamsBotApp : TeamsBotApplication
     {
         await context.SendTypingActivityAsync(cancellationToken);
 
-        string userText = context.Activity.TextWithoutMentions ?? string.Empty;
-
-        // Resolve Agent from a fresh per-turn scope so scoped services have a well-defined lifetime
-        // independent of the singleton bot application and of any ambient HTTP request scope.
-        await using AsyncServiceScope scope = _scopeFactory.CreateAsyncScope();
-        WorkIQAgent agent = scope.ServiceProvider.GetRequiredService<WorkIQAgent>();
+        // Resolve the agent from the HTTP request scope so the OBO token assertion
+        // (validated earlier in the pipeline) is available to IAuthorizationHeaderProvider.
+        // A detached scope (IServiceScopeFactory) would lose the HttpContext, causing
+        // MSAL's OBO flow to fail on the first turn before any tokens are cached.
+        IServiceProvider requestServices = _httpContextAccessor.HttpContext!.RequestServices;
+        WorkIQAgent agent = requestServices.GetRequiredService<WorkIQAgent>();
 
         string response = await agent.RunAsync(
             context.Activity,

@@ -3,6 +3,7 @@
 
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
+using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.TokenCacheProviders;
 using Microsoft.Identity.Web.TokenCacheProviders.Distributed;
 using Microsoft.OpenTelemetry;
@@ -28,6 +29,11 @@ internal static class WorkIQServiceExtensions
     {
         services.Configure<WorkIQAgentOptions>(configuration.GetSection(WorkIQAgentOptions.SectionName));
 
+        // Register the Agent Identities MSAL add-in so that WithAgentUserIdentity()
+        // triggers the FIC (Federated Identity Credential) grant instead of falling
+        // back to a silent token acquisition with mismatched client credentials.
+        services.AddAgentIdentities();
+
         services.AddChatClient(sp =>
         {
             IConfiguration config = sp.GetRequiredService<IConfiguration>();
@@ -42,7 +48,7 @@ internal static class WorkIQServiceExtensions
         .UseFunctionInvocation()
         .UseOpenTelemetry(sourceName: "Experimental.Microsoft.Extensions.AI");
 
-        services.AddSingleton<WorkIQAgentMcpClientFactory>();
+        services.AddScoped<WorkIQAgentMcpClientFactory>();
 
         // Conversation history must outlive any single turn -> singleton.
         services.AddSingleton<IConversationHistoryStore, InMemoryConversationHistoryStore>();
