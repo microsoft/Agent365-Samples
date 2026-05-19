@@ -6,11 +6,6 @@ using Microsoft.Extensions.AI;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.TokenCacheProviders;
 using Microsoft.Identity.Web.TokenCacheProviders.Distributed;
-using Microsoft.OpenTelemetry;
-using Microsoft.Teams.Apps.Diagnostics;
-using Microsoft.Teams.Core.Diagnostics;
-using OpenTelemetry;
-using OpenTelemetry.Resources;
 using System.ClientModel;
 
 namespace work_iq_teams_bot.TeamsApp;
@@ -61,24 +56,6 @@ internal static class WorkIQServiceExtensions
         services.AddDistributedMemoryCache();
         services.AddSingleton<IMsalTokenCacheProvider, MsalDistributedTokenCacheAdapter>();
 
-        string[] activitySources = [CoreTelemetryNames.ActivitySourceName, TeamsBotApplicationTelemetry.ActivitySourceName, "Experimental.Microsoft.Agents.AI", "ModelContextProtocol"];
-        string[] meterNames = [CoreTelemetryNames.MeterName, TeamsBotApplicationTelemetry.MeterName, "Experimental.Microsoft.Agents.AI", "ModelContextProtocol"];
-
-        services.AddOpenTelemetry()
-            .ConfigureResource(r => r
-                .AddService(serviceName: "WorkIQTeamsBot", serviceVersion: "0.0.1")
-                .AddAttributes(new Dictionary<string, object>
-                {
-                    ["service.namespace"] = "TeamsSamples"
-                }))
-            .UseMicrosoftOpenTelemetry(o =>
-            {
-                o.Exporters = ExportTarget.Otlp | ExportTarget.AzureMonitor;
-                o.Instrumentation.EnableHttpClientInstrumentation = true;
-                o.Instrumentation.EnableAspNetCoreInstrumentation = true;
-            })
-            .WithTracing(t => t.AddSource(activitySources))
-            .WithMetrics(m => m.AddMeter(meterNames));
         return services;
     }
 }

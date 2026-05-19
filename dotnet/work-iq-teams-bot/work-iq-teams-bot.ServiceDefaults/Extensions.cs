@@ -7,8 +7,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.ServiceDiscovery;
+using Microsoft.OpenTelemetry;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace Microsoft.Extensions.Hosting;
@@ -21,9 +23,12 @@ public static class Extensions
     private const string HealthEndpointPath = "/health";
     private const string AlivenessEndpointPath = "/alive";
 
-    public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
+    public static TBuilder AddServiceDefaults<TBuilder>(
+        this TBuilder builder,
+        string[]? activitySources = null,
+        string[]? meterNames = null) where TBuilder : IHostApplicationBuilder
     {
-        builder.ConfigureOpenTelemetry();
+        builder.ConfigureOpenTelemetry(activitySources, meterNames);
 
         builder.AddDefaultHealthChecks();
 
@@ -38,16 +43,13 @@ public static class Extensions
             http.AddServiceDiscovery();
         });
 
-        // Uncomment the following to restrict the allowed schemes for service discovery.
-        // builder.Services.Configure<ServiceDiscoveryOptions>(options =>
-        // {
-        //     options.AllowedSchemes = ["https"];
-        // });
-
         return builder;
     }
 
-    public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
+    public static TBuilder ConfigureOpenTelemetry<TBuilder>(
+        this TBuilder builder,
+        string[]? activitySources = null,
+        string[]? meterNames = null) where TBuilder : IHostApplicationBuilder
     {
         builder.Logging.AddOpenTelemetry(logging =>
         {
@@ -56,46 +58,63 @@ public static class Extensions
         });
 
         builder.Services.AddOpenTelemetry()
+            .ConfigureResource(r => r
+                .AddService(
+                    serviceName: builder.Environment.ApplicationName,
+                    serviceVersion: "0.0.1")
+                .AddAttributes(new Dictionary<string, object>
+                {
+                    ["service.namespace"] = "TeamsSamples"
+                }))
+            .UseMicrosoftOpenTelemetry(o =>
+            {
+                o.Exporters = ExportTarget.Otlp | ExportTarget.AzureMonitor;
+                o.Instrumentation.EnableHttpClientInstrumentation = true;
+                o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+            })
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddRuntimeInstrumentation();
+
+                if (meterNames is { Length: > 0 })
+                {
+                    metrics.AddMeter(meterNames);
+                }
             })
             .WithTracing(tracing =>
             {
                 tracing.AddSource(builder.Environment.ApplicationName)
-                    .AddAspNetCoreInstrumentation(tracing =>
+                    .AddAspNetCoreInstrumentation(options =>
                         // Exclude health check requests from tracing
-                        tracing.Filter = context =>
+                        options.Filter = context =>
                             !context.Request.Path.StartsWithSegments(HealthEndpointPath)
                             && !context.Request.Path.StartsWithSegments(AlivenessEndpointPath)
                     )
-                    // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
-                    //.AddGrpcClientInstrumentation()
-                    .AddHttpClientInstrumentation();
+                    .AddHttpClientInstrumentation(options =>
+                    {
+                        // Suppress known-noisy spans from Agent365 MCP service endpoints.
+                        // GET (SSE listener) returns 405 and DELETE (session teardown) returns 500
+                        // due to server-side issues. See docs/mcp-service-http-errors.md.
+                        options.FilterHttpRequestMessage = request =>
+                        {
+                            if (request.RequestUri?.Host is "agent365.svc.cloud.microsoft"
+                                && request.RequestUri.AbsolutePath.StartsWith("/agents/servers/", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return request.Method != HttpMethod.Get
+                                    && request.Method != HttpMethod.Delete;
+                            }
+
+                            return true;
+                        };
+                    });
+
+                if (activitySources is { Length: > 0 })
+                {
+                    tracing.AddSource(activitySources);
+                }
             });
-
-        //builder.AddOpenTelemetryExporters();
-
-        return builder;
-    }
-
-    private static TBuilder AddOpenTelemetryExporters<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
-    {
-        var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
-
-        if (useOtlpExporter)
-        {
-            builder.Services.AddOpenTelemetry().UseOtlpExporter();
-        }
-
-        // Uncomment the following lines to enable the Azure Monitor exporter (requires the Azure.Monitor.OpenTelemetry.AspNetCore package)
-        //if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
-        //{
-        //    builder.Services.AddOpenTelemetry()
-        //       .UseAzureMonitor();
-        //}
 
         return builder;
     }

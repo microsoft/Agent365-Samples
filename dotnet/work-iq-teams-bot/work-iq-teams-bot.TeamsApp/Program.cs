@@ -1,12 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using work_iq_teams_bot.TeamsApp;
 using Microsoft.Teams.Apps;
+using Microsoft.Teams.Apps.Diagnostics;
+using Microsoft.Teams.Core.Diagnostics;
+using work_iq_teams_bot.TeamsApp;
 
 WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(args);
 
-builder.AddServiceDefaults();
+builder.AddServiceDefaults(
+    activitySources: [CoreTelemetryNames.ActivitySourceName, TeamsBotApplicationTelemetry.ActivitySourceName, "Experimental.Microsoft.Agents.AI", "ModelContextProtocol"],
+    meterNames: [CoreTelemetryNames.MeterName, TeamsBotApplicationTelemetry.MeterName, "Experimental.Microsoft.Agents.AI", "ModelContextProtocol"]);
 
 builder.Services
     .AddWorkIQAgent(builder.Configuration)
