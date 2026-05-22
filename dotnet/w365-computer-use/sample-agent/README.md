@@ -156,22 +156,23 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 
 1. **User sends a message** -> `MyAgent.OnMessageAsync`
 2. **MCP connection** established (direct SSE in dev, A365 SDK gateway in prod)
-3. **Session acquisition** runs transparently on the first W365 tool call — ATG picks an eligible Cloud PC pool, checks out a session, and probes readiness. The session is reused across messages.
+3. **Session startup** runs explicitly with `mcp_W365ComputerUse_StartSession` before the first desktop action. Returned `sessionId` values are cached per conversation, and the selected session ID is sent on every remote W365 tool call.
 4. **CUA loop** in `ComputerUseOrchestrator.RunAsync`:
    - User message + conversation history sent to the model
    - Model returns `computer_call` actions (click, type, scroll, etc.)
-   - Actions translated to MCP tool calls (`click`, `type_text`, `press_keys`, etc. — discovered dynamically from the W365 remote server)
+   - Actions translated to MCP tool calls (`click`, `type_text`, `press_keys`, etc.) with the cached `sessionId`
    - Screenshot captured after each action and fed back to the model
    - Loop continues until model calls `OnTaskComplete` or max iterations reached
 5. **Response** sent back to user
-6. **Session persists** across messages for follow-up tasks
-7. **EndSession** called on app shutdown (Ctrl+C) via `mcp_W365ComputerUse_EndSession` to release the VM
+6. **Sessions persist** across messages for follow-up tasks, and a user can reference a specific `sessionId` to switch context
+7. **EndSession** called on app shutdown (Ctrl+C) via `mcp_W365ComputerUse_EndSession` for each cached `sessionId` to release VMs
 
 ## Session Management
 
-- Sessions are started **once** on the first message and reused across all subsequent messages
+- Sessions are started with `mcp_W365ComputerUse_StartSession`; multiple session IDs can be cached for one conversation
+- If a user references a known `sessionId`, the orchestrator selects that session before taking screenshots or sending remote W365 tool calls
 - Conversation history accumulates across messages, giving the model context for follow-up tasks
-- On app shutdown (`Ctrl+C`), the agent calls `EndSession` to release the VM back to the pool
+- On app shutdown (`Ctrl+C`), the agent calls `EndSession` for each cached `sessionId` to release VMs back to the pool
 - If the app crashes, sessions auto-expire after ~30 minutes on the W365 backend
 
 ## Production Deployment

@@ -28,8 +28,8 @@ internal static class CuaActionNormalization
         ["arrowright"] = "right",
 
         // Modifiers
-        ["ctrl"]    = "control",
-        ["control"] = "control",
+        ["ctrl"]    = "ctrl",
+        ["control"] = "ctrl",
         ["option"]  = "alt",
         ["alt"]     = "alt",
         ["shift"]   = "shift",

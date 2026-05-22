@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using W365ComputerUseSample.ComputerUse.Models;
@@ -18,11 +19,16 @@ namespace W365ComputerUseSample.ComputerUse;
 public class ComputerUseOrchestrator
 {
     /// <summary>
-    /// Names of the CUA tools exposed by the W365 remote MCP server (as returned by its
-    /// tools/list). Used to identify which tools came from the W365 server vs other MCP servers
-    /// (mail, calendar, etc.) without per-server tracking. Includes ATG's local EndSession
+    /// Names of the remote CUA tools exposed by the W365 MCP server, plus ATG's local EndSession
     /// mcptool. Update when W365 adds/renames tools.
     /// </summary>
+    internal const string W365StartSessionToolName = "mcp_W365ComputerUse_StartSession";
+    internal const string W365GetSessionDetailsToolName = "mcp_W365ComputerUse_GetSessionDetails";
+    internal const string W365EndSessionToolName = "mcp_W365ComputerUse_EndSession";
+    private static readonly Regex SessionIdRegex = new(
+        @"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        RegexOptions.Compiled);
+
     internal static readonly HashSet<string> W365CuaToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
         // Desktop interaction
@@ -41,7 +47,7 @@ public class ComputerUseOrchestrator
         // Code / shell execution
         "execute_python_code", "execute_shell_command",
         // ATG-local tool
-        "mcp_W365ComputerUse_EndSession",
+        W365EndSessionToolName,
     };
 
     /// <summary>Returns true when <paramref name="toolName"/> identifies a W365 CUA tool.</summary>
@@ -82,18 +88,14 @@ public class ComputerUseOrchestrator
 
     /// <summary>
     /// Tool list from non-W365 MCP servers (mail, calendar, etc.). Cached separately so that
-    /// non-CUA messages can be served without loading the W365 server's tools/list, which
-    /// triggers ATG's hostname-discovery handler and acquires a Cloud PC session (10-30s).
+    /// non-CUA messages can be served without loading the W365 server's lifecycle tools.
     /// </summary>
     private IList<AITool>? _cachedNonW365Tools;
 
     /// <summary>
-    /// True when this orchestrator has already loaded a tools/list for the W365 MCP server in
-    /// the current process. A tools/list call is what triggers ATG's hostname-discovery handler
-    /// to acquire a Cloud PC session, so if we've cached W365 tools, ATG has a live session
-    /// on our behalf and the agent doesn't need to show an "acquiring session" status.
-    /// Does not account for server-side idle reaps (~30 min on ATG) — those surface as tool-call
-    /// failures handled by the orchestrator's RecoverSessionAsync path.
+    /// True when this orchestrator has already loaded lifecycle tools for the W365 MCP server in
+    /// the current process. The explicit W365 lifecycle requires StartSession before remote
+    /// computer-use tool calls.
     /// </summary>
     public bool HasCachedW365Tools => _cachedTools != null && _cachedTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
 
@@ -115,6 +117,11 @@ public class ComputerUseOrchestrator
 
         ## Computer use (desktop control)
         Only use computer actions when no function tool can accomplish the task.
+        W365 computer-use sessions are explicit. If the user asks to start a session, call
+        mcp_W365ComputerUse_StartSession and keep the returned sessionId for later desktop work.
+        If the user names a specific sessionId, do the requested desktop work in that session.
+        For normal desktop tasks, the agent will start and attach the sessionId before invoking
+        remote W365 tools.
         When a task requires computer use, perform the actions and examine screenshots to verify they worked.
         If you see browser setup or sign-in dialogs, dismiss them (Escape, X, or Skip).
         When you have completed a computer-use task: FIRST emit a text message containing
@@ -199,7 +206,21 @@ public class ComputerUseOrchestrator
             new FunctionToolDefinition
             {
                 Name = "EndSession",
-                Description = "Release the Cloud PC / VM back to the pool and terminate the remote desktop session. Use ONLY when the user explicitly asks to end, quit, disconnect from, or release their Cloud PC / remote session itself (e.g. 'end my session', 'release the VM', 'disconnect from the cloud pc'). Do NOT call this when the user asks to close applications, windows, tabs, or files running inside the VM — those are normal computer-use actions that leave the VM running."
+                Description = "Release the Cloud PC / VM back to the pool and terminate the remote desktop session. Use ONLY when the user explicitly asks to end, quit, disconnect from, or release their Cloud PC / remote session itself (e.g. 'end my session', 'release the VM', 'disconnect from the cloud pc'). Do NOT call this when the user asks to close applications, windows, tabs, or files running inside the VM — those are normal computer-use actions that leave the VM running.",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        sessionId = new
+                        {
+                            type = "string",
+                            description = "Optional W365 sessionId to end. Omit to end the currently selected session."
+                        }
+                    },
+                    required = Array.Empty<string>(),
+                    additionalProperties = false
+                }
             },
             new FunctionToolDefinition
             {
@@ -333,6 +354,12 @@ public class ComputerUseOrchestrator
         if (session.SessionStarted)
         {
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+        }
+
+        if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
+        {
+            session.TrackAndSelectSession(requestedSessionId);
+            _logger.LogInformation("Selected W365 session {SessionId} from user message for conversation {ConversationId}", requestedSessionId, conversationId);
         }
 
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message if session already active
@@ -504,11 +531,7 @@ public class ComputerUseOrchestrator
                                 if (onCuaStarting != null)
                                     await onCuaStarting(true);
                                 onStatusUpdate?.Invoke("Starting W365 computing session...");
-                                session.SessionStarted = true;
-                                // V2: sessions are acquired transparently by ATG's hostname-discovery handler
-                                // on the first MCP call, so there's no W365 session ID returned to the agent
-                                // and no rename needed — the conversation-id-based screenshot subfolder set in
-                                // GetOrAdd above stays.
+                                await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, cancellationToken);
                                 _logger.LogInformation("Session marked started for conversation {ConversationId}", conversationId);
                             }
                             else if (onCuaStarting != null)
@@ -522,7 +545,7 @@ public class ComputerUseOrchestrator
                         _logger.LogInformation("CUA iteration {Iteration}: {Action}", i + 1, Truncate(item.GetRawText(), 200));
                         try
                         {
-                            session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
+                            session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, additionalTools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
                         }
                         catch (InvalidOperationException toolEx)
                         {
@@ -584,23 +607,23 @@ public class ComputerUseOrchestrator
                             _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
                             onStatusUpdate?.Invoke("Ending session...");
 
-                            // Always delegate to ATG regardless of session.SessionStarted: in V2 the
-                            // session can be acquired by ATG's hostname-discovery when the sample agent
-                            // calls tools/list at startup — before any computer_call flips SessionStarted.
-                            // Gating on SessionStarted would leak the pool slot. ATG's handler is
-                            // idempotent and returns "No active W365 session found." when there's nothing
-                            // to release, so this is safe on fresh conversations too.
-                            await EndSessionAsync(w365Tools, _logger, session.W365SessionId, cancellationToken);
-                            session.SessionStarted = false;
-                            session.W365SessionId = null;
-                            _sessions.TryRemove(conversationId, out _);
-                            return "Session ended. The VM has been released back to the pool.";
+                            var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
+                            await EndSessionAsync(w365Tools, _logger, sessionIdToEnd, cancellationToken);
+                            session.RemoveSession(sessionIdToEnd);
+                            if (session.W365SessionIds.Count == 0)
+                            {
+                                _sessions.TryRemove(conversationId, out _);
+                            }
+
+                            return string.IsNullOrEmpty(sessionIdToEnd)
+                                ? "Session ended. The VM has been released back to the pool."
+                                : $"Session {sessionIdToEnd} ended. The VM has been released back to the pool.";
                         }
 
                         // Invoke additional MCP function tool
                         if (additionalTools != null)
                         {
-                            var callResult = await InvokeFunctionCallAsync(item, additionalTools, cancellationToken);
+                            var callResult = await InvokeFunctionCallAsync(item, additionalTools, session, cancellationToken);
                             session.ConversationHistory.Add(callResult);
                         }
 
@@ -619,16 +642,67 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
+    /// Start an explicit W365 session and cache the returned sessionId for this conversation.
+    /// </summary>
+    private async Task StartW365SessionAsync(
+        ConversationSession session,
+        IList<AITool> w365Tools,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(session.W365SessionId))
+        {
+            session.SessionStarted = true;
+            return;
+        }
+
+        var lifecycleTools = new List<AITool>(w365Tools);
+        if (additionalTools != null)
+        {
+            lifecycleTools.AddRange(additionalTools);
+        }
+
+        string resultStr;
+        if (mcpClient != null)
+        {
+            var result = await mcpClient.CallToolAsync(W365StartSessionToolName, new Dictionary<string, object?>(), cancellationToken: ct);
+            resultStr = JsonSerializer.Serialize(result);
+        }
+        else
+        {
+            var result = await InvokeToolThrowOnErrorAsync(lifecycleTools, W365StartSessionToolName, new Dictionary<string, object?>(), ct);
+            resultStr = result?.ToString() ?? string.Empty;
+        }
+
+        if (TryExtractToolError(resultStr, out var errorText))
+        {
+            throw new InvalidOperationException($"Error calling tool '{W365StartSessionToolName}': {errorText}");
+        }
+
+        if (!TryExtractStringProperty(resultStr, "sessionId", out var sessionId))
+        {
+            throw new InvalidOperationException($"Tool '{W365StartSessionToolName}' did not return a sessionId.");
+        }
+
+        session.TrackAndSelectSession(sessionId);
+        _logger.LogInformation("Started explicit W365 session {SessionId}", sessionId);
+    }
+
+    /// <summary>
     /// End the W365 session. Called by the agent on shutdown or explicit end.
     /// </summary>
     public static async Task EndSessionAsync(IList<AITool> tools, ILogger logger, string? sessionId, CancellationToken ct)
     {
         try
         {
-            // The ATG-local mcptool resolves the active W365 session via the v2: context key
-            // — no sessionId arg needed (session routing is transparent).
             var args = new Dictionary<string, object?>();
-            await InvokeToolAsync(tools, "mcp_W365ComputerUse_EndSession", args, ct);
+            if (!string.IsNullOrEmpty(sessionId))
+            {
+                args["sessionId"] = sessionId;
+            }
+
+            await InvokeToolAsync(tools, W365EndSessionToolName, args, ct);
             logger.LogInformation("W365 session ended");
         }
         catch (ObjectDisposedException)
@@ -658,17 +732,11 @@ public class ComputerUseOrchestrator
 
         foreach (var (convId, session) in _sessions)
         {
-            _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, session.W365SessionId);
-            await EndSessionAsync(_cachedTools, _logger, session.W365SessionId, CancellationToken.None);
-        }
-
-        // Even when _sessions is empty, ATG may hold a V2 session acquired by tools/list at
-        // startup. Invoke EndSession once unconditionally — the handler is idempotent and
-        // returns a no-op response when there's nothing to release.
-        if (_sessions.IsEmpty)
-        {
-            _logger.LogInformation("No per-conversation sessions tracked; invoking EndSession to clean up any startup-acquired session");
-            await EndSessionAsync(_cachedTools, _logger, sessionId: null, CancellationToken.None);
+            foreach (var sessionId in session.W365SessionIds.ToArray())
+            {
+                _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
+                await EndSessionAsync(_cachedTools, _logger, sessionId, CancellationToken.None);
+            }
         }
 
         _sessions.Clear();
@@ -718,7 +786,7 @@ public class ComputerUseOrchestrator
         }
         else
         {
-            _logger.LogWarning("Not caching MCP tool list — no V2 CUA tools found (total {Count}). Next message will reconnect.", allTools.Count);
+            _logger.LogWarning("Not caching MCP tool list — no W365 CUA tools found (total {Count}). Next message will reconnect.", allTools.Count);
         }
 
         _logger.LogInformation("Total tools from {ServerCount} MCP server(s): {ToolCount}", mcpUrls.Count, allTools.Count);
@@ -825,11 +893,13 @@ public class ComputerUseOrchestrator
     /// Translate a computer_call into an MCP tool call, capture screenshot, return computer_call_output.
     /// </summary>
     private async Task<JsonElement> HandleComputerCallAsync(
-        JsonElement call, IList<AITool> tools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
+        JsonElement call, IList<AITool> tools, IList<AITool>? additionalTools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
     {
         var callId = call.GetProperty("call_id").GetString()!;
-        var sessionId = session.W365SessionId;
-
+        if (string.IsNullOrEmpty(session.W365SessionId))
+        {
+            await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
+        }
         // GPT-5.4 uses "actions" (non-empty array), older models use "action" (singular).
         if (call.TryGetProperty("actions", out var actionsArray)
             && actionsArray.ValueKind == JsonValueKind.Array
@@ -845,15 +915,15 @@ public class ComputerUseOrchestrator
 
                 if (actionType != "screenshot")
                 {
-                    var (toolName, args) = MapActionToMcpTool(actionType, action, sessionId);
-                    var (result, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                    var (toolName, args) = MapActionToMcpTool(actionType, action, session.W365SessionId);
+                    var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
                     if (sessionLost)
                     {
                         onStatus?.Invoke("Session lost — recovering...");
                         await RecoverSessionAsync(session, tools, _logger, ct);
-                        // Re-invoke with the same args; ATG re-acquires the session transparently
-                        // on this retry via the hostname-discovery handler.
-                        await InvokeToolThrowOnErrorAsync(tools, toolName, args, ct);
+                        await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
+                        AddSessionId(args, session.W365SessionId);
+                        await InvokeW365ToolAsync(tools, mcpClient, toolName, args, ct);
                     }
                     else if (TryExtractToolError(result?.ToString(), out var errorText))
                     {
@@ -871,15 +941,15 @@ public class ComputerUseOrchestrator
 
             if (actionType != "screenshot")
             {
-                var (toolName, args) = MapActionToMcpTool(actionType, singleAction, sessionId);
-                var (result, sessionLost) = await InvokeToolCheckSessionAsync(tools, toolName, args, ct);
+                var (toolName, args) = MapActionToMcpTool(actionType, singleAction, session.W365SessionId);
+                var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
                 if (sessionLost)
                 {
                     onStatus?.Invoke("Session lost — recovering...");
                     await RecoverSessionAsync(session, tools, _logger, ct);
-                    // Re-invoke with the same args; ATG re-acquires the session transparently
-                    // on this retry via the hostname-discovery handler.
-                    await InvokeToolThrowOnErrorAsync(tools, toolName, args, ct);
+                    await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
+                    AddSessionId(args, session.W365SessionId);
+                    await InvokeW365ToolAsync(tools, mcpClient, toolName, args, ct);
                 }
                 else if (TryExtractToolError(result?.ToString(), out var errorText))
                 {
@@ -889,7 +959,7 @@ public class ComputerUseOrchestrator
         }
 
         // Always capture screenshot after action
-        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, sessionId, ct);
+        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, session.W365SessionId, ct);
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName, session.ScreenshotSubfolder);
@@ -921,14 +991,13 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Map OpenAI computer_call action types to W365 V2 MCP tool names and arguments.
-    /// V2 tool names/schemas come from the in-VM MCP server (as returned by its tools/list).
-    /// No sessionId arg is passed — V2 session routing is handled transparently by ATG's
-    /// hostname-discovery handler via the x-ms-computerId header.
+    /// Map OpenAI computer_call action types to W365 MCP tool names and arguments.
+    /// The gateway requires the explicit sessionId returned by StartSession on every remote
+    /// W365 computer-use tool call.
     /// </summary>
     private static (string ToolName, Dictionary<string, object?> Args) MapActionToMcpTool(string actionType, JsonElement action, string? sessionId)
     {
-        return actionType.ToLowerInvariant() switch
+        var mapped = actionType.ToLowerInvariant() switch
         {
             "click" => ("click", new Dictionary<string, object?>
             {
@@ -998,13 +1067,15 @@ public class ComputerUseOrchestrator
             }),
             _ => throw new NotSupportedException($"Unsupported action: {actionType}")
         };
+
+        AddSessionId(mapped.Item2, sessionId);
+        return mapped;
     }
 
     private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
     {
-        // V2 take_screenshot takes optional crop args; empty dictionary = full screen.
-        // No sessionId — V2 session routing is handled by ATG's hostname-discovery handler.
         var screenshotArgs = new Dictionary<string, object?>();
+        AddSessionId(screenshotArgs, sessionId);
 
         // Use direct MCP client when available — AIFunction wrappers drop image content blocks
         if (mcpClient != null)
@@ -1188,6 +1259,33 @@ public class ComputerUseOrchestrator
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
     }
 
+    private static async Task<string> InvokeW365ToolAsync(
+        IList<AITool> tools,
+        IMcpClient? mcpClient,
+        string name,
+        Dictionary<string, object?> args,
+        CancellationToken ct)
+    {
+        string resultStr;
+        if (mcpClient != null)
+        {
+            var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
+            resultStr = JsonSerializer.Serialize(result);
+        }
+        else
+        {
+            var result = await InvokeToolAsync(tools, name, args, ct);
+            resultStr = result?.ToString() ?? string.Empty;
+        }
+
+        if (TryExtractToolError(resultStr, out var errorText))
+        {
+            throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
+        }
+
+        return resultStr;
+    }
+
     /// <summary>
     /// Invokes a tool and throws <see cref="InvalidOperationException"/> if the MCP result reports
     /// <c>isError: true</c>. The exception message format is <c>"Error calling tool '{name}': {detail}"</c>
@@ -1217,16 +1315,16 @@ public class ComputerUseOrchestrator
         try
         {
             using var doc = JsonDocument.Parse(response);
-            if (!doc.RootElement.TryGetProperty("isError", out var isErr) || isErr.ValueKind != JsonValueKind.True)
+            if (!TryGetProperty(doc.RootElement, "isError", out var isErr) || isErr.ValueKind != JsonValueKind.True)
             {
                 return false;
             }
 
-            if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            if (TryGetProperty(doc.RootElement, "content", out var content) && content.ValueKind == JsonValueKind.Array)
             {
                 foreach (var block in content.EnumerateArray())
                 {
-                    if (block.TryGetProperty("text", out var text))
+                    if (TryGetProperty(block, "text", out var text))
                     {
                         message = text.GetString() ?? "(unknown error)";
                         return true;
@@ -1243,17 +1341,105 @@ public class ComputerUseOrchestrator
         }
     }
 
+    private static void AddSessionId(Dictionary<string, object?> args, string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new InvalidOperationException("A W365 session has not been started. Call StartSession before using remote W365 tools.");
+        }
+
+        args["sessionId"] = sessionId;
+    }
+
+    private static bool TryExtractStringProperty(string? response, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(response);
+            return TryExtractStringProperty(doc.RootElement, propertyName, out value);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryExtractStringProperty(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetProperty(element, propertyName, out var property)
+                && property.ValueKind == JsonValueKind.String)
+            {
+                value = property.GetString() ?? string.Empty;
+                return !string.IsNullOrEmpty(value);
+            }
+
+            if (TryGetProperty(element, "content", out var content)
+                && content.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var block in content.EnumerateArray())
+                {
+                    if (TryGetProperty(block, "text", out var text)
+                        && text.ValueKind == JsonValueKind.String)
+                    {
+                        var nestedText = text.GetString();
+                        if (TryExtractStringProperty(nestedText, propertyName, out value))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var candidate in element.EnumerateObject())
+            {
+                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    property = candidate.Value;
+                    return true;
+                }
+            }
+        }
+
+        property = default;
+        return false;
+    }
+
     /// <summary>
     /// Invoke a tool and detect session-not-found errors. Returns (result, isSessionLost).
     /// </summary>
-    private static async Task<(object? Result, bool IsSessionLost)> InvokeToolCheckSessionAsync(
-        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    private static async Task<(string Result, bool IsSessionLost)> InvokeW365ToolCheckSessionAsync(
+        IList<AITool> tools, IMcpClient? mcpClient, string name, Dictionary<string, object?> args, CancellationToken ct)
     {
-        var result = await InvokeToolAsync(tools, name, args, ct);
-        var resultStr = result?.ToString() ?? "";
+        string resultStr;
+        try
+        {
+            resultStr = await InvokeW365ToolAsync(tools, mcpClient, name, args, ct);
+        }
+        catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
+        {
+            return (ex.Message, true);
+        }
+
         if (IsSessionNotFoundError(resultStr))
-            return (result, true);
-        return (result, false);
+            return (resultStr, true);
+        return (resultStr, false);
     }
 
     /// <summary>
@@ -1271,14 +1457,12 @@ public class ComputerUseOrchestrator
 
     /// <summary>
     /// Recover from a lost session: release the stale session (best-effort) and reset the
-    /// session-state flags so the next MCP tool call triggers a fresh checkout via ATG's
-    /// hostname-discovery handler. There is no explicit "start" step in V2 — the session
-    /// is acquired transparently when the orchestrator's next computer_call goes through.
+    /// session-state flags so the next computer-use action starts a fresh explicit session.
     /// </summary>
     private async Task RecoverSessionAsync(
         ConversationSession session, IList<AITool> tools, ILogger logger, CancellationToken ct)
     {
-        logger.LogWarning("Session lost. Recovering — releasing stale session; ATG will re-acquire on next MCP call.");
+        logger.LogWarning("Session lost. Recovering — releasing stale session before starting a new one.");
 
         try
         {
@@ -1289,9 +1473,8 @@ public class ComputerUseOrchestrator
             logger.LogWarning(ex, "Best-effort EndSession during recovery failed");
         }
 
-        session.W365SessionId = null;
-        session.SessionStarted = false;
-        logger.LogInformation("Session state cleared; awaiting transparent re-acquisition.");
+        session.RemoveSession(session.W365SessionId);
+        logger.LogInformation("Session state cleared; the next computer-use action will start a new session.");
     }
 
     private static string[] ExtractKeys(JsonElement action)
@@ -1317,6 +1500,50 @@ public class ComputerUseOrchestrator
         return "";
     }
 
+    private static bool TryExtractSessionId(string text, out string sessionId)
+    {
+        sessionId = string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var match = SessionIdRegex.Match(text);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        sessionId = match.Value;
+        return true;
+    }
+
+    private static string? ExtractSessionIdFromFunctionCall(JsonElement functionCall)
+    {
+        if (!functionCall.TryGetProperty("arguments", out var argsProperty))
+        {
+            return null;
+        }
+
+        var args = argsProperty.GetString();
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var argsDoc = JsonDocument.Parse(args);
+            return TryExtractStringProperty(argsDoc.RootElement, "sessionId", out var sessionId)
+                ? sessionId
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static JsonElement CreateUserMessage(string text) => ToJsonElement(new
     {
         type = "message", role = "user",
@@ -1331,7 +1558,7 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// Invoke an MCP function tool from a model function_call and return the function_call_output.
     /// </summary>
-    private async Task<JsonElement> InvokeFunctionCallAsync(JsonElement functionCall, IList<AITool> tools, CancellationToken ct)
+    private async Task<JsonElement> InvokeFunctionCallAsync(JsonElement functionCall, IList<AITool> tools, ConversationSession session, CancellationToken ct)
     {
         var callId = functionCall.GetProperty("call_id").GetString()!;
         var name = functionCall.GetProperty("name").GetString()!;
@@ -1343,10 +1570,32 @@ public class ComputerUseOrchestrator
         try
         {
             var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsStr) ?? [];
+            if (string.Equals(name, W365GetSessionDetailsToolName, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(session.W365SessionId)
+                && !args.ContainsKey("sessionId"))
+            {
+                args["sessionId"] = session.W365SessionId;
+            }
+
             var result = await InvokeToolAsync(tools, name, args, ct);
             var resultStr = result?.ToString() ?? "success";
             _logger.LogInformation("Function call {Name} returned ({Length} chars): {Result}",
                 name, resultStr.Length, Truncate(resultStr, 2000));
+
+            if (string.Equals(name, W365StartSessionToolName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (TryExtractToolError(resultStr, out var startError))
+                {
+                    return CreateFunctionOutput(callId, $"Error: {startError}");
+                }
+
+                if (TryExtractStringProperty(resultStr, "sessionId", out var sessionId))
+                {
+                    session.TrackAndSelectSession(sessionId);
+                    _logger.LogInformation("Stored explicit W365 session {SessionId} from model-requested StartSession", sessionId);
+                }
+            }
+
             return CreateFunctionOutput(callId, resultStr);
         }
         catch (Exception ex)
@@ -1514,10 +1763,38 @@ public class ComputerUseOrchestrator
     private sealed class ConversationSession
     {
         public bool SessionStarted { get; set; }
-        public string? W365SessionId { get; set; }
+        public string? W365SessionId { get; private set; }
+        public HashSet<string> W365SessionIds { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<JsonElement> ConversationHistory { get; } = [];
         public int ScreenshotCounter { get; set; }
         public string? ScreenshotSubfolder { get; set; }
         public bool FolderShared { get; set; }
+
+        public void TrackAndSelectSession(string? sessionId)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                return;
+            }
+
+            W365SessionId = sessionId.Trim();
+            W365SessionIds.Add(W365SessionId);
+            SessionStarted = true;
+        }
+
+        public void RemoveSession(string? sessionId)
+        {
+            if (!string.IsNullOrWhiteSpace(sessionId))
+            {
+                W365SessionIds.Remove(sessionId);
+            }
+
+            if (string.Equals(W365SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
+            {
+                W365SessionId = W365SessionIds.LastOrDefault();
+            }
+
+            SessionStarted = !string.IsNullOrEmpty(W365SessionId);
+        }
     }
 }
