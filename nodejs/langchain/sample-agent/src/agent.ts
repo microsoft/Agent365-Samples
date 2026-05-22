@@ -8,8 +8,7 @@ import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 // Observability Imports
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
+import { BaggageBuilder, AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/opentelemetry';
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
@@ -78,7 +77,7 @@ export class A365Agent extends AgentApplication<TurnState> {
 
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
-      turnContext
+      turnContext as any
     ).sessionDescription('Initial onboarding session')
       .build();
 
@@ -118,12 +117,11 @@ export class A365Agent extends AgentApplication<TurnState> {
       const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
       tokenCache.set(cacheKey, aauToken?.token || '');
     } else {
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
+      await AgenticTokenCacheInstance.refreshObservabilityToken(
         agentId,
         tenantId,
-        turnContext,
-        this.authorization,
-        getObservabilityAuthenticationScope()
+        turnContext as any,
+        this.authorization as any
       );
     }
   }
