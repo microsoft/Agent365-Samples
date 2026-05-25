@@ -13,12 +13,27 @@ import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runt
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
 
+// Maps a user "key" (aadObjectId / id / name) → proactive conversation ID, so
+// the WpxComment handler can post a Teams DM back to whichever user @mentioned
+// the agent. In-process only — survives the process lifetime; for prod, persist.
+const userKeyToConversationId = new Map<string, string>();
+
+function userKeysFor(from: any): string[] {
+  if (!from) return [];
+  const keys = new Set<string>();
+  if (from.aadObjectId) keys.add(`aad:${String(from.aadObjectId).toLowerCase()}`);
+  if (from.id) keys.add(`id:${String(from.id).toLowerCase()}`);
+  if (from.name) keys.add(`name:${String(from.name).toLowerCase()}`);
+  return [...keys];
+}
+
 export class A365Agent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
 
   constructor() {
     super({
       storage: new MemoryStorage(),
+      proactive: {}, // enable app.proactive; falls back to the application storage
       authorization: {
         agentic: {
           type: 'agentic',
@@ -42,6 +57,24 @@ export class A365Agent extends AgentApplication<TurnState> {
   }
 
   /**
+   * Stores the current Teams conversation reference and indexes it under the
+   * user's identifiers, so a later WpxComment from the same user can be routed
+   * back into this 1:1 Teams chat as a proactive notification.
+   */
+  private async trackConversationForProactive(context: TurnContext): Promise<void> {
+    try {
+      const convId = await this.proactive.storeConversation(context);
+      const keys = userKeysFor(context.activity.from);
+      for (const k of keys) {
+        userKeyToConversationId.set(k, convId);
+      }
+      console.log(`Tracked Teams conversation '${convId}' for user '${context.activity.from?.name}' under keys: ${keys.join(', ')}`);
+    } catch (err) {
+      console.error('Failed to store conversation reference for proactive messaging:', err);
+    }
+  }
+
+  /**
    * Handles incoming user messages and sends responses.
    */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
@@ -50,6 +83,10 @@ export class A365Agent extends AgentApplication<TurnState> {
     const from = turnContext.activity?.from;
     console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
     const displayName = from?.name ?? 'unknown';
+
+    // Remember this Teams chat so we can ping the user proactively when a Word
+    // comment notification arrives for them later.
+    await this.trackConversationForProactive(turnContext);
 
     if (!userMessage) {
       await turnContext.sendActivity('Please send me a message and I\'ll help you!');
@@ -113,7 +150,7 @@ export class A365Agent extends AgentApplication<TurnState> {
       const aauToken = await this.authorization.exchangeToken(turnContext, 'agentic', {
         scopes: getObservabilityAuthenticationScope()
       });
-      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId} token=${aauToken?.token?.substring(0, 10)}...`);
+      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId}`);
       const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
       tokenCache.set(cacheKey, aauToken?.token || '');
     } else {
@@ -131,8 +168,84 @@ export class A365Agent extends AgentApplication<TurnState> {
       case NotificationType.EmailNotification:
         await this.handleEmailNotification(context, state, agentNotificationActivity);
         break;
+      case NotificationType.WpxComment:
+        await this.handleWpxCommentNotification(context, state, agentNotificationActivity);
+        break;
       default:
         await context.sendActivity(`Received notification of type: ${agentNotificationActivity.notificationType}`);
+    }
+  }
+
+  private async handleWpxCommentNotification(context: TurnContext, state: TurnState, activity: AgentNotificationActivity): Promise<void> {
+    const wpx = activity.wpxCommentNotification;
+    if (!wpx) {
+      console.warn('WpxComment notification missing wpxCommentNotification payload');
+      return;
+    }
+
+    // Extract the document sharing URL from activity.attachments — the SDK's typed
+    // WpxComment view doesn't expose it, but it's reliably present in the raw payload.
+    const attachments = (context.activity as any)?.attachments ?? [];
+    const fileAttachment = attachments.find((a: any) =>
+      typeof a?.contentUrl === 'string' && /\.(docx?|doc)(\?|$)/i.test(a.contentUrl),
+    ) ?? attachments[0];
+    const documentUrl: string | undefined = fileAttachment?.contentUrl;
+    const documentName: string = fileAttachment?.name ?? 'the document';
+    const commentText: string = (context.activity as any)?.text ?? '';
+    const senderName = context.activity.from?.name ?? 'a user';
+
+    console.log(`WpxComment received — sender='${senderName}', documentName='${documentName}', documentUrl='${documentUrl ?? '(none)'}', commentText='${commentText.substring(0, 200)}', documentId='${wpx.documentId}', initiatingCommentId='${wpx.initiatingCommentId}'`);
+
+    try {
+      const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, context);
+
+      const prompt = documentUrl
+        ? `${senderName} @mentioned you on a comment in the Word document "${documentName}".\n` +
+          `\n` +
+          `What the user wrote in the comment:\n` +
+          `> ${commentText}\n` +
+          `\n` +
+          `Document sharing URL: ${documentUrl}\n` +
+          `\n` +
+          `Your job is to POST A REPLY on that same comment thread. Follow these steps:\n` +
+          `1. Call mcp_WordServer.GetDocumentContent with the URL above. The response returns the document's filename, driveId, documentId, plain text content, and a list of every comment with its commentId, author, and text.\n` +
+          `2. From the comments list, find the comment that matches the text above and @mentions DocMate (you). If multiple match, pick the most recent that does NOT already have a reply from DocMate.\n` +
+          `3. Capture driveId, documentId, and commentId from the GetDocumentContent response.\n` +
+          `4. Use the Word reply tool to post a REPLY on that comment thread. Look in your available mcp_WordServer tools for one whose name/description mentions "reply" (e.g. AddCommentReply, ReplyToComment, AddReplyComment) — do NOT use AddComment, that starts a new top-level thread.\n` +
+          `5. Reply text: read the comment carefully and answer it directly. Be useful, specific, and brief. If the request is ambiguous, post a brief clarifying question as the reply.\n` +
+          `\n` +
+          `Constraints:\n` +
+          `- Never fabricate IDs. Always pull driveId / documentId / commentId from a tool response.\n` +
+          `- Post exactly ONE reply. Do not create new top-level comments.\n` +
+          `- Finish with a short summary stating: "Replied to commentId=<id> with: <reply text>".`
+        : `${senderName} @mentioned you on a Word comment, but no document URL was attached to the notification. ` +
+          `documentId='${wpx.documentId}'. Apologise that you cannot resolve the document without a sharing URL and stop — do not fabricate a URL.`;
+
+      const response = await client.invokeInferenceScope(prompt);
+      console.log(`WpxComment handled. LLM summary: ${response?.substring(0, 500)}`);
+
+      // Proactively notify the user in their Teams 1:1 chat (if we have a
+      // stored conversation for them — i.e. they have chatted with us or
+      // installed us at least once).
+      const keys = userKeysFor(context.activity.from);
+      const convId = keys.map(k => userKeyToConversationId.get(k)).find(Boolean);
+      if (convId) {
+        try {
+          // Strip the technical prefix so the Teams message reads naturally.
+          const m = response?.match(/Replied to commentId=\S+ with:\s*([\s\S]+)/);
+          const replyText = (m?.[1] ?? response ?? '').trim();
+          const teamsMessage =
+            `I replied to your comment on **${documentName}**:\n\n${replyText.substring(0, 1500)}`;
+          await this.proactive.sendActivity(this.adapter, convId, { text: teamsMessage });
+          console.log(`Proactive Teams notification sent to '${context.activity.from?.name}' (convId='${convId}').`);
+        } catch (err) {
+          console.error('Failed to send proactive Teams notification:', err);
+        }
+      } else {
+        console.log(`No tracked Teams conversation for sender '${context.activity.from?.name}' (keys tried: ${keys.join(', ')}). Ask them to message DocMate once in Teams to enable Teams notifications for Word @mentions.`);
+      }
+    } catch (error) {
+      console.error('WpxComment handler error:', error);
     }
   }
 
@@ -176,6 +289,9 @@ export class A365Agent extends AgentApplication<TurnState> {
     console.log(`InstallationUpdate received — Action: '${context.activity.action ?? "(none)"}', DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}'`);
 
     if (context.activity.action === 'add') {
+      // Remember this conversation so we can ping the user proactively when a
+      // Word comment notification arrives later.
+      await this.trackConversationForProactive(context);
       await context.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
     } else if (context.activity.action === 'remove') {
       await context.sendActivity('Thank you for your time, I enjoyed working with you.');

@@ -6,6 +6,14 @@
       "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
       "scope": "McpServers.Mail.All",
       "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+    },
+    {
+      "mcpServerName": "mcp_WordServer",
+      "mcpServerUniqueName": "mcp_WordServer",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_WordServer",
+      "scope": "Tools.ListInvoke.All",
+      "audience": "c2d0c2b6-8013-4346-9f8b-b81d3b754a29",
+      "publisher": "Microsoft"
     }
   ]
 }
