@@ -326,18 +326,19 @@ public class ComputerUseOrchestrator
                 return true;
             }
 
-            var messageItems = response.Output.Where(item =>
-                item.TryGetProperty("type", out var tProp) && tProp.GetString() == "message");
-            foreach (var item in messageItems)
+            var firstMessage = response.Output
+                .Where(item => item.TryGetProperty("type", out var tProp) && tProp.GetString() == "message")
+                .Select(item => ExtractText(item).Trim())
+                .FirstOrDefault();
+
+            if (firstMessage != null)
             {
-                var replyText = ExtractText(item).Trim();
-                _logger.LogInformation("CUA intent classifier reply for message {Preview}: {Reply}", Truncate(userMessage, 80), Truncate(replyText, 60));
+                _logger.LogInformation("CUA intent classifier reply for message {Preview}: {Reply}", Truncate(userMessage, 80), Truncate(firstMessage, 60));
                 // Match on the first non-empty token. The router is instructed to emit a single
                 // word but may prepend/append fluff; trim to the leading YES/NO.
-                var upper = replyText.ToUpperInvariant();
+                var upper = firstMessage.ToUpperInvariant();
                 if (upper.StartsWith("NO")) return false;
-                if (upper.StartsWith("YES")) return true;
-                // Unexpected shape — default to CUA so we don't silently drop a legitimate request.
+                // YES or unexpected shape — default to CUA so we don't silently drop a legitimate request.
                 return true;
             }
 
@@ -489,15 +490,15 @@ public class ComputerUseOrchestrator
                     && typeProp.GetString() == "function_call"
                     && item.TryGetProperty("name", out var nameProp)
                     && cuaOnlyFunctionNames.Contains(nameProp.GetString() ?? string.Empty));
-                var cuaOnlyCallIds = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var item in cuaOnlyCalls)
-                {
-                    if (item.TryGetProperty("call_id", out var idProp))
+                var cuaOnlyCallIds = cuaOnlyCalls
+                    .Where(item => item.TryGetProperty("call_id", out _))
+                    .Select(item =>
                     {
-                        var id = idProp.GetString();
-                        if (!string.IsNullOrEmpty(id)) cuaOnlyCallIds.Add(id);
-                    }
-                }
+                        item.TryGetProperty("call_id", out var idProp);
+                        return idProp.GetString();
+                    })
+                    .Where(id => !string.IsNullOrEmpty(id))
+                    .ToHashSet(StringComparer.Ordinal);
 
                 conversation = session.ConversationHistory
                     .Where(item =>
@@ -973,24 +974,23 @@ public class ComputerUseOrchestrator
         string? existingSessionId,
         CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(existingSessionId) && _cachedMcpClient != null)
+        if (!string.IsNullOrWhiteSpace(existingSessionId)
+            && _cachedMcpClient != null
+            && _w365McpClientsBySessionId.TryGetValue(existingSessionId, out var sessionMcpClient))
         {
-            if (_w365McpClientsBySessionId.TryGetValue(existingSessionId, out var sessionMcpClient))
+            try
             {
-                try
-                {
-                    var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
-                    var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
-                    _cachedTools = cachedResult.Tools;
-                    _cachedMcpClient = cachedResult.Client;
-                    _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
-                    return cachedResult;
-                }
-                catch (Exception ex) when (IsUnauthorizedMcpTransportFailure(ex))
-                {
-                    _logger.LogWarning(ex, "Cached W365 MCP client for session {SessionId} was unauthorized. Disposing it and reconnecting with a fresh token.", existingSessionId);
-                    await DisposeW365McpClientAsync(existingSessionId);
-                }
+                var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
+                var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
+                _cachedTools = cachedResult.Tools;
+                _cachedMcpClient = cachedResult.Client;
+                _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
+                return cachedResult;
+            }
+            catch (Exception ex) when (IsUnauthorizedMcpTransportFailure(ex))
+            {
+                _logger.LogWarning(ex, "Cached W365 MCP client for session {SessionId} was unauthorized. Disposing it and reconnecting with a fresh token.", existingSessionId);
+                await DisposeW365McpClientAsync(existingSessionId);
             }
         }
 
@@ -1424,7 +1424,10 @@ public class ComputerUseOrchestrator
                 }
             }
         }
-        catch (JsonException) { }
+        catch (JsonException ex)
+        {
+            _logger.LogDebug(ex, "ExtractScreenshot: response was not valid JSON, will try last-resort raw base64 detection");
+        }
 
         // Last resort: if it looks like raw base64 (long string, no JSON), use it directly
         if (str.Length > 1000 && !str.StartsWith("{") && !str.StartsWith("["))
@@ -1444,7 +1447,10 @@ public class ComputerUseOrchestrator
             if (root.TryGetProperty("image", out var img)) return img.GetString();
             if (root.TryGetProperty("data", out var d)) return d.GetString();
         }
-        catch (JsonException) { }
+        catch (JsonException)
+        {
+            // Not valid JSON — fall through to returning null.
+        }
         return null;
     }
 
@@ -1469,19 +1475,13 @@ public class ComputerUseOrchestrator
             switch (el.ValueKind)
             {
                 case JsonValueKind.Object:
-                    foreach (var prop in el.EnumerateObject())
-                    {
-                        var found = Walk(prop.Value);
-                        if (!string.IsNullOrEmpty(found)) return found;
-                    }
-                    break;
+                    return el.EnumerateObject()
+                        .Select(prop => Walk(prop.Value))
+                        .FirstOrDefault(found => !string.IsNullOrEmpty(found));
                 case JsonValueKind.Array:
-                    foreach (var item in el.EnumerateArray())
-                    {
-                        var found = Walk(item);
-                        if (!string.IsNullOrEmpty(found)) return found;
-                    }
-                    break;
+                    return el.EnumerateArray()
+                        .Select(item => Walk(item))
+                        .FirstOrDefault(found => !string.IsNullOrEmpty(found));
                 case JsonValueKind.String:
                     var s = el.GetString();
                     if (string.IsNullOrEmpty(s)) break;
@@ -1738,10 +1738,17 @@ public class ComputerUseOrchestrator
     private static string ExtractText(JsonElement msg)
     {
         if (msg.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.Array)
-            foreach (var item in c.EnumerateArray())
-                if (item.TryGetProperty("text", out var t))
-                    return t.GetString() ?? "";
-        return "";
+        {
+            return c.EnumerateArray()
+                .Where(item => item.TryGetProperty("text", out _))
+                .Select(item =>
+                {
+                    item.TryGetProperty("text", out var t);
+                    return t.GetString() ?? string.Empty;
+                })
+                .FirstOrDefault() ?? string.Empty;
+        }
+        return string.Empty;
     }
 
     private static bool TryExtractSessionId(string text, out string sessionId)
@@ -1891,11 +1898,15 @@ public class ComputerUseOrchestrator
         {
             // Match the OneDrive folder layout — per-session subfolder under ./Screenshots so
             // counters from concurrent or sequential conversations don't clobber each other.
-            var dir = string.IsNullOrEmpty(subfolder)
+            // Normalize subfolder to a leaf name so a rooted/parent-traversal segment can't
+            // make Path.Combine drop _screenshotPath or escape it.
+            string? safeSubfolder = string.IsNullOrEmpty(subfolder) ? null : Path.GetFileName(subfolder.Trim());
+            var dir = string.IsNullOrEmpty(safeSubfolder)
                 ? _screenshotPath
-                : Path.Combine(_screenshotPath, subfolder);
+                : Path.Combine(_screenshotPath, safeSubfolder);
             Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, $"{name}.png");
+            var safeName = Path.GetFileName(name);
+            var path = Path.Combine(dir, $"{safeName}.png");
             File.WriteAllBytes(path, Convert.FromBase64String(base64Data));
             _logger.LogInformation("Screenshot saved: {Path}", path);
         }
