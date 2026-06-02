@@ -17,13 +17,12 @@ from typing import Optional
 from microsoft_agents.hosting.core import TurnContext
 from microsoft_agents_a365.observability.core import (
     AgentDetails,
-    TenantDetails,
+    InvokeAgentScopeDetails,
     Request,
-    ExecutionType,
-    InvokeAgentDetails,
 )
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.observability.core.models.caller_details import CallerDetails
+from microsoft_agents_a365.observability.core.models.user_details import UserDetails
 from microsoft_agents_a365.observability.hosting.scope_helpers.populate_baggage import populate
 
 
@@ -64,7 +63,10 @@ def extract_turn_context_details(context: TurnContext) -> TurnContextDetails:
 
     # Extract agent details from recipient (ChannelAccount)
     tenant_id = recipient.tenant_id if recipient else None
-    agent_id = getattr(recipient, "id", None) if recipient else None
+    # Use get_agentic_instance_id() (recipient.agentic_app_id) for agent_id
+    agent_id = activity.get_agentic_instance_id()
+    if not agent_id:
+        agent_id = getattr(recipient, "id", None) if recipient else None
     if not agent_id:
         agent_id = os.getenv("AGENT_ID", "claude-agent")
     agent_name = getattr(recipient, "name", None) if recipient else None
@@ -110,13 +112,11 @@ def create_agent_details(details: TurnContextDetails, description: str = "AI age
     """
     return AgentDetails(
         agent_id=details.agent_id,
-        conversation_id=details.conversation_id,
         agent_name=details.agent_name,
         agent_description=description,
         tenant_id=details.tenant_id,
-        agent_upn=details.agent_upn,
+        agentic_user_id=details.agent_auid,
         agent_blueprint_id=details.agent_blueprint_id,
-        agent_auid=details.agent_auid,
     )
 
 
@@ -131,24 +131,11 @@ def create_caller_details(details: TurnContextDetails) -> CallerDetails:
         CallerDetails for observability
     """
     return CallerDetails(
-        caller_id=details.caller_id or "unknown-caller",
-        caller_upn=details.caller_name or "unknown-user",
-        caller_user_id=details.caller_aad_object_id or details.caller_id or "unknown-user-id",
-        caller_name=details.caller_name,
+        user_details=UserDetails(
+            user_id=details.caller_aad_object_id or details.caller_id or "unknown-user-id",
+            user_name=details.caller_name,
+        ),
     )
-
-
-def create_tenant_details(details: TurnContextDetails) -> TenantDetails:
-    """
-    Create TenantDetails from extracted TurnContextDetails.
-
-    Args:
-        details: The extracted turn context details
-
-    Returns:
-        TenantDetails for observability
-    """
-    return TenantDetails(tenant_id=details.tenant_id)
 
 
 def create_request(details: TurnContextDetails, message: str) -> Request:
@@ -164,42 +151,34 @@ def create_request(details: TurnContextDetails, message: str) -> Request:
     """
     return Request(
         content=message,
-        execution_type=ExecutionType.HUMAN_TO_AGENT,
         session_id=details.conversation_id,
+        conversation_id=details.conversation_id,
     )
 
 
-def create_invoke_agent_details(details: TurnContextDetails, description: str = "AI agent powered by Anthropic Claude Agent SDK") -> InvokeAgentDetails:
+def create_invoke_agent_details(details: TurnContextDetails) -> InvokeAgentScopeDetails:
     """
-    Create InvokeAgentDetails from extracted TurnContextDetails.
+    Create InvokeAgentScopeDetails from extracted TurnContextDetails.
 
     Args:
         details: The extracted turn context details
-        description: Description of the agent
 
     Returns:
-        InvokeAgentDetails for observability
+        InvokeAgentScopeDetails for observability
     """
-    agent_details = create_agent_details(details, description)
-    return InvokeAgentDetails(
-        details=agent_details,
-        session_id=details.conversation_id,
-    )
+    return InvokeAgentScopeDetails()
 
 
-def build_baggage_builder(context: TurnContext, correlation_id: Optional[str] = None) -> BaggageBuilder:
+def build_baggage_builder(context: TurnContext) -> BaggageBuilder:
     """
     Build a BaggageBuilder populated from TurnContext activity.
 
     Args:
         context: The TurnContext from the Microsoft Agents SDK
-        correlation_id: Optional correlation id to add to baggage
 
     Returns:
         Populated BaggageBuilder instance
     """
     builder = BaggageBuilder()
     populate(builder, context)
-    if correlation_id:
-        builder.correlation_id(correlation_id)
     return builder

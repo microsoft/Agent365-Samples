@@ -3,15 +3,10 @@
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { Activity, ActivityTypes } from '@microsoft/agents-activity';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
-import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
-
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 
-import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
 
 export class MyAgent extends AgentApplication<TurnState> {
@@ -58,16 +53,12 @@ export class MyAgent extends AgentApplication<TurnState> {
     }
 
     // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
-    // Each sendActivity call produces a discrete Teams message.
-    // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
-    //       use sendActivity for any messages that must arrive immediately.
     await turnContext.sendActivity('Got it — working on it…');
 
-    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    // Send typing indicator immediately.
     await turnContext.sendActivity({ type: 'typing' } as Activity);
 
     // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
-    // Only visible in 1:1 and small group chats.
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     const startTypingLoop = () => {
       typingInterval = setInterval(() => {
@@ -80,54 +71,16 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
-    // Populate baggage consistently from TurnContext using hosting utilities
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
-      new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Initial onboarding session')
-      .build();
-
-    // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
-
     try {
-      await baggageScope.run(async () => {
-        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
-        const response = await client.invokeAgentWithScope(userMessage);
-        await turnContext.sendActivity(response);
-      });
+      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
+      const response = await client.invokeAgentWithScope(userMessage);
+      await turnContext.sendActivity(response);
     } catch (error) {
       console.error('LLM query error:', error);
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
       stopTypingLoop();
-      baggageScope.dispose();
-    }
-  }
-
-  /**
-   * Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
-   */
-  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
-    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-    const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
-
-    if (process.env.Use_Custom_Resolver === 'true') {
-      const aauToken = await this.authorization.exchangeToken(turnContext, 'agentic', {
-        scopes: getObservabilityAuthenticationScope()
-      });
-      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId} token=${aauToken?.token?.substring(0, 10)}...`);
-      const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
-      tokenCache.set(cacheKey, aauToken?.token || '');
-    } else {
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
-        agentId,
-        tenantId,
-        turnContext,
-        this.authorization,
-        getObservabilityAuthenticationScope()
-      );
     }
   }
 
@@ -172,6 +125,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       await context.sendActivity(errorResponse);
     }
   }
+
   /**
    * Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
    * Sends a welcome message on install and a farewell on uninstall.

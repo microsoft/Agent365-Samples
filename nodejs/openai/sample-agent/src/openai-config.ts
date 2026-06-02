@@ -57,7 +57,7 @@ export function configureOpenAIClient(): void {
     const azureClient = new AzureOpenAI({
       apiKey: process.env.AZURE_OPENAI_API_KEY,
       endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-      apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-10-21',
+      apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2025-03-01-preview',
       deployment: process.env.AZURE_OPENAI_DEPLOYMENT,
     });
     

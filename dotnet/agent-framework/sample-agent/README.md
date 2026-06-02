@@ -116,6 +116,46 @@ finally
 
 > **Note**: Typing indicators are only visible in 1:1 chats and small group chats — not in channels.
 
+## Observability
+
+This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro, configured in `Program.cs` with a single call:
+
+```csharp
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
+
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
+});
+```
+
+This produces the following spans automatically — no custom tracing code required:
+
+| Span | Source | What it captures |
+|---|---|---|
+| `POST /api/messages` | ASP.NET Core | Inbound request — method, path, status code |
+| `POST login.microsoftonline.com` | HttpClient | MSAL token acquisition |
+| `POST smba.trafficmanager.net` | HttpClient | Outbound Teams messages |
+| `POST …openai.azure.com/…/chat/completions` | HttpClient | Raw Azure OpenAI HTTP call |
+| `chat <model>` | `Microsoft.Extensions.AI` | Full `gen_ai.*` semantics — model, tool definitions, system prompt, input/output messages, token counts, finish reason |
+| `invoke_agent <id>` | `Microsoft.Agents.AI` | Agent-level span — agent ID, input/output, token counts |
+
+The `gen_ai.*` attributes on the `chat` span come from `.UseOpenTelemetry()` on the `ChatClientAgent` builder in `Program.cs`. This is the only non-distro observability call in the sample and is worth keeping — it enriches every LLM call with structured semantic data at no cost.
+
+### Service Name
+
+By default the OTel SDK sets `service.name` to `unknown_service:<process-name>`. Set the standard `OTEL_SERVICE_NAME` environment variable to give your service a meaningful name in traces:
+
+```bash
+OTEL_SERVICE_NAME="Agent Framework Sample"
+```
+
+Set this in your local launch profile, deployment environment, or container configuration to match your service catalog.
+
 ## Running the Agent
 
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.

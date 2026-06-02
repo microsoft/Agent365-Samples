@@ -43,7 +43,7 @@ dependencies = [
     "microsoft_agents_a365_tooling >= 0.1.0",
     "microsoft_agents_a365_tooling_extensions_agentframework >= 0.1.0",
     "microsoft_agents_a365_observability_core >= 0.1.0",
-    "microsoft_agents_a365_observability_extensions_agent_framework >= 0.1.0",
+    "microsoft-opentelemetry >= 0.1.0a3",
     "microsoft_agents_a365_runtime >= 0.1.0",
     "microsoft_agents_a365_notifications >= 0.1.0"
 ]
