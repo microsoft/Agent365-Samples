@@ -146,36 +146,37 @@ internal sealed class W365McpSessionClient
             if (TryGetProperty(element, "content", out var content)
                 && content.ValueKind == JsonValueKind.Array)
             {
-                foreach (var block in content.EnumerateArray())
+                var stringTextBlocks = content.EnumerateArray()
+                    .Where(b => TryGetProperty(b, "text", out var t) && t.ValueKind == JsonValueKind.String);
+                foreach (var block in stringTextBlocks)
                 {
-                    if (TryGetProperty(block, "text", out var text)
-                        && text.ValueKind == JsonValueKind.String)
+                    TryGetProperty(block, "text", out var text);
+                    var nestedText = text.GetString();
+                    if (TryExtractStringProperty(nestedText, propertyName, out value))
                     {
-                        var nestedText = text.GetString();
-                        if (TryExtractStringProperty(nestedText, propertyName, out value))
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
             }
 
-            foreach (var candidate in element.EnumerateObject())
+            var objectHit = element.EnumerateObject()
+                .Select(candidate => TryExtractStringPropertyTuple(candidate.Value, propertyName))
+                .FirstOrDefault(r => r.found);
+            if (objectHit.found)
             {
-                if (TryExtractStringProperty(candidate.Value, propertyName, out value))
-                {
-                    return true;
-                }
+                value = objectHit.value;
+                return true;
             }
         }
         else if (element.ValueKind == JsonValueKind.Array)
         {
-            foreach (var item in element.EnumerateArray())
+            var arrayHit = element.EnumerateArray()
+                .Select(item => TryExtractStringPropertyTuple(item, propertyName))
+                .FirstOrDefault(r => r.found);
+            if (arrayHit.found)
             {
-                if (TryExtractStringProperty(item, propertyName, out value))
-                {
-                    return true;
-                }
+                value = arrayHit.value;
+                return true;
             }
         }
         else if (element.ValueKind == JsonValueKind.String)
@@ -198,17 +199,23 @@ internal sealed class W365McpSessionClient
         return false;
     }
 
+    private static (bool found, string value) TryExtractStringPropertyTuple(JsonElement element, string propertyName)
+    {
+        return TryExtractStringProperty(element, propertyName, out var value)
+            ? (true, value)
+            : (false, string.Empty);
+    }
+
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            foreach (var candidate in element.EnumerateObject())
+            var match = element.EnumerateObject()
+                .FirstOrDefault(candidate => string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase));
+            if (match.Value.ValueKind != JsonValueKind.Undefined)
             {
-                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    property = candidate.Value;
-                    return true;
-                }
+                property = match.Value;
+                return true;
             }
         }
 

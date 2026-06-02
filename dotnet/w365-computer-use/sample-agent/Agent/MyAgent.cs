@@ -154,7 +154,7 @@ public class MyAgent : AgentApplication
             {
                 var recipientId = turnContext.Activity.Recipient.Id;
                 var newMembers = turnContext.Activity.MembersAdded.Where(m => m.Id != recipientId);
-                foreach (var member in newMembers)
+                foreach (var _ in newMembers)
                 {
                     await turnContext.SendActivityAsync(AgentWelcomeMessage);
                 }

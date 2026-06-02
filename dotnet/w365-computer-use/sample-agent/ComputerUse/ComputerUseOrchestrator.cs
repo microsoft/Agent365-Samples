@@ -326,20 +326,19 @@ public class ComputerUseOrchestrator
                 return true;
             }
 
-            foreach (var item in response.Output)
+            var messageItems = response.Output.Where(item =>
+                item.TryGetProperty("type", out var tProp) && tProp.GetString() == "message");
+            foreach (var item in messageItems)
             {
-                if (item.TryGetProperty("type", out var tProp) && tProp.GetString() == "message")
-                {
-                    var replyText = ExtractText(item).Trim();
-                    _logger.LogInformation("CUA intent classifier reply for message {Preview}: {Reply}", Truncate(userMessage, 80), Truncate(replyText, 60));
-                    // Match on the first non-empty token. The router is instructed to emit a single
-                    // word but may prepend/append fluff; trim to the leading YES/NO.
-                    var upper = replyText.ToUpperInvariant();
-                    if (upper.StartsWith("NO")) return false;
-                    if (upper.StartsWith("YES")) return true;
-                    // Unexpected shape — default to CUA so we don't silently drop a legitimate request.
-                    return true;
-                }
+                var replyText = ExtractText(item).Trim();
+                _logger.LogInformation("CUA intent classifier reply for message {Preview}: {Reply}", Truncate(userMessage, 80), Truncate(replyText, 60));
+                // Match on the first non-empty token. The router is instructed to emit a single
+                // word but may prepend/append fluff; trim to the leading YES/NO.
+                var upper = replyText.ToUpperInvariant();
+                if (upper.StartsWith("NO")) return false;
+                if (upper.StartsWith("YES")) return true;
+                // Unexpected shape — default to CUA so we don't silently drop a legitimate request.
+                return true;
             }
 
             return true;
@@ -481,14 +480,18 @@ public class ComputerUseOrchestrator
             var conversation = session.ConversationHistory;
             if (!includeCuaTool)
             {
-                var cuaOnlyCallIds = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var item in session.ConversationHistory)
+                var cuaOnlyFunctionNames = new HashSet<string>(StringComparer.Ordinal)
                 {
-                    if (!item.TryGetProperty("type", out var typeProp)) continue;
-                    if (typeProp.GetString() != "function_call") continue;
-                    if (!item.TryGetProperty("name", out var nameProp)) continue;
-                    var name = nameProp.GetString();
-                    if (name != "OnTaskComplete" && name != "EndSession" && name != "GetSessionDetails" && name != "ListAvailableW365Tools") continue;
+                    "OnTaskComplete", "EndSession", "GetSessionDetails", "ListAvailableW365Tools"
+                };
+                var cuaOnlyCalls = session.ConversationHistory.Where(item =>
+                    item.TryGetProperty("type", out var typeProp)
+                    && typeProp.GetString() == "function_call"
+                    && item.TryGetProperty("name", out var nameProp)
+                    && cuaOnlyFunctionNames.Contains(nameProp.GetString() ?? string.Empty));
+                var cuaOnlyCallIds = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var item in cuaOnlyCalls)
+                {
                     if (item.TryGetProperty("call_id", out var idProp))
                     {
                         var id = idProp.GetString();
@@ -1565,13 +1568,12 @@ public class ComputerUseOrchestrator
 
             if (TryGetProperty(doc.RootElement, "content", out var content) && content.ValueKind == JsonValueKind.Array)
             {
-                foreach (var block in content.EnumerateArray())
+                var textBlocks = content.EnumerateArray().Where(b => TryGetProperty(b, "text", out _));
+                foreach (var block in textBlocks)
                 {
-                    if (TryGetProperty(block, "text", out var text))
-                    {
-                        message = text.GetString() ?? "(unknown error)";
-                        return true;
-                    }
+                    TryGetProperty(block, "text", out var text);
+                    message = text.GetString() ?? "(unknown error)";
+                    return true;
                 }
             }
 
@@ -1628,16 +1630,15 @@ public class ComputerUseOrchestrator
             if (TryGetProperty(element, "content", out var content)
                 && content.ValueKind == JsonValueKind.Array)
             {
-                foreach (var block in content.EnumerateArray())
+                var stringTextBlocks = content.EnumerateArray()
+                    .Where(b => TryGetProperty(b, "text", out var t) && t.ValueKind == JsonValueKind.String);
+                foreach (var block in stringTextBlocks)
                 {
-                    if (TryGetProperty(block, "text", out var text)
-                        && text.ValueKind == JsonValueKind.String)
+                    TryGetProperty(block, "text", out var text);
+                    var nestedText = text.GetString();
+                    if (TryExtractStringProperty(nestedText, propertyName, out value))
                     {
-                        var nestedText = text.GetString();
-                        if (TryExtractStringProperty(nestedText, propertyName, out value))
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
             }
@@ -1650,13 +1651,12 @@ public class ComputerUseOrchestrator
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            foreach (var candidate in element.EnumerateObject())
+            var match = element.EnumerateObject()
+                .FirstOrDefault(candidate => string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase));
+            if (match.Value.ValueKind != JsonValueKind.Undefined)
             {
-                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    property = candidate.Value;
-                    return true;
-                }
+                property = match.Value;
+                return true;
             }
         }
 
