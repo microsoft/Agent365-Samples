@@ -42,16 +42,8 @@ builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationSe
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 // **********  END Configure A365 Services **********
 
-// Register the model provider based on configuration
-var aiProvider = builder.Configuration["AIServices:Provider"] ?? "AzureOpenAI";
-if (aiProvider.Equals("CustomEndpoint", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddSingleton<ICuaModelProvider, CustomEndpointProvider>();
-}
-else
-{
-    builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
-}
+// Register the model provider
+builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
