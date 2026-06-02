@@ -44,7 +44,7 @@ public static class A365OtelWrapper
                         AuthHandlerName = authHandlerName
                     }, EnvironmentUtils.GetObservabilityAuthenticationScope());
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger?.LogWarning("There was an error registering for observability: {Message}", ex.Message);
                 }
@@ -55,22 +55,26 @@ public static class A365OtelWrapper
 
     private static async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(ITurnContext turnContext, UserAuthorization authSystem, string authHandlerName)
     {
-        string agentId = "";
+        ArgumentNullException.ThrowIfNull(turnContext);
+
+        string? agentId = null;
         if (turnContext.Activity.IsAgenticRequest())
         {
             agentId = turnContext.Activity.GetAgenticInstanceId();
         }
-        else
+        else if (authSystem != null && !string.IsNullOrEmpty(authHandlerName))
         {
-            if (authSystem != null && !string.IsNullOrEmpty(authHandlerName))
-            {
-                agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
-            }
+            agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
         }
 
-        agentId = agentId ?? Guid.Empty.ToString();
-        string? tempTenantId = turnContext?.Activity?.Conversation?.TenantId ?? turnContext?.Activity?.Recipient?.TenantId;
-        string tenantId = tempTenantId ?? Guid.Empty.ToString();
+        if (string.IsNullOrEmpty(agentId))
+        {
+            agentId = Guid.Empty.ToString();
+        }
+
+        string tenantId = turnContext.Activity?.Conversation?.TenantId
+            ?? turnContext.Activity?.Recipient?.TenantId
+            ?? Guid.Empty.ToString();
 
         return (agentId, tenantId);
     }

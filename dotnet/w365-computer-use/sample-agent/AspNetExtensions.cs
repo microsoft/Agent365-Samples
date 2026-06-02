@@ -40,12 +40,12 @@ public static class AspNetExtensions
             throw new ArgumentException($"{nameof(TokenValidationOptions)}:Audiences requires at least one ClientId");
         }
 
-        foreach (var audience in validationOptions.Audiences)
+        var invalidAudiences = validationOptions.Audiences
+            .Where(audience => !Guid.TryParse(audience, out _))
+            .ToList();
+        if (invalidAudiences.Count > 0)
         {
-            if (!Guid.TryParse(audience, out _))
-            {
-                throw new ArgumentException($"{nameof(TokenValidationOptions)}:Audiences values must be a GUID");
-            }
+            throw new ArgumentException($"{nameof(TokenValidationOptions)}:Audiences values must be a GUID");
         }
 
         if (validationOptions.ValidIssuers == null || validationOptions.ValidIssuers.Count == 0)
@@ -104,33 +104,42 @@ public static class AspNetExtensions
 
             options.Events = new JwtBearerEvents
             {
-                OnMessageReceived = async context =>
+                OnMessageReceived = context =>
                 {
                     string authorizationHeader = context.Request.Headers.Authorization.ToString();
 
                     if (string.IsNullOrEmpty(authorizationHeader))
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager ??= options.ConfigurationManager as BaseConfigurationManager;
-                        await Task.CompletedTask.ConfigureAwait(false);
-                        return;
+                        return Task.CompletedTask;
                     }
 
-                    string[] parts = authorizationHeader?.Split(' ')!;
-                    if (parts.Length != 2 || parts[0] != "Bearer")
+                    string[] parts = authorizationHeader.Split(' ');
+                    if (parts.Length != 2 || !string.Equals(parts[0], "Bearer", StringComparison.OrdinalIgnoreCase))
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager ??= options.ConfigurationManager as BaseConfigurationManager;
-                        await Task.CompletedTask.ConfigureAwait(false);
-                        return;
+                        return Task.CompletedTask;
                     }
 
-                    JwtSecurityToken token = new(parts[1]);
-                    string issuer = token.Claims.FirstOrDefault(claim => claim.Type == AuthenticationConstants.IssuerClaim)?.Value!;
+                    string? issuer = null;
+                    try
+                    {
+                        JwtSecurityToken token = new(parts[1]);
+                        issuer = token.Claims.FirstOrDefault(claim => claim.Type == AuthenticationConstants.IssuerClaim)?.Value;
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Malformed / opaque token — fall back to default configuration so the JwtBearer
+                        // handler emits a 401 instead of a 500.
+                        context.Options.TokenValidationParameters.ConfigurationManager ??= options.ConfigurationManager as BaseConfigurationManager;
+                        return Task.CompletedTask;
+                    }
 
                     if (validationOptions.AzureBotServiceTokenHandling && AuthenticationConstants.BotFrameworkTokenIssuer.Equals(issuer))
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager = _openIdMetadataCache.GetOrAdd(validationOptions.AzureBotServiceOpenIdMetadataUrl, key =>
                         {
-                            return new ConfigurationManager<OpenIdConnectConfiguration>(validationOptions.AzureBotServiceOpenIdMetadataUrl, new OpenIdConnectConfigurationRetriever(), new HttpClient())
+                            return new ConfigurationManager<OpenIdConnectConfiguration>(validationOptions.AzureBotServiceOpenIdMetadataUrl, new OpenIdConnectConfigurationRetriever())
                             {
                                 AutomaticRefreshInterval = openIdMetadataRefresh
                             };
@@ -140,14 +149,14 @@ public static class AspNetExtensions
                     {
                         context.Options.TokenValidationParameters.ConfigurationManager = _openIdMetadataCache.GetOrAdd(validationOptions.OpenIdMetadataUrl, key =>
                         {
-                            return new ConfigurationManager<OpenIdConnectConfiguration>(validationOptions.OpenIdMetadataUrl, new OpenIdConnectConfigurationRetriever(), new HttpClient())
+                            return new ConfigurationManager<OpenIdConnectConfiguration>(validationOptions.OpenIdMetadataUrl, new OpenIdConnectConfigurationRetriever())
                             {
                                 AutomaticRefreshInterval = openIdMetadataRefresh
                             };
                         });
                     }
 
-                    await Task.CompletedTask.ConfigureAwait(false);
+                    return Task.CompletedTask;
                 },
                 OnTokenValidated = context => Task.CompletedTask,
                 OnForbidden = context => Task.CompletedTask,

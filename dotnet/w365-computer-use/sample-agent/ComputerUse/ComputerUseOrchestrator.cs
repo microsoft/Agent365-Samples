@@ -364,7 +364,11 @@ public class ComputerUseOrchestrator
 
             return true;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is JsonException || ex is HttpRequestException || ex is InvalidOperationException)
         {
             _logger.LogWarning(ex, "CUA intent classifier threw — defaulting to needsCua=true.");
             return true;
@@ -384,7 +388,7 @@ public class ComputerUseOrchestrator
         IList<AITool>? additionalTools = null,
         IMcpClient? mcpClient = null,
         string? graphAccessToken = null,
-        Action<string>? onStatusUpdate = null,
+        Func<string, Task>? onStatusUpdate = null,
         Func<bool, Task>? onCuaStarting = null,
         Func<string, Task>? onFolderLinkReady = null,
         bool includeCuaTool = true,
@@ -424,9 +428,10 @@ public class ComputerUseOrchestrator
         if (_toolType == "computer" && session.ConversationHistory.Count == 0 && session.SessionStarted)
         {
             var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
-            var initialName = $"{conversationId[..8]}_{++session.ScreenshotCounter:D3}_initial";
+            var convIdPrefix = conversationId.Length > 8 ? conversationId[..8] : conversationId;
+            var initialName = $"{convIdPrefix}_{++session.ScreenshotCounter:D3}_initial";
             SaveScreenshotToDisk(initialScreenshot!, initialName, session.ScreenshotSubfolder);
-            var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+            var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session, cancellationToken);
             if (folderUrlReuse != null && onFolderLinkReady != null)
                 await onFolderLinkReady(folderUrlReuse);
             session.ConversationHistory.Add(ToJsonElement(new
@@ -588,7 +593,10 @@ public class ComputerUseOrchestrator
                                 _logger.LogInformation("CUA needed for conversation {ConversationId} — starting session", conversationId);
                                 if (onCuaStarting != null)
                                     await onCuaStarting(true);
-                                onStatusUpdate?.Invoke("Starting W365 computing session...");
+                                if (onStatusUpdate != null)
+                                {
+                                    await onStatusUpdate("Starting W365 computing session...");
+                                }
                                 await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, cancellationToken);
                                 _logger.LogInformation("Session marked started for conversation {ConversationId}", conversationId);
                             }
@@ -647,7 +655,10 @@ public class ComputerUseOrchestrator
                             if (!string.IsNullOrEmpty(reason))
                             {
                                 _logger.LogInformation("Model narration: {Reason}", reason);
-                                onStatusUpdate?.Invoke(reason);
+                                if (onStatusUpdate != null)
+                                {
+                                    await onStatusUpdate(reason);
+                                }
                             }
 
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
@@ -664,7 +675,10 @@ public class ComputerUseOrchestrator
                         {
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                             _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
-                            onStatusUpdate?.Invoke("Ending session...");
+                            if (onStatusUpdate != null)
+                            {
+                                await onStatusUpdate("Ending session...");
+                            }
 
                             var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
                             await EndSessionAsync(w365Tools, _logger, sessionIdToEnd, cancellationToken);
@@ -801,7 +815,7 @@ public class ComputerUseOrchestrator
         {
             logger.LogInformation("MCP transport session expired (404) — W365 session will be released by server timeout");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Failed to end W365 session");
         }
@@ -1142,7 +1156,7 @@ public class ComputerUseOrchestrator
     /// Translate a computer_call into an MCP tool call, capture screenshot, return computer_call_output.
     /// </summary>
     private async Task<JsonElement> HandleComputerCallAsync(
-        JsonElement call, IList<AITool> tools, IList<AITool>? additionalTools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Action<string>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
+        JsonElement call, IList<AITool> tools, IList<AITool>? additionalTools, IMcpClient? mcpClient, ConversationSession session, string? graphAccessToken, Func<string, Task>? onStatus, Func<string, Task>? onFolderLinkReady, CancellationToken ct)
     {
         var callId = call.GetProperty("call_id").GetString()!;
         if (string.IsNullOrEmpty(session.W365SessionId))
@@ -1168,7 +1182,7 @@ public class ComputerUseOrchestrator
                     var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
                     if (sessionLost)
                     {
-                        onStatus?.Invoke("Session lost — recovering...");
+                        if (onStatus != null) { await onStatus("Session lost — recovering..."); }
                         await RecoverSessionAsync(session, tools, _logger, ct);
                         await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
                         AddSessionId(args, session.W365SessionId);
@@ -1194,7 +1208,7 @@ public class ComputerUseOrchestrator
                 var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
                 if (sessionLost)
                 {
-                    onStatus?.Invoke("Session lost — recovering...");
+                    if (onStatus != null) { await onStatus("Session lost — recovering..."); }
                     await RecoverSessionAsync(session, tools, _logger, ct);
                     await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
                     AddSessionId(args, session.W365SessionId);
@@ -1212,7 +1226,7 @@ public class ComputerUseOrchestrator
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName, session.ScreenshotSubfolder);
-        var folderUrl = await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken, session.ScreenshotSubfolder, session);
+        var folderUrl = await UploadScreenshotToOneDriveAsync(screenshot!, $"{stepName}.png", graphAccessToken, session.ScreenshotSubfolder, session, ct);
         if (folderUrl != null && onFolderLinkReady != null)
             await onFolderLinkReady(folderUrl);
 
@@ -1718,7 +1732,7 @@ public class ComputerUseOrchestrator
             await EndSessionAsync(tools, logger, session.W365SessionId, ct);
             await DisposeW365McpClientAsync(session.W365SessionId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Best-effort EndSession during recovery failed");
         }
@@ -1874,6 +1888,10 @@ public class ComputerUseOrchestrator
 
             return CreateFunctionOutput(callId, resultStr);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Function call {Name} threw. call_id={CallId}", name, callId);
@@ -1912,7 +1930,7 @@ public class ComputerUseOrchestrator
     /// Requires a Graph access token with Files.ReadWrite scope.
     /// Files are uploaded to /CUA-Sessions/{date}/ folder.
     /// </summary>
-    private async Task<string?> UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken, string? subfolder, ConversationSession session)
+    private async Task<string?> UploadScreenshotToOneDriveAsync(string base64Data, string fileName, string? graphAccessToken, string? subfolder, ConversationSession session, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(graphAccessToken))
         {
@@ -1932,10 +1950,11 @@ public class ComputerUseOrchestrator
 
         try
         {
-            // Use /me/drive for token owner, or /users/{id}/drive for a specific user
+            // Use /me/drive for token owner, or /users/{id}/drive for a specific user.
+            // URL-encode the user id so UPNs (which contain '@') produce a valid Graph URL.
             var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
                 ? "https://graph.microsoft.com/v1.0/me/drive"
-                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
+                : $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(_oneDriveUserId)}/drive";
             var folderPath = string.IsNullOrEmpty(subfolder)
                 ? _oneDriveFolder.TrimStart('/')
                 : $"{_oneDriveFolder.TrimStart('/')}/{subfolder}";
@@ -1946,7 +1965,7 @@ public class ComputerUseOrchestrator
             request.Content = new ByteArrayContent(Convert.FromBase64String(base64Data));
             request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
 
-            var response = await _httpClient.SendAsync(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken);
             if (response.IsSuccessStatusCode)
             {
                 _logger.LogInformation("Screenshot uploaded to OneDrive: {Folder}/{FileName}", folderPath, fileName);
@@ -1954,7 +1973,7 @@ public class ComputerUseOrchestrator
                 // On first upload, create an org-scoped sharing link for the folder
                 if (!session.FolderShared)
                 {
-                    var shareUrl = await ShareConversationFolderAsync(folderPath, graphAccessToken);
+                    var shareUrl = await ShareConversationFolderAsync(folderPath, graphAccessToken, cancellationToken);
                     if (shareUrl != null)
                     {
                         session.FolderShared = true;
@@ -1964,11 +1983,15 @@ public class ComputerUseOrchestrator
             }
             else
             {
-                var content = await response.Content.ReadAsStringAsync();
+                var content = await response.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogWarning("OneDrive upload failed: {Status} {Content}", response.StatusCode, content);
             }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is FormatException || ex is JsonException)
         {
             _logger.LogWarning(ex, "Failed to upload screenshot to OneDrive");
         }
@@ -1980,17 +2003,17 @@ public class ComputerUseOrchestrator
     /// Create an organization-scoped sharing link for the conversation's screenshot folder.
     /// Returns the web URL that anyone in the org can use to view the folder.
     /// </summary>
-    private async Task<string?> ShareConversationFolderAsync(string folderPath, string graphAccessToken)
+    private async Task<string?> ShareConversationFolderAsync(string folderPath, string graphAccessToken, CancellationToken cancellationToken = default)
     {
         try
         {
             var driveBase = string.IsNullOrEmpty(_oneDriveUserId)
                 ? "https://graph.microsoft.com/v1.0/me/drive"
-                : $"https://graph.microsoft.com/v1.0/users/{_oneDriveUserId}/drive";
+                : $"https://graph.microsoft.com/v1.0/users/{Uri.EscapeDataString(_oneDriveUserId)}/drive";
 
             using var getRequest = new HttpRequestMessage(HttpMethod.Get, $"{driveBase}/root:/{folderPath}");
             getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", graphAccessToken);
-            var getResponse = await _httpClient.SendAsync(getRequest);
+            var getResponse = await _httpClient.SendAsync(getRequest, cancellationToken);
 
             if (!getResponse.IsSuccessStatusCode)
             {
@@ -1998,7 +2021,7 @@ public class ComputerUseOrchestrator
                 return null;
             }
 
-            var folderJson = await getResponse.Content.ReadAsStringAsync();
+            var folderJson = await getResponse.Content.ReadAsStringAsync(cancellationToken);
             using var doc = JsonDocument.Parse(folderJson);
             var folderId = doc.RootElement.GetProperty("id").GetString();
             var webUrl = doc.RootElement.TryGetProperty("webUrl", out var wu) ? wu.GetString() : null;
@@ -2009,10 +2032,10 @@ public class ComputerUseOrchestrator
                 JsonSerializer.Serialize(new { type = "view", scope = "organization" }),
                 System.Text.Encoding.UTF8, "application/json");
 
-            var linkResponse = await _httpClient.SendAsync(linkRequest);
+            var linkResponse = await _httpClient.SendAsync(linkRequest, cancellationToken);
             if (linkResponse.IsSuccessStatusCode)
             {
-                var linkJson = await linkResponse.Content.ReadAsStringAsync();
+                var linkJson = await linkResponse.Content.ReadAsStringAsync(cancellationToken);
                 using var linkDoc = JsonDocument.Parse(linkJson);
                 var shareUrl = linkDoc.RootElement.GetProperty("link").GetProperty("webUrl").GetString();
                 _logger.LogInformation("Folder shared with org: {Url}", shareUrl);
@@ -2020,12 +2043,16 @@ public class ComputerUseOrchestrator
             }
             else
             {
-                var errorContent = await linkResponse.Content.ReadAsStringAsync();
+                var errorContent = await linkResponse.Content.ReadAsStringAsync(cancellationToken);
                 _logger.LogWarning("Failed to create sharing link: {Status} {Content}", linkResponse.StatusCode, errorContent);
                 return webUrl;
             }
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is JsonException || ex is KeyNotFoundException)
         {
             _logger.LogWarning(ex, "Failed to share conversation folder");
             return null;

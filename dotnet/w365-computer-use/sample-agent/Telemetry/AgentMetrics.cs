@@ -85,17 +85,19 @@ public static class AgentMetrics
         return Task.CompletedTask;
     }
 
-    public static Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
+    public static async Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)
     {
         MessageProcessedCounter.Add(1);
         var activity = InitializeMessageHandlingActivity(operationName, context);
         var stopwatch = Stopwatch.StartNew();
+        var success = true;
         try
         {
-            return func();
+            await func().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            success = false;
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddEvent(new ActivityEvent("exception", DateTimeOffset.UtcNow, new()
             {
@@ -108,7 +110,7 @@ public static class AgentMetrics
         finally
         {
             stopwatch.Stop();
-            FinalizeMessageHandlingActivity(activity, context, stopwatch.ElapsedMilliseconds, true);
+            FinalizeMessageHandlingActivity(activity, context, stopwatch.ElapsedMilliseconds, success);
         }
     }
 }

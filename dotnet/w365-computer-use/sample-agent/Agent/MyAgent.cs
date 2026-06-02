@@ -152,12 +152,11 @@ public class MyAgent : AgentApplication
             turnContext,
             async () =>
             {
-                foreach (ChannelAccount member in turnContext.Activity.MembersAdded)
+                var recipientId = turnContext.Activity.Recipient.Id;
+                var newMembers = turnContext.Activity.MembersAdded.Where(m => m.Id != recipientId);
+                foreach (var member in newMembers)
                 {
-                    if (member.Id != turnContext.Activity.Recipient.Id)
-                    {
-                        await turnContext.SendActivityAsync(AgentWelcomeMessage);
-                    }
+                    await turnContext.SendActivityAsync(AgentWelcomeMessage);
                 }
             });
     }
@@ -245,7 +244,7 @@ public class MyAgent : AgentApplication
                             additionalTools: nonCuaAdditionalTools,
                             mcpClient: null,
                             graphAccessToken: null,
-                            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
+                            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status),
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
@@ -310,7 +309,7 @@ public class MyAgent : AgentApplication
                             additionalTools: additionalTools,
                             mcpClient: mcpClient,
                             graphAccessToken: graphToken,
-                            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status).ConfigureAwait(false),
+                            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status),
                             onCuaStarting: async (isNewSession) =>
                             {
                                 if (isNewSession)
@@ -507,19 +506,18 @@ public class MyAgent : AgentApplication
             return null;
         }
 
-        foreach (var tool in additionalTools)
+        var errorTool = additionalTools
+            .OfType<AIFunction>()
+            .FirstOrDefault(fn => string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase));
+        if (errorTool == null)
         {
-            if (tool is not AIFunction fn) continue;
-            if (!string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase)) continue;
-
-            var description = fn.Description ?? string.Empty;
-            var extracted = ExtractQuotedField(description, "ExceptionMessage=")
-                ?? ExtractQuotedField(description, "Message=")
-                ?? (string.IsNullOrWhiteSpace(description) ? null : description);
-            return extracted;
+            return null;
         }
 
-        return null;
+        var description = errorTool.Description ?? string.Empty;
+        return ExtractQuotedField(description, "ExceptionMessage=")
+            ?? ExtractQuotedField(description, "Message=")
+            ?? (string.IsNullOrWhiteSpace(description) ? null : description);
     }
 
     private static string? ExtractQuotedField(string source, string fieldPrefix)
