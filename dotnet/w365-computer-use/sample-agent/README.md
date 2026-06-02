@@ -122,7 +122,7 @@ dotnet run
 1. Open [Microsoft 365 Agents Playground](https://dev.agents.cloud.microsoft/)
 2. Connect to `http://localhost:3978/api/messages`
 3. Send a message like: *"Open Notepad and type Hello World"*
-4. Screenshots are saved to `./Screenshots/` automatically
+4. Screenshots are saved under `./Screenshots/<session-id>/` automatically
 
 ## Configuration Reference
 
@@ -134,6 +134,7 @@ dotnet run
 | `AIServices:AzureOpenAI:DeploymentName` | Deployment name (for deployment-based URLs) | `computer-use-preview` |
 | `AIServices:AzureOpenAI:ModelName` | Model name (for model-based URLs, e.g., `gpt-5.4-mini`) | - |
 | `McpServer:Url` | MCP server URL (dev only; omit for production) | - |
+| `W365:GatewayUrl` | W365 Computer Use MCP gateway URL (production) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
 | `ComputerUse:MaxIterations` | Max CUA loop iterations | `30` |
 | `ComputerUse:DisplayWidth` | Display width for computer_use_preview tool | `1024` |
 | `ComputerUse:DisplayHeight` | Display height for computer_use_preview tool | `768` |
@@ -179,7 +180,7 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 
 1. Register an Azure Bot and configure the agent
 2. Set `AIServices` config with your Azure OpenAI credentials
-3. Remove `McpServer:Url` - the A365 SDK will discover the MCP server via the Tooling Gateway
+3. Remove `McpServer:Url` — in production the agent connects directly to the W365 Computer Use MCP gateway (default `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse`, override via `W365:GatewayUrl`) using the `w365` agentic auth handler. The W365 server requires an explicit session, so the agent calls `StartSession` and sends `_meta.sessionId` on `tools/list`, rather than going through the generic A365 SDK Tooling Gateway.
 4. Deploy and install the agent in Teams / M365
 
 ## Troubleshooting

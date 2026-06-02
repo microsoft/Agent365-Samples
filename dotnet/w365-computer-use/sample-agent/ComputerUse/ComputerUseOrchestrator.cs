@@ -5,6 +5,8 @@ using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Agents.Builder;
+using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using W365ComputerUseSample.ComputerUse.Models;
@@ -47,7 +49,7 @@ public class ComputerUseOrchestrator
         // Code / shell execution
         "execute_python_code", "execute_shell_command",
         // ATG-local tool
-        W365EndSessionToolName,
+        W365StartSessionToolName, W365GetSessionDetailsToolName, W365EndSessionToolName,
     };
 
     /// <summary>Returns true when <paramref name="toolName"/> identifies a W365 CUA tool.</summary>
@@ -70,6 +72,8 @@ public class ComputerUseOrchestrator
     /// W365 session, conversation history, and screenshot counter.
     /// </summary>
     private readonly ConcurrentDictionary<string, ConversationSession> _sessions = new();
+
+    private readonly ConcurrentDictionary<string, IMcpClient> _w365McpClientsBySessionId = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Primary MCP client (W365 server) — used for direct screenshot calls.
@@ -108,6 +112,8 @@ public class ComputerUseOrchestrator
         Prefer function tools over computer use when a matching one is available — they are faster and more reliable.
         After calling a function tool, respond with a text message describing what you did and the result.
         Do NOT call OnTaskComplete after using function tools — just respond with text.
+        If the user asks what W365 / CUA tools are available, call ListAvailableW365Tools
+        and summarize the returned names and descriptions.
 
         ## When no tool can accomplish the request
         If the user asks for something and no function tool matches AND computer use cannot accomplish it either,
@@ -126,9 +132,9 @@ public class ComputerUseOrchestrator
         If you see browser setup or sign-in dialogs, dismiss them (Escape, X, or Skip).
         When you have completed a computer-use task: FIRST emit a text message containing
         the full answer (extracted data, summary, table, etc.) the user asked for. THEN call
-        OnTaskComplete in the same turn. The OnTaskComplete function is a completion signal
-        only — it carries no user-visible content. If you skip the message, the user sees
-        nothing. Never call OnTaskComplete without a preceding answer message.
+        OnTaskComplete in the same turn. If you cannot emit a separate message, pass that
+        same user-visible answer in OnTaskComplete's finalAnswer argument. Never complete a
+        task without providing a user-visible answer either as a message or finalAnswer.
         Do NOT continue computer actions after the task is done.
 
         ## Live progress narration (narrate tool)
@@ -201,7 +207,21 @@ public class ComputerUseOrchestrator
             new FunctionToolDefinition
             {
                 Name = "OnTaskComplete",
-                Description = "Call this function when the given task has been completed successfully."
+                Description = "Call this function when the given task has been completed successfully. If no separate final message was emitted, include the user-visible answer in finalAnswer.",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        finalAnswer = new
+                        {
+                            type = "string",
+                            description = "Optional user-visible final answer to return if the model did not emit a separate message before completing."
+                        }
+                    },
+                    required = Array.Empty<string>(),
+                    additionalProperties = false
+                }
             },
             new FunctionToolDefinition
             {
@@ -218,6 +238,37 @@ public class ComputerUseOrchestrator
                             description = "Optional W365 sessionId to end. Omit to end the currently selected session."
                         }
                     },
+                    required = Array.Empty<string>(),
+                    additionalProperties = false
+                }
+            },
+            new FunctionToolDefinition
+            {
+                Name = "GetSessionDetails",
+                Description = "Return details for the current W365 Computer Use session, such as the sessionId and screen share URL. Use when the user asks for session details.",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        sessionId = new
+                        {
+                            type = "string",
+                            description = "Optional W365 sessionId to inspect. Omit to inspect the currently selected session."
+                        }
+                    },
+                    required = Array.Empty<string>(),
+                    additionalProperties = false
+                }
+            },
+            new FunctionToolDefinition
+            {
+                Name = "ListAvailableW365Tools",
+                Description = "List the W365 Computer Use tools currently loaded for this session. Use when the user asks what CUA or W365 tools are available.",
+                Parameters = new
+                {
+                    type = "object",
+                    properties = new { },
                     required = Array.Empty<string>(),
                     additionalProperties = false
                 }
@@ -337,6 +388,7 @@ public class ComputerUseOrchestrator
         Func<bool, Task>? onCuaStarting = null,
         Func<string, Task>? onFolderLinkReady = null,
         bool includeCuaTool = true,
+        string? prestartedW365SessionId = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
@@ -354,6 +406,12 @@ public class ComputerUseOrchestrator
         if (session.SessionStarted)
         {
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
+        }
+
+        if (includeCuaTool && !string.IsNullOrWhiteSpace(prestartedW365SessionId) && string.IsNullOrEmpty(session.W365SessionId))
+        {
+            session.TrackAndSelectSession(prestartedW365SessionId);
+            _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
         }
 
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
@@ -445,7 +503,7 @@ public class ComputerUseOrchestrator
                     if (typeProp.GetString() != "function_call") continue;
                     if (!item.TryGetProperty("name", out var nameProp)) continue;
                     var name = nameProp.GetString();
-                    if (name != "OnTaskComplete" && name != "EndSession") continue;
+                    if (name != "OnTaskComplete" && name != "EndSession" && name != "GetSessionDetails" && name != "ListAvailableW365Tools") continue;
                     if (item.TryGetProperty("call_id", out var idProp))
                     {
                         var id = idProp.GetString();
@@ -599,6 +657,7 @@ public class ComputerUseOrchestrator
                         {
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
                             return finalAnswerText
+                                ?? ExtractFinalAnswerFromFunctionCall(item)
                                 ?? $"Task complete, but the model did not include a final answer. Screenshots saved to ./Screenshots/{session.ScreenshotSubfolder}.";
                         }
                         if (funcName == "EndSession")
@@ -609,6 +668,7 @@ public class ComputerUseOrchestrator
 
                             var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
                             await EndSessionAsync(w365Tools, _logger, sessionIdToEnd, cancellationToken);
+                            await DisposeW365McpClientAsync(sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
                             {
@@ -618,6 +678,34 @@ public class ComputerUseOrchestrator
                             return string.IsNullOrEmpty(sessionIdToEnd)
                                 ? "Session ended. The VM has been released back to the pool."
                                 : $"Session {sessionIdToEnd} ended. The VM has been released back to the pool.";
+                        }
+                        if (funcName == "GetSessionDetails")
+                        {
+                            var args = new Dictionary<string, object?>();
+                            var sessionIdToInspect = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
+                            if (!string.IsNullOrEmpty(sessionIdToInspect))
+                            {
+                                args["sessionId"] = sessionIdToInspect;
+                            }
+
+                            var result = await InvokeToolThrowOnErrorAsync(w365Tools, W365GetSessionDetailsToolName, args, cancellationToken);
+                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!, result?.ToString() ?? "success"));
+                            break;
+                        }
+                        if (funcName == "ListAvailableW365Tools")
+                        {
+                            var toolSummaries = w365Tools
+                                .OfType<AIFunction>()
+                                .Select(tool => new
+                                {
+                                    name = tool.Name,
+                                    description = tool.Description ?? string.Empty
+                                })
+                                .OrderBy(tool => tool.name, StringComparer.OrdinalIgnoreCase)
+                                .ToArray();
+                            var output = JsonSerializer.Serialize(new { tools = toolSummaries });
+                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!, output));
+                            break;
                         }
 
                         // Invoke additional MCP function tool
@@ -741,6 +829,7 @@ public class ComputerUseOrchestrator
 
         _sessions.Clear();
         _cachedTools = null;
+        _w365McpClientsBySessionId.Clear();
 
         foreach (var client in _allMcpClients)
         {
@@ -869,6 +958,166 @@ public class ComputerUseOrchestrator
         _cachedMcpClient ??= _allMcpClients.FirstOrDefault();
 
         return allTools;
+    }
+
+    internal string? GetSelectedW365SessionId(string? conversationId)
+    {
+        return !string.IsNullOrWhiteSpace(conversationId)
+            && _sessions.TryGetValue(conversationId, out var session)
+            ? session.W365SessionId
+            : null;
+    }
+
+    internal async Task<W365McpToolListResult> StartDirectW365SessionAndListToolsAsync(
+        string url,
+        string accessToken,
+        string agentId,
+        ITurnContext turnContext,
+        string? existingSessionId,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(existingSessionId) && _cachedMcpClient != null)
+        {
+            if (_w365McpClientsBySessionId.TryGetValue(existingSessionId, out var sessionMcpClient))
+            {
+                try
+                {
+                    var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
+                    var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
+                    _cachedTools = cachedResult.Tools;
+                    _cachedMcpClient = cachedResult.Client;
+                    _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
+                    return cachedResult;
+                }
+                catch (Exception ex) when (IsUnauthorizedMcpTransportFailure(ex))
+                {
+                    _logger.LogWarning(ex, "Cached W365 MCP client for session {SessionId} was unauthorized. Disposing it and reconnecting with a fresh token.", existingSessionId);
+                    await DisposeW365McpClientAsync(existingSessionId);
+                }
+            }
+        }
+
+        var httpClient = _httpClientFactory.CreateClient();
+        var transport = new SseClientTransport(
+            CreateW365TransportOptions(url, accessToken, agentId, turnContext.Activity),
+            httpClient);
+        var mcpClient = await McpClientFactory.CreateAsync(transport, cancellationToken: cancellationToken);
+        try
+        {
+            var directClient = new W365McpSessionClient(mcpClient);
+            var result = string.IsNullOrWhiteSpace(existingSessionId)
+                ? await directClient.StartSessionAndListToolsAsync(cancellationToken)
+                : await directClient.ListToolsAsync(existingSessionId, cancellationToken);
+            _cachedTools = result.Tools;
+            _cachedMcpClient = result.Client;
+            _w365McpClientsBySessionId[result.SessionId] = result.Client;
+            _allMcpClients.Add(result.Client);
+            _logger.LogInformation("Started direct W365 session {SessionId} and loaded {ToolCount} tools via MCP transport.", result.SessionId, result.Tools.Count);
+            return result;
+        }
+        catch
+        {
+            await mcpClient.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static void AddHeaderIfPresent(HttpClient httpClient, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(name, value);
+        }
+    }
+
+    internal static bool IsUnauthorizedMcpTransportFailureForTest(Exception exception)
+    {
+        return IsUnauthorizedMcpTransportFailure(exception);
+    }
+
+    private static bool IsUnauthorizedMcpTransportFailure(Exception exception)
+    {
+        if (exception is HttpRequestException httpRequestException
+            && httpRequestException.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            return true;
+        }
+
+        return exception.InnerException != null && IsUnauthorizedMcpTransportFailure(exception.InnerException);
+    }
+
+    internal static SseClientTransportOptions CreateW365TransportOptionsForTest(
+        string url,
+        string accessToken,
+        string agentId,
+        IActivity activity)
+    {
+        return CreateW365TransportOptions(url, accessToken, agentId, activity);
+    }
+
+    private static SseClientTransportOptions CreateW365TransportOptions(
+        string url,
+        string accessToken,
+        string agentId,
+        IActivity activity)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Authorization"] = $"Bearer {accessToken}",
+            ["x-ms-agentid"] = agentId,
+        };
+
+        AddHeaderIfPresent(headers, "x-ms-conversation-id", activity.Conversation?.Id);
+        AddHeaderIfPresent(headers, "x-ms-channel-id", activity.ChannelId);
+        AddHeaderIfPresent(headers, "x-ms-user-message-id", activity.Id);
+
+        if (!string.IsNullOrWhiteSpace(activity.From?.Name))
+        {
+            AddHeaderIfPresent(headers, "x-ms-user-agent", activity.From.Name);
+        }
+
+        return new SseClientTransportOptions
+        {
+            Endpoint = new Uri(url),
+            TransportMode = HttpTransportMode.AutoDetect,
+            AdditionalHeaders = headers,
+        };
+    }
+
+    private static void AddHeaderIfPresent(IDictionary<string, string> headers, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            headers[name] = value;
+        }
+    }
+
+    private async Task DisposeW365McpClientAsync(string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return;
+        }
+
+        if (!_w365McpClientsBySessionId.TryRemove(sessionId, out var client))
+        {
+            return;
+        }
+
+        _allMcpClients.Remove(client);
+        if (ReferenceEquals(_cachedMcpClient, client))
+        {
+            _cachedMcpClient = _w365McpClientsBySessionId.Values.FirstOrDefault();
+        }
+
+        try
+        {
+            await client.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to dispose W365 MCP client for session {SessionId}", sessionId);
+        }
     }
 
     private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, CancellationToken ct)
@@ -1259,7 +1508,7 @@ public class ComputerUseOrchestrator
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
     }
 
-    private static async Task<string> InvokeW365ToolAsync(
+    private async Task<string> InvokeW365ToolAsync(
         IList<AITool> tools,
         IMcpClient? mcpClient,
         string name,
@@ -1424,7 +1673,7 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// Invoke a tool and detect session-not-found errors. Returns (result, isSessionLost).
     /// </summary>
-    private static async Task<(string Result, bool IsSessionLost)> InvokeW365ToolCheckSessionAsync(
+    private async Task<(string Result, bool IsSessionLost)> InvokeW365ToolCheckSessionAsync(
         IList<AITool> tools, IMcpClient? mcpClient, string name, Dictionary<string, object?> args, CancellationToken ct)
     {
         string resultStr;
@@ -1467,6 +1716,7 @@ public class ComputerUseOrchestrator
         try
         {
             await EndSessionAsync(tools, logger, session.W365SessionId, ct);
+            await DisposeW365McpClientAsync(session.W365SessionId);
         }
         catch (Exception ex)
         {
@@ -1536,6 +1786,32 @@ public class ComputerUseOrchestrator
             using var argsDoc = JsonDocument.Parse(args);
             return TryExtractStringProperty(argsDoc.RootElement, "sessionId", out var sessionId)
                 ? sessionId
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ExtractFinalAnswerFromFunctionCall(JsonElement functionCall)
+    {
+        if (!functionCall.TryGetProperty("arguments", out var argsProperty))
+        {
+            return null;
+        }
+
+        var args = argsProperty.GetString();
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var argsDoc = JsonDocument.Parse(args);
+            return TryExtractStringProperty(argsDoc.RootElement, "finalAnswer", out var finalAnswer)
+                ? finalAnswer
                 : null;
         }
         catch (JsonException)

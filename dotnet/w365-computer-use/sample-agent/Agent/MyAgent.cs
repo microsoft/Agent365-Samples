@@ -41,9 +41,10 @@ public class MyAgent : AgentApplication
     /// acquire a W365 session.
     /// </summary>
     private readonly string[] _otherMcpServerUrls;
+    private readonly string _w365GatewayUrl;
 
     private readonly string? AgenticAuthHandlerName;
-    private readonly string? OboAuthHandlerName;
+    private readonly string? W365AuthHandlerName;
 
     /// <summary>
     /// Check if a bearer token is available in the environment for development/testing.
@@ -52,6 +53,27 @@ public class MyAgent : AgentApplication
     {
         bearerToken = Environment.GetEnvironmentVariable("BEARER_TOKEN");
         return !string.IsNullOrEmpty(bearerToken);
+    }
+
+    internal static string BuildLocalSessionKeyForTest(string conversationId, ChannelAccount? fromAccount)
+    {
+        return BuildLocalSessionKey(conversationId, fromAccount);
+    }
+
+    private static string BuildLocalSessionKey(string conversationId, ChannelAccount? fromAccount)
+    {
+        var userKey = fromAccount?.AadObjectId;
+        if (string.IsNullOrWhiteSpace(userKey))
+        {
+            userKey = fromAccount?.Id;
+        }
+
+        if (string.IsNullOrWhiteSpace(userKey))
+        {
+            userKey = "unknown-user";
+        }
+
+        return $"{conversationId}::{userKey}";
     }
 
     /// <summary>
@@ -98,16 +120,21 @@ public class MyAgent : AgentApplication
         // chit-chat / mail-only messages.
         _w365McpServerUrls = _mcpServerUrls.Where(u => u.Contains("/mcp_W365ComputerUse", StringComparison.OrdinalIgnoreCase)).ToArray();
         _otherMcpServerUrls = _mcpServerUrls.Where(u => !u.Contains("/mcp_W365ComputerUse", StringComparison.OrdinalIgnoreCase)).ToArray();
+        _w365GatewayUrl = configuration.GetValue<string>("W365:GatewayUrl")
+            ?? "https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse";
 
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
-        OboAuthHandlerName = configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
+        W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
 
         // Greet when members are added
         OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
         // Compute auth handler arrays once
-        var agenticHandlers = !string.IsNullOrEmpty(AgenticAuthHandlerName) ? [AgenticAuthHandlerName] : Array.Empty<string>();
-        var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : Array.Empty<string>();
+        var agenticHandlers = new[] { AgenticAuthHandlerName, W365AuthHandlerName }
+            .OfType<string>()
+            .Where(handler => !string.IsNullOrEmpty(handler))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         // Handle install/uninstall
         OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
@@ -115,7 +142,7 @@ public class MyAgent : AgentApplication
 
         // Handle messages — MUST BE AFTER any other message handlers
         OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
-        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
+        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false);
     }
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -173,17 +200,10 @@ public class MyAgent : AgentApplication
             fromAccount?.Id ?? "(unknown)",
             fromAccount?.AadObjectId ?? "(none)");
 
-        // Select auth handler based on request type
-        string? ObservabilityAuthHandlerName;
-        string? ToolAuthHandlerName;
-        if (turnContext.IsAgenticRequest())
-        {
-            ObservabilityAuthHandlerName = ToolAuthHandlerName = AgenticAuthHandlerName;
-        }
-        else
-        {
-            ObservabilityAuthHandlerName = ToolAuthHandlerName = OboAuthHandlerName;
-        }
+        // Agentic requests use the agentic handler; non-agentic requests fall back to env
+        // bearer token / no auth (handled inside GetToolsAsync).
+        var ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
+        var ToolAuthHandlerName = ObservabilityAuthHandlerName;
 
         await A365OtelWrapper.InvokeObservedAgentOperation(
             "MessageProcessor",
@@ -206,6 +226,7 @@ public class MyAgent : AgentApplication
                 {
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
                     var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
+                    var localSessionKey = BuildLocalSessionKey(conversationId, fromAccount);
 
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
@@ -214,12 +235,11 @@ public class MyAgent : AgentApplication
 
                     if (!needsCua)
                     {
-                        // Non-CUA fast path: load only non-W365 tools, run orchestrator with the
-                        // computer tool withheld. Supports function-tool paths (mail/calendar/etc.)
-                        // without touching W365.
-                        var (_, nonCuaAdditionalTools, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false);
+                        // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
+                        // discovery entirely so chit-chat never touches W365.
+                        var (_, nonCuaAdditionalTools, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
                         var directResponse = await _orchestrator.RunAsync(
-                            conversationId,
+                            localSessionKey,
                             userText,
                             w365Tools: [],
                             additionalTools: nonCuaAdditionalTools,
@@ -251,7 +271,7 @@ public class MyAgent : AgentApplication
                     }
 
                     // Get MCP tools — direct connection in Dev, SDK in Production
-                    var (w365Tools, additionalTools, mcpClient) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true);
+                    var (w365Tools, additionalTools, mcpClient, prestartedW365SessionId) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true, localSessionKey, cancellationToken);
 
                     try
                     {
@@ -284,7 +304,7 @@ public class MyAgent : AgentApplication
 
                         // Run the CUA loop — session is managed per conversation
                         var response = await _orchestrator.RunAsync(
-                            conversationId,
+                            localSessionKey,
                             userText,
                             w365Tools,
                             additionalTools: additionalTools,
@@ -300,6 +320,7 @@ public class MyAgent : AgentApplication
                             },
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
                                 MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
+                            prestartedW365SessionId: prestartedW365SessionId,
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -326,7 +347,12 @@ public class MyAgent : AgentApplication
     /// When <paramref name="includeW365"/> is <c>false</c>, the W365 server(s) are skipped —
     /// used on the non-CUA fast path so chit-chat never starts a Cloud PC session.
     /// </summary>
-    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client)> GetToolsAsync(ITurnContext context, string? authHandlerName, bool includeW365)
+    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client, string? PrestartedW365SessionId)> GetToolsAsync(
+        ITurnContext context,
+        string? authHandlerName,
+        bool includeW365,
+        string? localSessionKey,
+        CancellationToken cancellationToken)
     {
         // Acquire access token
         string? accessToken = null;
@@ -344,10 +370,20 @@ public class MyAgent : AgentApplication
             agentId = Utility.ResolveAgentIdentity(context, accessToken!);
         }
 
+        if (includeW365 && !IsDevelopment())
+        {
+            var w365AuthHandlerName = W365AuthHandlerName ?? authHandlerName;
+            if (!string.IsNullOrEmpty(w365AuthHandlerName))
+            {
+                accessToken = await UserAuthorization.GetTurnTokenAsync(context, w365AuthHandlerName);
+                agentId = Utility.ResolveAgentIdentity(context, accessToken);
+            }
+        }
+
         if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
         {
             _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
-            return (null, null, null);
+            return (null, null, null, null);
         }
 
         try
@@ -375,29 +411,34 @@ public class MyAgent : AgentApplication
             }
             else
             {
-                // Production: use the A365 SDK's tooling gateway for server discovery.
-                // NOTE: The SDK loads all registered servers' tools in one call, including W365.
-                // The includeW365 flag can't suppress the W365 load in prod today — the SDK has
-                // no per-server loading API. The CUA gate still saves compute on the non-CUA
-                // branch (no CUA loop, no screenshots).
-                var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
-                    ? authHandlerName
-                    : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-                var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
+                if (includeW365)
+                {
+                    var existingSessionId = _orchestrator.GetSelectedW365SessionId(localSessionKey);
+                    var w365Result = await _orchestrator.StartDirectW365SessionAndListToolsAsync(
+                        _w365GatewayUrl,
+                        accessToken!,
+                        agentId,
+                        context,
+                        existingSessionId,
+                        cancellationToken);
+                    var additionalToolsForCua = Array.Empty<AITool>();
+                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId);
+                }
 
-                allTools = await _toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
+                _logger.LogInformation("Skipping production MCP tool discovery for non-CUA turn while ToolingManifest is restricted to W365 CUA.");
+                return (null, Array.Empty<AITool>(), null, null);
             }
 
             var w365Tools = includeW365 ? FilterW365Tools(allTools) : null;
             var additionalTools = FilterAdditionalTools(allTools);
-            return (w365Tools, additionalTools, mcpClient);
+            return (w365Tools, additionalTools, mcpClient, null);
         }
         catch (Exception ex)
         {
             if (ShouldSkipToolingOnErrors())
             {
                 _logger.LogWarning(ex, "Failed to connect to MCP servers. Continuing without tools (SKIP_TOOLING_ON_ERRORS=true).");
-                return (null, null, null);
+                return (null, null, null, null);
             }
 
             _logger.LogError(ex, "Failed to connect to MCP servers.");
