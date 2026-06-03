@@ -43,7 +43,7 @@ from microsoft_agents.hosting.core import Authorization, TurnContext
 from mcp_tool_registration_service import McpToolRegistrationService
 
 # Observability Components
-from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+from microsoft.opentelemetry.a365.core import BaggageBuilder
 ```
 
 **What it does**: Brings in all the external libraries and tools the agent needs to work.
@@ -98,7 +98,7 @@ def __init__(
 3. **Sets Instructions**: Defines how the agent should behave and respond
 
 **Settings**:
-- Uses "gemini-2.0-flash" model by default (Google's fast Gemini model)
+- Uses "gemini-2.5-flash" model by default (Google's fast Gemini model)
 - Configurable agent name and instructions
 - No explicit temperature/creativity settings (uses Google ADK defaults)
 
@@ -110,21 +110,22 @@ Observability for Google ADK is configured in the hosting layer (`main.py`) rath
 
 ```python
 # In main.py
-from microsoft_agents_a365.observability.core.config import configure
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 
-if __name__ == "__main__":
-    configure(
-        service_name="GoogleADKSampleAgent",
-        service_namespace="GoogleADKTesting",
-    )
+def main():
+    if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
+        use_microsoft_opentelemetry(
+            enable_a365=True,
+            enable_azure_monitor=False,
+        )
 ```
 
-**What it does**: Configures Microsoft Agent 365 observability for tracking and monitoring.
+**What it does**: Configures Microsoft Agent 365 observability via the Microsoft OpenTelemetry Distro.
 
 **What happens**:
 1. Sets up distributed tracing across your agent's operations
-2. Enables telemetry export to Azure Monitor or other backends
-3. Automatically tracks agent invocations, tool calls, and errors
+2. The distro reads `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` and `A365_AGENT_APP_INSTANCE_ID` / `A365_AGENTIC_USER_ID` for FIC auth automatically
+3. Exports traces to the A365 backend when `ENABLE_A365_OBSERVABILITY_EXPORTER=true`
 
 **In the agent code**, observability context is passed via `BaggageBuilder`:
 
@@ -227,11 +228,14 @@ async def invoke_agent(
 **With Observability Scope**:
 ```python
 async def invoke_agent_with_scope(self, message: str, auth, auth_handler_name, context):
-    tenant_id = context.activity.recipient.tenant_id
-    agent_id = context.activity.recipient.agentic_user_id
+    recipient = context.activity.recipient
+    tenant_id = getattr(recipient, "tenant_id", None) or os.getenv("AGENTIC_TENANT_ID", "")
+    agent_id = getattr(recipient, "agentic_app_id", None) or os.getenv("AGENTIC_APP_ID", "")
     with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
         return await self.invoke_agent(message, auth, auth_handler_name, context)
 ```
+
+**Note**: Uses `agentic_app_id` (the agent instance app ID), not `agentic_user_id`. The observability backend requires `agent_id` on the route, token `azp`, and span `gen_ai.agent.id` to all match the app instance ID.
 
 **Why it's important**: This is the core conversation handler - it orchestrates the entire agent invocation flow!
 
@@ -304,25 +308,26 @@ class MyAgent(AgentApplication):
 
 ```python
 # main.py
-if __name__ == "__main__":
-    configure(
-        service_name="GoogleADKSampleAgent",
-        service_namespace="GoogleADKTesting",
-    )
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 
-    google_adk_agent = GoogleADKAgent()
-    app = MyAgent(agent=google_adk_agent)
+def main():
+    if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
+        use_microsoft_opentelemetry(
+            enable_a365=True,
+            enable_azure_monitor=False,
+        )
 
-    run_http_app(app=app, host="0.0.0.0", port=3978)
+    agent_application = MyAgent(GoogleADKAgent())
+    start_server(agent_application)
 ```
 
 **What it does**: Hosts the Google ADK agent as an HTTP service with Microsoft 365 Agents SDK.
 
 **What happens**:
-1. **Configure Observability**: Sets up distributed tracing and monitoring
+1. **Configure Observability**: Sets up the Microsoft OpenTelemetry Distro for distributed tracing
 2. **Create Agent**: Instantiates the GoogleADKAgent wrapper
 3. **Create Host**: Wraps the agent in the Agent365 hosting framework
-4. **Start Server**: Runs an HTTP server that handles incoming messages
+4. **Start Server**: Runs an aiohttp server that handles incoming messages
 
 **Key Features**:
 - Enterprise authentication and authorization
