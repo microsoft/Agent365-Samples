@@ -16,6 +16,8 @@ import asyncio
 import logging
 import os
 import time
+import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
 
@@ -49,6 +51,11 @@ _GENERIC_DEVIN_ERROR = (
     "There was an error processing your request, please try again."
 )
 
+# Bounded LRU cache for per-conversation Devin session state. This caps memory
+# usage in long-running processes that handle many distinct conversations.
+# Override via ``DEVIN_MAX_SESSIONS``.
+_DEFAULT_MAX_SESSIONS = 1000
+
 
 def _parse_polling_interval(raw_value: Optional[str]) -> int:
     """Parse ``POLLING_INTERVAL_SECONDS`` defensively, fall back on bad input."""
@@ -67,6 +74,25 @@ def _parse_polling_interval(raw_value: Optional[str]) -> int:
             _DEFAULT_POLLING_INTERVAL_SECONDS,
         )
         return _DEFAULT_POLLING_INTERVAL_SECONDS
+
+
+def _parse_max_sessions(raw_value: Optional[str]) -> int:
+    """Parse ``DEVIN_MAX_SESSIONS`` defensively, fall back on bad input."""
+    if not raw_value:
+        return _DEFAULT_MAX_SESSIONS
+    try:
+        parsed = int(raw_value)
+        if parsed <= 0:
+            raise ValueError("must be positive")
+        return parsed
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid DEVIN_MAX_SESSIONS value '%s'; "
+            "falling back to default (%d).",
+            raw_value,
+            _DEFAULT_MAX_SESSIONS,
+        )
+        return _DEFAULT_MAX_SESSIONS
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +159,9 @@ class DevinAIClient:
         self._polling_interval: int = _parse_polling_interval(
             os.environ.get("POLLING_INTERVAL_SECONDS")
         )
+        self._max_sessions: int = _parse_max_sessions(
+            os.environ.get("DEVIN_MAX_SESSIONS")
+        )
 
         # The SDK reads DEVIN_SDK_API_KEY from the environment by default.
         # base_url can also be overridden via DEVIN_SDK_BASE_URL.
@@ -142,20 +171,45 @@ class DevinAIClient:
         # Per-conversation Devin session state. Keys are Agent 365
         # ``conversation.id`` values; values track the Devin session_id and the
         # event_ids already returned to the user for that session.
-        self._sessions: dict[str, _SessionState] = {}
+        # OrderedDict gives us O(1) LRU eviction via ``move_to_end`` +
+        # ``popitem(last=False)``.
+        self._sessions: "OrderedDict[str, _SessionState]" = OrderedDict()
         self._sessions_lock = asyncio.Lock()
 
         if not self._org_id:
             raise RuntimeError("DEVIN_ORG_ID environment variable is required")
 
     async def _get_session_state(self, conversation_id: str) -> _SessionState:
-        """Return (or lazily create) the session state for *conversation_id*."""
+        """Return (or lazily create) the session state for *conversation_id*.
+
+        Acts as a bounded LRU: on access the entry is moved to the end, and
+        when capacity is exceeded the least-recently-used entry is evicted.
+        """
         async with self._sessions_lock:
             state = self._sessions.get(conversation_id)
             if state is None:
                 state = _SessionState()
                 self._sessions[conversation_id] = state
+                # Evict the least-recently-used entry if we are over capacity.
+                while len(self._sessions) > self._max_sessions:
+                    evicted_id, _ = self._sessions.popitem(last=False)
+                    logger.debug(
+                        "Evicted LRU Devin session state for conversation=%s",
+                        evicted_id,
+                    )
+            else:
+                # Mark as most-recently-used.
+                self._sessions.move_to_end(conversation_id)
             return state
+
+    async def _discard_session_state(self, conversation_id: str) -> None:
+        """Drop session state once the Devin session reaches a terminal status."""
+        async with self._sessions_lock:
+            if self._sessions.pop(conversation_id, None) is not None:
+                logger.debug(
+                    "Discarded Devin session state for conversation=%s",
+                    conversation_id,
+                )
 
     # -- core send ----------------------------------------------------------
 
@@ -194,22 +248,28 @@ class DevinAIClient:
             )
 
         # Poll for Devin's reply, returning only new messages for this session.
-        return await self._poll_for_response(state)
+        return await self._poll_for_response(state, conversation_id)
 
     # -- polling ------------------------------------------------------------
 
-    async def _poll_for_response(self, state: _SessionState) -> str:
+    async def _poll_for_response(
+        self, state: _SessionState, conversation_id: str
+    ) -> str:
         """
         Poll the Devin session for new messages until a ``devin`` message
         arrives or the timeout is reached.
 
         Uses the per-session ``seen_event_ids`` set on *state* so follow-up
         turns return only the new reply rather than the entire history.
+
+        When the Devin session reaches a terminal status, the per-conversation
+        cache entry is dropped so memory does not grow unbounded.
         """
         assert state.session_id is not None  # caller guarantees this
         session_id = state.session_id
         deadline = time.monotonic() + _DEFAULT_TIMEOUT_SECONDS
         new_messages: list[str] = []
+        reached_terminal_status = False
 
         logger.debug("Starting poll for Devin's reply on session %s", session_id)
 
@@ -266,7 +326,13 @@ class DevinAIClient:
                     session_id,
                     session.status,
                 )
+                reached_terminal_status = True
                 break
+
+        if reached_terminal_status:
+            # Devin won't send more messages on this session; drop the cache
+            # entry so memory doesn't grow unbounded.
+            await self._discard_session_state(conversation_id)
 
         return (
             "\n".join(new_messages)
@@ -310,7 +376,9 @@ class DevinAIClient:
 
         conversation_id = (
             getattr(context.activity.conversation, "id", None)
-            or f"conv-{int(time.time() * 1000)}"
+            # Fallback uses UUIDv4 (random) so two requests in the same
+            # millisecond cannot collide and accidentally share session state.
+            or f"conv-{uuid.uuid4().hex}"
         )
 
         request = Request(

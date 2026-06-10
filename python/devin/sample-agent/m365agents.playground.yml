@@ -29,7 +29,10 @@ deploy:
         DEVIN_SDK_API_KEY: ${{DEVIN_SDK_API_KEY}}
         DEVIN_ORG_ID: ${{DEVIN_ORG_ID}}
         BEARER_TOKEN: ${{SECRET_BEARER_TOKEN}}
-        USE_AGENTIC_AUTH: ${{USE_AGENTIC_AUTH}}
+        # AUTH_HANDLER_NAME controls auth in the server (main.py):
+        #   empty  = anonymous mode (recommended for Agents Playground)
+        #   AGENTIC = production agentic auth (requires real AAD token)
+        AUTH_HANDLER_NAME: ${{AUTH_HANDLER_NAME}}
         connectionsMap__0__serviceUrl: ${{connectionsMap__0__serviceUrl}}
         connectionsMap__0__connection: ${{connectionsMap__0__connection}}
         agentic_type: ${{agentic_type}}

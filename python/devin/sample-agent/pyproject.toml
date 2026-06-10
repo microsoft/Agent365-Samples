@@ -16,11 +16,11 @@ dependencies = [
 
     # Microsoft Agent 365 SDK packages
     "microsoft-agents-a365-notifications",
-    "microsoft-agents-a365-runtime >= 0.1.0",
-    "microsoft-agents-a365-observability-core >= 0.1.0",
+    "microsoft-agents-a365-runtime>=0.1.0",
+    "microsoft-agents-a365-observability-core>=0.1.0",
 
     # Microsoft OpenTelemetry Distro — provides observability, BaggageBuilder, InferenceScope
-    "microsoft-opentelemetry >= 0.1.0a3",
+    "microsoft-opentelemetry>=0.1.0a3",
 
     # Devin AI official SDK
     "devinai",
