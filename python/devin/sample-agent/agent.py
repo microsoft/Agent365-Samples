@@ -50,6 +50,10 @@ class MyAgent:
     # ------------------------------------------------------------------
     # Message handling
     # ------------------------------------------------------------------
+    # NOTE: ``auth`` and ``auth_handler_name`` are accepted to match the
+    # interface expected by the host (see other Python samples). The Devin
+    # SDK uses its own ``DEVIN_SDK_API_KEY``, so this sample does not exchange
+    # an A365 OBO token before calling Devin.
 
     async def process_user_message(
         self,
@@ -74,9 +78,11 @@ class MyAgent:
             client = get_client()
             response = await client.invoke_inference_scope(message, context)
             return response
-        except Exception as exc:
+        except Exception:
+            # Log full traceback for debugging; return a generic message so we
+            # don't leak internal details (config, identifiers, upstream errors).
             logger.exception("Devin AI query error")
-            return f"Error communicating with Devin AI: {exc}"
+            return "Sorry, I had trouble reaching Devin. Please try again."
 
     # ------------------------------------------------------------------
     # Notification handling

@@ -216,10 +216,12 @@ class DevinAgentHost:
                         except asyncio.CancelledError:
                             pass
 
-            except Exception as exc:
+            except Exception:
+                # Log the traceback for diagnostics; reply with a generic
+                # message so we don't expose internal details to the user.
                 logger.exception("Error handling message")
                 await context.send_activity(
-                    f"Sorry, I encountered an error: {exc}"
+                    "Sorry, I encountered an error handling your message."
                 )
 
         # --- Agent notifications (email, Teams, etc.) ---
@@ -264,10 +266,12 @@ class DevinAgentHost:
 
                     await context.send_activity(response)
 
-            except Exception as exc:
+            except Exception:
+                # Log the traceback for diagnostics; reply with a generic
+                # message so we don't expose internal details to the user.
                 logger.exception("Notification error")
                 await context.send_activity(
-                    f"Sorry, I encountered an error processing the notification: {exc}"
+                    "Sorry, I encountered an error processing the notification."
                 )
 
     # -- agent lifecycle ----------------------------------------------------
