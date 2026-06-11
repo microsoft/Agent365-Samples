@@ -4,7 +4,8 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "SKIP_TOOLING_ON_ERRORS": "true"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     },
@@ -13,7 +14,8 @@
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "BEARER_TOKEN": ""
+        "BEARER_TOKEN": "",
+        "SKIP_TOOLING_ON_ERRORS": "true"
       },
       "applicationUrl": "https://localhost:64896;http://localhost:64897"
     }

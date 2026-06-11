@@ -120,18 +120,11 @@ import { ClientConfig } from '@langchain/mcp-adapters';
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-langchain';
 
 import {
-  ObservabilityManager,
   InferenceScope,
-  Builder,
 } from '@microsoft/agents-a365-observability';
 
-const sdk = ObservabilityManager.configure(
-  (builder: Builder) =>
-    builder
-      .withService('TypeScript Sample Agent', '1.0.0')
-);
-
-sdk.start();
+// Observability is initialized by the Microsoft OpenTelemetry distro in index.ts.
+// See: https://github.com/microsoft/opentelemetry-distro-javascript
 
 const toolService = new McpToolRegistrationService();
 ```

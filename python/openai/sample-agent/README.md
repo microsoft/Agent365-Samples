@@ -12,11 +12,123 @@ This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/mic
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## Prerequisites
+>
+> To run the template in your local dev machine, you will need:
+>
+> - [Python](https://www.python.org/), supported versions: 3.11 or higher
+> - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) latest version
+> - Prepare your own Azure OpenAI / OpenAI API credentials
+> - Azure CLI signed in with `az login`
 
-- Python 3.x
-- Microsoft Agent 365 SDK
-- OpenAI Agents SDK (openai-agents)
-- Azure/OpenAI API credentials
+> - Microsoft Agent 365 SDK
+> - OpenAI Agents SDK (openai-agents)
+> - A365 CLI: Required for agent deployment and management.
+
+## Python Environment Configuration
+
+Set up the Python virtual environment manually before running the agent or deploy steps:
+
+1. Install `uv`:
+	- `pip install uv`
+2. Create a virtual environment:
+	- `uv venv`
+3. Activate the virtual environment:
+	- Windows PowerShell: `.venv\Scripts\Activate.ps1`
+	- macOS/Linux: `source .venv/bin/activate`
+
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `activity.from_property` with basic user
+information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `activity.from_property.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from_property.name` | Display name as known to the channel |
+| `activity.from_property.aad_object_id` | Azure AD Object ID — use this to call Microsoft Graph |
+
+The sample logs these fields at the start of every message turn and injects the display name
+into the LLM system instructions for personalized responses.
+
+## Running the Agent in Microsoft 365 Agents Playground
+
+1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
+1. In file *env/.env.playground.user*, fill in your Azure OpenAI key `SECRET_AZURE_OPENAI_API_KEY=<your-key>`, endpoint `AZURE_OPENAI_ENDPOINT=<your-endpoint>`, and deployment name `AZURE_OPENAI_DEPLOYMENT_NAME=<your-deployment>` if you're using Azure OpenAI.
+1. In file *env/.env.playground.user*, fill in your OpenAI key `SECRET_OPENAI_API_KEY=<your-key>` if you're using OpenAI.
+1. In file *env/.env.playground*, fill in your custom app registration client id `CLIENT_APP_ID`.
+1. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
+1. You can send any message to get a response from the agent.
+
+**Congratulations**! You are running an agent that can now interact with users in Microsoft 365 Agents Playground.
+
+## Handling Agent Install and Uninstall
+
+When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `on_installation_update` in `host_agent_server.py`:
+
+| Action | Description |
+|---|---|
+| `add` | Agent was installed — send a welcome message |
+| `remove` | Agent was uninstalled — send a farewell message |
+
+```python
+if action == "add":
+    await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+elif action == "remove":
+    await context.send_activity("Thank you for your time, I enjoyed working with you.")
+```
+
+To test with Agents Playground, use **Mock an Activity → Install application** to send a simulated `installationUpdate` activity.
+
+## Sending Multiple Messages in Teams
+
+Agent365 agents can send multiple discrete messages in response to a single user prompt. This is the recommended pattern for agentic identities in Teams.
+
+> **Important**: Streaming (SSE) is not supported for agentic identities in Teams. The SDK detects agentic identity and buffers streaming into a single message. Instead, call `send_activity` multiple times to send multiple messages.
+
+### Pattern
+
+1. Send an immediate acknowledgment so the user knows work has started
+2. Run a typing indicator loop — each indicator times out after ~5 seconds, so re-send every ~4 seconds
+3. Do your LLM work, then send the response
+
+### Typing Indicators
+
+- Typing indicators show a progress animation in Teams
+- They have a built-in ~5-second visual timeout
+- For long-running operations, re-send the typing indicator in a loop every ~4 seconds
+- Typing indicators are only visible in 1:1 chats and small group chats (not channels)
+
+### Code Example
+
+```python
+# Multiple messages: send an immediate ack before the LLM work begins.
+# Each send_activity call produces a discrete Teams message.
+await context.send_activity("Got it — working on it…")
+
+# Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+await context.send_activity(Activity(type="typing"))
+
+# Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+# asyncio.create_task is used because all aiohttp handlers share the same event loop.
+async def _typing_loop():
+    while True:
+        try:
+            await asyncio.sleep(4)
+            await context.send_activity(Activity(type="typing"))
+        except asyncio.CancelledError:
+            break
+
+typing_task = asyncio.create_task(_typing_loop())
+try:
+    response = await agent.invoke(user_message)
+    await context.send_activity(response)
+finally:
+    typing_task.cancel()
+    try:
+        await typing_task
+    except asyncio.CancelledError:
+        pass
+```
 
 ## Running the Agent
 

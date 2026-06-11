@@ -2,16 +2,11 @@
 // Licensed under the MIT License.
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
-import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
-
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 
-import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 import { Client, getClient } from './client';
 
 export class MyAgent extends AgentApplication<TurnState> {
@@ -19,7 +14,6 @@ export class MyAgent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
@@ -36,6 +30,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
     });
+
+    // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+    this.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: TurnState) => {
+      await this.handleInstallationUpdateActivity(context, state);
+    });
   }
 
   /**
@@ -44,59 +43,44 @@ export class MyAgent extends AgentApplication<TurnState> {
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     const userMessage = turnContext.activity.text?.trim() || '';
 
+    const from = turnContext.activity?.from;
+    console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+    const displayName = from?.name ?? 'unknown';
+
     if (!userMessage) {
       await turnContext.sendActivity('Please send me a message and I\'ll help you!');
       return;
     }
 
-    // Populate baggage consistently from TurnContext using hosting utilities
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
-      new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Initial onboarding session')
-      .correlationId("7ff6dca0-917c-4bb0-b31a-794e533d8aad")
-      .build();
+    // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+    await turnContext.sendActivity('Got it — working on it…');
 
-    // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
+    // Send typing indicator immediately.
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(() => {
+        turnContext.sendActivity({ type: 'typing' } as Activity).catch(() => {
+          // Typing indicator failed — non-critical, continue
+        });
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
 
     try {
-      await baggageScope.run(async () => {
-        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext);
-        const response = await client.invokeAgentWithScope(userMessage);
-        await turnContext.sendActivity(response);
-      });
+      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
+      const response = await client.invokeAgentWithScope(userMessage);
+      await turnContext.sendActivity(response);
     } catch (error) {
       console.error('LLM query error:', error);
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
-      baggageScope.dispose();
-    }
-  }
-
-  /**
-   * Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
-   */
-  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
-    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-    const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
-
-    if (process.env.Use_Custom_Resolver === 'true') {
-      const aauToken = await this.authorization.exchangeToken(turnContext, 'agentic', {
-        scopes: getObservabilityAuthenticationScope()
-      });
-      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId} token=${aauToken?.token?.substring(0, 10)}...`);
-      const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
-      tokenCache.set(cacheKey, aauToken?.token || '');
-    } else {
-      await AgenticTokenCacheInstance.RefreshObservabilityToken(
-        agentId,
-        tenantId,
-        turnContext,
-        this.authorization,
-        getObservabilityAuthenticationScope()
-      );
+      stopTypingLoop();
     }
   }
 
@@ -139,6 +123,21 @@ export class MyAgent extends AgentApplication<TurnState> {
       console.error('Email notification error:', error);
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
       await context.sendActivity(errorResponse);
+    }
+  }
+
+  /**
+   * Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
+   * Sends a welcome message on install and a farewell on uninstall.
+   */
+  async handleInstallationUpdateActivity(context: TurnContext, state: TurnState): Promise<void> {
+    const from = context.activity?.from;
+    console.log(`InstallationUpdate received — Action: '${context.activity.action ?? "(none)"}', DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}'`);
+
+    if (context.activity.action === 'add') {
+      await context.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
+    } else if (context.activity.action === 'remove') {
+      await context.sendActivity('Thank you for your time, I enjoyed working with you.');
     }
   }
 }

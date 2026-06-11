@@ -22,24 +22,18 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Identity" Version="1.16.0" />
+		<PackageReference Include="Azure.Identity" Version="1.17.1" />
 		<PackageReference Include="AdaptiveCards" Version="3.1.0" />
-		<PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.65.0-preview" />
-		<PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.66.0" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.66.0" />
-		<PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.66.0" />
-		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.3.*-*" />
-		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.3.*-*" />
+		<PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.71.0-preview" />
+		<PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.71.0" />
+		<PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.71.0" />
+		<PackageReference Include="Microsoft.SemanticKernel.Connectors.OpenAI" Version="1.71.0" />
+		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.4.*-*" />
+		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.4.*-*" />
 		<PackageReference Include="ModelContextProtocol.Core" Version="0.3.0-preview.4" />
 
 		<!-- Telemetry Packages -->
-		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.9.0" />
-		<PackageReference Include="Microsoft.Extensions.ServiceDiscovery" Version="9.5.0" />
-		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
-		<PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
-		<PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+		<PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.1" />
 	</ItemGroup>
 
 </Project>

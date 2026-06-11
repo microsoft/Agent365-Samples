@@ -1,5 +1,8 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
-import { ActivityTypes } from '@microsoft/agents-activity';
+import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 
 // Notification Imports
 import '@microsoft/agents-a365-notifications';
@@ -13,7 +16,6 @@ export class A365Agent extends AgentApplication<TurnState> {
 
   constructor() {
     super({
-      startTypingTimer: true,
       storage: new MemoryStorage(),
       authorization: {
         agentic: {
@@ -30,6 +32,11 @@ export class A365Agent extends AgentApplication<TurnState> {
     this.onActivity(ActivityTypes.Message, async (context: TurnContext, state: TurnState) => {
       await this.handleAgentMessageActivity(context, state);
     }, [A365Agent.authHandlerName]);
+
+    // Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+    this.onActivity(ActivityTypes.InstallationUpdate, async (context: TurnContext, state: TurnState) => {
+      await this.handleInstallationUpdateActivity(context, state);
+    });
   }
 
     /**
@@ -38,19 +45,48 @@ export class A365Agent extends AgentApplication<TurnState> {
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     const userMessage = turnContext.activity.text?.trim() || '';
 
+    const from = turnContext.activity?.from;
+    console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+    const displayName = from?.name ?? 'unknown';
+
     if (!userMessage) {
       await turnContext.sendActivity('Please send me a message and I\'ll help you!');
       return;
     }
 
+    // Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+    // Each sendActivity call produces a discrete Teams message.
+    // NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+    //       use sendActivity for any messages that must arrive immediately.
+    await turnContext.sendActivity('Got it — working on it…');
+
+    // Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+    await turnContext.sendActivity({ type: 'typing' } as Activity);
+
+    // Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+    // Only visible in 1:1 and small group chats.
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
+    const startTypingLoop = () => {
+      typingInterval = setInterval(() => {
+        turnContext.sendActivity({ type: 'typing' } as Activity).catch(() => {
+          // Typing indicator failed — non-critical, continue
+        });
+      }, 4000);
+    };
+    const stopTypingLoop = () => { clearInterval(typingInterval); };
+
+    startTypingLoop();
+
     try {
-      const client: Client = await getClient();
+      const client: Client = await getClient(displayName);
       const response = await client.invokeAgentWithScope(userMessage);
       await turnContext.sendActivity(response);
     } catch (error) {
       console.error('LLM query error:', error);
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
+    } finally {
+      stopTypingLoop();
     }
   }
 
@@ -93,6 +129,20 @@ export class A365Agent extends AgentApplication<TurnState> {
       console.error('Email notification error:', error);
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
       await context.sendActivity(errorResponse);
+    }
+  }
+  /**
+   * Handles agent install and uninstall events (agentInstanceCreated / InstallationUpdate).
+   * Sends a welcome message on install and a farewell on uninstall.
+   */
+  async handleInstallationUpdateActivity(context: TurnContext, state: TurnState): Promise<void> {
+    const from = context.activity?.from;
+    console.log(`InstallationUpdate received — Action: '${context.activity.action ?? "(none)"}', DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}'`);
+
+    if (context.activity.action === 'add') {
+      await context.sendActivity('Thank you for hiring me! Looking forward to assisting you in your professional journey!');
+    } else if (context.activity.action === 'remove') {
+      await context.sendActivity('Thank you for your time, I enjoyed working with you.');
     }
   }
 }

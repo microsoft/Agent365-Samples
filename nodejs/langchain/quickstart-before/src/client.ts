@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import { createAgent, ReactAgent } from "langchain";
-import { ChatOpenAI } from "@langchain/openai";
+import { AzureChatOpenAI, ChatOpenAI } from "@langchain/openai";
 
 export interface Client {
   invokeAgent(prompt: string): Promise<string>;
@@ -24,10 +24,20 @@ export interface Client {
  * ```
  */
 export async function getClient(): Promise<Client> {
-  // Create the model
-  const model = new ChatOpenAI({
-    model: "gpt-4o-mini",
-  });
+  // Create the model — prefer Azure OpenAI if configured, fall back to standard OpenAI
+  let model: ChatOpenAI;
+  if (process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT) {
+    model = new AzureChatOpenAI({
+      azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT.replace('https://', '').replace('.openai.azure.com/', '').replace('.openai.azure.com', ''),
+      azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
+      azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2025-03-01-preview',
+    });
+  } else if (process.env.OPENAI_API_KEY) {
+    model = new ChatOpenAI({ model: 'gpt-4o-mini' });
+  } else {
+    throw new Error('No OpenAI credentials found. Set AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_DEPLOYMENT, or OPENAI_API_KEY.');
+  }
 
   // Create the agent
   const agent = createAgent({

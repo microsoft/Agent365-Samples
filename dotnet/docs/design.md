@@ -37,36 +37,33 @@ The entry point follows the ASP.NET Core minimal hosting pattern:
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Configure OpenTelemetry
-builder.ConfigureOpenTelemetry();
-
-// 2. Configure Agent 365 services
-builder.Services.AddAgenticTracingExporter();
-builder.AddA365Tracing(config => {
-    config.WithAgentFramework();  // or .WithSemanticKernel()
+// 1. Configure OpenTelemetry distro
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = ExportTarget.Agent365 | ExportTarget.Console;
 });
 
-// 3. Register MCP tooling services
+// 2. Register MCP tooling services
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 
-// 4. Configure authentication
+// 3. Configure authentication
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
-// 5. Register storage and agent
+// 4. Register storage and agent
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 builder.AddAgent<MyAgent>();
 
-// 6. Register LLM client
+// 5. Register LLM client
 builder.Services.AddSingleton<IChatClient>(sp => { ... });
 
 var app = builder.Build();
 
-// 7. Configure middleware
+// 6. Configure middleware
 app.UseAuthentication();
 app.UseAuthorization();
 
-// 8. Map endpoints
+// 7. Map endpoints
 app.MapPost("/api/messages", async (...) => {
     await adapter.ProcessAsync(request, response, agent, cancellationToken);
 });
@@ -103,14 +100,13 @@ public class MyAgent : AgentApplication
     protected async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState,
                                          CancellationToken cancellationToken)
     {
+        // Tracing and instrumentation are handled by the distro.
+        // Token cache registration for the Agent365 exporter is done
+        // via A365OtelWrapper which resolves tenant/agent identity
+        // and calls RegisterObservability on the agentic token cache.
         await A365OtelWrapper.InvokeObservedAgentOperation(
-            "MessageProcessor",
-            turnContext,
-            turnState,
-            _agentTokenCache,
-            UserAuthorization,
-            authHandlerName,
-            _logger,
+            "MessageProcessor", turnContext, turnState,
+            _agentTokenCache, UserAuthorization, authHandlerName, _logger,
             async () => {
                 // Process message with LLM
             });
@@ -125,7 +121,6 @@ All services are registered via the DI container:
 ```csharp
 // Core services
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
-builder.Services.AddSingleton<IExporterTokenCache<AgenticTokenStruct>, AgenticTokenCache>();
 
 // MCP tooling
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
@@ -189,7 +184,33 @@ var a365Tools = await toolService.GetMcpToolsAsync(
 toolList.AddRange(a365Tools);
 ```
 
-### 6. Authentication Flow
+### 6. User Identity
+
+The A365 platform populates `Activity.From` on every incoming message. Log it at message handler entry and inject the display name into LLM system instructions:
+
+```csharp
+protected async Task MessageActivityAsync(ITurnContext turnContext, ITurnState turnState,
+                                          CancellationToken cancellationToken)
+{
+    var fromAccount = turnContext.Activity.From;
+    _logger.LogInformation(
+        "Turn received from user — DisplayName: '{Name}', UserId: '{Id}', AadObjectId: '{AadObjectId}'",
+        fromAccount?.Name ?? "(unknown)",
+        fromAccount?.Id ?? "(unknown)",
+        fromAccount?.AadObjectId ?? "(none)");
+
+    var displayName = fromAccount?.Name ?? "unknown";
+    // Inject displayName into your LLM system prompt / agent instructions
+}
+```
+
+| Field | Description |
+|---|---|
+| `Activity.From.Id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `Activity.From.Name` | Display name as known to the channel |
+| `Activity.From.AadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+### 7. Authentication Flow
 
 ```csharp
 // Check for bearer token (development)
@@ -210,17 +231,30 @@ else
 }
 ```
 
-### 7. Observability Integration
+### 8. Observability Integration
+
+Observability is configured via the Microsoft.OpenTelemetry distro in `Program.cs`:
 
 ```csharp
-// Configure tracing
-builder.AddA365Tracing(config => {
-    config.WithAgentFramework();  // Framework-specific instrumentation
+// Single-line setup — configures tracing, metrics, Agent365 exporter,
+// Agent Framework instrumentation, and Semantic Kernel instrumentation.
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = ExportTarget.Agent365 | ExportTarget.Console;
 });
+```
 
-// Wrap operations for tracing
+The distro automatically handles:
+- ASP.NET Core and HttpClient instrumentation
+- OpenAI / Semantic Kernel / Agent Framework span capture
+- Agent365 exporter with agentic token cache
+- Baggage propagation (tenant ID, agent ID)
+
+Agent operations are wrapped with `A365OtelWrapper` to register the token cache and set baggage context:
+
+```csharp
 await A365OtelWrapper.InvokeObservedAgentOperation(
-    "OperationName",
+    "MessageProcessor",
     turnContext,
     turnState,
     _agentTokenCache,
@@ -228,7 +262,7 @@ await A365OtelWrapper.InvokeObservedAgentOperation(
     authHandlerName,
     _logger,
     async () => {
-        // Operation code
+        // Process message with LLM
     });
 ```
 
@@ -236,13 +270,12 @@ await A365OtelWrapper.InvokeObservedAgentOperation(
 
 | Package | Purpose |
 |---------|---------|
+| `Microsoft.OpenTelemetry` | OpenTelemetry distro (tracing, metrics, exporters) |
 | `Microsoft.Agents.Builder` | Agent application framework |
 | `Microsoft.Agents.Hosting.AspNetCore` | ASP.NET Core hosting |
-| `Microsoft.Agents.A365.Observability` | Agent 365 tracing |
 | `Microsoft.Agents.A365.Tooling.Extensions.*` | MCP tool integration |
 | `Azure.AI.OpenAI` | Azure OpenAI client |
 | `Microsoft.SemanticKernel` | Semantic Kernel (SK samples) |
-| `OpenTelemetry.*` | Telemetry infrastructure |
 
 ## Interface Contracts
 
@@ -264,7 +297,7 @@ public interface IMcpToolRegistrationService
     Task<List<AITool>> GetMcpToolsAsync(...);
 }
 
-// Token caching for observability
+// Token caching for observability (registered automatically by the distro)
 public interface IExporterTokenCache<T> { }
 ```
 

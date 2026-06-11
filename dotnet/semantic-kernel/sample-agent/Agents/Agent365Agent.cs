@@ -28,20 +28,22 @@ public class Agent365Agent
     private const string AgentName = "Agent365Agent";
     private const string TermsAndConditionsNotAcceptedInstructions = "The user has not accepted the terms and conditions. You must ask the user to accept the terms and conditions before you can help them with any tasks. You may use the 'accept_terms_and_conditions' function to accept the terms and conditions on behalf of the user. If the user tries to perform any action before accepting the terms and conditions, you must use the 'terms_and_conditions_not_accepted' function to inform them that they must accept the terms and conditions to proceed.";
     private const string TermsAndConditionsAcceptedInstructions = "You may ask follow up questions until you have enough information to answer the user's question.";
-    private string AgentInstructions() => $@"
+    private string AgentInstructions(string? userName) => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
+        The user's name is {(string.IsNullOrEmpty(userName) ? "unknown" : userName)}. Use their name naturally where appropriate.
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
 
         Respond in JSON format with the following JSON schema:
-        
+
         {{
             ""contentType"": ""'Text'"",
             ""content"": ""{{The content of the response in plain text}}""
         }}
         ";
 
-    private string AgentInstructions_Streaming() => $@"
+    private string AgentInstructions_Streaming(string? userName) => $@"
         You are a friendly assistant that helps office workers with their daily tasks.
+        The user's name is {(string.IsNullOrEmpty(userName) ? "unknown" : userName)}. Use their name naturally where appropriate.
         {(MyAgent.TermsAndConditionsAccepted ? TermsAndConditionsAcceptedInstructions : TermsAndConditionsNotAcceptedInstructions)}
 
         Respond in Markdown format
@@ -137,11 +139,12 @@ public class Agent365Agent
         }
 
         // Define the agent
+        var displayName = turnContext.Activity.From?.Name;
         this._agent =
             new()
             {
                 Id = turnContext.Activity.Recipient.AgenticAppId ?? Guid.NewGuid().ToString(),
-                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming() : AgentInstructions(),
+                Instructions = turnContext.StreamingResponse.IsStreamingChannel ? AgentInstructions_Streaming(displayName) : AgentInstructions(displayName),
                 Name = AgentName,
                 Kernel = this._kernel,
                 Arguments = new KernelArguments(new OpenAIPromptExecutionSettings()

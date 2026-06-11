@@ -1,0 +1,26 @@
+[project]
+name = "observability-with-langgraph"
+version = "0.1.0"
+description = "Sample: Agent 365 SDK with existing OTel SDK + LangGraph ReAct agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.3.0",
+    "langchain-openai>=0.3.0",
+    "langchain-core>=0.3.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "microsoft-agents-a365-observability-core",
+    "microsoft-agents-a365-observability-extensions-langchain",
+    # The langchain extension uses `wrap_function_wrapper(module=..., name=...)`
+    # which the wrapt 2.x release removed. Pin until the SDK ships a fix.
+    "wrapt<2",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

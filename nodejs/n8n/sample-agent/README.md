@@ -11,6 +11,20 @@ This sample demonstrates how to build an agent using n8n with its Microsoft Agen
 - Microsoft Agent 365
 - n8n instance (version 2.7.0 or later) with Microsoft Agent 365 Node
 
+## Working with User Identity
+
+On every incoming message, the A365 platform populates `activity.from` with basic user
+information — always available with no API calls or token acquisition:
+
+| Field | Description |
+|---|---|
+| `activity.from.id` | Channel-specific user ID (e.g., `29:1AbcXyz...` in Teams) |
+| `activity.from.name` | Display name as known to the channel |
+| `activity.from.aadObjectId` | Azure AD Object ID — use this to call Microsoft Graph |
+
+These fields are available in the n8n workflow via the Microsoft Agent 365 trigger node outputs
+and can be used to personalize agent responses.
+
 ## Running the Agent
 
 This sample is fully contained within n8n. The **Microsoft Agent 365** node encapsulates all necessary code and integrations for the agent to function. There is no external code to run or compile; simply use your n8n workflow and connect it to Agent Identity as explained below.

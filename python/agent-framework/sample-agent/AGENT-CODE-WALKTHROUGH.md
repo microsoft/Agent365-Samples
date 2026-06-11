@@ -48,7 +48,9 @@ from microsoft_agents.hosting.core import Authorization, TurnContext
 from microsoft_agents_a365.notifications.agent_notification import NotificationTypes
 
 # Observability Components
-from microsoft_agents_a365.observability.core.config import configure
+# Observability is initialized by the Microsoft OpenTelemetry distro in
+# host_agent_server.py via use_microsoft_opentelemetry().
+# See: https://github.com/microsoft/opentelemetry-distro-python
 
 # MCP Tooling
 from microsoft_agents_a365.tooling.extensions.agentframework.services.mcp_tool_registration_service import (

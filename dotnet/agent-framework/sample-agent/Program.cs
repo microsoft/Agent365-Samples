@@ -3,12 +3,8 @@
 
 using Agent365AgentFrameworkSampleAgent;
 using Agent365AgentFrameworkSampleAgent.Agent;
-using Agent365AgentFrameworkSampleAgent.telemetry;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Agents.A365.Observability;
-using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
-using Microsoft.Agents.A365.Observability.Runtime;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
@@ -17,14 +13,26 @@ using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.Agents.Storage.Transcript;
 using Microsoft.Extensions.AI;
+using Microsoft.OpenTelemetry;
 using System.Reflection;
 
 
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
-builder.ConfigureOpenTelemetry();
+// Configure OpenTelemetry distro — Console exporter only in Development to avoid PII leaks
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
+
+    // Agent365-only export suppresses infrastructure instrumentation by default.
+    // Re-enable explicitly so HTTP calls (Azure OpenAI, auth, Teams) appear in traces.
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
+});
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
@@ -33,15 +41,6 @@ builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
-
-// Add A365 tracing with Agent Framework integration
-builder.AddA365Tracing(config =>
-{
-    config.WithAgentFramework();
-});
-
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
@@ -90,7 +89,7 @@ builder.Services.AddSingleton<IChatClient>(sp => {
         .AsIChatClient()
         .AsBuilder()
         .UseFunctionInvocation()
-        .UseOpenTelemetry(sourceName: AgentMetrics.SourceName, configure: (cfg) => cfg.EnableSensitiveData = true)
+        .UseOpenTelemetry(sourceName: null, configure: (cfg) => cfg.EnableSensitiveData = true)
         .Build(); 
 });
 
@@ -112,10 +111,7 @@ app.UseAuthorization();
 // Map the /api/messages endpoint to the AgentApplication
 app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
-    {
-        await adapter.ProcessAsync(request, response, agent, cancellationToken);
-    }).ConfigureAwait(false);
+    await adapter.ProcessAsync(request, response, agent, cancellationToken);
 });
 
 // Health check endpoint for CI/CD pipelines and monitoring

@@ -1,8 +1,10 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 """Generic Agent Host Server - Hosts agents implementing AgentInterface"""
 
 # --- Imports ---
+import asyncio
 import logging
 import os
 import socket
@@ -37,14 +39,14 @@ from microsoft_agents_a365.notifications.agent_notification import (
 )
 from microsoft_agents_a365.notifications import EmailResponse
 
-from microsoft_agents_a365.observability.core.config import configure
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
     BaggageBuilder,
 )
 from microsoft_agents_a365.runtime.environment_utils import (
     get_observability_authentication_scope,
 )
-from token_cache import cache_agentic_token
+from token_cache import cache_agentic_token, get_cached_agentic_token
 
 # --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -70,9 +72,17 @@ def create_and_run_host(
             f"Agent class {agent_class.__name__} must inherit from AgentInterface"
         )
 
-    configure(
-        service_name="AgentFrameworkTracingWithAzureOpenAI",
-        service_namespace="AgentFrameworkTesting",
+    # Initialize Microsoft OpenTelemetry distro for observability.
+    # Replaces the legacy configure() call with a single entrypoint that sets up
+    # tracing, metrics, and logging pipelines including A365 telemetry export.
+    # See: https://github.com/microsoft/opentelemetry-distro-python
+    use_microsoft_opentelemetry(
+        enable_a365=True,
+        enable_azure_monitor=False,
+        a365_token_resolver=lambda agent_id, tenant_id: get_cached_agentic_token(
+            tenant_id, agent_id
+        )
+        or "",
     )
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
@@ -176,6 +186,22 @@ class GenericAgentHost:
         self.agent_app.conversation_update("membersAdded", **handler_config)(help_handler)
         self.agent_app.message("/help", **handler_config)(help_handler)
 
+        # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+        @self.agent_app.activity("installationUpdate")
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            action = context.activity.action
+            from_prop = context.activity.from_property
+            logger.info(
+                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                action or "(none)",
+                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+            )
+            if action == "add":
+                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+            elif action == "remove":
+                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+
         @self.agent_app.activity("message", **handler_config)
         async def on_message(context: TurnContext, _: TurnState):
             try:
@@ -190,10 +216,36 @@ class GenericAgentHost:
                         return
 
                     logger.info(f"📨 {user_message}")
-                    response = await self.agent_instance.process_user_message(
-                        user_message, self.agent_app.auth, self.auth_handler_name, context
-                    )
-                    await context.send_activity(response)
+
+                    # Multiple messages pattern: send an immediate acknowledgment before the LLM work begins.
+                    # Each send_activity call produces a discrete Teams message.
+                    # NOTE: For Teams agentic identities, streaming is buffered into a single message by the SDK;
+                    #       use send_activity for any messages that must arrive immediately.
+                    await context.send_activity("Got it — working on it…")
+                    await context.send_activity(Activity(type="typing"))
+
+                    # Typing indicator loop — refreshes the "..." animation every ~4s for long-running operations.
+                    # Typing indicators time out after ~5s and must be re-sent. Only visible in 1:1 and small group chats.
+                    async def _typing_loop():
+                        try:
+                            while True:
+                                await asyncio.sleep(4)
+                                await context.send_activity(Activity(type="typing"))
+                        except asyncio.CancelledError:
+                            pass  # Expected: loop is cancelled when processing completes.
+
+                    typing_task = asyncio.create_task(_typing_loop())
+                    try:
+                        response = await self.agent_instance.process_user_message(
+                            user_message, self.agent_app.auth, self.auth_handler_name, context
+                        )
+                        await context.send_activity(response)
+                    finally:
+                        typing_task.cancel()
+                        try:
+                            await typing_task
+                        except asyncio.CancelledError:
+                            pass  # Expected on cancel.
 
             except Exception as e:
                 logger.error(f"❌ Error: {e}")
@@ -291,7 +343,17 @@ class GenericAgentHost:
 
         middlewares = []
         if auth_configuration:
-            middlewares.append(jwt_authorization_middleware)
+
+            @web_middleware
+            async def jwt_with_health_bypass(request, handler):
+                # Skip JWT validation for health endpoint so that container
+                # orchestrators (Azure Container Apps, Kubernetes, App Service)
+                # can reach /api/health without a bearer token.
+                if request.path == "/api/health":
+                    return await handler(request)
+                return await jwt_authorization_middleware(request, handler)
+
+            middlewares.append(jwt_with_health_bypass)
 
         @web_middleware
         async def anonymous_claims(request, handler):

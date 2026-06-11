@@ -1,6 +1,8 @@
-# Copyright (c) Microsoft. All rights reserved.
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 
 # --- Imports ---
+import asyncio
 import os
 
 # Import our agent interface
@@ -71,14 +73,22 @@ class MyAgent(AgentApplication):
         )
 
         self.agent = agent
-        self.auth_handler_name = "AGENTIC"
+        # Read from AUTH_HANDLER_NAME env var. Set to "AGENTIC" for production
+        # agentic auth. Leave empty (default) for local dev and Agents Playground.
+        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME", "") or None
+        if self.auth_handler_name:
+            logger.info("Auth handler: %s", self.auth_handler_name)
+        else:
+            logger.info("No auth handler configured — anonymous mode (Playground/local dev)")
         self.agent_notification = AgentNotification(self)
 
         self._setup_handlers()
 
     def _setup_handlers(self):
         """Set up activity handlers for the agent."""
-        auth_handlers = [self.auth_handler_name]
+        # Only enforce auth when AUTH_HANDLER_NAME is configured.
+        # Without it the Agents Playground (and local dev) can reach the handler.
+        handler_config = {"auth_handlers": [self.auth_handler_name]} if self.auth_handler_name else {}
 
         @self.conversation_update("membersAdded")
         async def help_handler(context: TurnContext, _: TurnState):
@@ -89,7 +99,23 @@ class MyAgent(AgentApplication):
             )
             await context.send_activity(Activity(type=ActivityTypes.message, text=help_message))
 
-        @self.activity("message", auth_handlers=auth_handlers, rank=2)
+        # Handle agent install / uninstall events (agentInstanceCreated / InstallationUpdate)
+        @self.activity("installationUpdate")
+        async def on_installation_update(context: TurnContext, _: TurnState):
+            action = context.activity.action
+            from_prop = context.activity.from_property
+            logger.info(
+                "InstallationUpdate received — Action: '%s', DisplayName: '%s', UserId: '%s'",
+                action or "(none)",
+                getattr(from_prop, "name", "(unknown)") if from_prop else "(unknown)",
+                getattr(from_prop, "id", "(unknown)") if from_prop else "(unknown)",
+            )
+            if action == "add":
+                await context.send_activity("Thank you for hiring me! Looking forward to assisting you in your professional journey!")
+            elif action == "remove":
+                await context.send_activity("Thank you for your time, I enjoyed working with you.")
+
+        @self.activity("message", **handler_config, rank=2)
         async def message_handler(context: TurnContext, _: TurnState):
             """Handle message activities."""
             user_message = context.activity.text
@@ -97,18 +123,43 @@ class MyAgent(AgentApplication):
                 await context.send_activity("Please send me a message and I'll help you!")
                 return
 
-            response = await self.agent.invoke_agent_with_scope(
-                message=user_message,
-                auth=self.auth,
-                auth_handler_name=self.auth_handler_name,
-                context=context
-            )
+            # Multiple messages: send an immediate ack before the LLM work begins.
+            # Each send_activity call produces a discrete Teams message.
+            await context.send_activity("Got it — working on it…")
 
-            await context.send_activity(Activity(type=ActivityTypes.message, text=response))
+            # Send typing indicator immediately (awaited so it arrives before the LLM call starts).
+            await context.send_activity(Activity(type="typing"))
+
+            # Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
+            # asyncio.create_task is used because all aiohttp handlers share the same event loop.
+            async def _typing_loop():
+                while True:
+                    try:
+                        await asyncio.sleep(4)
+                        await context.send_activity(Activity(type="typing"))
+                    except asyncio.CancelledError:
+                        break
+
+            typing_task = asyncio.create_task(_typing_loop())
+            try:
+                response = await self.agent.invoke_agent_with_scope(
+                    message=user_message,
+                    auth=self.auth,
+                    auth_handler_name=self.auth_handler_name,
+                    context=context
+                )
+
+                await context.send_activity(Activity(type=ActivityTypes.message, text=response))
+            finally:
+                typing_task.cancel()
+                try:
+                    await typing_task
+                except asyncio.CancelledError:
+                    pass  # Expected: task is cancelled when LLM processing completes.
 
         @self.agent_notification.on_agent_notification(
             channel_id=ChannelId(channel="agents", sub_channel="*"),
-            auth_handlers=auth_handlers,
+            **handler_config,
             rank=1
         )
         async def agent_notification_handler(

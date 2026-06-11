@@ -3,9 +3,7 @@
 
 using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
-using Microsoft.Agents.A365.Observability;
-using Microsoft.Agents.A365.Observability.Extensions.SemanticKernel;
-using Microsoft.Agents.A365.Observability.Runtime;
+using Microsoft.OpenTelemetry;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
@@ -23,8 +21,19 @@ using System.Threading;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-// Setup Aspire service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
- builder.ConfigureOpenTelemetry();
+// Configure OpenTelemetry distro — Console exporter only in Development to avoid PII leaks
+builder.UseMicrosoftOpenTelemetry(o =>
+{
+    o.Exporters = builder.Environment.IsDevelopment()
+        ? ExportTarget.Agent365 | ExportTarget.Console
+        : ExportTarget.Agent365;
+
+    // Agent365-only export suppresses infrastructure instrumentation by default.
+    // Re-enable explicitly so HTTP calls (Azure OpenAI, auth, Teams) appear in traces.
+    o.Instrumentation.EnableAspNetCoreInstrumentation = true;
+    o.Instrumentation.EnableHttpClientInstrumentation = true;
+    o.Instrumentation.EnableAzureSdkInstrumentation = true;
+});
 
 if (builder.Environment.IsDevelopment())
 {
@@ -57,15 +66,6 @@ else
         apiKey: builder.Configuration.GetSection("AIServices:OpenAI").GetValue<string>("ApiKey")!);
 }
 
-// Configure observability.
-builder.Services.AddAgenticTracingExporter();
-
-// Add A365 tracing with Semantic Kernel integration
-builder.AddA365Tracing(config =>
-{
-    config.WithSemanticKernel();
-});
-
 
 // Add AgentApplicationOptions from appsettings section "AgentApplication".
 builder.AddAgentApplicationOptions();
@@ -97,12 +97,9 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // This receives incoming messages from Azure Bot Service or other SDK Agents
-var incomingRoute = app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
+app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
 {
-    await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
-    {
-        await adapter.ProcessAsync(request, response, agent, cancellationToken);
-    }).ConfigureAwait(false);
+    await adapter.ProcessAsync(request, response, agent, cancellationToken);
 });
 
 // Health check endpoint for CI/CD pipelines and monitoring
