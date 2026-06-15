@@ -82,6 +82,9 @@ Create `appsettings.Development.json` (this file is gitignored):
 }
 ```
 
+`DeploymentName` is treated as the model identifier fallback for compatibility with existing local settings. Azure OpenAI requests are sent to the v1 Responses endpoint (`/openai/v1/responses`), not the legacy deployment-style Responses URL. The selected `ModelName` or fallback `DeploymentName` is sent as the request body `model`.
+
+
 **For `gpt-5.4-mini` model:**
 ```json
 {
@@ -101,7 +104,48 @@ Create `appsettings.Development.json` (this file is gitignored):
 
 ### 4. Obtain a bearer token
 
-Get a token with the `McpServers.W365ComputerUse.All` scope for your tenant. See the [Agent 365 MCP Platform docs](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/) for details.
+> **Note:** Running locally requires an agent identity. Create an Agent Blueprint with an Agent Identity for local development, then use that identity's client ID and the Agent Blueprint client credentials in the commands below.
+
+#### Get the Windows 365 for Agents MCP token
+
+Use the helper script to get a CUA user token for the MCP server, then set it as `BEARER_TOKEN`:
+
+```powershell
+   $tenantId = "<tenant-id-or-domain>"
+   $blueprintClientId = "<agent-blueprint-client-id>"
+   $blueprintClientSecret = "<agent-blueprint-client-secret>"
+   $agentClientId = "<agent-identity-client-id>"
+   $agentUpn = "<agent-upn-from-teams-instance>"
+
+   .\scripts\Get-CuaAgentUserToken.ps1 `
+     -TenantId $tenantId `
+     -AgentBlueprintClientId $blueprintClientId `
+     -AgentBlueprintClientSecret $blueprintClientSecret `
+     -AgentClientId $agentClientId `
+     -AgentUsername $agentUpn `
+     -SetBearerToken `
+     -InformationAction Continue
+   ```
+
+   `-SetBearerToken` assigns the generated token to `$env:BEARER_TOKEN` for the current PowerShell process and writes an informational message. To use a different token audience, pass `-Scope "<scope>"`; by default the script requests `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`.
+
+The script requests scopes for the Windows 365 for Agents MCP server. For this sample, use the `Tools.ListInvoke.All` scope. The script writes only the access token to stdout, so it can be assigned directly to `$env:BEARER_TOKEN`. See the [Agent 365 MCP Platform docs](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/) for details.
+
+#### Optional: Get a Microsoft Graph token for OneDrive screenshots
+
+This token is optional and is only needed when you want the sample to upload screenshots to OneDrive.
+
+```powershell
+Install-Module MSAL.PS -Scope CurrentUser
+
+$token = Get-MsalToken `
+  -ClientId "<your-app-registration-client-id>" `
+  -TenantId "organizations" `
+  -Scopes "https://graph.microsoft.com/Files.ReadWrite" `
+  -Interactive
+
+$env:GRAPH_TOKEN = $token.AccessToken
+```
 
 ### 5. Start the MCP Platform server
 
@@ -112,7 +156,6 @@ Ensure the MCP Platform is running locally on port 52857, or update the `McpServ
 ```powershell
 cd sample-agent
 $env:ASPNETCORE_ENVIRONMENT = "Development"
-$env:BEARER_TOKEN = "<your-mcp-platform-token>"
 $env:GRAPH_TOKEN = "<optional-graph-token-for-onedrive-upload>"
 dotnet run
 ```
