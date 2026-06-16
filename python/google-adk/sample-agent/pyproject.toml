@@ -10,14 +10,14 @@ dependencies = [
     "google-adk>=1.32.0,<2",
 
     # Microsoft Agents SDK - Official packages for hosting and integration
-    "microsoft-agents-hosting-aiohttp",
-    "microsoft-agents-hosting-core",
-    "microsoft-agents-authentication-msal",
-    "microsoft-agents-activity",
+    "microsoft-agents-hosting-aiohttp>=0.10.0.dev4",
+    "microsoft-agents-hosting-core>=0.10.0.dev4",
+    "microsoft-agents-authentication-msal>=0.10.0.dev4",
+    "microsoft-agents-activity>=0.10.0.dev4",
 
     # Core dependencies
-    "python-dotenv",
-    "aiohttp",
+    "python-dotenv>=1.0.0",
+    "aiohttp>=3.9.0",
 
     # HTTP server support for MCP servers
     "uvicorn[standard]>=0.20.0",
@@ -33,9 +33,15 @@ dependencies = [
     "typing-extensions>=4.0.0",
 
     # Microsoft Agent 365 SDK packages (GA 1.0.0 — released May 1 2026)
-    "microsoft_agents_a365_tooling >= 1.0.0",
-    "microsoft_agents_a365_observability_core >= 1.0.0",
-    "microsoft_agents_a365_notifications >= 1.0.0",
+    "microsoft-agents-a365-tooling>=1.0.0",
+    "microsoft-agents-a365-observability-core>=1.0.0",
+    "microsoft-agents-a365-observability-hosting>=1.0.0",
+    "microsoft-agents-a365-notifications>=1.0.0",
+    "microsoft-agents-a365-runtime>=1.0.0",
+
+    # Microsoft OpenTelemetry Distro — required by main.py and agent.py
+    # (use_microsoft_opentelemetry, microsoft.opentelemetry.a365.core.BaggageBuilder)
+    "microsoft-opentelemetry>=1.2.0",
 ]
 requires-python = ">=3.11"
 
