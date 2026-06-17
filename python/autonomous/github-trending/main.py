@@ -11,11 +11,13 @@ and trending digest loop, and runs a minimal aiohttp health check server.
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from aiohttp import web
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from microsoft.opentelemetry import use_microsoft_opentelemetry
 from microsoft.opentelemetry.a365.core import AgentDetails
@@ -43,19 +45,31 @@ AZURE_OPENAI_API_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
 if not AZURE_OPENAI_API_KEY:
     raise SystemExit("AZURE_OPENAI_API_KEY environment variable is required but not set.")
 AZURE_OPENAI_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+# Only consumed by the classic AzureOpenAI client. Foundry's /openai/v1 path ignores
+# (and in fact rejects) api-version, so this is effectively a default for non-Foundry endpoints.
+AZURE_OPENAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
 
 # Agent 365 Observability — optional. When these are missing or set to placeholders,
 # the agent runs without A365 observability export (spans go to console only).
-TENANT_ID = os.environ.get("AGENT365_TENANT_ID", "")
-AGENT_ID = os.environ.get("AGENT365_AGENT_ID", "")
-BLUEPRINT_ID = os.environ.get("AGENT365_BLUEPRINT_ID", "")
-CLIENT_ID = os.environ.get("AGENT365_CLIENT_ID", "")
-CLIENT_SECRET = os.environ.get("AGENT365_CLIENT_SECRET", "")
-AGENT_NAME = os.environ.get("AGENT365_AGENT_NAME", "github-trending")
-AGENT_DESCRIPTION = os.environ.get("AGENT365_AGENT_DESCRIPTION", "")
+# Read AGENT365OBSERVABILITY__* (canonical) with legacy AGENT365_* names as fallback
+# for backward compatibility with older .env files.
+TENANT_ID = os.environ.get("AGENT365OBSERVABILITY__TENANTID") or os.environ.get("AGENT365_TENANT_ID", "")
+AGENT_ID = os.environ.get("AGENT365OBSERVABILITY__AGENTID") or os.environ.get("AGENT365_AGENT_ID", "")
+BLUEPRINT_ID = os.environ.get("AGENT365OBSERVABILITY__AGENTBLUEPRINTID") or os.environ.get("AGENT365_BLUEPRINT_ID", "")
+CLIENT_ID = os.environ.get("AGENT365OBSERVABILITY__CLIENTID") or os.environ.get("AGENT365_CLIENT_ID", "")
+CLIENT_SECRET = os.environ.get("AGENT365OBSERVABILITY__CLIENTSECRET") or os.environ.get("AGENT365_CLIENT_SECRET", "")
+AGENT_NAME = (os.environ.get("AGENT365OBSERVABILITY__AGENTNAME") or os.environ.get("AGENT365_AGENT_NAME", "github-trending")).strip('"')
+AGENT_DESCRIPTION = os.environ.get("AGENT365OBSERVABILITY__AGENTDESCRIPTION") or os.environ.get("AGENT365_AGENT_DESCRIPTION", "")
 # Default to MSI in production (matches .NET appsettings.json default of true).
 # Local dev .env sets this to "false" to use client secret instead.
 USE_MANAGED_IDENTITY = os.environ.get("AGENT365_USE_MANAGED_IDENTITY", "true").lower() == "true"
+
+# Observability feature flags (mirrors python/google-adk/sample-agent/main.py pattern).
+# ENABLE_A365_OBSERVABILITY        — master switch for the OpenTelemetry pipeline.
+# ENABLE_A365_OBSERVABILITY_EXPORTER — when false, spans go to console only
+#                                       (no upload to the A365 backend).
+ENABLE_A365_OBSERVABILITY = os.environ.get("ENABLE_A365_OBSERVABILITY", "true").lower() == "true"
+ENABLE_A365_OBSERVABILITY_EXPORTER = os.environ.get("ENABLE_A365_OBSERVABILITY_EXPORTER", "false").lower() == "true"
 
 def _has_a365_credentials() -> bool:
     """Check whether Agent 365 observability credentials are fully configured."""
@@ -85,18 +99,30 @@ agent_details = AgentDetails(
 )
 
 A365_ENABLED = _has_a365_credentials()
+# Exporter is only active when (a) the master observability flag is on,
+# (b) credentials are configured, and (c) the exporter flag is on.
+A365_EXPORTER_ENABLED = ENABLE_A365_OBSERVABILITY and A365_ENABLED and ENABLE_A365_OBSERVABILITY_EXPORTER
 
 # ── Microsoft OpenTelemetry Distro ───────────────────────────────────────────
 # Equivalent to .NET's builder.UseMicrosoftOpenTelemetry().
 # Token resolver reads from the in-memory cache populated by the background token service.
-# When A365 credentials are not configured, the A365 exporter is disabled.
+# When A365 credentials are not configured or observability is disabled, the
+# A365 exporter is skipped and spans go to the console only.
 
-use_microsoft_opentelemetry(
-    enable_a365=A365_ENABLED,
-    enable_azure_monitor=False,
-    a365_use_s2s_endpoint=True,
-    a365_token_resolver=lambda agent_id, tenant_id: token_cache.get_cached_token(agent_id, tenant_id) or "",
-)
+if ENABLE_A365_OBSERVABILITY:
+    use_microsoft_opentelemetry(
+        enable_a365=A365_EXPORTER_ENABLED,
+        enable_azure_monitor=False,
+        a365_use_s2s_endpoint=True,
+        a365_token_resolver=lambda agent_id, tenant_id: token_cache.get_cached_token(agent_id, tenant_id) or "",
+    )
+    logger.info(
+        "Observability configured (a365_exporter=%s, credentials_present=%s)",
+        A365_EXPORTER_ENABLED,
+        A365_ENABLED,
+    )
+else:
+    logger.info("Observability disabled (ENABLE_A365_OBSERVABILITY=false)")
 
 
 # ── Health check endpoint ────────────────────────────────────────────────────
@@ -153,12 +179,32 @@ async def start_background_tasks(app: web.Application) -> None:
     # Heartbeat
     app["heartbeat_task"] = asyncio.create_task(heartbeat_loop(interval_seconds))
 
-    # Azure OpenAI client — stored on the app for proper shutdown
-    client = AsyncAzureOpenAI(
-        azure_endpoint=AZURE_OPENAI_ENDPOINT,
-        api_key=AZURE_OPENAI_API_KEY,
-        api_version="2024-12-01-preview",
+    # OpenAI client — Foundry resources (services.ai.azure.com / cognitiveservices.azure.com)
+    # use the OpenAI-compatible /openai/v1 path which does NOT accept the api-version query.
+    # Classic Azure OpenAI resources (.openai.azure.com) use the legacy deployments path.
+    # This mirrors the Node.js sample at nodejs/autonomous/github-trending/src/github-trending-service.ts.
+    parsed = urlparse(AZURE_OPENAI_ENDPOINT)
+    resource_endpoint = f"{parsed.scheme}://{parsed.netloc}"  # strip any path pasted from the portal
+    use_foundry_v1_path = bool(
+        re.search(r"services\.ai\.azure\.com|cognitiveservices\.azure\.com", parsed.netloc, re.IGNORECASE)
+        or re.fullmatch(r"preview", AZURE_OPENAI_API_VERSION, re.IGNORECASE)
     )
+
+    if use_foundry_v1_path:
+        client = AsyncOpenAI(
+            base_url=f"{resource_endpoint}/openai/v1",
+            api_key=AZURE_OPENAI_API_KEY,
+            default_headers={"api-key": AZURE_OPENAI_API_KEY},
+        )
+        logger.info("Using Foundry OpenAI-compatible client (base_url=%s/openai/v1)", resource_endpoint)
+    else:
+        client = AsyncAzureOpenAI(
+            azure_endpoint=resource_endpoint,
+            api_key=AZURE_OPENAI_API_KEY,
+            api_version=AZURE_OPENAI_API_VERSION,
+        )
+        logger.info("Using classic Azure OpenAI client (endpoint=%s, api_version=%s)", resource_endpoint, AZURE_OPENAI_API_VERSION)
+
     app["openai_client"] = client
 
     # Trending digest service
