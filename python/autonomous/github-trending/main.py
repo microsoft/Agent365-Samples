@@ -184,16 +184,24 @@ async def start_background_tasks(app: web.Application) -> None:
     # Classic Azure OpenAI resources (.openai.azure.com) use the legacy deployments path.
     # This mirrors the Node.js sample at nodejs/autonomous/github-trending/src/github-trending-service.ts.
     parsed = urlparse(AZURE_OPENAI_ENDPOINT)
+    if not parsed.scheme or not parsed.netloc:
+        raise SystemExit(
+            f"AZURE_OPENAI_ENDPOINT must be an absolute URL with a scheme (e.g. "
+            f"https://your-resource.openai.azure.com/ or "
+            f"https://your-foundry-account.services.ai.azure.com/). Got: {AZURE_OPENAI_ENDPOINT!r}"
+        )
     resource_endpoint = f"{parsed.scheme}://{parsed.netloc}"  # strip any path pasted from the portal
     use_foundry_v1_path = bool(
         re.search(r"services\.ai\.azure\.com|cognitiveservices\.azure\.com", parsed.netloc, re.IGNORECASE)
-        or re.fullmatch(r"preview", AZURE_OPENAI_API_VERSION, re.IGNORECASE)
     )
 
     if use_foundry_v1_path:
+        # Foundry's /openai/v1 path expects authentication via the `api-key` header.
+        # The OpenAI SDK requires api_key to be set, so pass a placeholder — the real
+        # credential is sent via default_headers and Foundry ignores the placeholder Bearer token.
         client = AsyncOpenAI(
             base_url=f"{resource_endpoint}/openai/v1",
-            api_key=AZURE_OPENAI_API_KEY,
+            api_key="placeholder-foundry-uses-api-key-header",
             default_headers={"api-key": AZURE_OPENAI_API_KEY},
         )
         logger.info("Using Foundry OpenAI-compatible client (base_url=%s/openai/v1)", resource_endpoint)
