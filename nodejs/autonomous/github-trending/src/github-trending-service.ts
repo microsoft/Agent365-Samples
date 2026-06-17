@@ -7,7 +7,7 @@
  * and how to call the GitHub Search API.
  */
 
-import { AzureOpenAI } from 'openai';
+import OpenAI, { AzureOpenAI } from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 
 import {
@@ -34,6 +34,7 @@ export interface TrendingServiceConfig {
   endpoint: string;
   apiKey: string;
   deployment: string;
+  apiVersion: string;
   agentDetails: AgentDetails;
   language: string;
   minStars: number;
@@ -49,12 +50,31 @@ export interface TrendingServiceConfig {
  * @param delayFirstRunMs Optional delay (ms) before the first cycle, e.g. to let token service warm up.
  */
 export function startTrendingService(config: TrendingServiceConfig, delayFirstRunMs: number = 0): AbortController {
-  const client = new AzureOpenAI({
-    endpoint: config.endpoint,
-    apiKey: config.apiKey,
-    apiVersion: '2024-12-01-preview',
-    deployment: config.deployment,
-  });
+  // Foundry resources (services.ai.azure.com / cognitiveservices.azure.com) use the
+  // OpenAI-compatible /openai/v1 path which does NOT accept the api-version query.
+  // Classic Azure OpenAI resources (.openai.azure.com) use the legacy deployments path.
+  const useFoundryV1Path =
+    /services\.ai\.azure\.com|cognitiveservices\.azure\.com/i.test(config.endpoint) ||
+    /^preview$/i.test(config.apiVersion);
+
+  // Normalize the endpoint to just <scheme>://<host> — strip any path the user may have
+  // pasted from the Foundry portal (e.g. /api/projects/<name>, /openai/v1, /openai/v1/responses).
+  const parsedEndpoint = new URL(config.endpoint);
+  const resourceEndpoint = `${parsedEndpoint.protocol}//${parsedEndpoint.host}`;
+
+  const foundryBaseURL = `${resourceEndpoint}/openai/v1`;
+  const client: OpenAI = useFoundryV1Path
+    ? new OpenAI({
+        baseURL: foundryBaseURL,
+        apiKey: config.apiKey,
+        defaultHeaders: { 'api-key': config.apiKey },
+      })
+    : new AzureOpenAI({
+        endpoint: resourceEndpoint,
+        apiKey: config.apiKey,
+        apiVersion: config.apiVersion,
+        deployment: config.deployment,
+      });
 
   console.log(`GitHubTrendingService started. Interval: ${config.intervalMs}ms`);
 
@@ -81,7 +101,7 @@ export function startTrendingService(config: TrendingServiceConfig, delayFirstRu
   return controller;
 }
 
-async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Promise<void> {
+async function runCycle(client: OpenAI, config: TrendingServiceConfig): Promise<void> {
   const { deployment, agentDetails, endpoint, language, minStars, maxResults } = config;
 
   // A365 Observability — propagate baggage context for this cycle.
