@@ -56,6 +56,25 @@ public class ComputerUseOrchestrator
     internal static bool IsW365CuaTool(string? toolName)
         => !string.IsNullOrEmpty(toolName) && W365CuaToolNames.Contains(toolName);
 
+    /// <summary>Lifecycle wrappers, never exposed to the model as function tools.</summary>
+    private static readonly HashSet<string> W365LifecycleToolNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        W365StartSessionToolName, W365GetSessionDetailsToolName, W365EndSessionToolName,
+    };
+
+    /// <summary>W365 tools that duplicate the native CUA actions; excluded from model exposure.</summary>
+    private static readonly HashSet<string> W365NativeDuplicateToolNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "click", "type_text", "press_keys", "scroll", "move_mouse",
+        "drag_mouse", "get_cursor_position", "get_screen_size",
+    };
+
+    /// <summary>Returns true when <paramref name="toolName"/> must not be exposed to the model as a function tool.</summary>
+    internal static bool IsExcludedFromModelExposure(string? toolName)
+        => !string.IsNullOrEmpty(toolName)
+           && (W365LifecycleToolNames.Contains(toolName)
+               || W365NativeDuplicateToolNames.Contains(toolName));
+
     private readonly ICuaModelProvider _modelProvider;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly HttpClient _httpClient;
@@ -66,6 +85,12 @@ public class ComputerUseOrchestrator
     private readonly string? _oneDriveUserId;
     private readonly string _toolType;
     private readonly List<object> _tools;
+
+    /// <summary>Base system instructions sent to the model.</summary>
+    private readonly string _systemInstructions;
+
+    /// <summary><see cref="SystemInstructions"/> plus <see cref="ToolSteeringAddendum"/>, used only when W365 tools are exposed.</summary>
+    private readonly string _systemInstructionsWithToolSteering;
 
     /// <summary>
     /// Per-conversation session state. Each conversation (user chat) gets its own
@@ -145,6 +170,19 @@ public class ComputerUseOrchestrator
         ListAvailableW365Tools and summarize the returned names and descriptions.
         """;
 
+    private const string ToolSteeringAddendum = """
+
+        ## Direct high-level tools
+        In addition to the generic `computer` control tool, you now have direct function tools for
+        browser tabs (browser_new_tab, browser_list_tabs, browser_switch_tab, browser_navigate, …),
+        code execution (execute_python_code, execute_shell_command), clipboard, accessibility
+        (get_accessibility_tree, find_ui_element), and window management (list_windows,
+        activate_window, …). These supersede the earlier note that you lack shell/Python/file access.
+        Prefer these named tools over manual clicking, typing, or key-pressing whenever one fits the
+        goal — they are faster and more reliable. Fall back to `computer` actions only for visual or
+        pixel-level tasks that no named tool can accomplish.
+        """;
+
     public ComputerUseOrchestrator(
         ICuaModelProvider modelProvider,
         IHttpClientFactory httpClientFactory,
@@ -155,6 +193,10 @@ public class ComputerUseOrchestrator
         _httpClientFactory = httpClientFactory;
         _httpClient = httpClientFactory.CreateClient("WebClient");
         _logger = logger;
+
+        // The steering addendum is only included when W365 tools are actually exposed to the model.
+        _systemInstructions = SystemInstructions;
+        _systemInstructionsWithToolSteering = SystemInstructions + Environment.NewLine + ToolSteeringAddendum;
         _maxIterations = configuration.GetValue("ComputerUse:MaxIterations", 30);
         _screenshotPath = configuration["Screenshots:LocalPath"];
         _oneDriveFolder = configuration["Screenshots:OneDriveFolder"];
@@ -407,7 +449,7 @@ public class ComputerUseOrchestrator
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message if session already active
         if (_toolType == "computer" && session.ConversationHistory.Count == 0 && session.SessionStarted)
         {
-            var initialScreenshot = await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, cancellationToken);
+            var initialScreenshot = await CaptureScreenshotWithRecoveryAsync(w365Tools, session, additionalTools, mcpClient, onStatusUpdate, cancellationToken);
             var convIdPrefix = conversationId.Length > 8 ? conversationId[..8] : conversationId;
             var initialName = $"{convIdPrefix}_{++session.ScreenshotCounter:D3}_initial";
             SaveScreenshotToDisk(initialScreenshot!, initialName, session.ScreenshotSubfolder);
@@ -457,6 +499,32 @@ public class ComputerUseOrchestrator
                 _logger.LogInformation("Function tool: {Name}, Description: {Desc}, Schema: {Schema}",
                     tool.Name, Truncate(tool.Description ?? "", 80), Truncate(schemaStr, 200));
             }
+        }
+
+        // Expose W365 tools to the model as callable function tools (all except the excluded ones).
+        // Gated behind includeCuaTool so the non-CUA fast path is unaffected. exposedW365Names tracks
+        // what was exposed so the function_call handler routes those calls through the W365 path.
+        var exposedW365Names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (includeCuaTool && w365Tools is { Count: > 0 })
+        {
+            foreach (var tool in w365Tools.OfType<AIFunction>())
+            {
+                if (IsExcludedFromModelExposure(tool.Name))
+                {
+                    continue;
+                }
+
+                modelTools.Add(new FunctionToolDefinition
+                {
+                    Name = tool.Name,
+                    Description = tool.Description ?? string.Empty,
+                    Parameters = tool.JsonSchema
+                });
+                exposedW365Names.Add(tool.Name);
+            }
+
+            _logger.LogInformation("Exposed {Count} W365 function tools to the model: {Names}",
+                exposedW365Names.Count, Truncate(string.Join(", ", exposedW365Names), 500));
         }
 
         var cuaAcknowledged = false;
@@ -532,7 +600,9 @@ public class ComputerUseOrchestrator
                     .ToList();
             }
 
-            var response = await CallModelAsync(conversation, modelTools, cancellationToken);
+            var sanitized = SanitizeConversationHistory(conversation);
+            var instructions = exposedW365Names.Count > 0 ? _systemInstructionsWithToolSteering : _systemInstructions;
+            var response = await CallModelAsync(sanitized, modelTools, instructions, cancellationToken);
             if (response?.Output == null || response.Output.Count == 0)
                 break;
 
@@ -703,6 +773,17 @@ public class ComputerUseOrchestrator
                                 .ToArray();
                             var output = JsonSerializer.Serialize(new { tools = toolSummaries });
                             session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!, output));
+                            break;
+                        }
+
+                        // Route a model function_call for an exposed W365 tool through the W365 path.
+                        if (exposedW365Names.Contains(funcName ?? string.Empty))
+                        {
+                            var w365CallId = item.GetProperty("call_id").GetString()!;
+                            var w365Result = await InvokeExposedW365ToolAsync(
+                                item, funcName!, w365Tools, additionalTools, mcpClient,
+                                session, onStatusUpdate, cancellationToken);
+                            session.ConversationHistory.Add(CreateFunctionOutput(w365CallId, w365Result));
                             break;
                         }
 
@@ -1117,12 +1198,12 @@ public class ComputerUseOrchestrator
         }
     }
 
-    private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, CancellationToken ct)
+    private async Task<ComputerUseResponse?> CallModelAsync(List<JsonElement> conversation, List<object> tools, string instructions, CancellationToken ct)
     {
         var body = JsonSerializer.Serialize(new ComputerUseRequest
         {
             Model = _modelProvider.ModelName,
-            Instructions = SystemInstructions,
+            Instructions = instructions,
             Input = conversation,
             Tools = tools,
             Truncation = "auto"
@@ -1166,10 +1247,7 @@ public class ComputerUseOrchestrator
                     if (sessionLost)
                     {
                         if (onStatus != null) { await onStatus("Session lost — recovering..."); }
-                        await RecoverSessionAsync(session, tools, _logger, ct);
-                        await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
-                        AddSessionId(args, session.W365SessionId);
-                        await InvokeW365ToolAsync(tools, mcpClient, toolName, args, ct);
+                        await RecoverAndRetryToolAsync(session, tools, additionalTools, mcpClient, toolName, args, ct);
                     }
                     else if (TryExtractToolError(result?.ToString(), out var errorText))
                     {
@@ -1192,10 +1270,7 @@ public class ComputerUseOrchestrator
                 if (sessionLost)
                 {
                     if (onStatus != null) { await onStatus("Session lost — recovering..."); }
-                    await RecoverSessionAsync(session, tools, _logger, ct);
-                    await StartW365SessionAsync(session, tools, additionalTools, mcpClient, ct);
-                    AddSessionId(args, session.W365SessionId);
-                    await InvokeW365ToolAsync(tools, mcpClient, toolName, args, ct);
+                    await RecoverAndRetryToolAsync(session, tools, additionalTools, mcpClient, toolName, args, ct);
                 }
                 else if (TryExtractToolError(result?.ToString(), out var errorText))
                 {
@@ -1205,7 +1280,7 @@ public class ComputerUseOrchestrator
         }
 
         // Always capture screenshot after action
-        var screenshot = await CaptureScreenshotAsync(tools, mcpClient, session.W365SessionId, ct);
+        var screenshot = await CaptureScreenshotWithRecoveryAsync(tools, session, additionalTools, mcpClient, onStatus, ct);
 
         var stepName = $"{++session.ScreenshotCounter:D3}_step";
         SaveScreenshotToDisk(screenshot!, stepName, session.ScreenshotSubfolder);
@@ -1721,6 +1796,203 @@ public class ComputerUseOrchestrator
         logger.LogInformation("Session state cleared; the next computer-use action will start a new session.");
     }
 
+    /// <summary>
+    /// Recovers from a lost W365 session by releasing the stale session and starting a fresh one on
+    /// the existing MCP client. Clears the active selection first so a leftover tracked session id
+    /// can't short-circuit <see cref="StartW365SessionAsync"/>.
+    /// </summary>
+    private async Task RecoverAndStartFreshSessionAsync(
+        ConversationSession session,
+        IList<AITool> w365Tools,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        CancellationToken ct)
+    {
+        await RecoverSessionAsync(session, w365Tools, _logger, ct);
+        session.ClearActiveSession();
+        await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+    }
+
+    /// <summary>Recovers from an in-turn session loss and retries the failed tool call against a fresh session.</summary>
+    private async Task<string> RecoverAndRetryToolAsync(
+        ConversationSession session,
+        IList<AITool> w365Tools,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        string toolName,
+        Dictionary<string, object?> args,
+        CancellationToken ct)
+    {
+        await RecoverAndStartFreshSessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+        AddSessionId(args, session.W365SessionId);
+        return await InvokeW365ToolAsync(w365Tools, mcpClient, toolName, args, ct);
+    }
+
+    /// <summary>
+    /// Invokes an exposed W365 tool requested by the model via a function_call, returning the tool's
+    /// result string for the model's function_call_output. Starts a session if needed, injects the
+    /// sessionId, and recovers on a lost session. Tool errors are returned as text (not thrown) so a
+    /// single bad call does not abort the turn.
+    /// </summary>
+    private async Task<string> InvokeExposedW365ToolAsync(
+        JsonElement functionCall,
+        string toolName,
+        IList<AITool> w365Tools,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        ConversationSession session,
+        Func<string, Task>? onStatusUpdate,
+        CancellationToken ct)
+    {
+        var argsStr = functionCall.TryGetProperty("arguments", out var argsProp)
+            ? argsProp.GetString() ?? "{}"
+            : "{}";
+        Dictionary<string, object?> args;
+        try
+        {
+            args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsStr) ?? [];
+        }
+        catch (JsonException)
+        {
+            args = [];
+        }
+
+        try
+        {
+            if (string.IsNullOrEmpty(session.W365SessionId))
+            {
+                await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+            }
+
+            AddSessionId(args, session.W365SessionId);
+
+            var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(w365Tools, mcpClient, toolName, args, ct);
+            if (sessionLost)
+            {
+                if (onStatusUpdate != null) await onStatusUpdate("Session lost — recovering...");
+                return await RecoverAndRetryToolAsync(session, w365Tools, additionalTools, mcpClient, toolName, args, ct);
+            }
+
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Exposed W365 tool '{Tool}' failed", toolName);
+            return $"Error calling tool '{toolName}': {ex.Message}";
+        }
+    }
+
+    /// <summary>True when an exception (or any inner exception) indicates a recoverable lost session.</summary>
+    private static bool IsRecoverableSessionLoss(Exception exception)
+    {
+        for (var ex = exception; ex != null; ex = ex.InnerException)
+        {
+            if (IsSessionNotFoundError(ex.Message))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Captures a screenshot and, on a lost/expired W365 session, starts a fresh session and retries
+    /// once so a pure screenshot action can't abort the turn when the session has expired.
+    /// </summary>
+    private async Task<string> CaptureScreenshotWithRecoveryAsync(
+        IList<AITool> w365Tools,
+        ConversationSession session,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        Func<string, Task>? onStatusUpdate,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && IsRecoverableSessionLoss(ex))
+        {
+            _logger.LogWarning(ex, "Screenshot failed because the W365 session was lost — starting a new session and retrying.");
+            if (onStatusUpdate != null) await onStatusUpdate("Session expired — starting a new W365 session...");
+            await RecoverAndStartFreshSessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+            return await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, ct);
+        }
+    }
+
+    /// <summary>
+    /// Removes conversation items that would make the next model call invalid: function/computer
+    /// calls without their paired output, orphan outputs, and reasoning items that don't precede a
+    /// surviving tool call. Returns a new list; the caller's history is left intact.
+    /// </summary>
+    internal static List<JsonElement> SanitizeConversationHistory(IReadOnlyList<JsonElement> conversation)
+    {
+        var functionCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var functionOutputIds = new HashSet<string>(StringComparer.Ordinal);
+        var computerCallIds = new HashSet<string>(StringComparer.Ordinal);
+        var computerOutputIds = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var item in conversation)
+        {
+            if (!item.TryGetProperty("type", out var typeProp)) continue;
+            if (!item.TryGetProperty("call_id", out var idProp)) continue;
+            var id = idProp.GetString();
+            if (string.IsNullOrEmpty(id)) continue;
+            switch (typeProp.GetString())
+            {
+                case "function_call": functionCallIds.Add(id); break;
+                case "function_call_output": functionOutputIds.Add(id); break;
+                case "computer_call": computerCallIds.Add(id); break;
+                case "computer_call_output": computerOutputIds.Add(id); break;
+            }
+        }
+
+        static string CallId(JsonElement item)
+            => item.TryGetProperty("call_id", out var p) ? p.GetString() ?? string.Empty : string.Empty;
+
+        var result = new List<JsonElement>(conversation.Count);
+        // Reasoning items are only valid when the tool call they precede survives, so buffer them.
+        var pendingReasoning = new List<JsonElement>();
+
+        foreach (var item in conversation)
+        {
+            var type = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
+
+            if (type == "reasoning")
+            {
+                pendingReasoning.Add(item);
+                continue;
+            }
+
+            var drop = type switch
+            {
+                "function_call" => !functionOutputIds.Contains(CallId(item)),
+                "computer_call" => !computerOutputIds.Contains(CallId(item)),
+                "function_call_output" => !functionCallIds.Contains(CallId(item)),
+                "computer_call_output" => !computerCallIds.Contains(CallId(item)),
+                _ => false
+            };
+
+            if (drop)
+            {
+                // A dropped computer_call / function_call takes its buffered reasoning with it.
+                if (type is "function_call" or "computer_call") pendingReasoning.Clear();
+                continue;
+            }
+
+            if (pendingReasoning.Count > 0)
+            {
+                result.AddRange(pendingReasoning);
+                pendingReasoning.Clear();
+            }
+            result.Add(item);
+        }
+
+        // Trailing reasoning with no following tool call is dangling — never flush it.
+        return result;
+    }
+
     private static string[] ExtractKeys(JsonElement action)
     {
         if (action.TryGetProperty("keys", out var k))
@@ -2089,6 +2361,12 @@ public class ComputerUseOrchestrator
             }
 
             SessionStarted = !string.IsNullOrEmpty(W365SessionId);
+        }
+
+        public void ClearActiveSession()
+        {
+            W365SessionId = null;
+            SessionStarted = false;
         }
     }
 }
