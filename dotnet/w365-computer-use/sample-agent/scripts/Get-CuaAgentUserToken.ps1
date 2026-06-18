@@ -7,16 +7,17 @@ Acquires a CUA user access token for an agent using the Entra user_fic flow.
 
 .DESCRIPTION
 Requests an application token, exchanges it for an agent identity token, and then
-requests a CUA user token from Microsoft Entra ID. By default, the script writes
-only the final CUA access token to stdout. Use -SetBearerToken to assign
-the token to $env:BEARER_TOKEN in the current PowerShell process instead. Use -ShowOid
+requests a CUA user token from Microsoft Entra ID. By default, the script assigns
+the final CUA access token to $env:BEARER_TOKEN in the current PowerShell
+process. Use -ShowOid
 to decode the final token payload and write the oid claim to the information
 stream.
 
 .EXAMPLE
 .\Get-CuaAgentUserToken.ps1 -TenantId "contoso.onmicrosoft.com" -AgentBlueprintClientId "00000000-0000-0000-0000-000000000000" -AgentBlueprintClientSecret "<agent-blueprint-client-secret>" -AgentClientId "11111111-1111-1111-1111-111111111111" -AgentUsername "user@contoso.com"
 
-Writes only the final CUA access token to stdout.
+Assigns the final CUA access token to $env:BEARER_TOKEN in the current
+PowerShell process.
 
 .EXAMPLE
 .\Get-CuaAgentUserToken.ps1 -TenantId "contoso.onmicrosoft.com" -AgentBlueprintClientId "00000000-0000-0000-0000-000000000000" -AgentBlueprintClientSecret "<agent-blueprint-client-secret>" -AgentClientId "11111111-1111-1111-1111-111111111111" -AgentUsername "user@contoso.com" -SetBearerToken -InformationAction Continue
@@ -27,7 +28,8 @@ PowerShell process.
 .EXAMPLE
 .\Get-CuaAgentUserToken.ps1 -TenantId "contoso.onmicrosoft.com" -AgentBlueprintClientId "00000000-0000-0000-0000-000000000000" -AgentBlueprintClientSecret "<agent-blueprint-client-secret>" -AgentClientId "11111111-1111-1111-1111-111111111111" -AgentUsername "user@contoso.com" -ShowOid -InformationAction Continue
 
-Writes the final CUA access token to stdout and writes the token oid claim to the information stream.
+Assigns the final CUA access token to $env:BEARER_TOKEN and writes the token
+oid claim to the information stream.
 #>
 [CmdletBinding()]
 param(
@@ -43,7 +45,7 @@ param(
     [string]$AgentUsername,
     [string]$AuthorityHost = "https://login.microsoftonline.com",
     [string]$Scope = "da81128c-e5b5-4f9e-8d89-50d906f107c5/.default",
-    [switch]$SetBearerToken,
+    [switch]$SetBearerToken = $true,
     [switch]$ShowOid
 )
 
@@ -186,5 +188,5 @@ if ($SetBearerToken) {
     Write-Information "Set `$env:BEARER_TOKEN for the current PowerShell process."
 }
 else {
-    Write-Output $cuaAccessToken
+    Write-Information "Token acquired. `$env:BEARER_TOKEN was not set because -SetBearerToken was false."
 }
