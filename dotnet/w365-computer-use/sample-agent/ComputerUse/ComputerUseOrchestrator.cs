@@ -1844,9 +1844,16 @@ public class ComputerUseOrchestrator
         Func<string, Task>? onStatusUpdate,
         CancellationToken ct)
     {
-        var argsStr = functionCall.TryGetProperty("arguments", out var argsProp)
-            ? argsProp.GetString() ?? "{}"
-            : "{}";
+        var argsStr = "{}";
+        if (functionCall.TryGetProperty("arguments", out var argsProp))
+        {
+            argsStr = argsProp.ValueKind switch
+            {
+                JsonValueKind.String => argsProp.GetString() ?? "{}",
+                JsonValueKind.Object or JsonValueKind.Array => argsProp.GetRawText(),
+                _ => "{}"
+            };
+        }
         Dictionary<string, object?> args;
         try
         {
@@ -1981,11 +1988,13 @@ public class ComputerUseOrchestrator
                 continue;
             }
 
-            if (pendingReasoning.Count > 0)
+            // Buffered reasoning is only valid immediately before its paired tool call; emit it only
+            // when the surviving item is a tool call, otherwise discard it so it can't dangle.
+            if (type is "function_call" or "computer_call")
             {
                 result.AddRange(pendingReasoning);
-                pendingReasoning.Clear();
             }
+            pendingReasoning.Clear();
             result.Add(item);
         }
 
