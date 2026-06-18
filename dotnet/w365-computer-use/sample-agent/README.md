@@ -113,7 +113,7 @@ Use the helper script to get a CUA user token for the MCP server, then set it as
 ```powershell
    $tenantId = "<tenant-id-or-domain>"
    $blueprintClientId = "<agent-blueprint-client-id>"
-   $blueprintClientSecret = "<agent-blueprint-client-secret>"
+   $blueprintClientSecret = Read-Host -Prompt "Agent Blueprint client secret"
    $agentClientId = "<agent-identity-client-id>"
    $agentUpn = "<agent-upn-from-teams-instance>"
 
