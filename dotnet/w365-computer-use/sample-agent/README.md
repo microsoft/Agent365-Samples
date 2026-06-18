@@ -129,7 +129,7 @@ Use the helper script to get a CUA user token for the MCP server, then set it as
 
    The script assigns the generated token to `$env:BEARER_TOKEN` for the current PowerShell process and writes an informational message. To use a different token audience, pass `-Scope "<scope>"`; by default the script requests `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`.
 
-The script requests scopes for the Windows 365 for Agents MCP server. For this sample, use the `Tools.ListInvoke.All` scope. The script does not write the access token to stdout. See the [Agent 365 MCP Platform docs](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/) for details.
+The script requests scopes for the Windows 365 for Agents MCP server. For this sample, use the `Tools.ListInvoke.All` scope.
 
 #### Optional: Get a Microsoft Graph token for OneDrive screenshots
 
