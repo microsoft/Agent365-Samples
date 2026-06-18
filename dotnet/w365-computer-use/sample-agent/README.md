@@ -44,7 +44,7 @@ Response to User
   - `computer-use-preview` or `gpt-5.4` / `gpt-5.4-mini`
   - [Request access to gpt-5.4](https://aka.ms/OAI/gpt54access) if needed
 - Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/))
-- A bearer token with `McpServers.W365ComputerUse.All` scope
+- A bearer token with `Tools.ListInvoke.All` scope
 
 ## Setup
 
@@ -113,14 +113,15 @@ Use the helper script to get a CUA user token for the MCP server, then set it as
 ```powershell
    $tenantId = "<tenant-id-or-domain>"
    $blueprintClientId = "<agent-blueprint-client-id>"
-   $blueprintClientSecret = Read-Host -Prompt "Agent Blueprint client secret"
+   $blueprintClientSecret = Read-Host "Agent Blueprint client secret" -AsSecureString
+   $blueprintClientSecretPlainText = [System.Net.NetworkCredential]::new("", $blueprintClientSecret).Password
    $agentClientId = "<agent-identity-client-id>"
    $agentUpn = "<agent-upn-from-teams-instance>"
 
    .\scripts\Get-CuaAgentUserToken.ps1 `
      -TenantId $tenantId `
      -AgentBlueprintClientId $blueprintClientId `
-     -AgentBlueprintClientSecret $blueprintClientSecret `
+     -AgentBlueprintClientSecret $blueprintClientSecretPlainText `
      -AgentClientId $agentClientId `
      -AgentUsername $agentUpn `
      -SetBearerToken `
@@ -129,7 +130,7 @@ Use the helper script to get a CUA user token for the MCP server, then set it as
 
    `-SetBearerToken` assigns the generated token to `$env:BEARER_TOKEN` for the current PowerShell process and writes an informational message. To use a different token audience, pass `-Scope "<scope>"`; by default the script requests `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`.
 
-The script requests scopes for the Windows 365 for Agents MCP server. Ensure the resulting token has the permissions required to list and invoke tools in your tenant. The script writes only the access token to stdout, so it can be assigned directly to `$env:BEARER_TOKEN`. See the [Agent 365 MCP Platform docs](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/) for details.
+The script requests scopes for the Windows 365 for Agents MCP server. For this sample, use the `Tools.ListInvoke.All` scope. Without `-SetBearerToken`, the script writes only the access token to stdout, so it can be assigned directly to `$env:BEARER_TOKEN`. See the [Agent 365 MCP Platform docs](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/) for details.
 
 #### Optional: Get a Microsoft Graph token for OneDrive screenshots
 
@@ -174,7 +175,7 @@ dotnet run
 | `AIServices:Provider` | Model provider | `AzureOpenAI` |
 | `AIServices:AzureOpenAI:Endpoint` | Azure OpenAI resource URL | - |
 | `AIServices:AzureOpenAI:ApiKey` | API key | - |
-| `AIServices:AzureOpenAI:DeploymentName` | Deployment name (for deployment-based URLs) | `computer-use-preview` |
+| `AIServices:AzureOpenAI:DeploymentName` | Backward-compatible model identifier fallback when `ModelName` is not set | `computer-use-preview` |
 | `AIServices:AzureOpenAI:ModelName` | Model name (for model-based URLs, e.g., `gpt-5.4-mini`) | - |
 | `McpServer:Url` | MCP server URL (dev only; omit for production) | - |
 | `W365:GatewayUrl` | W365 Computer Use MCP gateway URL (production) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
@@ -184,7 +185,7 @@ dotnet run
 | `Screenshots:LocalPath` | Local path to save screenshots | `./Screenshots` |
 | `Screenshots:OneDriveFolder` | OneDrive folder for screenshot upload | `CUA-Sessions` |
 | `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
-| `BEARER_TOKEN` (env var) | MCP Platform token with `McpServers.W365ComputerUse.All` scope (dev only) | - |
+| `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
 | `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
 
 ## Supported Models
