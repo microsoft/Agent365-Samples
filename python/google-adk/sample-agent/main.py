@@ -28,6 +28,11 @@ log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INF
 logging.basicConfig(level=log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+# TEMPORARY: surface the A365 exporter's per-chunk export result ("HTTP 200 success
+# ... Correlation ID") which is logged at DEBUG, without flooding root with DEBUG.
+# Remove alongside the TLS_PROBE diagnostic once export is confirmed.
+logging.getLogger("microsoft_agents_a365.observability.core.exporters.agent365_exporter").setLevel(logging.DEBUG)
+
 def start_server(agent_app: AgentApplication):
     """Start the agent application server."""
     isProduction = (
@@ -104,10 +109,31 @@ def start_server(agent_app: AgentApplication):
     async def health_check(req: Request) -> Response:
         return Response(text="OK", status=200)
 
+    # Temporary egress diagnostic for the A365 observability ingestion endpoint.
+    # Runs DNS -> raw TLS handshake -> minimal OTLP POST from THIS container's
+    # egress path (the test never previously run from inside Cloud Run). Gated by
+    # DEBUG_PROBE_KEY; returns 404 when the key is unset so it can't be probed on
+    # a public URL. Remove the route (or unset the key) once diagnosis is done.
+    async def otlp_probe(req: Request) -> Response:
+        import json as _json
+        from aiohttp.web import json_response
+
+        expected_key = os.getenv("DEBUG_PROBE_KEY", "")
+        if not expected_key or req.query.get("key") != expected_key:
+            return Response(text="Not found", status=404)
+
+        from debug_probe import run_probe
+        # run_probe does blocking socket/TLS/HTTP work; offload from the loop.
+        import asyncio
+        result = await asyncio.to_thread(run_probe)
+        logger.info("OTLP egress probe verdict: %s", result.get("verdict"))
+        return json_response(result, dumps=lambda o: _json.dumps(o, indent=2))
+
     # Configure App
     app = Application(middlewares=middlewares)
     app.router.add_get("/", health_check)
     app.router.add_get("/robots933456.txt", health_check)
+    app.router.add_get("/debug/otlp-probe", otlp_probe)
     app.router.add_post("/api/messages", entry_point)
     app["agent_configuration"] = agent_auth_config
 
@@ -140,10 +166,22 @@ def main():
     # ENABLE_A365_OBSERVABILITY_EXPORTER=true sends traces to the A365 backend;
     # false falls back to the console exporter (expected in local/dev).
     if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
+        # token_resolver supplies the Bearer token the A365 exporter uses to POST
+        # spans. It reads the agentic token cached during each authenticated turn
+        # (see agent.py invoke_agent_with_scope). When the A365 exporter is disabled
+        # (console exporter), the resolver is simply never called.
+        from token_cache import observability_token_resolver
         configure(
             service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
             service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "GoogleADKTesting"),
+            token_resolver=observability_token_resolver,
         )
+        # Google ADK tags the LLM span as gen_ai.operation.name="generate_content",
+        # which A365/Maven ingestion drops (it only accepts invoke_agent, execute_tool,
+        # chat, output_messages). Remap generate_content -> chat on export so the
+        # inference span (model + token usage) reaches Maven's InferenceCall table.
+        from observability_remap import register_generate_content_remap
+        register_generate_content_remap()
         logger.info(
             "Observability configured (service=%s, a365_exporter=%s)",
             os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
