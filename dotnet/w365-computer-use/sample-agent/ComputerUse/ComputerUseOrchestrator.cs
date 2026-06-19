@@ -429,6 +429,49 @@ public class ComputerUseOrchestrator
             };
         });
 
+        // Serialize turns for the same conversation. Concurrent turns (e.g. Bot Framework
+        // redelivering an activity during a slow CUA turn) could each append an input_image to
+        // the shared ConversationHistory, producing the Azure OpenAI 400 "Computer tool cannot
+        // use multiple image inputs."
+        await session.TurnLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await RunTurnAsync(
+                session,
+                conversationId,
+                userMessage,
+                w365Tools,
+                additionalTools,
+                mcpClient,
+                graphAccessToken,
+                onStatusUpdate,
+                onCuaStarting,
+                onFolderLinkReady,
+                includeCuaTool,
+                prestartedW365SessionId,
+                cancellationToken);
+        }
+        finally
+        {
+            session.TurnLock.Release();
+        }
+    }
+
+    private async Task<string> RunTurnAsync(
+        ConversationSession session,
+        string conversationId,
+        string userMessage,
+        IList<AITool> w365Tools,
+        IList<AITool>? additionalTools,
+        IMcpClient? mcpClient,
+        string? graphAccessToken,
+        Func<string, Task>? onStatusUpdate,
+        Func<bool, Task>? onCuaStarting,
+        Func<string, Task>? onFolderLinkReady,
+        bool includeCuaTool,
+        string? prestartedW365SessionId,
+        CancellationToken cancellationToken)
+    {
         if (session.SessionStarted)
         {
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
@@ -2344,6 +2387,12 @@ public class ComputerUseOrchestrator
         public int ScreenshotCounter { get; set; }
         public string? ScreenshotSubfolder { get; set; }
         public bool FolderShared { get; set; }
+
+        /// <summary>
+        /// Serializes turns for this conversation so two concurrent turns cannot both append a
+        /// user image to <see cref="ConversationHistory"/> (which the computer-use tool rejects).
+        /// </summary>
+        public SemaphoreSlim TurnLock { get; } = new(1, 1);
 
         public void TrackAndSelectSession(string? sessionId)
         {
