@@ -1,0 +1,117 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start App in Microsoft 365 Agents Playground",
+            "dependsOn": [
+                "Validate prerequisites (Microsoft 365 Agents Playground)",
+                "Refresh bearer token (Microsoft 365 Agents Playground)",
+                "Deploy (Microsoft 365 Agents Playground)",
+                "Start application (Microsoft 365 Agents Playground)",
+                "Start Microsoft 365 Agents Playground"
+            ],
+            "dependsOrder": "sequence"
+        },
+        {
+            "label": "Validate prerequisites (Microsoft 365 Agents Playground)",
+            "type": "teamsfx",
+            "command": "debug-check-prerequisites",
+            "args": {
+                "prerequisites": [
+                    "nodejs",
+                    "portOccupancy"
+                ],
+                "portOccupancy": [
+                    3978,
+                    9239,
+                    56150
+                ]
+            }
+        },
+        {
+            "label": "Refresh bearer token (Microsoft 365 Agents Playground)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/.vscode/scripts/refresh-bearer-token.ps1"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Deploy (Microsoft 365 Agents Playground)",
+            "dependsOrder": "sequence",
+            "type": "teamsfx",
+            "command": "deploy",
+            "args": {
+                "env": "playground"
+            }
+        },
+        {
+            "label": "Start application (Microsoft 365 Agents Playground)",
+            "type": "shell",
+            "command": "npm run dev:teamsfx:playground",
+            "isBackground": true,
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": {
+                "pattern": [
+                    {
+                        "regexp": "^.*$",
+                        "file": 0,
+                        "location": 1,
+                        "message": 2
+                    }
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "[nodemon] starting",
+                    "endsPattern": "Server listening on|Bot/ME service listening at|[nodemon] app crashed"
+                }
+            }
+        },
+        {
+            "label": "Start Microsoft 365 Agents Playground",
+            "type": "shell",
+            "command": "npm run dev:teamsfx:launch-playground",
+            "isBackground": true,
+            "options": {
+                "env": {
+                    "PATH": "${workspaceFolder}/devTools/playground/node_modules/.bin;${env:PATH}"
+                }
+            },
+            "windows": {
+                "options": {
+                    "env": {
+                        "PATH": "${workspaceFolder}/devTools/playground/node_modules/.bin;${env:PATH}"
+                    }
+                }
+            },
+            "problemMatcher": {
+                "pattern": [
+                    {
+                        "regexp": "^.*$",
+                        "file": 0,
+                        "location": 1,
+                        "message": 2
+                    }
+                ],
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*",
+                    "endsPattern": "Listening on"
+                }
+            },
+            "presentation": {
+                "panel": "dedicated",
+                "reveal": "silent"
+            }
+        }
+    ]
+}
