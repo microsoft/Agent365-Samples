@@ -62,11 +62,15 @@ public class ComputerUseOrchestrator
         W365StartSessionToolName, W365GetSessionDetailsToolName, W365EndSessionToolName,
     };
 
-    /// <summary>W365 tools that duplicate the native CUA actions; excluded from model exposure.</summary>
+    /// <summary>
+    /// W365 tools that duplicate the native CUA actions; excluded from model exposure.
+    /// Only actions the native <c>computer</c> tool can actually emit belong here. Query-only tools
+    /// such as <c>get_cursor_position</c>/<c>get_screen_size</c> have no native equivalent, so they
+    /// are intentionally NOT excluded — excluding them would remove the capability entirely.
+    /// </summary>
     private static readonly HashSet<string> W365NativeDuplicateToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type_text", "press_keys", "scroll", "move_mouse",
-        "drag_mouse", "get_cursor_position", "get_screen_size",
+        "click", "type_text", "press_keys", "scroll", "move_mouse", "drag_mouse",
     };
 
     /// <summary>Returns true when <paramref name="toolName"/> must not be exposed to the model as a function tool.</summary>
