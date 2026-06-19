@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 import importlib.metadata as m
 
 skip = {"sample-google-adk", "pip", "setuptools", "wheel"}
