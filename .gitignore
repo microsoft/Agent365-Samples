@@ -116,6 +116,11 @@ a365.generated.config.json
 app.zip
 publish/
 
+# Sensitive / per-developer config
+**/Properties/launchSettings.json
+**/appsettings.Development.json
+*.csproj.user
+
 # OS-specific files
 .DS_Store
 Thumbs.db
