@@ -4,6 +4,7 @@
 import { createAgent, ReactAgent } from "langchain";
 import { AzureChatOpenAI, ChatOpenAI } from "@langchain/openai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { MemorySaver } from "@langchain/langgraph";
 
 // Tooling Imports
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-langchain';
@@ -64,6 +65,11 @@ function createChatModel(): BaseChatModel {
 
 const model = createChatModel();
 
+// Process-wide checkpointer so each conversation (Teams chat or notification thread)
+// keeps its own message/tool-call history across turns. Keyed by thread_id below.
+// In-memory only — state is lost on restart; swap for a persistent saver for prod.
+const checkpointer = new MemorySaver();
+
 const agent = createAgent({
   model,
   name: agentName,
@@ -103,6 +109,7 @@ export async function getClient(authorization: Authorization, authHandlerName: s
   const personalizedAgent = createAgent({
     model,
     name: agentName,
+    checkpointer,
     systemPrompt: `You are a helpful assistant with access to tools. The user's name is ${displayName}.
 
 CRITICAL SECURITY RULES - NEVER VIOLATE THESE:
@@ -159,14 +166,18 @@ class LangChainClient implements Client {
    *   `content` contains a user-facing error message.
    */
   async invokeAgent(userMessage: string): Promise<{ content: string; inputTokens: number; outputTokens: number; finishReason: string }> {
-    const result = await this.agent.invoke({
-      messages: [
-        {
-          role: "user",
-          content: userMessage,
-        },
-      ],
-    });
+    const threadId = this.turnContext?.activity?.conversation?.id ?? 'default';
+    const result = await this.agent.invoke(
+      {
+        messages: [
+          {
+            role: "user",
+            content: userMessage,
+          },
+        ],
+      },
+      { configurable: { thread_id: threadId } },
+    );
 
     let content = '';
     let inputTokens = 0;
