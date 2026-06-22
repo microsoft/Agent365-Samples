@@ -22,27 +22,12 @@ public class AzureOpenAIModelProvider : ICuaModelProvider
     {
         _httpClient = httpClientFactory.CreateClient("WebClient");
         _logger = logger;
-        var endpoint = configuration["AIServices:AzureOpenAI:Endpoint"]
-            ?? throw new InvalidOperationException("AIServices:AzureOpenAI:Endpoint is required.");
         _apiKey = configuration["AIServices:AzureOpenAI:ApiKey"]
             ?? throw new InvalidOperationException("AIServices:AzureOpenAI:ApiKey is required.");
-        var apiVersion = configuration["AIServices:AzureOpenAI:ApiVersion"] ?? "2025-04-01-preview";
 
-        // DeploymentName = deployment-based URL; ModelName = model-based URL (model sent in body)
-        var deploymentName = configuration["AIServices:AzureOpenAI:DeploymentName"];
-        ModelName = configuration["AIServices:AzureOpenAI:ModelName"]
-            ?? deploymentName
-            ?? "computer-use-preview";
-
-        if (!string.IsNullOrEmpty(deploymentName))
-        {
-            _url = $"{endpoint.TrimEnd('/')}/openai/deployments/{deploymentName}/responses?api-version={apiVersion}";
-        }
-        else
-        {
-            // Model-based endpoint — model name goes in the request body, not the URL
-            _url = $"{endpoint.TrimEnd('/')}/openai/responses?api-version={apiVersion}";
-        }
+        var options = AzureOpenAIModelProviderOptions.FromConfiguration(configuration);
+        ModelName = options.ModelName;
+        _url = options.Url;
     }
 
     public async Task<string> SendAsync(string requestBody, CancellationToken cancellationToken)
