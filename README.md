@@ -23,7 +23,7 @@ Please help improve the Microsoft Agent 365 SDK and CLI by taking our survey: [A
 ## Current Repository State
 
 This samples repository is currently in active development and contains:
-- **Sample Agents**: Production-ready examples in C#/.NET, Python, and Node.js/TypeScript demonstrating observability, notifications, tooling, and hosting patterns
+- **Sample Agents**: Production-ready examples in C#/.NET, Python, Node.js/TypeScript, and Salesforce/Apex demonstrating observability, notifications, tooling, and hosting patterns
 - **Prompts**: Guides for using AI-powered development tools (e.g., Cursor IDE) to accelerate agent development
 
 ## Documentation
