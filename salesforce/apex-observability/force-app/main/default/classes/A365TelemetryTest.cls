@@ -11,6 +11,7 @@ private class A365TelemetryTest {
     private static final String TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
     private static final String PARENT = '00f067aa0ba902b7';
     private static final String TRACEPARENT = '00-' + TRACE + '-' + PARENT + '-01';
+    // Intentionally non-default so the test proves the boundary path honors ServiceName__c.
     private static final String SERVICE_NAME = 'salesforce-apex-custom';
 
     // Routes by endpoint: token endpoints (/oauth2/) return fake tokens; ingest (/otlp/)
