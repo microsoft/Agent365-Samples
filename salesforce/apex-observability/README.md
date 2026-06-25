@@ -156,7 +156,7 @@ script above). Secrets are **never** here — only in the External Credential en
 | `Enabled__c` | `true` | Master kill switch for the boundary emitter (`false` = no-op). |
 | `TenantId__c` | `<<TENANT_ID>>` | Entra tenant id. |
 | `AgentId__c` | `<<AGENT_ID>>` | Agent 365 agent id (in the ingest URL; token `azp` must match). |
-| `IngestBase__c` | `https://agent365.svc.cloud.microsoft` | OTLP ingest host. |
+| `IngestBase__c` | `https://agent365.svc.cloud.microsoft` | Documented default ingest host reference; the deployed ingest target is controlled by the `A365_Obs_Ingest` Named Credential URL. |
 | `ObsScope__c` | `api://9b975845-…/.default` | Observability API scope (public resource). |
 | `FmiScope__c` | `api://AzureADTokenExchange/.default` | FMI token-exchange scope. |
 | `UseS2SEndpoint__c` | `true` | Use the roles-enforced S2S ingest path. |

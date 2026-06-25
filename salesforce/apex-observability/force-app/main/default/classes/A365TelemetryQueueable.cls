@@ -22,7 +22,7 @@ public with sharing class A365TelemetryQueueable implements Queueable, Database.
 
     private static final String NC_INGEST = 'A365_Obs_Ingest';
 
-    // Boundary path (inbound traceparent) — uses the default service.name.
+    // Boundary path (inbound traceparent) — uses the configured/default boundary service.name.
     public A365TelemetryQueueable(
         String traceId, String parentSpanId, String spanId,
         String spanName, String kind, String statusCode,
@@ -32,7 +32,7 @@ public with sharing class A365TelemetryQueueable implements Queueable, Database.
              attrs, startNs, endNs, null);
     }
 
-    // Origination path — carries an explicit service.name (null => default).
+    // Origination path — carries an explicit service.name (blank/null => boundary config/default).
     public A365TelemetryQueueable(
         String traceId, String parentSpanId, String spanId,
         String spanName, String kind, String statusCode,
@@ -55,10 +55,13 @@ public with sharing class A365TelemetryQueueable implements Queueable, Database.
             String tenantId = A365ObsConfig.tenantId();
             String agentId = A365ObsConfig.agentId();
             String token = A365ObsToken.getToken();
+            String resolvedServiceName = String.isNotBlank(serviceName)
+                ? serviceName
+                : A365ObsConfig.serviceName();
 
             String body = A365ObsSpan.buildBody(
                 tenantId, agentId, traceId, parentSpanId, spanId,
-                spanName, kind, statusCode, attrs, startNs, endNs, serviceName);
+                spanName, kind, statusCode, attrs, startNs, endNs, resolvedServiceName);
 
             HttpRequest req = new HttpRequest();
             req.setEndpoint('callout:' + NC_INGEST + A365ObsConfig.tracesPath());

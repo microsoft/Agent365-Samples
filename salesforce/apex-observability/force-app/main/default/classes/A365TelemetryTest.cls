@@ -11,6 +11,7 @@ private class A365TelemetryTest {
     private static final String TRACE = '4bf92f3577b34da6a3ce929d0e0e4736';
     private static final String PARENT = '00f067aa0ba902b7';
     private static final String TRACEPARENT = '00-' + TRACE + '-' + PARENT + '-01';
+    private static final String SERVICE_NAME = 'salesforce-apex-custom';
 
     // Routes by endpoint: token endpoints (/oauth2/) return fake tokens; ingest (/otlp/)
     // returns a configurable status. Records counts + the last ingest request for asserts.
@@ -52,7 +53,15 @@ private class A365TelemetryTest {
             ObsScope__c = 'api://9b975845-388f-4429-889e-eab1ef63949c/.default',
             FmiScope__c = 'api://AzureADTokenExchange/.default',
             UseS2SEndpoint__c = true,
-            ServiceName__c = 'salesforce-apex');
+            ServiceName__c = SERVICE_NAME);
+    }
+
+    private static String resourceServiceName(String body) {
+        Map<String, Object> root = (Map<String, Object>) JSON.deserializeUntyped(body);
+        Map<String, Object> rs = (Map<String, Object>) ((List<Object>) root.get('resourceSpans'))[0];
+        Map<String, Object> resource = (Map<String, Object>) rs.get('resource');
+        Map<String, Object> attrs = (Map<String, Object>) resource.get('attributes');
+        return (String) attrs.get('service.name');
     }
 
     @IsTest
@@ -81,6 +90,8 @@ private class A365TelemetryTest {
         Map<String, Object> span = (Map<String, Object>) ((List<Object>) ss.get('spans'))[0];
         System.assertEquals(TRACE, span.get('traceId'), 'span reuses inbound traceId');
         System.assertEquals(PARENT, span.get('parentSpanId'), 'span nests under inbound parent');
+        System.assertEquals(SERVICE_NAME, resourceServiceName(mock.lastIngestBody),
+            'boundary path uses configured service.name');
     }
 
     @IsTest

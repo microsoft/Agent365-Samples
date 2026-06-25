@@ -2,7 +2,7 @@
 
 This repository contains sample agents and prompts for building with the Microsoft Agent 365 SDK. The Microsoft Agent 365 SDK extends the Microsoft 365 Agents SDK with enterprise-grade capabilities for building sophisticated agents. It provides comprehensive tooling for observability, notifications, runtime utilities, and development tools that help developers create production-ready agents for platforms including M365, Teams, Copilot Studio, and Webchat.
 
-- **Sample agents** are available in C# (.NET), Python, and Node.js/TypeScript
+- **Sample agents** are available in C# (.NET), Python, Node.js/TypeScript, and Salesforce/Apex
 - **Prompts** to help you get started with AI-powered development tools like Cursor IDE
 
 ## SDK Versions
