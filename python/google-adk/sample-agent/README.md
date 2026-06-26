@@ -207,14 +207,14 @@ Run `agentsplayground --help` for all options.
 # 1. Initialize config (first time only)
 a365 config init
 
-# 2. Provision all cloud resources and set up the blueprint
-a365 setup all
+# 2. Provision blueprint and permissions (--aiteammate for AI Teammate agents)
+a365 setup all --agent-name "<your-agent-name>" --aiteammate
 
 # 3. Deploy agent code to Azure
 a365 deploy
 
-# 4. Publish agent to Microsoft 365 admin center
-a365 publish
+# 4. Publish manifest to Microsoft 365 admin center
+a365 publish --agent-name "<your-agent-name>" --aiteammate
 ```
 
 ### Running on Azure App Service
@@ -239,23 +239,46 @@ All values below come from `a365.config.json` and `a365.generated.config.json` (
 
 | Key | Source | Value |
 |-----|--------|-------|
-| `GOOGLE_API_KEY` | Google AI Studio | Your Google API key |
-| `GOOGLE_GENAI_USE_VERTEXAI` | — | `FALSE` |
+| `GOOGLE_GENAI_USE_VERTEXAI` | — | `TRUE` (Vertex AI) or `FALSE` (public Gemini API) |
 | `GEMINI_MODEL` | — | `gemini-2.5-flash` |
+| `GOOGLE_API_KEY` | Google AI Studio | Your Google API key (when `VERTEXAI=FALSE`) |
+| `GOOGLE_CLOUD_PROJECT` | GCP Console | GCP project ID (when `VERTEXAI=TRUE`) |
+| `GOOGLE_CLOUD_LOCATION` | GCP Console | e.g. `us-central1` (when `VERTEXAI=TRUE`) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | GCP Console | Path to service account JSON key (when `VERTEXAI=TRUE`) |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET` | `a365.generated.config.json` → `agentBlueprintClientSecret` | Blueprint client secret |
 | `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID` | `a365.config.json` → `tenantId` | Azure tenant ID |
-| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES` | `a365.generated.config.json` → `agentBlueprintId` + `/.default` | `<blueprintId>/.default` |
+| `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__SCOPES` | — | `5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default` |
+| `CONNECTIONSMAP__0__SERVICEURL` | — | `*` |
+| `CONNECTIONSMAP__0__CONNECTION` | — | `SERVICE_CONNECTION` |
 | `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__TYPE` | — | `AgenticUserAuthorization` |
 | `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__SCOPES` | — | `https://graph.microsoft.com/.default` |
+| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__ALTERNATEBLUEPRINTCONNECTIONNAME` | — | `https://graph.microsoft.com/.default` |
+| `AGENTAPPLICATION__USERAUTHORIZATION__HANDLERS__AGENTIC__SETTINGS__ALT_BLUEPRINT_NAME` | — | `SERVICE_CONNECTION` |
 | `AUTH_HANDLER_NAME` | — | `AGENTIC` |
-| `AGENTIC_UPN` | `a365.config.json` → `agentUserPrincipalName` | Agent user principal name |
-| `AGENTIC_NAME` | `a365.config.json` → `agentUserDisplayName` | Agent display name |
-| `AGENTIC_APP_ID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
+| `AGENTIC_UPN` | Instance creation in Copilot | Agent user principal name |
+| `AGENTIC_NAME` | Instance creation in Copilot | Agent identity display name |
+| `AGENTIC_APP_ID` | Instance creation in Copilot | Agent instance app ID (not the blueprint ID) |
 | `AGENTIC_TENANT_ID` | `a365.config.json` → `tenantId` | Azure tenant ID |
-| `AGENTIC_USER_ID` | `a365.generated.config.json` → `AgenticUserId` | Populated after Teams admin approves the agent instance |
+| `AGENTIC_USER_ID` | Instance creation in Copilot | Agent user Object ID (from Entra ID → Users) |
+| `A365_AGENT_APP_INSTANCE_ID` | Same as `AGENTIC_APP_ID` | Used by SDK/distro for FIC auth |
+| `A365_AGENTIC_USER_ID` | Same as `AGENTIC_USER_ID` | Used by SDK/distro for FIC auth |
 | `ENABLE_OBSERVABILITY` | — | `true` |
+| `ENABLE_A365_OBSERVABILITY_EXPORTER` | — | `true` |
+| `ENABLE_KAIRO_EXPORTER` | — | `true` |
+| `PYTHON_ENVIRONMENT` | — | `production` |
 | `OBSERVABILITY_SERVICE_NAME` | — | `GoogleADKSampleAgent` |
+| `OBSERVABILITY_SERVICE_NAMESPACE` | — | `GoogleADKTesting` |
+| `AGENT_ID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint ID |
+| `AGENT365OBSERVABILITY__AGENTID` | Same as `AGENTIC_APP_ID` | Agent instance app ID for observability routing |
+| `AGENT365OBSERVABILITY__AGENTNAME` | — | Agent identity display name |
+| `AGENT365OBSERVABILITY__AGENTDESCRIPTION` | — | Agent description |
+| `AGENT365OBSERVABILITY__TENANTID` | `a365.config.json` → `tenantId` | Azure tenant ID |
+| `AGENT365OBSERVABILITY__AGENTBLUEPRINTID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
+| `AGENT365OBSERVABILITY__CLIENTID` | `a365.generated.config.json` → `agentBlueprintId` | Blueprint App ID |
+| `AGENT365OBSERVABILITY__CLIENTSECRET` | `a365.generated.config.json` → `agentBlueprintClientSecret` | Blueprint client secret |
+| `LOG_LEVEL` | — | `DEBUG` |
+| `SCM_DO_BUILD_DURING_DEPLOYMENT` | — | `true` (Azure App Service only) |
 
 ### Running on GCP (Cloud Run)
 
@@ -326,31 +349,31 @@ After `a365 deploy` and `a365 publish` complete, the following steps require bro
 
 ### Step 3: Create agent instance
 
-1. In Microsoft Teams, go to **Apps** and search for your agent name
-2. Select your agent and click **Request Instance**
+1. In Microsoft Copilot, search for your blueprint name
+2. Click **Create Instance** and enter a name and email address for the AI Teammate
 3. A tenant admin must approve the request at:
    ```
    https://admin.cloud.microsoft/#/agents/all/requested
    ```
 
-### Step 4: Update AGENTIC_USER_ID after approval
+### Step 4: Update agent identity env vars after instance creation
 
-Once the admin approves the agent instance, the agent user is created. Update `AGENTIC_USER_ID` in two places:
+Once the instance is created and approved, the AI Teammate user is provisioned in Entra ID. Update the identity variables:
 
-1. Find the value in `a365.generated.config.json` → `AgenticUserId`
+1. Find the AI Teammate user in **Azure Portal → Entra ID → Users** → search by the UPN/email you entered during instance creation.
 
-2. Update `.env`:
+2. Update `.env` (or Azure App Service Application Settings):
    ```env
-   AGENTIC_USER_ID=<AgenticUserId from a365.generated.config.json>
+   AGENTIC_UPN=<UPN you entered during instance creation>
+   AGENTIC_NAME=<display name you entered>
+   AGENTIC_APP_ID=<agent instance app ID from Entra>
+   AGENTIC_USER_ID=<Object ID of the AI Teammate user from Entra>
+   A365_AGENT_APP_INSTANCE_ID=<same as AGENTIC_APP_ID>
+   A365_AGENTIC_USER_ID=<same as AGENTIC_USER_ID>
+   AGENT365OBSERVABILITY__AGENTID=<same as AGENTIC_APP_ID>
    ```
 
-3. Update the Azure App Service Application Setting:
-   ```bash
-   az webapp config appsettings set \
-     --name gemini-buddy-agent-webapp \
-     --resource-group AgentSDKTestRG \
-     --settings AGENTIC_USER_ID=<AgenticUserId>
-   ```
+> **Note:** These values are fallbacks — in production, the A365 platform delivers the agent identity per-message via `activity.recipient`. The env vars are used for observability configuration and as fallbacks when the activity doesn't carry the identity (e.g., local dev).
 
 > **Note:** The agent user creation is asynchronous — it can take a few minutes to a few hours to become searchable in Teams after the instance is approved.
 
@@ -362,18 +385,31 @@ All configuration is via environment variables (`.env` for local, App Settings f
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOOGLE_API_KEY` | — | **Required**. Google Gemini API key |
+| `GOOGLE_API_KEY` | — | Google Gemini API key (required when `VERTEXAI=FALSE`) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model to use |
-| `GOOGLE_GENAI_USE_VERTEXAI` | `FALSE` | Set `TRUE` to use Vertex AI instead of Gemini API |
+| `GOOGLE_GENAI_USE_VERTEXAI` | `FALSE` | `TRUE` = Vertex AI, `FALSE` = public Gemini API |
+| `GOOGLE_CLOUD_PROJECT` | — | GCP project ID (required when `VERTEXAI=TRUE`) |
+| `GOOGLE_CLOUD_LOCATION` | — | GCP region, e.g. `us-central1` (required when `VERTEXAI=TRUE`) |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to service account JSON key (required when `VERTEXAI=TRUE`) |
 | `AUTH_HANDLER_NAME` | _(empty)_ | Empty = anonymous (Playground/local), `AGENTIC` = production |
 | `BEARER_TOKEN` | _(empty)_ | Token for MCP tool access. Get with `a365 develop get-token -o raw` |
-| `AGENTIC_APP_ID` | — | Agent App ID from A365 portal |
+| `AGENTIC_APP_ID` | — | Agent instance app ID (fallback; delivered per-message in production) |
 | `AGENTIC_TENANT_ID` | — | Azure tenant ID |
-| `AGENTIC_USER_ID` | — | Agent User ID from A365 portal |
-| `PORT` | `3978` | Server port (Azure sets this to `8000` automatically) |
+| `AGENTIC_USER_ID` | — | Agent user Object ID (fallback; delivered per-message in production) |
+| `A365_AGENT_APP_INSTANCE_ID` | — | Same as `AGENTIC_APP_ID`; used by SDK/distro for FIC auth |
+| `A365_AGENTIC_USER_ID` | — | Same as `AGENTIC_USER_ID`; used by SDK/distro for FIC auth |
+| `PORT` | `3978` | Server port (Azure sets `8000` automatically) |
 | `ENABLE_OBSERVABILITY` | `true` | Enable OpenTelemetry tracing |
 | `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` | Send traces to A365 backend (`true` for production) |
+| `ENABLE_KAIRO_EXPORTER` | `false` | Enable Kairo exporter (`true` for production) |
+| `PYTHON_ENVIRONMENT` | `development` | `development` or `production` |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `OBSERVABILITY_SERVICE_NAME` | `GoogleADKSampleAgent` | Service name for OpenTelemetry traces |
+| `OBSERVABILITY_SERVICE_NAMESPACE` | `GoogleADKTesting` | Service namespace for OpenTelemetry traces |
+| `AGENT_ID` | — | Blueprint ID for observability routing |
+| `AGENT365OBSERVABILITY__AGENTID` | — | Agent instance app ID for observability exporter |
+| `AGENT365OBSERVABILITY__CLIENTID` | — | Blueprint App ID for exporter auth |
+| `AGENT365OBSERVABILITY__CLIENTSECRET` | — | Blueprint client secret for exporter auth |
 
 ---
 

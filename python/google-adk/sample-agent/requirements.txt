@@ -1,0 +1,22 @@
+# Google ADK
+google-adk>=1.32.0,<2
+
+# Microsoft Agents SDK
+microsoft-agents-hosting-aiohttp==0.10.0.dev4
+microsoft-agents-hosting-core==0.10.0.dev4
+microsoft-agents-authentication-msal==0.10.0.dev4
+microsoft-agents-activity==0.10.0.dev4
+
+# Microsoft Agent 365
+microsoft-agents-a365-notifications==1.0.0
+microsoft-agents-a365-tooling==1.0.0
+microsoft-agents-a365-observability-core==1.0.0
+microsoft-agents-a365-observability-hosting==1.0.0
+microsoft-agents-a365-runtime==1.0.0
+
+# Microsoft OpenTelemetry Distro
+microsoft-opentelemetry==1.2.0
+
+# Utilities
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
