@@ -33,17 +33,27 @@ const shutdownHandles: { intervals: ReturnType<typeof setInterval>[]; controller
 const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT!;
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY!;
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-10-21';
 
 // Agent 365 Observability — optional. When these are missing or set to placeholders,
 // the agent runs without A365 observability export (spans go to console only).
-const TENANT_ID = process.env.AGENT365_TENANT_ID || '';
-const AGENT_ID = process.env.AGENT365_AGENT_ID || '';
-const BLUEPRINT_ID = process.env.AGENT365_BLUEPRINT_ID || '';
-const CLIENT_ID = process.env.AGENT365_CLIENT_ID || '';
-const CLIENT_SECRET = process.env.AGENT365_CLIENT_SECRET || '';
-const AGENT_NAME = process.env.AGENT365_AGENT_NAME || 'github-trending';
-const AGENT_DESCRIPTION = process.env.AGENT365_AGENT_DESCRIPTION || '';
+// Read agent365Observability__* (canonical) with legacy AGENT365_* names as fallback
+// for backward compatibility with older .env files.
+const TENANT_ID = process.env.agent365Observability__tenantId || process.env.AGENT365_TENANT_ID || '';
+const AGENT_ID = process.env.agent365Observability__agentId || process.env.AGENT365_AGENT_ID || '';
+const BLUEPRINT_ID = process.env.agent365Observability__agentBlueprintId || process.env.AGENT365_BLUEPRINT_ID || '';
+const CLIENT_ID = process.env.agent365Observability__clientId || process.env.AGENT365_CLIENT_ID || '';
+const CLIENT_SECRET = process.env.agent365Observability__clientSecret || process.env.AGENT365_CLIENT_SECRET || '';
+const AGENT_NAME = process.env.agent365Observability__agentName || process.env.AGENT365_AGENT_NAME || 'github-trending';
+const AGENT_DESCRIPTION = process.env.agent365Observability__agentDescription || process.env.AGENT365_AGENT_DESCRIPTION || '';
 const USE_MANAGED_IDENTITY = (process.env.AGENT365_USE_MANAGED_IDENTITY || 'true').toLowerCase() === 'true';
+
+// Observability feature flags (mirrors python/autonomous/github-trending/main.py).
+// ENABLE_A365_OBSERVABILITY          — master switch for the OpenTelemetry pipeline.
+// ENABLE_A365_OBSERVABILITY_EXPORTER — when false, spans go to console only
+//                                      (no upload to the A365 backend).
+const ENABLE_A365_OBSERVABILITY = (process.env.ENABLE_A365_OBSERVABILITY || 'true').toLowerCase() === 'true';
+const ENABLE_A365_OBSERVABILITY_EXPORTER = (process.env.ENABLE_A365_OBSERVABILITY_EXPORTER || 'false').toLowerCase() === 'true';
 
 function hasA365Credentials(): boolean {
   const requiredValues = [TENANT_ID, AGENT_ID, CLIENT_ID];
@@ -61,6 +71,9 @@ function hasA365Credentials(): boolean {
 }
 
 const A365_ENABLED = hasA365Credentials();
+// Exporter is only active when (a) the master observability flag is on,
+// (b) credentials are configured, and (c) the exporter flag is on.
+const A365_EXPORTER_ENABLED = ENABLE_A365_OBSERVABILITY && A365_ENABLED && ENABLE_A365_OBSERVABILITY_EXPORTER;
 
 const LANGUAGE = process.env.GITHUB_TRENDING_LANGUAGE || 'typescript';
 const MIN_STARS = parseInt(process.env.GITHUB_TRENDING_MIN_STARS || '5', 10);
@@ -87,7 +100,8 @@ const agentDetails: AgentDetails = {
 // Build A365 span processors manually so we can set useS2SEndpoint (autonomous S2S scenario).
 // The distro's a365 option doesn't yet expose useS2SEndpoint, so we create the exporter ourselves
 // and pass it via spanProcessors, leaving a365 unset to avoid a duplicate exporter.
-const a365SpanProcessors = A365_ENABLED
+// Exporter is only attached when both credentials are present AND the exporter flag is on.
+const a365SpanProcessors = A365_EXPORTER_ENABLED
   ? [
       new A365SpanProcessor(),
       new BatchSpanProcessor(new Agent365Exporter({
@@ -98,9 +112,16 @@ const a365SpanProcessors = A365_ENABLED
     ]
   : [];
 
-useMicrosoftOpenTelemetry({
-  spanProcessors: a365SpanProcessors,
-});
+if (ENABLE_A365_OBSERVABILITY) {
+  useMicrosoftOpenTelemetry({
+    spanProcessors: a365SpanProcessors,
+  });
+  console.log(
+    `Observability configured (a365_exporter=${A365_EXPORTER_ENABLED}, credentials_present=${A365_ENABLED})`
+  );
+} else {
+  console.log('Observability disabled (ENABLE_A365_OBSERVABILITY=false)');
+}
 
 // ── Express server ───────────────────────────────────────────────────────────
 
@@ -149,6 +170,7 @@ server.listen(PORT, host, () => {
     endpoint: AZURE_OPENAI_ENDPOINT,
     apiKey: AZURE_OPENAI_API_KEY,
     deployment: AZURE_OPENAI_DEPLOYMENT,
+    apiVersion: AZURE_OPENAI_API_VERSION,
     agentDetails,
     language: LANGUAGE,
     minStars: MIN_STARS,
