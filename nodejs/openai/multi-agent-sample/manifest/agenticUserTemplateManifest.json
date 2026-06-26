@@ -1,0 +1,6 @@
+{
+    "id": "<<AGENTIC_USER_TEMPLATE_ID>>",
+    "schemaVersion": "0.1.0-preview",
+    "agentIdentityBlueprintId": "<<AGENT_IDENTITY_BLUEPRINT_ID>>",
+    "communicationProtocol": "activityProtocol"
+}
