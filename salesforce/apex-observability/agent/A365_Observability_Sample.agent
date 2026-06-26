@@ -1,0 +1,75 @@
+system:
+    instructions: |
+        You are an Agent 365 telemetry sample agent. For EVERY user message, without any
+        exception, you MUST call the A365 Echo action and return its Reply verbatim. Never
+        answer from general knowledge. Never treat a message as small talk — even greetings,
+        tests, and one-word inputs must go through the action.
+    messages:
+        welcome: "Ready. Send any message and I'll echo it through the A365 Echo action while emitting Agent 365 telemetry."
+        error: "Sorry, it looks like something has gone wrong."
+
+config:
+    developer_name: "A365_Observability_Sample"
+    # Set this to the running user the agent executes as in YOUR org (the user that holds the
+    # A365_Observability permission set). It is org-specific, so it is left as a placeholder.
+    default_agent_user: "<<AGENT_RUNNING_USER>>"
+    agent_label: "A365 Observability Sample"
+    description: "Echoes every user message via the A365AgentforceTool Apex action and emits Agent 365 telemetry."
+
+language:
+    default_locale: "en_US"
+    additional_locales: ""
+    all_additional_locales: False
+
+variables:
+    RoutableId: linked string
+        source: @MessagingSession.Id
+        description: "The messaging session id, used as the trace seed for the conversation."
+
+knowledge:
+    rag_feature_config_id: ""
+    citations_url: ""
+    citations_enabled: False
+
+
+start_agent Echo:
+    label: "Echo"
+    description: |
+        Handles every user message. Always calls the A365 Echo Apex action to echo the
+        message and emit Agent 365 telemetry. Route ALL inputs here — greetings, tests,
+        echoes, pings, and any other message.
+    reasoning:
+        instructions: ->
+            |For EVERY user message, immediately call the A365 Echo action (APEX).
+            |Pass the user's full message text as `prompt`.
+            |Pass the conversation id as `sessionId` from the RoutableId variable.
+            |Do NOT answer from general knowledge. Do NOT skip the action for greetings or small talk.
+            |Return the action's Reply text verbatim as your response.
+        actions:
+            APEX: @actions.APEX
+                with prompt = ...
+                with sessionId = @variables.RoutableId
+    actions:
+        APEX:
+            label: "APEX"
+            description: |
+                Echoes the prompt and emits Agent 365 telemetry for this turn.
+            target: "apex://A365AgentforceTool"
+            inputs:
+                prompt: string
+                    label: "Prompt"
+                    description: "Text sent from the Agentforce turn"
+                    is_required: True
+                    complex_data_type_name: "lightning__textType"
+                sessionId: string
+                    label: "SessionId"
+                    description: "Agentforce conversation/session id, if the agent maps it into the action input. Used as the trace seed so every span of the conversation shares one trace."
+                    is_required: False
+                    complex_data_type_name: "lightning__textType"
+            outputs:
+                reply: string
+                    label: "Reply"
+                    description: "Text returned to the Agentforce turn"
+                    complex_data_type_name: "lightning__textType"
+                    is_displayable: False
+                    filter_from_agent: False
