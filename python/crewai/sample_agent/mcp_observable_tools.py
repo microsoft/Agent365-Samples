@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 
-from microsoft_agents_a365.observability.core import ExecuteToolScope, ToolCallDetails
+from microsoft_agents_a365.observability.core import ExecuteToolScope, ToolCallDetails, Request
 from mcp_tool_registration_service import MCPToolDefinition
 
 if TYPE_CHECKING:
@@ -49,7 +49,8 @@ class MCPToolExecutor:
         tool_name: str,
         arguments: dict,
         agent_details: Any,
-        tenant_details: Any,
+        user_details: Any,
+        conversation_id: str | None = None,
     ) -> str:
         """
         Call an MCP tool by name with ExecuteToolScope observability.
@@ -58,7 +59,8 @@ class MCPToolExecutor:
             tool_name: Name of the tool to call
             arguments: Tool arguments as a dictionary
             agent_details: AgentDetails for observability
-            tenant_details: TenantDetails for observability
+            user_details: UserDetails for observability
+            conversation_id: Optional conversation ID for telemetry correlation
             
         Returns:
             The tool result as a string
@@ -86,11 +88,19 @@ class MCPToolExecutor:
             endpoint=endpoint,
         )
         
+        # Create a Request for the tool scope
+        tool_request = Request(
+            content=args_str,
+            session_id=conversation_id,
+            conversation_id=conversation_id,
+        )
+        
         # Execute with ExecuteToolScope for observability
         with ExecuteToolScope.start(
+            request=tool_request,
             details=tool_call_details,
             agent_details=agent_details,
-            tenant_details=tenant_details,
+            user_details=user_details,
         ) as tool_scope:
             try:
                 logger.info(f"🔧 Calling MCP tool: {tool_name}")
@@ -112,7 +122,8 @@ def create_observable_mcp_tools(
     mcp_tools: list[MCPToolDefinition],
     tool_executor: MCPToolExecutor,
     get_agent_details: callable,
-    get_tenant_details: callable,
+    get_user_details: callable,
+    get_conversation_id: callable = None,
 ) -> list[BaseTool]:
     """
     Create CrewAI-compatible tool wrappers for MCP tools with ExecuteToolScope observability.
@@ -125,7 +136,8 @@ def create_observable_mcp_tools(
         mcp_tools: List of MCP tool definitions from the registration service
         tool_executor: MCPToolExecutor instance for executing tools with observability
         get_agent_details: Callable that returns current agent details for observability
-        get_tenant_details: Callable that returns current tenant details for observability
+        get_user_details: Callable that returns current user details for observability
+        get_conversation_id: Optional callable that returns current conversation ID for telemetry
     
     Returns:
         List of CrewAI BaseTool instances that wrap MCP tools with observability
@@ -141,7 +153,7 @@ def create_observable_mcp_tools(
         
         # Create a closure to capture the tool definition and executor reference
         tool_class = _create_tool_class(
-            mcp_tool, InputModel, tool_executor, get_agent_details, get_tenant_details
+            mcp_tool, InputModel, tool_executor, get_agent_details, get_user_details, get_conversation_id
         )
         
         observable_tools.append(tool_class)
@@ -205,7 +217,8 @@ def _create_tool_class(
     input_model: Type[BaseModel],
     tool_executor: MCPToolExecutor,
     get_agent_details: callable,
-    get_tenant_details: callable,
+    get_user_details: callable,
+    get_conversation_id: callable = None,
 ) -> BaseTool:
     """
     Create a CrewAI BaseTool class for an MCP tool with observability.
@@ -215,7 +228,8 @@ def _create_tool_class(
         input_model: Pydantic model for input validation
         tool_executor: MCPToolExecutor for executing the tool
         get_agent_details: Callable to get current agent details
-        get_tenant_details: Callable to get current tenant details
+        get_user_details: Callable to get current user details
+        get_conversation_id: Optional callable to get current conversation ID
         
     Returns:
         Instance of the created tool class
@@ -240,7 +254,8 @@ def _create_tool_class(
                         tool_name=tool_def.name,
                         arguments=kwargs,
                         agent_details=get_agent_details(),
-                        tenant_details=get_tenant_details(),
+                        user_details=get_user_details(),
+                        conversation_id=get_conversation_id() if get_conversation_id else None,
                     ),
                     loop
                 )
@@ -253,7 +268,8 @@ def _create_tool_class(
                         tool_name=tool_def.name,
                         arguments=kwargs,
                         agent_details=get_agent_details(),
-                        tenant_details=get_tenant_details(),
+                        user_details=get_user_details(),
+                        conversation_id=get_conversation_id() if get_conversation_id else None,
                     )
                 )
                 return result
