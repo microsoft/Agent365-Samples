@@ -7,7 +7,8 @@ authors = [
 ]
 dependencies = [
     # AgentFramework SDK - The official package
-    "agent-framework-azure-ai",
+    "agent-framework-azure-ai==1.0.0b251114",
+    "agent-framework-core==1.0.0b251114",
     
     # Azure AI Projects - explicitly require pre-release version
     "azure-ai-agents>=1.2.0b5",
@@ -15,9 +16,11 @@ dependencies = [
 
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp",
-    "microsoft-agents-hosting-core",
+    "microsoft-agents-hosting-core>= 0.4.0",
     "microsoft-agents-authentication-msal",
-    "microsoft-agents-activity",
+    "microsoft-agents-activity>= 0.4.0",
+
+    "opentelemetry-semantic-conventions-ai==0.4.13",
 
     # Azure SDK components
     "azure-identity",
