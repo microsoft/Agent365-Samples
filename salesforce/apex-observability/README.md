@@ -134,12 +134,30 @@ After deploying:
    printf '%s' '<your-blueprint-app-id>:<secret>' | base64 -w0
    ```
 
-3. **Assign the permission set** to the running user (REST integration user and/or Agentforce agent
-   running user):
+3. **Assign the permission set** to every identity that runs the code — the REST integration user
+   (inbound tool path) **and** the Agentforce agent's running user (origination path):
 
    ```bash
    sf org assign permset --name A365_Observability --target-org <your-org-alias>
    ```
+
+   > ⚠️ **Agentforce runs as a bot user, not you.** Once activated on a channel, the agent executes
+   > as its auto-provisioned **EinsteinServiceAgent User** (username ends in `.ext`, profile
+   > *Einstein Agent User*) — **not** the developer who tests in the Agent Builder **preview**. The
+   > preview runs as *you*, so origination works there even when the bot user is unassigned, which
+   > hides the gap. On a real turn the bot user can't see the Apex action, so Salesforce **silently
+   > drops it from the planner** and nothing is emitted (and nothing reaches the Admin Center).
+   > Assign the permission set to the bot user as well:
+   >
+   > ```bash
+   > # 1. find the Agentforce bot user (username ends in .ext)
+   > sf data query --target-org <your-org-alias> \
+   >   --query "SELECT Username FROM User WHERE Profile.Name = 'Einstein Agent User' AND IsActive = true"
+   >
+   > # 2. assign the permission set on its behalf
+   > sf org assign permset --name A365_Observability \
+   >   --on-behalf-of <bot-username-from-step-1> --target-org <your-org-alias>
+   > ```
 
 4. **(Optional) Set the callback endpoint** — only needed to exercise the outbound `A365Callout` path
    (CLIENT span). Point the `A365_Callback` Named Credential at a public HTTPS URL that forwards to your
@@ -163,6 +181,10 @@ script above). Secrets are **never** here — only in the External Credential en
 | `ServiceName__c` | `salesforce-apex` | `service.name` for boundary spans. |
 | `AgentforceServiceName__c` | `salesforce-agentforce` | `service.name` for originated (Agentforce) spans. |
 | `OriginateEnabled__c` | `false` | Enable the Agentforce origination path (see `agent/`). |
+| `RunAsUserId__c` | *(blank)* | Origination only — Entra user object id to attribute Agentforce sessions to (`user.id` → Admin Center Activity). Blank ⇒ user-less (Defender-only). See [`agent/README.md`](agent/README.md). |
+| `BlueprintId__c` | *(blank)* | Origination only — agent blueprint id (`microsoft.a365.agent.blueprint.id`). |
+| `AgentName__c` | `salesforce-agentforce` | Origination only — agent display name (`gen_ai.agent.name`); code falls back to `AgentforceServiceName__c` if cleared. |
+| `ChannelName__c` | `agentforce` | Origination only — channel name (`microsoft.channel.name`); code defaults to `agentforce` if cleared. |
 
 ## Testing
 
@@ -207,6 +229,7 @@ org-specific, so it ships as a documented **reference** — see [`agent/README.m
 | No span ingested, no error | Telemetry is fail-open — check the debug log (`sf apex tail log`) for a swallowed warning. |
 | Token hop returns `401 AADSTS7002134` | `AgentId__c` and the External Credential's blueprint Basic value are not a matched blueprint→agent pair. |
 | `You don't have read permissions on the User External Credential object` | The running user is missing the `A365_Observability` permission set (it grants `UserExternalCredential` read + the EC principal). |
+| Agentforce turns emit nothing — no `A365TelemetryQueueable` job, no session in the M365 Admin Center — **but the Agent Builder preview works** | The activated agent runs as its **bot user** (*EinsteinServiceAgent User*, username ends in `.ext`), which is missing the `A365_Observability` permission set, so Salesforce drops the Apex action from the planner for that user. The preview runs as *you* (already assigned), masking it. Assign the permset to the bot user with `--on-behalf-of` (see Deploy step 3). |
 | Ingest `403` | The token is not agent-bound (`azp` ≠ `AgentId__c`), or the tenant is not onboarded to Agent 365. |
 | Nothing emitted at all | `Enabled__c = false`, or no inbound `traceparent` (the boundary path never fabricates a trace). |
 

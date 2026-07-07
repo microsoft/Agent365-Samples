@@ -51,4 +51,26 @@
         <field>OriginateEnabled__c</field>
         <value xsi:type="xsd:boolean">false</value>
     </values>
+    <!--
+      Admin Center attribution / enrichment (Option 1 + 3). Set RunAsUserId__c to a real Entra
+      (AAD) user object id to make Agentforce-originated sessions surface in the M365 Admin
+      Center "Activity" tab (Agent run-time). Leave it blank to keep spans user-less
+      (Defender-only). The others enrich the session record and are optional.
+    -->
+    <values>
+        <field>RunAsUserId__c</field>
+        <value xsi:type="xsd:string"></value>
+    </values>
+    <values>
+        <field>BlueprintId__c</field>
+        <value xsi:type="xsd:string"></value>
+    </values>
+    <values>
+        <field>AgentName__c</field>
+        <value xsi:type="xsd:string">salesforce-agentforce</value>
+    </values>
+    <values>
+        <field>ChannelName__c</field>
+        <value xsi:type="xsd:string">agentforce</value>
+    </values>
 </CustomMetadata>

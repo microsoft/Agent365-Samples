@@ -16,7 +16,12 @@
 global with sharing class A365AgentforceTool {
 
     global class Request {
-        @InvocableVariable(label='Prompt' description='Text sent from the Agentforce turn' required=true)
+        // NOTE: `prompt` is intentionally OPTIONAL. The Echo agent invokes this action
+        // deterministically every turn via `run @actions.APEX` (a pre-reasoning node that
+        // carries no bound inputs). If `prompt` were required, that deterministic invocation
+        // would fail input validation and never fire — so no telemetry would be emitted. Left
+        // optional, the deterministic run always fires; a blank prompt is echoed as a greeting.
+        @InvocableVariable(label='Prompt' description='Text sent from the Agentforce turn (optional)')
         global String prompt;
 
         @InvocableVariable(label='SessionId' description='Agentforce conversation/session id, if the agent maps it into the action input. Used as the trace seed so every span of the conversation shares one trace.')

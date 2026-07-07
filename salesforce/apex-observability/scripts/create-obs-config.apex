@@ -8,6 +8,11 @@
 //   <<TENANT_ID>>  — your Entra tenant id
 //   <<AGENT_ID>>   — the Agent 365 agent id (the agentId in the ingest URL; token azp must match)
 //
+// Optional (Admin Center attribution / enrichment, Option 1 + 3) — fill in the map below:
+//   RunAsUserId__c — Entra user object id to attribute Agentforce sessions to, so they surface
+//                    in the M365 Admin Center "Activity" tab. Blank => user-less (Defender-only).
+//   BlueprintId__c — agent blueprint id for session enrichment.
+//
 // Run:
 //   sf apex run --file scripts/create-obs-config.apex --target-org <<ORG_ALIAS>>
 //
@@ -28,7 +33,14 @@ Map<String, Object> vals = new Map<String, Object>{
     // Origination (Agentforce-native) fields — set OriginateEnabled__c = true only if you
     // build the optional Agentforce agent (see ../agent/README.md).
     'AgentforceServiceName__c' => 'salesforce-agentforce',
-    'OriginateEnabled__c' => false
+    'OriginateEnabled__c' => false,
+    // Admin Center attribution / enrichment (Option 1 + 3). Set RunAsUserId__c to a real Entra
+    // (AAD) user object id so Agentforce sessions surface as run-time in the M365 Admin Center
+    // "Activity" tab; leave blank to keep spans user-less (Defender-only). Others are optional.
+    'RunAsUserId__c' => '',
+    'BlueprintId__c' => '',
+    'AgentName__c' => 'salesforce-agentforce',
+    'ChannelName__c' => 'agentforce'
 };
 for (String f : vals.keySet()) {
     Metadata.CustomMetadataValue v = new Metadata.CustomMetadataValue();

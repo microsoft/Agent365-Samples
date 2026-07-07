@@ -124,10 +124,46 @@ public with sharing class A365Telemetry {
         if (!spanAttrs.containsKey('gen_ai.operation.name')) {
             spanAttrs.put('gen_ai.operation.name', 'invoke_agent');
         }
+        addAttributionAttrs(spanAttrs, seed);
         String statusCode = (ok == true) ? 'OK' : 'ERROR';
         // Root span: no parent (parentSpanId = null) — it is the top of the Agentforce trace.
         enqueueOriginated(traceId, null, rootSpanId,
             spanName, 'SERVER', statusCode, spanAttrs, startNs, endNs);
+    }
+
+    // Enrich the `invoke_agent` root with Admin Center attribution/identity attributes (Option
+    // 1 + 3). Set only when configured and not already provided by the caller:
+    //   - user.id                            -> CloudAppEvents UserKey (the attribution key the
+    //                                           Admin Center "Activity" tab surfaces sessions on).
+    //                                           Without it, UserKey = 0 and the session lands in
+    //                                           Defender raw logs only, never in the Admin Center.
+    //   - microsoft.a365.agent.blueprint.id  -> TargetAgentBlueprintID
+    //   - gen_ai.agent.name                  -> TargetAgentName
+    //   - microsoft.channel.name             -> ChannelName
+    //   - gen_ai.conversation.id / microsoft.session.id -> ConversationId / SessionIdentity
+    private static void addAttributionAttrs(Map<String, Object> spanAttrs, String seed) {
+        String runAsUser = A365ObsConfig.runAsUserId();
+        if (String.isNotBlank(runAsUser) && !spanAttrs.containsKey('user.id')) {
+            spanAttrs.put('user.id', runAsUser);
+        }
+        String blueprintId = A365ObsConfig.blueprintId();
+        if (String.isNotBlank(blueprintId) && !spanAttrs.containsKey('microsoft.a365.agent.blueprint.id')) {
+            spanAttrs.put('microsoft.a365.agent.blueprint.id', blueprintId);
+        }
+        if (!spanAttrs.containsKey('gen_ai.agent.name')) {
+            spanAttrs.put('gen_ai.agent.name', A365ObsConfig.agentName());
+        }
+        if (!spanAttrs.containsKey('microsoft.channel.name')) {
+            spanAttrs.put('microsoft.channel.name', A365ObsConfig.channelName());
+        }
+        if (String.isNotBlank(seed)) {
+            if (!spanAttrs.containsKey('gen_ai.conversation.id')) {
+                spanAttrs.put('gen_ai.conversation.id', seed);
+            }
+            if (!spanAttrs.containsKey('microsoft.session.id')) {
+                spanAttrs.put('microsoft.session.id', seed);
+            }
+        }
     }
 
     // Synthesize a default `invoke_agent` root when a tool span originates without an explicit

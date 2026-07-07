@@ -40,10 +40,19 @@ private class A365TelemetryOriginateTest {
     }
 
     private static A365_Observability_Config__mdt cfg(Boolean originateEnabled) {
+        return cfg(originateEnabled, null, null);
+    }
+
+    // Overload with Admin Center attribution/enrichment fields (Option 1 + 3).
+    private static A365_Observability_Config__mdt cfg(
+        Boolean originateEnabled, String runAsUserId, String blueprintId
+    ) {
         return new A365_Observability_Config__mdt(
             Enabled__c = true,
             OriginateEnabled__c = originateEnabled,
             AgentforceServiceName__c = AF_SERVICE,
+            RunAsUserId__c = runAsUserId,
+            BlueprintId__c = blueprintId,
             TenantId__c = TENANT,
             AgentId__c = AGENT,
             IngestBase__c = 'https://agent365.svc.cloud.microsoft',
@@ -72,6 +81,19 @@ private class A365TelemetryOriginateTest {
     private static String opName(Map<String, Object> sp) {
         Map<String, Object> attrs = (Map<String, Object>) sp.get('attributes');
         return (String) attrs.get('gen_ai.operation.name');
+    }
+
+    private static Object attr(Map<String, Object> sp, String key) {
+        return ((Map<String, Object>) sp.get('attributes')).get(key);
+    }
+
+    // Returns the invoke_agent root span body from a batch of ingest bodies.
+    private static Map<String, Object> rootSpan(List<String> bodies) {
+        for (String body : bodies) {
+            Map<String, Object> sp = span(body);
+            if (opName(sp) == 'invoke_agent') { return sp; }
+        }
+        return null;
     }
 
     @IsTest
@@ -161,6 +183,58 @@ private class A365TelemetryOriginateTest {
         }
         System.assertEquals(1, invokeAgent, 'explicit root + tool span converge on one root');
         System.assertEquals(2, mock.ingestCalls, 'exactly two spans total');
+    }
+
+    @IsTest
+    static void originate_setsAttributionAttrsOnRoot_whenConfigured() {
+        String runAsUser = '33333333-3333-3333-3333-333333333333';
+        String blueprint = '44444444-4444-4444-4444-444444444444';
+        A365ObsConfig.overrideRecord = cfg(true, runAsUser, blueprint);
+        A365ObsToken.clearCache();
+        MultiMock mock = new MultiMock();
+        Test.setMock(HttpCalloutMock.class, mock);
+
+        Long t0 = 1750000000000000000L;
+        Test.startTest();
+        A365Telemetry.originateToolSpan(SEED, 'execute_tool A365AgentforceTool',
+            new Map<String, Object>{ 'gen_ai.operation.name' => 'execute_tool' }, t0, t0 + 3000000L, true);
+        Test.stopTest();
+
+        Map<String, Object> root = rootSpan(mock.ingestBodies);
+        System.assertNotEquals(null, root, 'root invoke_agent span emitted');
+        System.assertEquals(runAsUser, attr(root, 'user.id'),
+            'user.id (Admin Center UserKey) set from RunAsUserId__c');
+        System.assertEquals(blueprint, attr(root, 'microsoft.a365.agent.blueprint.id'),
+            'blueprint id enrichment set');
+        System.assertEquals(AF_SERVICE, attr(root, 'gen_ai.agent.name'),
+            'agent name falls back to the service name');
+        System.assertEquals('agentforce', attr(root, 'microsoft.channel.name'),
+            'channel name defaults to agentforce');
+        System.assertEquals(SEED, attr(root, 'gen_ai.conversation.id'),
+            'conversation id derives from the session seed');
+        System.assertEquals(SEED, attr(root, 'microsoft.session.id'),
+            'session id derives from the session seed');
+    }
+
+    @IsTest
+    static void originate_omitsUserId_whenRunAsUserBlank() {
+        A365ObsConfig.overrideRecord = cfg(true); // no run-as user configured
+        A365ObsToken.clearCache();
+        MultiMock mock = new MultiMock();
+        Test.setMock(HttpCalloutMock.class, mock);
+
+        Long t0 = 1750000000000000000L;
+        Test.startTest();
+        A365Telemetry.originateToolSpan(SEED, 'execute_tool A365AgentforceTool',
+            new Map<String, Object>{ 'gen_ai.operation.name' => 'execute_tool' }, t0, t0 + 1L, true);
+        Test.stopTest();
+
+        Map<String, Object> root = rootSpan(mock.ingestBodies);
+        System.assertNotEquals(null, root, 'root invoke_agent span still emitted');
+        System.assert(!((Map<String, Object>) root.get('attributes')).containsKey('user.id'),
+            'user.id omitted when RunAsUserId__c is blank (user-less, Defender-only)');
+        System.assert(!((Map<String, Object>) root.get('attributes')).containsKey('microsoft.a365.agent.blueprint.id'),
+            'blueprint id omitted when BlueprintId__c is blank');
     }
 
     @IsTest
