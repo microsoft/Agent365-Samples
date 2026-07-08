@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEMPLATE for the A365_Observability_Config.Default record. Replace the <<...>> placeholders
+  with your tenant/agent values before use. This file is excluded from CLI deploys by
+  .forceignore (CustomMetadata RECORDS can fail to deploy via the CLI on some orgs); seed it at
+  runtime instead by running scripts/create-obs-config.apex with `sf apex run`.
+
+  Non-secret config only. The blueprint client secret lives solely in the A365_Obs_Entra
+  External Credential (entered in Setup, never in git).
+-->
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <label>Default</label>
+    <protected>false</protected>
+    <values>
+        <field>Enabled__c</field>
+        <value xsi:type="xsd:boolean">true</value>
+    </values>
+    <values>
+        <field>TenantId__c</field>
+        <value xsi:type="xsd:string">&lt;&lt;TENANT_ID&gt;&gt;</value>
+    </values>
+    <values>
+        <field>AgentId__c</field>
+        <value xsi:type="xsd:string">&lt;&lt;AGENT_ID&gt;&gt;</value>
+    </values>
+    <values>
+        <field>IngestBase__c</field>
+        <value xsi:type="xsd:string">https://agent365.svc.cloud.microsoft</value>
+    </values>
+    <values>
+        <field>ObsScope__c</field>
+        <value xsi:type="xsd:string">api://9b975845-388f-4429-889e-eab1ef63949c/.default</value>
+    </values>
+    <values>
+        <field>FmiScope__c</field>
+        <value xsi:type="xsd:string">api://AzureADTokenExchange/.default</value>
+    </values>
+    <values>
+        <field>UseS2SEndpoint__c</field>
+        <value xsi:type="xsd:boolean">true</value>
+    </values>
+    <values>
+        <field>ServiceName__c</field>
+        <value xsi:type="xsd:string">salesforce-apex</value>
+    </values>
+    <values>
+        <field>AgentforceServiceName__c</field>
+        <value xsi:type="xsd:string">salesforce-agentforce</value>
+    </values>
+    <values>
+        <field>OriginateEnabled__c</field>
+        <value xsi:type="xsd:boolean">false</value>
+    </values>
+</CustomMetadata>

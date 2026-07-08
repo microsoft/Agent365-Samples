@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>FmiScope__c</fullName>
+    <description>Hop 1/2 FMI token-exchange scope (.default).</description>
+    <externalId>false</externalId>
+    <label>FMI Scope</label>
+    <length>255</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

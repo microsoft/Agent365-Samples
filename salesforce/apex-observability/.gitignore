@@ -1,0 +1,12 @@
+# Salesforce / SFDX local artifacts
+**/.sf/
+**/.sfdx/
+**/.localdevserver/
+.sfdx
+.sf
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
