@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>AgentId__c</fullName>
+    <description>Runtime agent id; must equal the obs token azp/appid.</description>
+    <externalId>false</externalId>
+    <label>Agent Id</label>
+    <length>36</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

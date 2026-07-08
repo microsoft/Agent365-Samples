@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>AgentforceServiceName__c</fullName>
+    <description>OTLP resource service.name for Salesforce-ORIGINATED (Agentforce) traces; disambiguates this path from the boundary emitter when both share the mapped agentId.</description>
+    <externalId>false</externalId>
+    <label>Agentforce Service Name</label>
+    <length>255</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

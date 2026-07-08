@@ -1,0 +1,21 @@
+{
+  "profiles": {
+    "Playground": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "TokenValidation__Enabled": "false",
+        "BEARER_TOKEN": ""
+      },
+      "applicationUrl": "http://localhost:3978"
+    },
+    "DevTunnel": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "BEARER_TOKEN": ""
+      },
+      "applicationUrl": "http://localhost:3978"
+    }
+  }
+}
