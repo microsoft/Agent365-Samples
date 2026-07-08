@@ -131,9 +131,9 @@ public with sharing class A365Telemetry {
             spanName, 'SERVER', statusCode, spanAttrs, startNs, endNs);
     }
 
-    // Enrich the `invoke_agent` root with Admin Center attribution/identity attributes (Option
-    // 1 + 3). Set only when configured and not already provided by the caller:
-    //   - user.id                            -> CloudAppEvents UserKey (the attribution key the
+    // Enrich the `invoke_agent` root with Admin Center attribution/identity attributes (Option 1 + 3).
+    // `user.id` and `microsoft.a365.agent.blueprint.id` are only set when configured; the other
+    // attributes are defaulted when missing (unless already provided by the caller):
     //                                           Admin Center "Activity" tab surfaces sessions on).
     //                                           Without it, UserKey = 0 and the session lands in
     //                                           Defender raw logs only, never in the Admin Center.
