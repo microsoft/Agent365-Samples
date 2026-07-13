@@ -125,7 +125,7 @@ public static class A365OtelWrapper
                     new AgenticTokenStruct(authSystem, turnContext, authHandlerName, null),
                     observabilityScopes);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger?.LogWarning(
                     ex,
@@ -202,7 +202,7 @@ public static class A365OtelWrapper
         {
             agentId = turnContext.Activity.GetAgenticInstanceId();
         }
-        else if (!string.IsNullOrEmpty(authHandlerName))
+        else if (!string.IsNullOrWhiteSpace(authHandlerName))
         {
             try
             {
