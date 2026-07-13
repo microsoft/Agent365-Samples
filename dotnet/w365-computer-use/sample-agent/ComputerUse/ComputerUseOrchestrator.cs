@@ -1263,6 +1263,20 @@ public class ComputerUseOrchestrator
         return exception.InnerException != null && IsUnauthorizedMcpTransportFailure(exception.InnerException);
     }
 
+    private static bool IsEmptyJsonMcpResponse(Exception exception)
+    {
+        for (var ex = exception; ex != null; ex = ex.InnerException)
+        {
+            var msg = ex.Message ?? string.Empty;
+            if (msg.Contains("does not contain any JSON tokens", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("Invalid JSON response from remote MCP server", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     internal static SseClientTransportOptions CreateW365TransportOptionsForTest(
         string url,
         string accessToken,
@@ -1773,37 +1787,50 @@ public class ComputerUseOrchestrator
         string? toolCallId = null)
     {
         string resultStr;
-        if (mcpClient != null)
+        try
         {
-            resultStr = await ToolTelemetry.InvokeAsync(
-                toolName: name,
-                arguments: args,
-                toolCallId: toolCallId,
-                toolServerName: "w365",
-                endpoint: null,
-                conversationId: session.ConversationId,
-                channelId: session.ChannelId,
-                invokeAsync: async () =>
-                {
-                    var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
-                    return JsonSerializer.Serialize(result);
-                }).ConfigureAwait(false);
+            if (mcpClient != null)
+            {
+                resultStr = await ToolTelemetry.InvokeAsync(
+                    toolName: name,
+                    arguments: args,
+                    toolCallId: toolCallId,
+                    toolServerName: "w365",
+                    endpoint: null,
+                    conversationId: session.ConversationId,
+                    channelId: session.ChannelId,
+                    invokeAsync: async () =>
+                    {
+                        var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
+                        return JsonSerializer.Serialize(result);
+                    }).ConfigureAwait(false);
+            }
+            else
+            {
+                resultStr = await ToolTelemetry.InvokeAsync(
+                    toolName: name,
+                    arguments: args,
+                    toolCallId: toolCallId,
+                    toolServerName: "w365",
+                    endpoint: null,
+                    conversationId: session.ConversationId,
+                    channelId: session.ChannelId,
+                    invokeAsync: async () =>
+                    {
+                        var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
+                        return raw?.ToString() ?? string.Empty;
+                    }).ConfigureAwait(false);
+            }
         }
-        else
+        catch (Exception ex) when (name == "wait_milliseconds" && IsEmptyJsonMcpResponse(ex))
         {
-            resultStr = await ToolTelemetry.InvokeAsync(
-                toolName: name,
-                arguments: args,
-                toolCallId: toolCallId,
-                toolServerName: "w365",
-                endpoint: null,
-                conversationId: session.ConversationId,
-                channelId: session.ChannelId,
-                invokeAsync: async () =>
-                {
-                    var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
-                    return raw?.ToString() ?? string.Empty;
-                }).ConfigureAwait(false);
+            // The W365 CUA backend occasionally returns an empty body for wait_milliseconds.
+            // The wait is purely a pacing aid, so fall back to an in-process delay and report
+            // success so the model keeps progressing instead of failing the whole turn.
+            var ms = args.TryGetValue("ms", out var msObj) && msObj is int n ? n : 500;
+            _logger.LogWarning("wait_milliseconds returned an invalid JSON response from W365; falling back to local Task.Delay({Ms}).", ms);
+            await Task.Delay(Math.Clamp(ms, 0, 5000), ct);
+            return "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"waited locally\"}]}";
         }
 
         if (TryExtractToolError(resultStr, out var errorText))
