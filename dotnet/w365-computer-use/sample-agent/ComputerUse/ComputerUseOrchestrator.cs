@@ -1222,9 +1222,36 @@ public class ComputerUseOrchestrator
         try
         {
             var directClient = new W365McpSessionClient(mcpClient);
-            var result = string.IsNullOrWhiteSpace(existingSessionId)
-                ? await directClient.StartSessionAndListToolsAsync(cancellationToken)
-                : await directClient.ListToolsAsync(existingSessionId, cancellationToken);
+            W365McpToolListResult result;
+            if (string.IsNullOrWhiteSpace(existingSessionId))
+            {
+                var startArguments = new Dictionary<string, object?>();
+                W365McpToolListResult? startedResult = null;
+                await ToolTelemetry.InvokeAsync(
+                    toolName: W365StartSessionToolName,
+                    arguments: startArguments,
+                    toolCallId: null,
+                    toolServerName: "w365",
+                    endpoint: null,
+                    conversationId: turnContext.Activity.Conversation?.Id,
+                    channelId: turnContext.Activity.ChannelId,
+                    invokeAsync: async () =>
+                    {
+                        startedResult = await directClient.StartSessionAndListToolsAsync(cancellationToken);
+                        return JsonSerializer.Serialize(new
+                        {
+                            sessionId = startedResult.SessionId,
+                            toolCount = startedResult.Tools.Count,
+                        });
+                    }).ConfigureAwait(false);
+                result = startedResult
+                    ?? throw new InvalidOperationException("W365 session startup telemetry completed without producing a tool-list result.");
+            }
+            else
+            {
+                result = await directClient.ListToolsAsync(existingSessionId, cancellationToken);
+            }
+
             _cachedTools = result.Tools;
             _cachedMcpClient = result.Client;
             _w365McpClientsBySessionId[result.SessionId] = result.Client;
