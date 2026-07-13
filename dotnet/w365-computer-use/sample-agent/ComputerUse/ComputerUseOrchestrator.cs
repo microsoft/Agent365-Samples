@@ -1402,11 +1402,20 @@ public class ComputerUseOrchestrator
                         toolName,
                         args,
                         session,
-                        ct);
+                        ct,
+                        toolCallId: callId);
                     if (sessionLost)
                     {
                         if (onStatus != null) { await onStatus("Session lost — recovering..."); }
-                        await RecoverAndRetryToolAsync(session, tools, additionalTools, mcpClient, toolName, args, ct);
+                        await RecoverAndRetryToolAsync(
+                            session,
+                            tools,
+                            additionalTools,
+                            mcpClient,
+                            toolName,
+                            args,
+                            ct,
+                            toolCallId: callId);
                     }
                     else if (TryExtractToolError(result?.ToString(), out var errorText))
                     {
@@ -1431,11 +1440,20 @@ public class ComputerUseOrchestrator
                     toolName,
                     args,
                     session,
-                    ct);
+                    ct,
+                    toolCallId: callId);
                 if (sessionLost)
                 {
                     if (onStatus != null) { await onStatus("Session lost — recovering..."); }
-                    await RecoverAndRetryToolAsync(session, tools, additionalTools, mcpClient, toolName, args, ct);
+                    await RecoverAndRetryToolAsync(
+                        session,
+                        tools,
+                        additionalTools,
+                        mcpClient,
+                        toolName,
+                        args,
+                        ct,
+                        toolCallId: callId);
                 }
                 else if (TryExtractToolError(result?.ToString(), out var errorText))
                 {
@@ -1827,7 +1845,15 @@ public class ComputerUseOrchestrator
             // The W365 CUA backend occasionally returns an empty body for wait_milliseconds.
             // The wait is purely a pacing aid, so fall back to an in-process delay and report
             // success so the model keeps progressing instead of failing the whole turn.
-            var ms = args.TryGetValue("ms", out var msObj) && msObj is int n ? n : 500;
+            var ms = args.TryGetValue("ms", out var msObj)
+                ? msObj switch
+                {
+                    int intValue => intValue,
+                    JsonElement { ValueKind: JsonValueKind.Number } msElement
+                        when msElement.TryGetInt32(out var jsonValue) => jsonValue,
+                    _ => 500
+                }
+                : 500;
             _logger.LogWarning("wait_milliseconds returned an invalid JSON response from W365; falling back to local Task.Delay({Ms}).", ms);
             await Task.Delay(Math.Clamp(ms, 0, 5000), ct);
             return "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"waited locally\"}]}";
