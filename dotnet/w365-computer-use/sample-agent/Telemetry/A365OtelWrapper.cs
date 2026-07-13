@@ -25,6 +25,7 @@ public static class A365OtelWrapper
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
+        CancellationToken cancellationToken,
         Func<Task> func)
     {
         ArgumentNullException.ThrowIfNull(func);
@@ -39,6 +40,7 @@ public static class A365OtelWrapper
             authSystem,
             authHandlerName,
             logger,
+            cancellationToken,
             async () =>
             {
                 await func().ConfigureAwait(false);
@@ -56,6 +58,7 @@ public static class A365OtelWrapper
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
+        CancellationToken cancellationToken,
         Func<Task<string?>> func)
     {
         ArgumentNullException.ThrowIfNull(func);
@@ -64,7 +67,8 @@ public static class A365OtelWrapper
             turnContext,
             authSystem,
             authHandlerName,
-            logger).ConfigureAwait(false);
+            logger,
+            cancellationToken).ConfigureAwait(false);
 
         var telemetryContext = Agent365TelemetryContext.FromTurnContext(
             turnContext,
@@ -87,7 +91,7 @@ public static class A365OtelWrapper
                     authHandlerName,
                     null!,
                     observabilityScopes,
-                    default).ConfigureAwait(false);
+                    cancellationToken).ConfigureAwait(false);
 
                 if (!string.IsNullOrEmpty(token))
                 {
@@ -98,7 +102,7 @@ public static class A365OtelWrapper
                         observabilityScopes);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger?.LogError(
                     ex,
@@ -188,7 +192,8 @@ public static class A365OtelWrapper
         ITurnContext turnContext,
         UserAuthorization authSystem,
         string authHandlerName,
-        ILogger? logger)
+        ILogger? logger,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(turnContext);
 
@@ -201,10 +206,13 @@ public static class A365OtelWrapper
         {
             try
             {
-                var token = await authSystem.GetTurnTokenAsync(turnContext, authHandlerName).ConfigureAwait(false);
+                var token = await authSystem.GetTurnTokenAsync(
+                    turnContext,
+                    authHandlerName,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 agentId = Utility.ResolveAgentIdentity(turnContext, token);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
                 logger?.LogWarning(
                     ex,

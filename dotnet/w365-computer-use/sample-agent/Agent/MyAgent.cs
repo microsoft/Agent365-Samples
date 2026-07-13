@@ -133,15 +133,16 @@ public class MyAgent : AgentApplication
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
         W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
 
-        // Greet when members are added
-        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
-
         // Compute auth handler arrays once
         var agenticHandlers = new[] { AgenticAuthHandlerName, W365AuthHandlerName }
             .OfType<string>()
             .Where(handler => !string.IsNullOrEmpty(handler))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+        // Greet when members are added
+        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync, autoSignInHandlers: agenticHandlers, isAgenticOnly: true);
+        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync, isAgenticOnly: false);
 
         // Handle install/uninstall
         OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
@@ -164,6 +165,7 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             GetObservabilityAuthHandlerName(turnContext),
             _logger,
+            cancellationToken,
             async () =>
             {
                 var recipientId = turnContext.Activity.Recipient.Id;
@@ -191,6 +193,7 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             GetObservabilityAuthHandlerName(turnContext),
             _logger,
+            cancellationToken,
             async () =>
             {
                 _logger.LogInformation(
@@ -243,6 +246,7 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             ObservabilityAuthHandlerName,
             _logger,
+            cancellationToken,
             async () =>
             {
                 // Typing indicator
