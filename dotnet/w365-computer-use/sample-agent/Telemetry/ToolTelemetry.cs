@@ -53,7 +53,7 @@ public static class ToolTelemetry
         }
         catch (Exception ex)
         {
-            scope.RecordError(ex);
+            scope.RecordError(RedactSensitiveError(toolName, ex));
             throw;
         }
     }
@@ -87,7 +87,7 @@ public static class ToolTelemetry
 
     private static string RedactSensitiveResult(string toolName, string result)
     {
-        if (string.Equals(toolName, "take_screenshot", StringComparison.OrdinalIgnoreCase))
+        if (toolName.Contains("screenshot", StringComparison.OrdinalIgnoreCase))
         {
             return "<redacted screenshot result>";
         }
@@ -97,5 +97,13 @@ public static class ToolTelemetry
             @"data:image\/[^""\s]+",
             "data:image/redacted;base64,<redacted>",
             RegexOptions.IgnoreCase);
+    }
+
+    private static Exception RedactSensitiveError(string toolName, Exception exception)
+    {
+        var redactedMessage = RedactSensitiveResult(toolName, exception.Message);
+        return string.Equals(redactedMessage, exception.Message, StringComparison.Ordinal)
+            ? exception
+            : new InvalidOperationException(redactedMessage);
     }
 }

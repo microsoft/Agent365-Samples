@@ -283,6 +283,8 @@ public class MyAgent : AgentApplication
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
+                            telemetryConversationId: conversationId,
+                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
                         return directResponse;
@@ -355,6 +357,8 @@ public class MyAgent : AgentApplication
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
                                 MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
                             prestartedW365SessionId: prestartedW365SessionId,
+                            telemetryConversationId: conversationId,
+                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
 
                         // Send the response

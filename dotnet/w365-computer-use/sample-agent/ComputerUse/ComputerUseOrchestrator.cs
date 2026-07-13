@@ -420,6 +420,8 @@ public class ComputerUseOrchestrator
         Func<string, Task>? onFolderLinkReady = null,
         bool includeCuaTool = true,
         string? prestartedW365SessionId = null,
+        string? telemetryConversationId = null,
+        string? telemetryChannelId = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
@@ -433,8 +435,12 @@ public class ComputerUseOrchestrator
                 ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeId}"
             };
         });
-        session.ConversationId = conversationId;
-        session.ChannelId = "msteams";
+        session.ConversationId = !string.IsNullOrWhiteSpace(telemetryConversationId)
+            ? telemetryConversationId
+            : conversationId;
+        session.ChannelId = !string.IsNullOrWhiteSpace(telemetryChannelId)
+            ? telemetryChannelId
+            : "msteams";
 
         // Serialize turns for the same conversation. Concurrent turns (e.g. Bot Framework
         // redelivering an activity during a slow CUA turn) could each append an input_image to
@@ -823,7 +829,11 @@ public class ComputerUseOrchestrator
                                 session,
                                 cancellationToken,
                                 toolCallId: callId);
-                            if (detailsSessionLost)
+                            if (detailsSessionLost
+                                && string.Equals(
+                                    sessionIdToInspect,
+                                    session.W365SessionId,
+                                    StringComparison.OrdinalIgnoreCase))
                             {
                                 if (onStatusUpdate != null)
                                 {
@@ -1847,7 +1857,9 @@ public class ComputerUseOrchestrator
                     invokeAsync: async () =>
                     {
                         var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
-                        return JsonSerializer.Serialize(result);
+                        var serializedResult = JsonSerializer.Serialize(result);
+                        ThrowIfW365ToolError(name, serializedResult);
+                        return serializedResult;
                     }).ConfigureAwait(false);
             }
             else
@@ -1863,7 +1875,9 @@ public class ComputerUseOrchestrator
                     invokeAsync: async () =>
                     {
                         var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
-                        return raw?.ToString() ?? string.Empty;
+                        var rawResult = raw?.ToString() ?? string.Empty;
+                        ThrowIfW365ToolError(name, rawResult);
+                        return rawResult;
                     }).ConfigureAwait(false);
             }
         }
@@ -1884,11 +1898,6 @@ public class ComputerUseOrchestrator
             _logger.LogWarning("wait_milliseconds returned an invalid JSON response from W365; falling back to local Task.Delay({Ms}).", ms);
             await Task.Delay(Math.Clamp(ms, 0, 5000), ct);
             return "{\"isError\":false,\"content\":[{\"type\":\"text\",\"text\":\"waited locally\"}]}";
-        }
-
-        if (TryExtractToolError(resultStr, out var errorText))
-        {
-            throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
         }
 
         return resultStr;
@@ -1922,6 +1931,14 @@ public class ComputerUseOrchestrator
         }
 
         return result;
+    }
+
+    private static void ThrowIfW365ToolError(string toolName, string result)
+    {
+        if (TryExtractToolError(result, out var errorText))
+        {
+            throw new InvalidOperationException($"Error calling tool '{toolName}': {errorText}");
+        }
     }
 
     /// <summary>
