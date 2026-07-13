@@ -10,6 +10,7 @@ using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using W365ComputerUseSample.ComputerUse.Models;
+using W365ComputerUseSample.Telemetry;
 
 namespace W365ComputerUseSample.ComputerUse;
 
@@ -432,6 +433,8 @@ public class ComputerUseOrchestrator
                 ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeId}"
             };
         });
+        session.ConversationId = conversationId;
+        session.ChannelId = "msteams";
 
         // Serialize turns for the same conversation. Concurrent turns (e.g. Bot Framework
         // redelivering an activity during a slow CUA turn) could each append an input_image to
@@ -774,7 +777,8 @@ public class ComputerUseOrchestrator
                         }
                         if (funcName == "EndSession")
                         {
-                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!));
+                            var callId = item.GetProperty("call_id").GetString()!;
+                            session.ConversationHistory.Add(CreateFunctionOutput(callId));
                             _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
                             if (onStatusUpdate != null)
                             {
@@ -782,7 +786,14 @@ public class ComputerUseOrchestrator
                             }
 
                             var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
-                            await EndSessionAsync(w365Tools, _logger, sessionIdToEnd, cancellationToken);
+                            await EndSessionAsync(
+                                w365Tools,
+                                _logger,
+                                sessionIdToEnd,
+                                cancellationToken,
+                                conversationId: session.ConversationId,
+                                channelId: session.ChannelId,
+                                toolCallId: callId);
                             await DisposeW365McpClientAsync(sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
@@ -796,6 +807,7 @@ public class ComputerUseOrchestrator
                         }
                         if (funcName == "GetSessionDetails")
                         {
+                            var callId = item.GetProperty("call_id").GetString()!;
                             var args = new Dictionary<string, object?>();
                             var sessionIdToInspect = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
                             if (!string.IsNullOrEmpty(sessionIdToInspect))
@@ -803,8 +815,35 @@ public class ComputerUseOrchestrator
                                 args["sessionId"] = sessionIdToInspect;
                             }
 
-                            var result = await InvokeToolThrowOnErrorAsync(w365Tools, W365GetSessionDetailsToolName, args, cancellationToken);
-                            session.ConversationHistory.Add(CreateFunctionOutput(item.GetProperty("call_id").GetString()!, result?.ToString() ?? "success"));
+                            var (detailsResult, detailsSessionLost) = await InvokeW365ToolCheckSessionAsync(
+                                w365Tools,
+                                mcpClient,
+                                W365GetSessionDetailsToolName,
+                                args,
+                                session,
+                                cancellationToken,
+                                toolCallId: callId);
+                            if (detailsSessionLost)
+                            {
+                                if (onStatusUpdate != null)
+                                {
+                                    await onStatusUpdate("Session expired — starting a new W365 session...");
+                                }
+
+                                detailsResult = await RecoverAndRetryToolAsync(
+                                    session,
+                                    w365Tools,
+                                    additionalTools,
+                                    mcpClient,
+                                    W365GetSessionDetailsToolName,
+                                    args,
+                                    cancellationToken,
+                                    toolCallId: callId);
+                            }
+
+                            session.ConversationHistory.Add(CreateFunctionOutput(
+                                callId,
+                                string.IsNullOrEmpty(detailsResult) ? "success" : detailsResult));
                             break;
                         }
                         if (funcName == "ListAvailableW365Tools")
@@ -863,7 +902,8 @@ public class ComputerUseOrchestrator
         IList<AITool> w365Tools,
         IList<AITool>? additionalTools,
         IMcpClient? mcpClient,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? toolCallId = null)
     {
         if (!string.IsNullOrEmpty(session.W365SessionId))
         {
@@ -878,15 +918,42 @@ public class ComputerUseOrchestrator
         }
 
         string resultStr;
+        var startArgs = new Dictionary<string, object?>();
         if (mcpClient != null)
         {
-            var result = await mcpClient.CallToolAsync(W365StartSessionToolName, new Dictionary<string, object?>(), cancellationToken: ct);
-            resultStr = JsonSerializer.Serialize(result);
+            resultStr = await ToolTelemetry.InvokeAsync(
+                toolName: W365StartSessionToolName,
+                arguments: startArgs,
+                toolCallId: toolCallId,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var result = await mcpClient.CallToolAsync(W365StartSessionToolName, startArgs, cancellationToken: ct);
+                    return JsonSerializer.Serialize(result);
+                }).ConfigureAwait(false);
         }
         else
         {
-            var result = await InvokeToolThrowOnErrorAsync(lifecycleTools, W365StartSessionToolName, new Dictionary<string, object?>(), ct);
-            resultStr = result?.ToString() ?? string.Empty;
+            resultStr = await ToolTelemetry.InvokeAsync(
+                toolName: W365StartSessionToolName,
+                arguments: startArgs,
+                toolCallId: toolCallId,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var result = await RawInvokeToolThrowOnErrorAsync(
+                        lifecycleTools,
+                        W365StartSessionToolName,
+                        startArgs,
+                        ct);
+                    return result?.ToString() ?? string.Empty;
+                }).ConfigureAwait(false);
         }
 
         if (TryExtractToolError(resultStr, out var errorText))
@@ -906,7 +973,14 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// End the W365 session. Called by the agent on shutdown or explicit end.
     /// </summary>
-    public static async Task EndSessionAsync(IList<AITool> tools, ILogger logger, string? sessionId, CancellationToken ct)
+    public static async Task EndSessionAsync(
+        IList<AITool> tools,
+        ILogger logger,
+        string? sessionId,
+        CancellationToken ct,
+        string? conversationId = null,
+        string? channelId = null,
+        string? toolCallId = null)
     {
         try
         {
@@ -916,7 +990,19 @@ public class ComputerUseOrchestrator
                 args["sessionId"] = sessionId;
             }
 
-            await InvokeToolAsync(tools, W365EndSessionToolName, args, ct);
+            await ToolTelemetry.InvokeAsync(
+                toolName: W365EndSessionToolName,
+                arguments: args,
+                toolCallId: toolCallId,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: conversationId,
+                channelId: channelId,
+                invokeAsync: async () =>
+                {
+                    var result = await RawInvokeToolAsync(tools, W365EndSessionToolName, args, ct);
+                    return result?.ToString() ?? string.Empty;
+                }).ConfigureAwait(false);
             logger.LogInformation("W365 session ended");
         }
         catch (ObjectDisposedException)
@@ -949,7 +1035,13 @@ public class ComputerUseOrchestrator
             foreach (var sessionId in session.W365SessionIds.ToArray())
             {
                 _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
-                await EndSessionAsync(_cachedTools, _logger, sessionId, CancellationToken.None);
+                await EndSessionAsync(
+                    _cachedTools,
+                    _logger,
+                    sessionId,
+                    CancellationToken.None,
+                    conversationId: session.ConversationId,
+                    channelId: session.ChannelId);
             }
         }
 
@@ -1290,7 +1382,13 @@ public class ComputerUseOrchestrator
                 if (actionType != "screenshot")
                 {
                     var (toolName, args) = MapActionToMcpTool(actionType, action, session.W365SessionId);
-                    var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
+                    var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(
+                        tools,
+                        mcpClient,
+                        toolName,
+                        args,
+                        session,
+                        ct);
                     if (sessionLost)
                     {
                         if (onStatus != null) { await onStatus("Session lost — recovering..."); }
@@ -1313,7 +1411,13 @@ public class ComputerUseOrchestrator
             if (actionType != "screenshot")
             {
                 var (toolName, args) = MapActionToMcpTool(actionType, singleAction, session.W365SessionId);
-                var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(tools, mcpClient, toolName, args, ct);
+                var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(
+                    tools,
+                    mcpClient,
+                    toolName,
+                    args,
+                    session,
+                    ct);
                 if (sessionLost)
                 {
                     if (onStatus != null) { await onStatus("Session lost — recovering..."); }
@@ -1440,23 +1544,45 @@ public class ComputerUseOrchestrator
         return mapped;
     }
 
-    private async Task<string> CaptureScreenshotAsync(IList<AITool> tools, IMcpClient? mcpClient, string? sessionId, CancellationToken ct)
+    private async Task<string> CaptureScreenshotAsync(
+        IList<AITool> tools,
+        IMcpClient? mcpClient,
+        ConversationSession session,
+        CancellationToken ct)
     {
         var screenshotArgs = new Dictionary<string, object?>();
-        AddSessionId(screenshotArgs, sessionId);
+        AddSessionId(screenshotArgs, session.W365SessionId);
 
         // Use direct MCP client when available — AIFunction wrappers drop image content blocks
         if (mcpClient != null)
         {
-            var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
+            var rawResultJson = await ToolTelemetry.InvokeAsync(
+                toolName: "take_screenshot",
+                arguments: screenshotArgs,
+                toolCallId: null,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
+                    return JsonSerializer.Serialize(result);
+                }).ConfigureAwait(false);
 
             // Log full raw content on entry so we can diagnose new/unexpected shapes.
-            string? rawResultJson = null;
+            var contentBlockCount = 0;
             try
             {
-                rawResultJson = JsonSerializer.Serialize(result);
+                using var rawResultDocument = JsonDocument.Parse(rawResultJson);
+                if (TryGetProperty(rawResultDocument.RootElement, "content", out var content)
+                    && content.ValueKind == JsonValueKind.Array)
+                {
+                    contentBlockCount = content.GetArrayLength();
+                }
+
                 _logger.LogDebug("take_screenshot returned {Count} content blocks. Raw JSON (truncated): {Raw}",
-                    result.Content.Count, rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
+                    contentBlockCount, rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
             }
             catch (Exception logEx)
             {
@@ -1466,33 +1592,16 @@ public class ComputerUseOrchestrator
             // Detect MCP error responses and surface the real reason (e.g. "no pool with an available
             // session was found") instead of falling through to the image-extractor and reporting the
             // misleading "no extractable image data" message.
-            if (!string.IsNullOrEmpty(rawResultJson) && TryExtractToolError(rawResultJson, out var toolErrorText))
+            if (TryExtractToolError(rawResultJson, out var toolErrorText))
             {
                 throw new InvalidOperationException($"Error calling tool 'take_screenshot': {toolErrorText}");
-            }
-
-            foreach (var item in result.Content)
-            {
-                _logger.LogDebug("Screenshot content block: Type={Type}, DataLen={DataLen}, TextLen={TextLen}, MimeType={Mime}",
-                    item.Type, item.Data?.Length ?? 0, item.Text?.Length ?? 0, item.MimeType);
-
-                if (item.Type == "image" && !string.IsNullOrEmpty(item.Data))
-                    return item.Data;
-                if (!string.IsNullOrEmpty(item.Data))
-                    return item.Data;
-                if (item.Type == "text" && !string.IsNullOrEmpty(item.Text))
-                {
-                    var nested = ExtractBase64FromText(item.Text);
-                    if (!string.IsNullOrEmpty(nested)) return nested;
-                }
             }
 
             // Fallback: serialize to JSON and hunt for any base64-looking PNG payload in string fields.
             // Covers MCP "resource" blocks (blob), embedded data URLs, or other unexpected shapes.
             try
             {
-                var rawJson = JsonSerializer.Serialize(result.Content);
-                var extracted = ExtractPngBase64FromJson(rawJson);
+                var extracted = ExtractPngBase64FromJson(rawResultJson);
                 if (!string.IsNullOrEmpty(extracted))
                 {
                     _logger.LogInformation("Extracted PNG base64 from take_screenshot via JSON scan ({Length} chars).", extracted.Length);
@@ -1504,21 +1613,26 @@ public class ComputerUseOrchestrator
                 _logger.LogWarning(scanEx, "JSON-scan fallback for take_screenshot threw.");
             }
 
-            // Per-block warning with as much detail as possible before we give up.
-            foreach (var item in result.Content)
-                _logger.LogWarning("Unhandled screenshot block: Type={Type}, MimeType={Mime}, DataLen={DataLen}, TextLen={TextLen}, TextPreview={Preview}",
-                    item.Type, item.MimeType, item.Data?.Length ?? 0, item.Text?.Length ?? 0,
-                    item.Text?[..Math.Min(200, item.Text.Length)]);
-
-            throw new InvalidOperationException($"Screenshot MCP response had {result.Content.Count} content blocks but no extractable image data. See preceding log lines for the raw shape.");
+            throw new InvalidOperationException($"Screenshot MCP response had {contentBlockCount} content blocks but no extractable image data. See preceding log lines for the raw shape.");
         }
 
         // Fallback: AIFunction wrapper (may lose image content)
-        var aiResult = await InvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
-        var str = aiResult?.ToString() ?? "";
+        var str = await ToolTelemetry.InvokeAsync(
+            toolName: "take_screenshot",
+            arguments: screenshotArgs,
+            toolCallId: null,
+            toolServerName: "w365",
+            endpoint: null,
+            conversationId: session.ConversationId,
+            channelId: session.ChannelId,
+            invokeAsync: async () =>
+            {
+                var aiResult = await RawInvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
+                return aiResult?.ToString() ?? "";
+            }).ConfigureAwait(false);
 
         _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
-            aiResult?.GetType().Name ?? "null", str.Length, str[..Math.Min(200, str.Length)]);
+            "string", str.Length, str[..Math.Min(200, str.Length)]);
 
         try
         {
@@ -1607,6 +1721,8 @@ public class ComputerUseOrchestrator
                 case JsonValueKind.String:
                     var s = el.GetString();
                     if (string.IsNullOrEmpty(s)) break;
+                    var nested = ExtractBase64FromText(s);
+                    if (!string.IsNullOrEmpty(nested)) return nested;
                     // Data URL form: strip the prefix, return the base64 body.
                     var dataPrefix = "data:image/png;base64,";
                     var dataIdx = s.IndexOf(dataPrefix, StringComparison.OrdinalIgnoreCase);
@@ -1622,6 +1738,26 @@ public class ComputerUseOrchestrator
     internal static async Task<object?> InvokeToolAsync(
         IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
     {
+        var result = await ToolTelemetry.InvokeAsync(
+            toolName: name,
+            arguments: args,
+            toolCallId: null,
+            toolServerName: "mcp",
+            endpoint: null,
+            conversationId: null,
+            channelId: null,
+            invokeAsync: async () =>
+            {
+                var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
+                return raw?.ToString() ?? string.Empty;
+            }).ConfigureAwait(false);
+
+        return result;
+    }
+
+    private static async Task<object?> RawInvokeToolAsync(
+        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    {
         var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? throw new InvalidOperationException($"Tool '{name}' not found.");
         return await tool.InvokeAsync(new AIFunctionArguments(args), ct);
@@ -1632,18 +1768,42 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient,
         string name,
         Dictionary<string, object?> args,
-        CancellationToken ct)
+        ConversationSession session,
+        CancellationToken ct,
+        string? toolCallId = null)
     {
         string resultStr;
         if (mcpClient != null)
         {
-            var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
-            resultStr = JsonSerializer.Serialize(result);
+            resultStr = await ToolTelemetry.InvokeAsync(
+                toolName: name,
+                arguments: args,
+                toolCallId: toolCallId,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
+                    return JsonSerializer.Serialize(result);
+                }).ConfigureAwait(false);
         }
         else
         {
-            var result = await InvokeToolAsync(tools, name, args, ct);
-            resultStr = result?.ToString() ?? string.Empty;
+            resultStr = await ToolTelemetry.InvokeAsync(
+                toolName: name,
+                arguments: args,
+                toolCallId: toolCallId,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
+                    return raw?.ToString() ?? string.Empty;
+                }).ConfigureAwait(false);
         }
 
         if (TryExtractToolError(resultStr, out var errorText))
@@ -1664,6 +1824,18 @@ public class ComputerUseOrchestrator
         IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
     {
         var result = await InvokeToolAsync(tools, name, args, ct);
+        if (TryExtractToolError(result?.ToString(), out var errorText))
+        {
+            throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
+        }
+
+        return result;
+    }
+
+    private static async Task<object?> RawInvokeToolThrowOnErrorAsync(
+        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
+    {
+        var result = await RawInvokeToolAsync(tools, name, args, ct);
         if (TryExtractToolError(result?.ToString(), out var errorText))
         {
             throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
@@ -1790,12 +1962,25 @@ public class ComputerUseOrchestrator
     /// Invoke a tool and detect session-not-found errors. Returns (result, isSessionLost).
     /// </summary>
     private async Task<(string Result, bool IsSessionLost)> InvokeW365ToolCheckSessionAsync(
-        IList<AITool> tools, IMcpClient? mcpClient, string name, Dictionary<string, object?> args, CancellationToken ct)
+        IList<AITool> tools,
+        IMcpClient? mcpClient,
+        string name,
+        Dictionary<string, object?> args,
+        ConversationSession session,
+        CancellationToken ct,
+        string? toolCallId = null)
     {
         string resultStr;
         try
         {
-            resultStr = await InvokeW365ToolAsync(tools, mcpClient, name, args, ct);
+            resultStr = await InvokeW365ToolAsync(
+                tools,
+                mcpClient,
+                name,
+                args,
+                session,
+                ct,
+                toolCallId: toolCallId);
         }
         catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
         {
@@ -1831,7 +2016,13 @@ public class ComputerUseOrchestrator
 
         try
         {
-            await EndSessionAsync(tools, logger, session.W365SessionId, ct);
+            await EndSessionAsync(
+                tools,
+                logger,
+                session.W365SessionId,
+                ct,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId);
             await DisposeW365McpClientAsync(session.W365SessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1868,11 +2059,19 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient,
         string toolName,
         Dictionary<string, object?> args,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? toolCallId = null)
     {
         await RecoverAndStartFreshSessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
         AddSessionId(args, session.W365SessionId);
-        return await InvokeW365ToolAsync(w365Tools, mcpClient, toolName, args, ct);
+        return await InvokeW365ToolAsync(
+            w365Tools,
+            mcpClient,
+            toolName,
+            args,
+            session,
+            ct,
+            toolCallId: toolCallId);
     }
 
     /// <summary>
@@ -1891,6 +2090,7 @@ public class ComputerUseOrchestrator
         Func<string, Task>? onStatusUpdate,
         CancellationToken ct)
     {
+        var callId = functionCall.GetProperty("call_id").GetString();
         var argsStr = "{}";
         if (functionCall.TryGetProperty("arguments", out var argsProp))
         {
@@ -1920,11 +2120,26 @@ public class ComputerUseOrchestrator
 
             AddSessionId(args, session.W365SessionId);
 
-            var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(w365Tools, mcpClient, toolName, args, ct);
+            var (result, sessionLost) = await InvokeW365ToolCheckSessionAsync(
+                w365Tools,
+                mcpClient,
+                toolName,
+                args,
+                session,
+                ct,
+                toolCallId: callId);
             if (sessionLost)
             {
                 if (onStatusUpdate != null) await onStatusUpdate("Session lost — recovering...");
-                return await RecoverAndRetryToolAsync(session, w365Tools, additionalTools, mcpClient, toolName, args, ct);
+                return await RecoverAndRetryToolAsync(
+                    session,
+                    w365Tools,
+                    additionalTools,
+                    mcpClient,
+                    toolName,
+                    args,
+                    ct,
+                    toolCallId: callId);
             }
 
             return result;
@@ -1964,14 +2179,14 @@ public class ComputerUseOrchestrator
     {
         try
         {
-            return await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, ct);
+            return await CaptureScreenshotAsync(w365Tools, mcpClient, session, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException && IsRecoverableSessionLoss(ex))
         {
             _logger.LogWarning(ex, "Screenshot failed because the W365 session was lost — starting a new session and retrying.");
             if (onStatusUpdate != null) await onStatusUpdate("Session expired — starting a new W365 session...");
             await RecoverAndStartFreshSessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
-            return await CaptureScreenshotAsync(w365Tools, mcpClient, session.W365SessionId, ct);
+            return await CaptureScreenshotAsync(w365Tools, mcpClient, session, ct);
         }
     }
 
@@ -2182,8 +2397,19 @@ public class ComputerUseOrchestrator
                 args["sessionId"] = session.W365SessionId;
             }
 
-            var result = await InvokeToolAsync(tools, name, args, ct);
-            var resultStr = result?.ToString() ?? "success";
+            var resultStr = await ToolTelemetry.InvokeAsync(
+                toolName: name,
+                arguments: args,
+                toolCallId: callId,
+                toolServerName: "mcp",
+                endpoint: null,
+                conversationId: session.ConversationId,
+                channelId: session.ChannelId,
+                invokeAsync: async () =>
+                {
+                    var result = await RawInvokeToolAsync(tools, name, args, ct);
+                    return result?.ToString() ?? "success";
+                }).ConfigureAwait(false);
             _logger.LogInformation("Function call {Name} returned ({Length} chars): {Result}",
                 name, resultStr.Length, Truncate(resultStr, 2000));
 
@@ -2390,6 +2616,8 @@ public class ComputerUseOrchestrator
         public List<JsonElement> ConversationHistory { get; } = [];
         public int ScreenshotCounter { get; set; }
         public string? ScreenshotSubfolder { get; set; }
+        public string? ConversationId { get; set; }
+        public string? ChannelId { get; set; }
         public bool FolderShared { get; set; }
 
         /// <summary>
