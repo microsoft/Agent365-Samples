@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
@@ -37,12 +37,11 @@ public static class A365OtelWrapper
 
                 try
                 {
-                    agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
-                    {
-                        UserAuthorization = authSystem,
-                        TurnContext = turnContext,
-                        AuthHandlerName = authHandlerName
-                    }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                    agentTokenCache?.RegisterObservability(
+                        agentId,
+                        tenantId,
+                        new AgenticTokenStruct(authSystem, turnContext, authHandlerName, null),
+                        EnvironmentUtils.GetObservabilityAuthenticationScope());
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

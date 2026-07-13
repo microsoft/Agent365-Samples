@@ -4,7 +4,7 @@
 using System.Net.Http.Headers;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.Builder;
