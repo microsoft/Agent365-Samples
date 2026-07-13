@@ -78,8 +78,11 @@ public sealed record Agent365TelemetryContext
         agentBlueprintId = FirstNonEmpty(
             ReadBaggage(currentActivity, "microsoft.a365.agent.blueprint.id"),
             agentBlueprintId);
-        var conversationId = FirstNonEmpty(turnContext.Activity.Conversation?.Id, Guid.NewGuid().ToString("D"))!;
-        var sessionId = conversationId;
+        var conversationId = FirstNonEmpty(
+            turnContext.Activity.Conversation?.Id,
+            ReadBaggage(currentActivity, "gen_ai.conversation.id"),
+            Guid.NewGuid().ToString("D"))!;
+        var sessionId = FirstNonEmpty(ReadBaggage(currentActivity, "microsoft.session.id"), conversationId);
         var runtimeEndpoint = TryCreateEndpoint(turnContext.Activity.ServiceUrl, null);
         var baggageChannelLink = ReadBaggage(currentActivity, "microsoft.channel.link");
         var baggageEndpoint = TryCreateEndpoint(baggageChannelLink, null);
