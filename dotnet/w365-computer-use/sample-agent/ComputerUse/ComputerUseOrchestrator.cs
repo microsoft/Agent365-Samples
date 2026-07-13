@@ -496,6 +496,7 @@ public class ComputerUseOrchestrator
             _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
         }
 
+        var activeSessionIdBeforeRequestedSelection = session.W365SessionId;
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
         {
             session.TrackAndSelectSession(requestedSessionId);
@@ -829,26 +830,43 @@ public class ComputerUseOrchestrator
                                 session,
                                 cancellationToken,
                                 toolCallId: callId);
-                            if (detailsSessionLost
-                                && string.Equals(
-                                    sessionIdToInspect,
-                                    session.W365SessionId,
-                                    StringComparison.OrdinalIgnoreCase))
+                            if (detailsSessionLost)
                             {
-                                if (onStatusUpdate != null)
+                                if (!string.IsNullOrWhiteSpace(activeSessionIdBeforeRequestedSelection)
+                                    && string.Equals(
+                                    sessionIdToInspect,
+                                    activeSessionIdBeforeRequestedSelection,
+                                    StringComparison.OrdinalIgnoreCase))
                                 {
-                                    await onStatusUpdate("Session expired — starting a new W365 session...");
-                                }
+                                    session.TrackAndSelectSession(activeSessionIdBeforeRequestedSelection);
+                                    if (onStatusUpdate != null)
+                                    {
+                                        await onStatusUpdate("Session expired — starting a new W365 session...");
+                                    }
 
-                                detailsResult = await RecoverAndRetryToolAsync(
-                                    session,
-                                    w365Tools,
-                                    additionalTools,
-                                    mcpClient,
-                                    W365GetSessionDetailsToolName,
-                                    args,
-                                    cancellationToken,
-                                    toolCallId: callId);
+                                    detailsResult = await RecoverAndRetryToolAsync(
+                                        session,
+                                        w365Tools,
+                                        additionalTools,
+                                        mcpClient,
+                                        W365GetSessionDetailsToolName,
+                                        args,
+                                        cancellationToken,
+                                        toolCallId: callId);
+                                }
+                                else
+                                {
+                                    await DisposeW365McpClientAsync(sessionIdToInspect);
+                                    session.RemoveSession(sessionIdToInspect);
+                                    if (!string.IsNullOrWhiteSpace(activeSessionIdBeforeRequestedSelection))
+                                    {
+                                        session.TrackAndSelectSession(activeSessionIdBeforeRequestedSelection);
+                                    }
+                                    else
+                                    {
+                                        session.ClearActiveSession();
+                                    }
+                                }
                             }
 
                             session.ConversationHistory.Add(CreateFunctionOutput(
@@ -927,11 +945,11 @@ public class ComputerUseOrchestrator
             lifecycleTools.AddRange(additionalTools);
         }
 
-        string resultStr;
+        string? startedSessionId = null;
         var startArgs = new Dictionary<string, object?>();
         if (mcpClient != null)
         {
-            resultStr = await ToolTelemetry.InvokeAsync(
+            await ToolTelemetry.InvokeAsync(
                 toolName: W365StartSessionToolName,
                 arguments: startArgs,
                 toolCallId: toolCallId,
@@ -942,12 +960,14 @@ public class ComputerUseOrchestrator
                 invokeAsync: async () =>
                 {
                     var result = await mcpClient.CallToolAsync(W365StartSessionToolName, startArgs, cancellationToken: ct);
-                    return JsonSerializer.Serialize(result);
+                    var serializedResult = JsonSerializer.Serialize(result);
+                    startedSessionId = ValidateStartSessionResult(serializedResult);
+                    return serializedResult;
                 }).ConfigureAwait(false);
         }
         else
         {
-            resultStr = await ToolTelemetry.InvokeAsync(
+            await ToolTelemetry.InvokeAsync(
                 toolName: W365StartSessionToolName,
                 arguments: startArgs,
                 toolCallId: toolCallId,
@@ -957,24 +977,19 @@ public class ComputerUseOrchestrator
                 channelId: session.ChannelId,
                 invokeAsync: async () =>
                 {
-                    var result = await RawInvokeToolThrowOnErrorAsync(
+                    var result = await RawInvokeToolAsync(
                         lifecycleTools,
                         W365StartSessionToolName,
                         startArgs,
                         ct);
-                    return result?.ToString() ?? string.Empty;
+                    var rawResult = result?.ToString() ?? string.Empty;
+                    startedSessionId = ValidateStartSessionResult(rawResult);
+                    return rawResult;
                 }).ConfigureAwait(false);
         }
 
-        if (TryExtractToolError(resultStr, out var errorText))
-        {
-            throw new InvalidOperationException($"Error calling tool '{W365StartSessionToolName}': {errorText}");
-        }
-
-        if (!TryExtractStringProperty(resultStr, "sessionId", out var sessionId))
-        {
-            throw new InvalidOperationException($"Tool '{W365StartSessionToolName}' did not return a sessionId.");
-        }
+        var sessionId = startedSessionId
+            ?? throw new InvalidOperationException($"Tool '{W365StartSessionToolName}' telemetry completed without capturing a validated sessionId.");
 
         session.TrackAndSelectSession(sessionId);
         _logger.LogInformation("Started explicit W365 session {SessionId}", sessionId);
@@ -1625,7 +1640,8 @@ public class ComputerUseOrchestrator
         // Use direct MCP client when available — AIFunction wrappers drop image content blocks
         if (mcpClient != null)
         {
-            var rawResultJson = await ToolTelemetry.InvokeAsync(
+            string? screenshotBase64 = null;
+            await ToolTelemetry.InvokeAsync(
                 toolName: "take_screenshot",
                 arguments: screenshotArgs,
                 toolCallId: null,
@@ -1636,57 +1652,31 @@ public class ComputerUseOrchestrator
                 invokeAsync: async () =>
                 {
                     var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
-                    return JsonSerializer.Serialize(result);
+                    var serializedResult = JsonSerializer.Serialize(result);
+                    ThrowIfW365ToolError("take_screenshot", serializedResult);
+                    var extracted = ExtractScreenshotBase64(serializedResult, out var contentBlockCount);
+                    _logger.LogDebug(
+                        "take_screenshot returned {ContentBlockCount} content blocks. Response length: {ResponseLength}; extracted image length: {ImageLength}.",
+                        contentBlockCount,
+                        serializedResult.Length,
+                        extracted?.Length ?? 0);
+                    if (string.IsNullOrEmpty(extracted))
+                    {
+                        throw new InvalidOperationException(
+                            $"Screenshot MCP response had {contentBlockCount} content blocks but no extractable image data. Response length: {serializedResult.Length}.");
+                    }
+
+                    screenshotBase64 = extracted;
+                    return serializedResult;
                 }).ConfigureAwait(false);
 
-            // Log full raw content on entry so we can diagnose new/unexpected shapes.
-            var contentBlockCount = 0;
-            try
-            {
-                using var rawResultDocument = JsonDocument.Parse(rawResultJson);
-                if (TryGetProperty(rawResultDocument.RootElement, "content", out var content)
-                    && content.ValueKind == JsonValueKind.Array)
-                {
-                    contentBlockCount = content.GetArrayLength();
-                }
-
-                _logger.LogDebug("take_screenshot returned {Count} content blocks. Raw JSON (truncated): {Raw}",
-                    contentBlockCount, rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
-            }
-            catch (Exception logEx)
-            {
-                _logger.LogWarning(logEx, "Failed to serialize take_screenshot response for logging.");
-            }
-
-            // Detect MCP error responses and surface the real reason (e.g. "no pool with an available
-            // session was found") instead of falling through to the image-extractor and reporting the
-            // misleading "no extractable image data" message.
-            if (TryExtractToolError(rawResultJson, out var toolErrorText))
-            {
-                throw new InvalidOperationException($"Error calling tool 'take_screenshot': {toolErrorText}");
-            }
-
-            // Fallback: serialize to JSON and hunt for any base64-looking PNG payload in string fields.
-            // Covers MCP "resource" blocks (blob), embedded data URLs, or other unexpected shapes.
-            try
-            {
-                var extracted = ExtractPngBase64FromJson(rawResultJson);
-                if (!string.IsNullOrEmpty(extracted))
-                {
-                    _logger.LogInformation("Extracted PNG base64 from take_screenshot via JSON scan ({Length} chars).", extracted.Length);
-                    return extracted;
-                }
-            }
-            catch (Exception scanEx)
-            {
-                _logger.LogWarning(scanEx, "JSON-scan fallback for take_screenshot threw.");
-            }
-
-            throw new InvalidOperationException($"Screenshot MCP response had {contentBlockCount} content blocks but no extractable image data. See preceding log lines for the raw shape.");
+            return screenshotBase64
+                ?? throw new InvalidOperationException("Screenshot tool telemetry completed without capturing validated image data.");
         }
 
         // Fallback: AIFunction wrapper (may lose image content)
-        var str = await ToolTelemetry.InvokeAsync(
+        string? fallbackScreenshotBase64 = null;
+        await ToolTelemetry.InvokeAsync(
             toolName: "take_screenshot",
             arguments: screenshotArgs,
             toolCallId: null,
@@ -1697,48 +1687,109 @@ public class ComputerUseOrchestrator
             invokeAsync: async () =>
             {
                 var aiResult = await RawInvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
-                return aiResult?.ToString() ?? "";
+                var rawResult = aiResult?.ToString() ?? "";
+                ThrowIfW365ToolError("take_screenshot", rawResult);
+                var extracted = ExtractScreenshotBase64(rawResult, out var contentBlockCount);
+                _logger.LogInformation(
+                    "Screenshot fallback response length={ResponseLength}, content blocks={ContentBlockCount}, extracted image length={ImageLength}",
+                    rawResult.Length,
+                    contentBlockCount,
+                    extracted?.Length ?? 0);
+                if (string.IsNullOrEmpty(extracted))
+                {
+                    throw new InvalidOperationException($"Failed to extract screenshot. Response length: {rawResult.Length}");
+                }
+
+                fallbackScreenshotBase64 = extracted;
+                return rawResult;
             }).ConfigureAwait(false);
 
-        _logger.LogInformation("Screenshot fallback: result type={Type}, length={Length}, preview={Preview}",
-            "string", str.Length, str[..Math.Min(200, str.Length)]);
+        return fallbackScreenshotBase64
+            ?? throw new InvalidOperationException("Screenshot tool telemetry completed without capturing validated image data.");
+    }
 
+    private static string? ExtractScreenshotBase64(string result, out int contentBlockCount)
+    {
+        contentBlockCount = 0;
         try
         {
-            using var doc = JsonDocument.Parse(str);
+            using var doc = JsonDocument.Parse(result);
             var root = doc.RootElement;
-            if (root.TryGetProperty("screenshotData", out var sd)) return sd.GetString() ?? "";
-            if (root.TryGetProperty("image", out var img)) return img.GetString() ?? "";
-            if (root.TryGetProperty("data", out var d)) return d.GetString() ?? "";
+            var hasContentBlocks = TryGetProperty(root, "content", out var content)
+                && content.ValueKind == JsonValueKind.Array;
+            if (hasContentBlocks)
+            {
+                contentBlockCount = content.GetArrayLength();
+            }
+
+            if (TryGetProperty(root, "screenshotData", out var screenshotData)
+                && screenshotData.ValueKind == JsonValueKind.String)
+            {
+                var extracted = NormalizeScreenshotBase64(screenshotData.GetString());
+                if (!string.IsNullOrEmpty(extracted)) return extracted;
+            }
+            if (TryGetProperty(root, "image", out var image)
+                && image.ValueKind == JsonValueKind.String)
+            {
+                var extracted = NormalizeScreenshotBase64(image.GetString());
+                if (!string.IsNullOrEmpty(extracted)) return extracted;
+            }
+            if (TryGetProperty(root, "data", out var topLevelData)
+                && topLevelData.ValueKind == JsonValueKind.String)
+            {
+                var extracted = NormalizeScreenshotBase64(topLevelData.GetString());
+                if (!string.IsNullOrEmpty(extracted)) return extracted;
+            }
 
             // Try nested content array (SDK gateway format)
-            if (root.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            if (hasContentBlocks)
             {
                 foreach (var block in content.EnumerateArray())
                 {
-                    if (block.TryGetProperty("data", out var blockData))
+                    if (TryGetProperty(block, "data", out var blockData)
+                        && blockData.ValueKind == JsonValueKind.String)
                     {
-                        var data = blockData.GetString();
-                        if (!string.IsNullOrEmpty(data)) return data;
+                        var blockDataValue = NormalizeScreenshotBase64(blockData.GetString());
+                        if (!string.IsNullOrEmpty(blockDataValue)) return blockDataValue;
                     }
-                    if (block.TryGetProperty("text", out var blockText))
+                    if (TryGetProperty(block, "text", out var blockText)
+                        && blockText.ValueKind == JsonValueKind.String)
                     {
-                        var extracted = ExtractBase64FromText(blockText.GetString());
+                        var extracted = NormalizeScreenshotBase64(ExtractBase64FromText(blockText.GetString()));
                         if (!string.IsNullOrEmpty(extracted)) return extracted;
                     }
                 }
             }
+
+            var nestedExtracted = ExtractPngBase64FromJson(result);
+            if (!string.IsNullOrEmpty(nestedExtracted))
+            {
+                return nestedExtracted;
+            }
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            _logger.LogDebug(ex, "ExtractScreenshot: response was not valid JSON, will try last-resort raw base64 detection");
+            // Fall through to last-resort raw base64 detection.
         }
 
         // Last resort: if it looks like raw base64 (long string, no JSON), use it directly
-        if (str.Length > 1000 && !str.StartsWith("{") && !str.StartsWith("["))
-            return str;
+        if (result.Length > 1000 && !result.StartsWith("{") && !result.StartsWith("["))
+        {
+            return NormalizeScreenshotBase64(result);
+        }
 
-        throw new InvalidOperationException($"Failed to extract screenshot. Response length: {str.Length}");
+        return null;
+    }
+
+    private static string? NormalizeScreenshotBase64(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+
+        const string dataPrefix = "data:image/png;base64,";
+        var dataIndex = value.IndexOf(dataPrefix, StringComparison.OrdinalIgnoreCase);
+        return dataIndex >= 0
+            ? value[(dataIndex + dataPrefix.Length)..]
+            : value;
     }
 
     private static string? ExtractBase64FromText(string? text)
@@ -1748,9 +1799,21 @@ public class ComputerUseOrchestrator
         {
             using var doc = JsonDocument.Parse(text);
             var root = doc.RootElement;
-            if (root.TryGetProperty("screenshotData", out var sd)) return sd.GetString();
-            if (root.TryGetProperty("image", out var img)) return img.GetString();
-            if (root.TryGetProperty("data", out var d)) return d.GetString();
+            if (TryGetProperty(root, "screenshotData", out var screenshotData)
+                && screenshotData.ValueKind == JsonValueKind.String)
+            {
+                return NormalizeScreenshotBase64(screenshotData.GetString());
+            }
+            if (TryGetProperty(root, "image", out var image)
+                && image.ValueKind == JsonValueKind.String)
+            {
+                return NormalizeScreenshotBase64(image.GetString());
+            }
+            if (TryGetProperty(root, "data", out var data)
+                && data.ValueKind == JsonValueKind.String)
+            {
+                return NormalizeScreenshotBase64(data.GetString());
+            }
         }
         catch (JsonException)
         {
@@ -1921,24 +1984,23 @@ public class ComputerUseOrchestrator
         return result;
     }
 
-    private static async Task<object?> RawInvokeToolThrowOnErrorAsync(
-        IList<AITool> tools, string name, Dictionary<string, object?> args, CancellationToken ct)
-    {
-        var result = await RawInvokeToolAsync(tools, name, args, ct);
-        if (TryExtractToolError(result?.ToString(), out var errorText))
-        {
-            throw new InvalidOperationException($"Error calling tool '{name}': {errorText}");
-        }
-
-        return result;
-    }
-
     private static void ThrowIfW365ToolError(string toolName, string result)
     {
         if (TryExtractToolError(result, out var errorText))
         {
             throw new InvalidOperationException($"Error calling tool '{toolName}': {errorText}");
         }
+    }
+
+    private static string ValidateStartSessionResult(string result)
+    {
+        ThrowIfW365ToolError(W365StartSessionToolName, result);
+        if (!TryExtractStringProperty(result, "sessionId", out var sessionId))
+        {
+            throw new InvalidOperationException($"Tool '{W365StartSessionToolName}' did not return a sessionId.");
+        }
+
+        return sessionId;
     }
 
     /// <summary>
