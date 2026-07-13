@@ -13,6 +13,7 @@ using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Client;
 
 namespace W365ComputerUseSample.Agent;
@@ -24,6 +25,8 @@ public class MyAgent : AgentApplication
     private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
     private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache;
+    private readonly ServiceTokenCache _observabilityTokenCache;
+    private readonly Agent365TelemetryOptions _agent365TelemetryOptions;
     private readonly ILogger<MyAgent> _logger;
     private readonly IMcpToolRegistrationService _toolService;
     private readonly ComputerUseOrchestrator _orchestrator;
@@ -97,11 +100,15 @@ public class MyAgent : AgentApplication
         AgentApplicationOptions options,
         IConfiguration configuration,
         IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
+        ServiceTokenCache observabilityTokenCache,
         IMcpToolRegistrationService toolService,
         ComputerUseOrchestrator orchestrator,
+        IOptions<Agent365TelemetryOptions> agent365TelemetryOptions,
         ILogger<MyAgent> logger) : base(options)
     {
         _agentTokenCache = agentTokenCache;
+        _observabilityTokenCache = observabilityTokenCache;
+        _agent365TelemetryOptions = agent365TelemetryOptions.Value;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
@@ -147,25 +154,43 @@ public class MyAgent : AgentApplication
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "WelcomeMessage",
             turnContext,
+            turnState,
+            _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
+            UserAuthorization,
+            GetObservabilityAuthHandlerName(turnContext),
+            _logger,
             async () =>
             {
                 var recipientId = turnContext.Activity.Recipient.Id;
                 var newMembers = turnContext.Activity.MembersAdded.Where(m => m.Id != recipientId);
+                var sentWelcome = false;
                 foreach (var _ in newMembers)
                 {
                     await turnContext.SendActivityAsync(AgentWelcomeMessage);
+                    sentWelcome = true;
                 }
+
+                return sentWelcome ? AgentWelcomeMessage : null;
             });
     }
 
     protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "InstallationUpdate",
             turnContext,
+            turnState,
+            _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
+            UserAuthorization,
+            GetObservabilityAuthHandlerName(turnContext),
+            _logger,
             async () =>
             {
                 _logger.LogInformation(
@@ -177,11 +202,15 @@ public class MyAgent : AgentApplication
                 if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+                    return AgentHireMessage;
                 }
                 else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+                    return AgentFarewellMessage;
                 }
+
+                return null;
             });
     }
 
@@ -201,7 +230,7 @@ public class MyAgent : AgentApplication
 
         // Agentic requests use the agentic handler; non-agentic requests fall back to env
         // bearer token / no auth (handled inside GetToolsAsync).
-        var ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
+        var ObservabilityAuthHandlerName = GetObservabilityAuthHandlerName(turnContext);
         var ToolAuthHandlerName = ObservabilityAuthHandlerName;
 
         await A365OtelWrapper.InvokeObservedAgentOperation(
@@ -209,8 +238,10 @@ public class MyAgent : AgentApplication
             turnContext,
             turnState,
             _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
             UserAuthorization,
-            ObservabilityAuthHandlerName ?? string.Empty,
+            ObservabilityAuthHandlerName,
             _logger,
             async () =>
             {
@@ -250,7 +281,7 @@ public class MyAgent : AgentApplication
                             includeCuaTool: false,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
-                        return;
+                        return directResponse;
                     }
 
                     // CUA path: SendActivity the "Got it" acknowledgment FIRST, before the streaming
@@ -285,7 +316,7 @@ public class MyAgent : AgentApplication
                             // Write the error into the streaming response so EndStreamAsync doesn't
                             // emit a confusing 'No text was streamed' alongside the real message.
                             turnContext.StreamingResponse.QueueTextChunk(errorMessage);
-                            return;
+                            return errorMessage;
                         }
 
                         // Get Graph token for OneDrive screenshot upload.
@@ -324,6 +355,7 @@ public class MyAgent : AgentApplication
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
+                        return response;
                     }
                     finally
                     {
@@ -337,6 +369,13 @@ public class MyAgent : AgentApplication
                     catch (ObjectDisposedException) { /* stream already disposed */ }
                 }
             });
+    }
+
+    private string GetObservabilityAuthHandlerName(ITurnContext turnContext)
+    {
+        return turnContext.IsAgenticRequest()
+            ? AgenticAuthHandlerName ?? string.Empty
+            : string.Empty;
     }
 
     /// <summary>
