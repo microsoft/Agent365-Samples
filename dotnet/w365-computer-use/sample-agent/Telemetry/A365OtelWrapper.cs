@@ -166,9 +166,6 @@ public static class A365OtelWrapper
     private static string[] GetInvokeAgentOutputMessages(string? outputMessage) =>
         string.IsNullOrWhiteSpace(outputMessage) ? [] : [outputMessage];
 
-    internal static string[] GetInvokeAgentOutputMessagesForTest(string? outputMessage) =>
-        GetInvokeAgentOutputMessages(outputMessage);
-
     private static void ForceInvokeAgentServerPortTag(
         InvokeAgentScope invokeAgentScope,
         Agent365TelemetryContext telemetryContext)

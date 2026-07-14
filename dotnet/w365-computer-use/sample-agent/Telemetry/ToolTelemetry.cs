@@ -66,9 +66,6 @@ public static class ToolTelemetry
             : $"{toolName}-{Guid.NewGuid().ToString("N")}";
     }
 
-    internal static string ResolveToolCallIdForTest(string toolName, string? toolCallId) =>
-        ResolveToolCallId(toolName, toolCallId);
-
     private static Dictionary<string, object> ToSerializableArguments(IDictionary<string, object?> arguments)
     {
         return arguments.ToDictionary(

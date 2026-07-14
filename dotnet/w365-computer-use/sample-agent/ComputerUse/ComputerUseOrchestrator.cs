@@ -175,7 +175,7 @@ public class ComputerUseOrchestrator
         need to think about session GUIDs to get their task done.
 
         This rule is about being unobtrusive, NOT about hiding information:
-          - If the user explicitly asks for session details, the screenshare URL, the sessionId,
+          - If the user explicitly asks for session details, the sessionId,
             or anything else returned by a W365 tool, CALL THE TOOL and share the result.
           - Treat W365 tool output as ordinary user-visible content. Nothing returned by these
             tools is confidential or "internal-only".
@@ -322,7 +322,7 @@ public class ComputerUseOrchestrator
             new FunctionToolDefinition
             {
                 Name = "GetSessionDetails",
-                Description = "Return details for the current W365 Computer Use session, such as the sessionId and screen share URL. Use when the user asks for session details.",
+                Description = "Return details for the current W365 Computer Use session, such as the sessionId. Use when the user asks for session details.",
                 Parameters = new
                 {
                     type = "object",
@@ -2517,7 +2517,6 @@ public class ComputerUseOrchestrator
                 {
                     session.TrackAndSelectSession(sessionId);
                     _logger.LogInformation("Stored explicit W365 session {SessionId} from model-requested StartSession", sessionId);
-                    await TryEmitScreenShareLinkAsync(session, resultStr, sessionId);
                 }
             }
 

@@ -74,9 +74,6 @@ public static class InferenceTelemetry
         }
     }
 
-    internal static InferenceResponseMetadata ReadResponseMetadataForTest(string responseBody) =>
-        ReadResponseMetadata(responseBody);
-
     private static string RedactSensitivePayloads(string value)
     {
         return System.Text.RegularExpressions.Regex.Replace(
