@@ -1654,6 +1654,7 @@ public class ComputerUseOrchestrator
                     var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
                     var serializedResult = JsonSerializer.Serialize(result);
                     ThrowIfW365ToolError("take_screenshot", serializedResult);
+                    ThrowIfW365SessionLost(serializedResult);
                     var extracted = ExtractScreenshotBase64(serializedResult, out var contentBlockCount);
                     _logger.LogDebug(
                         "take_screenshot returned {ContentBlockCount} content blocks. Response length: {ResponseLength}; extracted image length: {ImageLength}.",
@@ -1689,6 +1690,7 @@ public class ComputerUseOrchestrator
                 var aiResult = await RawInvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
                 var rawResult = aiResult?.ToString() ?? "";
                 ThrowIfW365ToolError("take_screenshot", rawResult);
+                ThrowIfW365SessionLost(rawResult);
                 var extracted = ExtractScreenshotBase64(rawResult, out var contentBlockCount);
                 _logger.LogInformation(
                     "Screenshot fallback response length={ResponseLength}, content blocks={ContentBlockCount}, extracted image length={ImageLength}",
@@ -1922,6 +1924,7 @@ public class ComputerUseOrchestrator
                         var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
                         var serializedResult = JsonSerializer.Serialize(result);
                         ThrowIfW365ToolError(name, serializedResult);
+                        ThrowIfW365SessionLost(serializedResult);
                         return serializedResult;
                     }).ConfigureAwait(false);
             }
@@ -1940,6 +1943,7 @@ public class ComputerUseOrchestrator
                         var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
                         var rawResult = raw?.ToString() ?? string.Empty;
                         ThrowIfW365ToolError(name, rawResult);
+                        ThrowIfW365SessionLost(rawResult);
                         return rawResult;
                     }).ConfigureAwait(false);
             }
@@ -2149,6 +2153,14 @@ public class ComputerUseOrchestrator
         if (IsSessionNotFoundError(resultStr))
             return (resultStr, true);
         return (resultStr, false);
+    }
+
+    private static void ThrowIfW365SessionLost(string result)
+    {
+        if (IsSessionNotFoundError(result))
+        {
+            throw new InvalidOperationException(result);
+        }
     }
 
     /// <summary>
