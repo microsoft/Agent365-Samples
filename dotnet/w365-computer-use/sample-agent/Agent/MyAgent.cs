@@ -47,6 +47,7 @@ public class MyAgent : AgentApplication
     private readonly string _w365GatewayUrl;
 
     private readonly string? AgenticAuthHandlerName;
+    private readonly string? OboAuthHandlerName;
     private readonly string? W365AuthHandlerName;
 
     /// <summary>
@@ -108,10 +109,10 @@ public class MyAgent : AgentApplication
     {
         _agentTokenCache = agentTokenCache;
         _observabilityTokenCache = observabilityTokenCache;
-        _agent365TelemetryOptions = agent365TelemetryOptions.Value;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
+        _agent365TelemetryOptions = agent365TelemetryOptions.Value;
 
         // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
         _mcpServerUrls = configuration.GetSection("McpServers").Get<string[]>() ?? [];
@@ -131,7 +132,11 @@ public class MyAgent : AgentApplication
             ?? "https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse";
 
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
+        OboAuthHandlerName = configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
         W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
+
+        // Greet when members are added
+        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
         // Compute auth handler arrays once
         var agenticHandlers = new[] { AgenticAuthHandlerName, W365AuthHandlerName }
@@ -139,10 +144,7 @@ public class MyAgent : AgentApplication
             .Where(handler => !string.IsNullOrEmpty(handler))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-
-        // Greet when members are added
-        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync, autoSignInHandlers: agenticHandlers, isAgenticOnly: true);
-        OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync, isAgenticOnly: false);
+        var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : Array.Empty<string>();
 
         // Handle install/uninstall
         OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
@@ -150,7 +152,7 @@ public class MyAgent : AgentApplication
 
         // Handle messages — MUST BE AFTER any other message handlers
         OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
-        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false);
+        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
     }
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -165,19 +167,14 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             GetObservabilityAuthHandlerName(turnContext),
             _logger,
-            cancellationToken,
             async () =>
             {
-                var recipientId = turnContext.Activity.Recipient.Id;
-                var newMembers = turnContext.Activity.MembersAdded.Where(m => m.Id != recipientId);
-                var sentWelcome = false;
-                foreach (var _ in newMembers)
+                var membersToWelcome = turnContext.Activity.MembersAdded
+                    .Where(m => m.Id != turnContext.Activity.Recipient.Id);
+                foreach (var member in membersToWelcome)
                 {
                     await turnContext.SendActivityAsync(AgentWelcomeMessage);
-                    sentWelcome = true;
                 }
-
-                return sentWelcome ? AgentWelcomeMessage : null;
             });
     }
 
@@ -193,7 +190,6 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             GetObservabilityAuthHandlerName(turnContext),
             _logger,
-            cancellationToken,
             async () =>
             {
                 _logger.LogInformation(
@@ -205,15 +201,11 @@ public class MyAgent : AgentApplication
                 if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
-                    return AgentHireMessage;
                 }
                 else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
-                    return AgentFarewellMessage;
                 }
-
-                return null;
             });
     }
 
@@ -231,10 +223,17 @@ public class MyAgent : AgentApplication
             fromAccount?.Id ?? "(unknown)",
             fromAccount?.AadObjectId ?? "(none)");
 
-        // Agentic requests use the agentic handler; non-agentic requests fall back to env
-        // bearer token / no auth (handled inside GetToolsAsync).
+        // Select auth handler based on request type
+        string? ToolAuthHandlerName;
         var ObservabilityAuthHandlerName = GetObservabilityAuthHandlerName(turnContext);
-        var ToolAuthHandlerName = ObservabilityAuthHandlerName;
+        if (turnContext.IsAgenticRequest())
+        {
+            ToolAuthHandlerName = AgenticAuthHandlerName;
+        }
+        else
+        {
+            ToolAuthHandlerName = OboAuthHandlerName;
+        }
 
         await A365OtelWrapper.InvokeObservedAgentOperation(
             "MessageProcessor",
@@ -246,7 +245,6 @@ public class MyAgent : AgentApplication
             UserAuthorization,
             ObservabilityAuthHandlerName,
             _logger,
-            cancellationToken,
             async () =>
             {
                 // Typing indicator
@@ -265,7 +263,17 @@ public class MyAgent : AgentApplication
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
                     // W365 tool loading and explicit session startup entirely.
-                    var needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+                    //
+                    // Short-circuit when a W365 session is already active on this conversation:
+                    // the classifier sees the user's message in isolation, so short follow-ups
+                    // like "fix it!", "yes", "do it", "same session" carry no W365 keywords and
+                    // get misclassified as non-CUA. The LLM then runs without the computer-use
+                    // tool and silently no-ops (says "I'll fix it" but has no tool to act).
+                    // Once a session is live the cost of classifying is no longer worth the
+                    // risk of dropping a legitimate continuation.
+                    var hasActiveSession = _orchestrator.HasActiveW365Session(localSessionKey);
+                    var needsCua = hasActiveSession
+                        || await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
 
                     if (!needsCua)
                     {
@@ -283,8 +291,6 @@ public class MyAgent : AgentApplication
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
-                            telemetryConversationId: conversationId,
-                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
                         return directResponse;
@@ -357,8 +363,6 @@ public class MyAgent : AgentApplication
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
                                 MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
                             prestartedW365SessionId: prestartedW365SessionId,
-                            telemetryConversationId: conversationId,
-                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -383,7 +387,7 @@ public class MyAgent : AgentApplication
     {
         return turnContext.IsAgenticRequest()
             ? AgenticAuthHandlerName ?? string.Empty
-            : string.Empty;
+            : OboAuthHandlerName ?? string.Empty;
     }
 
     /// <summary>
@@ -468,6 +472,22 @@ public class MyAgent : AgentApplication
                         existingSessionId,
                         cancellationToken);
                     var additionalToolsForCua = Array.Empty<AITool>();
+
+                    // Reconnect delegate for in-turn session recovery: re-run the prod prestart path
+                    // with existingSessionId=null to mint a fresh session + client + bound tools.
+                    // Captures the turn's freshly-acquired access token (recovery happens within the
+                    // same turn, so the token is still valid).
+                    var capturedAccessToken = accessToken!;
+                    var capturedAgentId = agentId;
+                    ComputerUseOrchestrator.ReconnectW365Async reconnect = reconnectCt =>
+                        _orchestrator.StartDirectW365SessionAndListToolsAsync(
+                            _w365GatewayUrl,
+                            capturedAccessToken,
+                            capturedAgentId,
+                            context,
+                            existingSessionId: null,
+                            reconnectCt);
+                        
                     return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId);
                 }
 
@@ -556,15 +576,17 @@ public class MyAgent : AgentApplication
         var errorTool = additionalTools
             .OfType<AIFunction>()
             .FirstOrDefault(fn => string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase));
+        
         if (errorTool == null)
         {
             return null;
         }
 
         var description = errorTool.Description ?? string.Empty;
-        return ExtractQuotedField(description, "ExceptionMessage=")
+        var extracted = ExtractQuotedField(description, "ExceptionMessage=")
             ?? ExtractQuotedField(description, "Message=")
             ?? (string.IsNullOrWhiteSpace(description) ? null : description);
+        return extracted;
     }
 
     private static string? ExtractQuotedField(string source, string fieldPrefix)
