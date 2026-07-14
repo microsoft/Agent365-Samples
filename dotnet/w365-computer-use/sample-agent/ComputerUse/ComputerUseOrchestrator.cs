@@ -801,14 +801,26 @@ public class ComputerUseOrchestrator
                             }
 
                             var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
-                            await EndSessionAsync(
-                                w365Tools,
-                                _logger,
-                                sessionIdToEnd,
-                                cancellationToken,
-                                conversationId: session.ConversationId,
-                                channelId: session.ChannelId,
-                                toolCallId: callId);
+                            try
+                            {
+                                await EndSessionAsync(
+                                    w365Tools,
+                                    _logger,
+                                    sessionIdToEnd,
+                                    cancellationToken,
+                                    conversationId: session.ConversationId,
+                                    channelId: session.ChannelId,
+                                    toolCallId: callId);
+                            }
+                            catch (Exception ex) when (
+                                ex is not OperationCanceledException
+                                && (IsDisposedMcpClientFailure(ex) || IsRecoverableSessionLoss(ex)))
+                            {
+                                _logger.LogInformation(
+                                    "W365 session {SessionId} was already unavailable; completing local cleanup.",
+                                    sessionIdToEnd);
+                            }
+
                             await DisposeW365McpClientAsync(sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
