@@ -1,79 +1,91 @@
-# Windows 365 Computer Use Agent — .NET Sample
+# W365 Computer Use Sample
 
-This interactive .NET 8 agent uses the Microsoft 365 Agents SDK, the Azure OpenAI Responses API, and the Windows 365 Computer Use MCP server to complete natural-language tasks on a Cloud PC. It is a reference for explicit W365 session management, computer-use orchestration, agentic user authentication, and Agent 365 semantic observability.
+## Overview
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+This sample demonstrates how to build an agent that controls a Windows 365 Cloud PC using the OpenAI Responses API and the W365 Computer Use MCP server.
 
-## What This Sample Demonstrates
+The agent receives a natural language task from the user, provisions a W365 desktop session via MCP tools, then runs a CUA (Computer Use Agent) loop: the model sees screenshots, decides actions (click, type, scroll), and the MCP server executes them on the VM.
 
-| Pattern | Where |
-|---------|-------|
-| Interactive agent hosted at `/api/messages` | `Program.cs`, `Agent/MyAgent.cs` |
-| Azure OpenAI Responses API integration for computer-use models | `ComputerUse/AzureOpenAIModelProvider.cs` |
-| Explicit W365 MCP session startup, reuse, recovery, and cleanup | `ComputerUse/ComputerUseOrchestrator.cs`, `ComputerUse/W365McpSessionClient.cs` |
-| Agentic user authorization with a development bearer-token fallback | `Agent/MyAgent.cs`, `appsettings.json` |
-| Microsoft OpenTelemetry distro with Agent 365 export | `Telemetry/ObservabilityServiceCollectionExtensions.cs` |
-| Agent turn, inference, and tool semantic spans | `Telemetry/A365OtelWrapper.cs`, `Telemetry/InferenceTelemetry.cs`, `Telemetry/ToolTelemetry.cs` |
-| Shared Agent 365 baggage and activity context | `Telemetry/Agent365TelemetryContext.cs` |
-| Telemetry-only redaction of text and image data | `Telemetry/InferenceTelemetry.cs`, `Telemetry/ToolTelemetry.cs` |
+It supports two model types:
+- **`computer-use-preview`** - The original CUA model on Azure OpenAI
+- **`gpt-5.4` / `gpt-5.4-mini`** - Newer GPT models with built-in computer use capability
+
+## Architecture
+
+```
+User Message
+    |
+MyAgent (Agent Framework)
+    | connects to MCP server
+W365 MCP Tools (QuickStartSession, CaptureScreenshot, Click, Type, etc.)
+    | provisions and controls
+Windows 365 Cloud PC
+    | screenshots fed back to
+CUA Model (Azure OpenAI)
+    | emits computer_call actions
+ComputerUseOrchestrator (translates actions to MCP tool calls)
+    | loop until task complete
+Response to User
+```
+
+**Key components:**
+
+| File | Purpose |
+|------|---------|
+| `Agent/MyAgent.cs` | Message handler - acquires tokens, connects to MCP, runs orchestrator |
+| `ComputerUse/ComputerUseOrchestrator.cs` | CUA loop - sends screenshots to model, maps actions to MCP tools |
+| `ComputerUse/ICuaModelProvider.cs` | Abstraction for the CUA model API |
+| `ComputerUse/AzureOpenAIModelProvider.cs` | Azure OpenAI Responses API provider |
 
 ## Prerequisites
 
 - [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
-- An Azure OpenAI resource with a deployed `computer-use-preview`, `gpt-5.4`, or `gpt-5.4-mini` model
-- An Entra tenant with at minimum the **Agent ID Developer** role
-- Access to the Windows 365 Computer Use MCP server through the Agent 365 MCP Platform
-- A token with the Windows 365 for Agents `Tools.ListInvoke.All` permission
-- Optional: Microsoft Graph `Files.ReadWrite` permission for OneDrive screenshot uploads
+- Azure OpenAI resource with a CUA-capable model deployment:
+  - `computer-use-preview` or `gpt-5.4` / `gpt-5.4-mini`
+  - [Request access to gpt-5.4](https://aka.ms/OAI/gpt54access) if needed
+- Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/))
+- A bearer token with `Tools.ListInvoke.All` scope
 
-## Authentication + Identity
+## Setup
 
-| Aspect | Model |
-|--------|-------|
-| **Authentication** | Agent user |
-| **Identity** | Agent user with own identity |
+### 1. Clone the repository
 
-Production requests use the `agentic` and `w365` `AgenticUserAuthorization` handlers configured in `appsettings.json`; `Agent/MyAgent.cs` exchanges the current turn token for the required downstream resource. Local development can instead use `BEARER_TOKEN`, but that fallback does not provide the agentic turn token needed for Agent 365 export.
+```bash
+git clone https://github.com/microsoft/Agent365-Samples.git
+cd Agent365-Samples/dotnet/w365-computer-use/sample-agent
+```
 
-## Environment Configuration
+### 2. Restore dependencies
 
-### Agent 365 Setup
+```bash
+dotnet restore
+```
 
-1. Log in to Azure:
+### 3. Create your local configuration
 
-   ```bash
-   az login
-   ```
+Create `appsettings.Development.json` (this file is gitignored):
 
-2. Provision the blueprint, agent identity, and local settings:
+**For `computer-use-preview` model:**
+```json
+{
+  "AIServices": {
+    "Provider": "AzureOpenAI",
+    "AzureOpenAI": {
+      "DeploymentName": "computer-use-preview",
+      "Endpoint": "https://your-resource.openai.azure.com",
+      "ApiKey": "your-api-key"
+    }
+  },
+  "McpServer": {
+    "Url": "http://localhost:52857/mcp/environments/Default-{your-tenant-id}/servers/mcp_W365ComputerUse"
+  }
+}
+```
 
-   ```bash
-   cd dotnet/w365-computer-use/sample-agent
-   a365 setup all --agent-name <your-agent-name>
-   ```
+`DeploymentName` is treated as the model identifier fallback for compatibility with existing local settings. Azure OpenAI requests are sent to the v1 Responses endpoint (`/openai/v1/responses`), not the legacy deployment-style Responses URL. The selected `ModelName` or fallback `DeploymentName` is sent as the request body `model`.
 
-3. If required, have a Global Administrator grant admin consent for Agent 365 observability:
 
-   ```bash
-   a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-   ```
-
-   Also grant the agent the Windows 365 for Agents `Tools.ListInvoke.All` permission required by the `w365` authorization handler.
-
-4. Configure the Azure OpenAI values manually. The Agent 365 CLI does not provision the model deployment or API key. Store secrets in environment variables, .NET user secrets, or an uncommitted `appsettings.Development.json`:
-
-   ```powershell
-   $env:AIServices__AzureOpenAI__Endpoint = "https://your-resource.openai.azure.com"
-   $env:AIServices__AzureOpenAI__ApiKey = "<your-api-key>"
-   $env:AIServices__AzureOpenAI__ModelName = "gpt-5.4-mini"
-   ```
-
-### Configuration
-
-For local development, create `appsettings.Development.json`:
-
+**For `gpt-5.4-mini` model:**
 ```json
 {
   "AIServices": {
@@ -81,204 +93,152 @@ For local development, create `appsettings.Development.json`:
     "AzureOpenAI": {
       "ModelName": "gpt-5.4-mini",
       "Endpoint": "https://your-resource.openai.azure.com",
-      "ApiKey": "<<YOUR_API_KEY>>"
+      "ApiKey": "your-api-key"
     }
   },
   "McpServer": {
-    "Url": "http://localhost:52857/mcp/environments/Default-<<YOUR_TENANT_ID>>/servers/mcp_W365ComputerUse"
+    "Url": "http://localhost:52857/mcp/environments/Default-{your-tenant-id}/servers/mcp_W365ComputerUse"
   }
 }
 ```
 
-For `computer-use-preview`, set `DeploymentName` to `computer-use-preview` instead of `ModelName`. `DeploymentName` is retained as a model identifier fallback; requests use the v1 Responses endpoint (`/openai/v1/responses`).
+### 4. Obtain a bearer token
 
-The following optional settings provide fallback telemetry metadata when the incoming activity does not contain it:
+> **Note:** Running locally requires an agent identity. Create an Agent Blueprint with an Agent Identity for local development, then use that identity's client ID and the Agent Blueprint client credentials in the commands below.
 
-```json
-{
-  "EnableOpenTelemetryConsoleExporter": false,
-  "Agent365Observability": {
-    "AgentId": "<<YOUR_AGENT_ID>>",
-    "AgentName": "<<YOUR_AGENT_NAME>>",
-    "AgentDescription": "<<YOUR_AGENT_DESCRIPTION>>",
-    "TenantId": "<<YOUR_TENANT_ID>>",
-    "AgentBlueprintId": "<<YOUR_AGENT_BLUEPRINT_ID>>",
-    "ClientId": "<<YOUR_CLIENT_ID>>",
-    "AgenticUserId": "",
-    "AgenticUserEmail": "",
-    "MessagingEndpoint": "<<YOUR_MESSAGING_ENDPOINT>>",
-    "DefaultChannelName": "msteams",
-    "OperationSource": "W365ComputerUseSample"
-  },
-  "Logging": {
-    "LogLevel": {
-      "OpenTelemetry": "Information",
-      "Microsoft.Agents.A365.Observability": "Information"
-    }
-  }
-}
-```
+#### Get the Windows 365 for Agents MCP token
 
-| Section | Key | Set by | Default | Description |
-|---------|-----|--------|---------|-------------|
-| `AgentApplication` | `AgenticAuthHandlerName` | Repo/Manual | `agentic` | Agentic user handler used for Graph and observability token exchange |
-| | `W365AuthHandlerName` | Repo/Manual | `w365` | Agentic user handler used for the W365 MCP token |
-| `AIServices` | `Provider` | Manual | `AzureOpenAI` | Model provider |
-| `AIServices:AzureOpenAI` | `Endpoint` | Manual | — | Azure OpenAI resource endpoint |
-| | `ApiKey` | Manual | — | Azure OpenAI API key; do not commit it |
-| | `ModelName` | Manual | — | Model identifier such as `gpt-5.4-mini` |
-| | `DeploymentName` | Manual | `computer-use-preview` | Backward-compatible model identifier fallback |
-| `McpServer` | `Url` | Manual | — | Local MCP Platform URL; omit in production |
-| `W365` | `GatewayUrl` | Manual | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` | Production W365 MCP gateway |
-| `ComputerUse` | `MaxIterations` | Manual | `30` | Maximum CUA loop iterations |
-| | `DisplayWidth` | Manual | `1024` | Display width for `computer_use_preview` |
-| | `DisplayHeight` | Manual | `768` | Display height for `computer_use_preview` |
-| `Screenshots` | `LocalPath` | Manual | `./Screenshots` | Local screenshot directory |
-| | `OneDriveFolder` | Manual | `CUA-Sessions` | OneDrive upload folder |
-| | `OneDriveUserId` | Manual | — | Optional target user's UPN/email |
-| `Agent365Observability` | `AgentId` | CLI/Manual | Activity value | Agent identity used in traces |
-| | `AgentName` | CLI/Manual | — | Agent display name |
-| | `AgentDescription` | CLI/Manual | — | Agent description |
-| | `TenantId` | CLI/Manual | Activity value | Entra tenant ID |
-| | `AgentBlueprintId` | CLI/Manual | — | Agent blueprint application ID |
-| | `ClientId` | CLI/Manual | — | Client application ID |
-| | `AgenticUserId` | CLI/Manual | Activity value | Agentic user object ID |
-| | `AgenticUserEmail` | CLI/Manual | Activity value | Agentic user email |
-| | `MessagingEndpoint` | CLI/Manual | Activity service URL | Agent messaging endpoint |
-| | `DefaultChannelName` | Manual | `msteams` | Channel fallback for telemetry |
-| | `OperationSource` | Manual | `W365ComputerUseSample` | Operation-source baggage value |
-| Root | `EnableOpenTelemetryConsoleExporter` | Manual | `false` | Adds console export for local diagnostics; Agent 365 export remains enabled |
-| `Logging:LogLevel` | `OpenTelemetry` | Manual | Framework default | OpenTelemetry diagnostics level |
-| | `Microsoft.Agents.A365.Observability` | Manual | Framework default | Agent 365 observability diagnostics level |
-| Environment | `BEARER_TOKEN` | Manual | — | Local W365 MCP token with `Tools.ListInvoke.All` |
-| | `GRAPH_TOKEN` | Manual | — | Optional Graph token with `Files.ReadWrite` |
+Use the helper script to get a CUA user token for the MCP server, then set it as `BEARER_TOKEN`:
 
-Supported model behavior:
-
-| Model | Tool type | Configuration | Notes |
-|-------|-----------|---------------|-------|
-| `computer-use-preview` | `computer_use_preview` | `DeploymentName: "computer-use-preview"` | Uses display width, display height, and environment parameters |
-| `gpt-5.4` / `gpt-5.4-mini` | `computer` | `ModelName: "gpt-5.4-mini"` | Uses the built-in computer tool and sends an initial screenshot when a session is already active |
-
-## Running the Agent Locally
-
-### Quick start (Azure OpenAI only)
-
-Azure OpenAI credentials alone are not sufficient to exercise this sample; computer-use operations also require the local MCP Platform and a W365 token. This path omits Agent 365 observability setup and uses the development bearer-token fallback.
-
-1. Restore dependencies and create the `appsettings.Development.json` shown above:
-
-   ```powershell
-   cd dotnet\w365-computer-use\sample-agent
-   dotnet restore
-   ```
-
-2. Obtain a W365 token. The helper sets `BEARER_TOKEN` in the current PowerShell process:
-
-   ```powershell
+```powershell
+   $tenantId = "<tenant-id-or-domain>"
+   $blueprintClientId = "<agent-blueprint-client-id>"
    $blueprintClientSecret = Read-Host "Agent Blueprint client secret" -AsSecureString
    $blueprintClientSecretPlainText = [System.Net.NetworkCredential]::new("", $blueprintClientSecret).Password
+   $agentClientId = "<agent-identity-client-id>"
+   $agentUpn = "<agent-upn-from-teams-instance>"
 
    .\scripts\Get-CuaAgentUserToken.ps1 `
-     -TenantId "<tenant-id-or-domain>" `
-     -AgentBlueprintClientId "<agent-blueprint-client-id>" `
+     -TenantId $tenantId `
+     -AgentBlueprintClientId $blueprintClientId `
      -AgentBlueprintClientSecret $blueprintClientSecretPlainText `
-     -AgentClientId "<agent-identity-client-id>" `
-     -AgentUsername "<agent-upn-from-teams-instance>" `
+     -AgentClientId $agentClientId `
+     -AgentUsername $agentUpn `
      -InformationAction Continue
    ```
 
-3. Start the MCP Platform locally on port `52857`, then run the agent:
+   The script assigns the generated token to `$env:BEARER_TOKEN` for the current PowerShell process and writes an informational message. To use a different token audience, pass `-Scope "<scope>"`; by default the script requests `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`.
 
-   ```powershell
-   $env:ASPNETCORE_ENVIRONMENT = "Development"
-   dotnet run
-   ```
+The script requests scopes for the Windows 365 for Agents MCP server. For this sample, use the `Tools.ListInvoke.All` scope.
 
-4. Open [Microsoft 365 Agents Playground](https://dev.agents.cloud.microsoft/), connect to `http://localhost:3978/api/messages`, and try: `Open Notepad and type Hello World`.
+#### Optional: Get a Microsoft Graph token for OneDrive screenshots
 
-Screenshots are saved under `./Screenshots/<session-id>/`. To upload them to OneDrive, set `GRAPH_TOKEN` to a token with `Files.ReadWrite`; `Screenshots:OneDriveUserId` optionally selects another user's drive.
-
-### Local development (with A365 observability)
-
-Complete [Agent 365 Setup](#agent-365-setup), populate any needed `Agent365Observability` fallbacks, and send an agentic request so `A365OtelWrapper` can exchange the turn token and register it with `ServiceTokenCache`. A bearer-token-only request still creates spans, but it cannot authenticate the Agent 365 exporter.
-
-Set `EnableOpenTelemetryConsoleExporter` to `true` only when you also want local console diagnostics:
+This token is optional and is only needed when you want the sample to upload screenshots to OneDrive.
 
 ```powershell
+Install-Module MSAL.PS -Scope CurrentUser
+
+$token = Get-MsalToken `
+  -ClientId "<your-app-registration-client-id>" `
+  -TenantId "organizations" `
+  -Scopes "https://graph.microsoft.com/Files.ReadWrite" `
+  -Interactive
+
+$env:GRAPH_TOKEN = $token.AccessToken
+```
+
+### 5. Start the MCP Platform server
+
+Ensure the MCP Platform is running locally on port 52857, or update the `McpServer:Url` in your config.
+
+### 6. Run the agent
+
+```powershell
+cd sample-agent
 $env:ASPNETCORE_ENVIRONMENT = "Development"
-$env:EnableOpenTelemetryConsoleExporter = "true"
+$env:GRAPH_TOKEN = "<optional-graph-token-for-onedrive-upload>"
 dotnet run
 ```
 
-Use the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing) guide for Playground, WebChat, Teams, and Microsoft 365 testing options.
+### 7. Test with Agent Builder
 
-### Troubleshooting
+1. Open [Microsoft 365 Agents Playground](https://dev.agents.cloud.microsoft/)
+2. Connect to `http://localhost:3978/api/messages`
+3. Send a message like: *"Open Notepad and type Hello World"*
+4. Screenshots are saved under `./Screenshots/<session-id>/` automatically
 
-| Issue | Resolution |
-|-------|------------|
-| `McpServer:Url is required` | Add the local MCP Platform URL to `appsettings.Development.json` |
-| `BEARER_TOKEN` not set | Run `Get-CuaAgentUserToken.ps1` in the same PowerShell process before `dotnet run` |
-| Azure OpenAI returns HTTP 400 | Confirm the configured model and tool type match the supported-model table |
-| Screenshot extraction fails | Confirm the W365 MCP server returned an image content block |
-| Agent 365 spans are not exported | Use an agentic request, verify observability consent, and check the Agent 365 observability log category |
-| A session remains after a process crash | W365 sessions expire on the backend after approximately 30 minutes |
+## Configuration Reference
 
-## Deploying the Agent
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `AIServices:Provider` | Model provider | `AzureOpenAI` |
+| `AIServices:AzureOpenAI:Endpoint` | Azure OpenAI resource URL | - |
+| `AIServices:AzureOpenAI:ApiKey` | API key | - |
+| `AIServices:AzureOpenAI:DeploymentName` | Backward-compatible model identifier fallback when `ModelName` is not set | `computer-use-preview` |
+| `AIServices:AzureOpenAI:ModelName` | Model name (for model-based URLs, e.g., `gpt-5.4-mini`) | - |
+| `McpServer:Url` | MCP server URL (dev only; omit for production) | - |
+| `W365:GatewayUrl` | W365 Computer Use MCP gateway URL (production) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
+| `ComputerUse:MaxIterations` | Max CUA loop iterations | `30` |
+| `ComputerUse:DisplayWidth` | Display width for computer_use_preview tool | `1024` |
+| `ComputerUse:DisplayHeight` | Display height for computer_use_preview tool | `768` |
+| `Screenshots:LocalPath` | Local path to save screenshots | `./Screenshots` |
+| `Screenshots:OneDriveFolder` | OneDrive folder for screenshot upload | `CUA-Sessions` |
+| `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
+| `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
+| `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
 
-Deploy the ASP.NET Core application to Azure App Service, Azure Container Apps, or another HTTPS hosting provider, then configure:
+## Supported Models
 
-1. A user-assigned managed identity on the hosting resource.
-2. A Federated Identity Credential (FIC) between that managed identity and the agent blueprint; `a365 setup all` provisions the required Agent 365 identity resources.
-3. `Connections:ServiceConnection` with `AuthType` set to `UserManagedIdentity`, the production tenant authority, and managed identity client ID.
-4. Azure OpenAI settings through protected application settings or Key Vault references.
-5. `TokenValidation:Enabled` and the production audience for authenticated `/api/messages` traffic.
-6. The Azure Bot or channel messaging endpoint as `https://<host>/api/messages`.
-7. The W365 gateway permission and `w365` agentic authorization handler. Omit `McpServer:Url` so production uses `W365:GatewayUrl`.
-8. The `Agent365Observability` metadata needed when it is not available on incoming activities.
+| Model | Tool Type | Config | Notes |
+|-------|-----------|--------|-------|
+| `computer-use-preview` | `computer_use_preview` | `DeploymentName: "computer-use-preview"` | Uses `display_width`, `display_height`, `environment` params |
+| `gpt-5.4` / `gpt-5.4-mini` | `computer` | `ModelName: "gpt-5.4-mini"` | Bare `{"type": "computer"}`. Initial screenshot sent with first message |
 
-Do not deploy client secrets. Use managed identity and FIC for hosting authentication, then install and validate the corresponding agent in Teams or Microsoft 365 using the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing) guidance.
+The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherwise -> `computer_use_preview`).
 
-## Observability
+## How It Works
 
-The sample uses the `Microsoft.OpenTelemetry` distro with the Agent 365 exporter enabled in every environment. `InvokeAgentScope` covers each agent turn, `InferenceScope` covers each Azure OpenAI Responses API call, and `ExecuteToolScope` covers physical MCP and W365 tool calls. `Telemetry/Agent365TelemetryContext.cs` supplies shared tenant, agent, user, conversation, channel, endpoint, and operation-source context.
+1. **User sends a message** -> `MyAgent.OnMessageAsync`
+2. **MCP connection** established (direct SSE in dev, A365 SDK gateway in prod)
+3. **Session startup** runs explicitly with `mcp_W365ComputerUse_StartSession` before the first desktop action. Returned `sessionId` values are cached per conversation, and the selected session ID is sent on every remote W365 tool call.
+4. **CUA loop** in `ComputerUseOrchestrator.RunAsync`:
+   - User message + conversation history sent to the model
+   - Model returns `computer_call` actions (click, type, scroll, etc.)
+   - Actions translated to MCP tool calls (`click`, `type_text`, `press_keys`, etc.) with the cached `sessionId`
+   - Screenshot captured after each action and fed back to the model
+   - Loop continues until model calls `OnTaskComplete` or max iterations reached
+5. **Response** sent back to user
+6. **Sessions persist** across messages for follow-up tasks, and a user can reference a specific `sessionId` to switch context
+7. **EndSession** called on app shutdown (Ctrl+C) via `mcp_W365ComputerUse_EndSession` for each cached `sessionId` to release VMs
 
-For agentic requests, `Telemetry/A365OtelWrapper.cs` exchanges the current turn token for the observability scope and registers it in `ServiceTokenCache`; the exporter resolves tokens from that cache. `EnableOpenTelemetryConsoleExporter` adds console export for local diagnostics without disabling Agent 365 export.
+## Session Management
 
-Before telemetry is recorded, model image inputs, tool `text` arguments, screenshot results, and embedded image data URLs are redacted. Runtime model and tool callers continue to receive the original values.
+- Sessions are started with `mcp_W365ComputerUse_StartSession`; multiple session IDs can be cached for one conversation
+- If a user references a known `sessionId`, the orchestrator selects that session before taking screenshots or sending remote W365 tool calls
+- Conversation history accumulates across messages, giving the model context for follow-up tasks
+- On app shutdown (`Ctrl+C`), the agent calls `EndSession` for each cached `sessionId` to release VMs back to the pool
+- If the app crashes, sessions auto-expire after ~30 minutes on the W365 backend
 
-For details, see the [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+## Production Deployment
 
-## Support
+1. Register an Azure Bot and configure the agent
+2. Set `AIServices` config with your Azure OpenAI credentials
+3. Remove `McpServer:Url` — in production the agent connects directly to the W365 Computer Use MCP gateway (default `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse`, override via `W365:GatewayUrl`) using the `w365` agentic auth handler. The W365 server requires an explicit session, so the agent calls `StartSession` and sends `_meta.sessionId` on `tools/list`, rather than going through the generic A365 SDK Tooling Gateway.
+4. Deploy and install the agent in Teams / M365
 
-For issues, questions, or feedback:
+## Troubleshooting
 
-- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Security**: For security issues, please see [SECURITY.md](../../../SECURITY.md)
+| Issue | Solution |
+|-------|----------|
+| `McpServer:Url is required` | Create `appsettings.Development.json` with the MCP server URL |
+| `BEARER_TOKEN` not set | Set `$env:BEARER_TOKEN` before running |
+| Model returns 400 | Check that the tool type matches your model (see Supported Models table) |
+| Screenshot extraction fails | Ensure MCP server returns image content blocks |
+| Session orphaned after crash | Sessions auto-expire after ~30 min on the W365 backend |
+| Multiple sessions started | Ensure only one agent instance is running per MCP server |
 
-## Contributing
-
-This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## Additional Resources
+## Links
 
 - [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
-- [Microsoft 365 Agents SDK for .NET](https://github.com/microsoft/Agents-for-net)
-- [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing)
-- [Azure OpenAI computer use](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use)
-
-## Trademarks
-
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the MIT License — see the [LICENSE](../../../LICENSE.md) file for details.
+- [Microsoft 365 Agents SDK](https://learn.microsoft.com/microsoft-365/agents-sdk/)
+- [Azure OpenAI Computer Use Guide](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use)
