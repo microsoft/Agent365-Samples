@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PlatformCachePartition xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Caches the agent-bound Observability token (~50 min) to avoid the FMI token exchange on every span. Optional; A365ObsToken degrades to no-L2-cache if capacity is unavailable.</description>
+    <isDefaultPartition>false</isDefaultPartition>
+    <masterLabel>A365Obs</masterLabel>
+    <platformCachePartitionTypes>
+        <allocatedCapacity>1</allocatedCapacity>
+        <allocatedPurchasedCapacity>0</allocatedPurchasedCapacity>
+        <cacheType>Organization</cacheType>
+    </platformCachePartitionTypes>
+    <platformCachePartitionTypes>
+        <allocatedCapacity>0</allocatedCapacity>
+        <allocatedPurchasedCapacity>0</allocatedPurchasedCapacity>
+        <cacheType>Session</cacheType>
+    </platformCachePartitionTypes>
+</PlatformCachePartition>

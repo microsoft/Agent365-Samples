@@ -29,6 +29,8 @@ Agent365-Samples/
 │   ├── n8n/
 │   ├── perplexity/
 │   └── vercel-sdk/
+├── salesforce/                # Salesforce/Apex samples (SFDX projects)
+│   └── apex-observability/    # Native Apex Agent 365 observability + tool boundary
 ├── docs/                      # Repository-wide documentation
 │   └── design.md             # Architectural patterns
 ├── prompts/                   # AI development prompts
@@ -73,6 +75,28 @@ python start_with_generic_host.py
 ```
 
 Python samples use `pyproject.toml` for dependency management. Most samples support `uv` for faster dependency resolution.
+
+### Salesforce / Apex
+
+Salesforce samples are SFDX projects (no hosted process). Use the Salesforce CLI (`sf`).
+
+**Validate (no persist):**
+```bash
+cd salesforce/<sample-directory>
+sf project deploy start --source-dir force-app/main/default --target-org <alias> --dry-run --test-level RunLocalTests
+```
+
+**Deploy:**
+```bash
+sf project deploy start --source-dir force-app/main/default --target-org <alias> --test-level RunLocalTests
+```
+
+**Test:**
+```bash
+sf apex run test --target-org <alias> --test-level RunLocalTests --wait 10
+```
+
+`RunLocalTests` enforces 75% aggregate org coverage. Full Apex tests require a Dev Hub + scratch org.
 
 ### Node.js / TypeScript
 
@@ -186,6 +210,12 @@ All source files MUST have Microsoft copyright headers:
 
 **JavaScript/TypeScript (`.js`, `.ts`):**
 ```javascript
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+```
+
+**Apex (`.cls`):**
+```apex
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 ```
