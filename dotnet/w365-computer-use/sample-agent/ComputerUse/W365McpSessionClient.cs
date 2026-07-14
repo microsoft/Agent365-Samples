@@ -23,6 +23,12 @@ internal sealed class W365McpSessionClient
 
     public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(CancellationToken cancellationToken)
     {
+        var sessionId = await StartSessionAsync(cancellationToken);
+        return await ListToolsAsync(sessionId, cancellationToken);
+    }
+
+    public async Task<string> StartSessionAsync(CancellationToken cancellationToken)
+    {
         var startResult = await this.mcpClient.CallToolAsync(
             ComputerUseOrchestrator.W365StartSessionToolName,
             new Dictionary<string, object?>(),
@@ -34,7 +40,7 @@ internal sealed class W365McpSessionClient
             throw new InvalidOperationException("W365 StartSession did not return a sessionId.");
         }
 
-        return await ListToolsAsync(sessionId, cancellationToken);
+        return sessionId;
     }
 
     public async Task<W365McpToolListResult> ListToolsAsync(string sessionId, CancellationToken cancellationToken)

@@ -490,8 +490,14 @@ public class ComputerUseOrchestrator
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
         }
 
-        if (includeCuaTool && !string.IsNullOrWhiteSpace(prestartedW365SessionId) && string.IsNullOrEmpty(session.W365SessionId))
+        if (includeCuaTool
+            && !string.IsNullOrWhiteSpace(prestartedW365SessionId)
+            && !string.Equals(
+                session.W365SessionId,
+                prestartedW365SessionId,
+                StringComparison.OrdinalIgnoreCase))
         {
+            session.RemoveSession(session.W365SessionId);
             session.TrackAndSelectSession(prestartedW365SessionId);
             _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
         }
@@ -785,7 +791,6 @@ public class ComputerUseOrchestrator
                         if (funcName == "EndSession")
                         {
                             var callId = item.GetProperty("call_id").GetString()!;
-                            session.ConversationHistory.Add(CreateFunctionOutput(callId));
                             _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
                             if (onStatusUpdate != null)
                             {
@@ -808,6 +813,7 @@ public class ComputerUseOrchestrator
                                 _sessions.TryRemove(conversationId, out _);
                             }
 
+                            session.ConversationHistory.Add(CreateFunctionOutput(callId));
                             return string.IsNullOrEmpty(sessionIdToEnd)
                                 ? "Session ended. The VM has been released back to the pool."
                                 : $"Session {sessionIdToEnd} ended. The VM has been released back to the pool.";
@@ -1007,41 +1013,28 @@ public class ComputerUseOrchestrator
         string? channelId = null,
         string? toolCallId = null)
     {
-        try
+        var args = new Dictionary<string, object?>();
+        if (!string.IsNullOrEmpty(sessionId))
         {
-            var args = new Dictionary<string, object?>();
-            if (!string.IsNullOrEmpty(sessionId))
-            {
-                args["sessionId"] = sessionId;
-            }
+            args["sessionId"] = sessionId;
+        }
 
-            await ToolTelemetry.InvokeAsync(
-                toolName: W365EndSessionToolName,
-                arguments: args,
-                toolCallId: toolCallId,
-                toolServerName: "w365",
-                endpoint: null,
-                conversationId: conversationId,
-                channelId: channelId,
-                invokeAsync: async () =>
-                {
-                    var result = await RawInvokeToolAsync(tools, W365EndSessionToolName, args, ct);
-                    return result?.ToString() ?? string.Empty;
-                }).ConfigureAwait(false);
-            logger.LogInformation("W365 session ended");
-        }
-        catch (ObjectDisposedException)
-        {
-            logger.LogInformation("MCP client already disposed — W365 session will be released by server timeout");
-        }
-        catch (HttpRequestException httpEx) when (httpEx.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            logger.LogInformation("MCP transport session expired (404) — W365 session will be released by server timeout");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "Failed to end W365 session");
-        }
+        await ToolTelemetry.InvokeAsync(
+            toolName: W365EndSessionToolName,
+            arguments: args,
+            toolCallId: toolCallId,
+            toolServerName: "w365",
+            endpoint: null,
+            conversationId: conversationId,
+            channelId: channelId,
+            invokeAsync: async () =>
+            {
+                var result = await RawInvokeToolAsync(tools, W365EndSessionToolName, args, ct);
+                var resultString = result?.ToString() ?? string.Empty;
+                ThrowIfW365ToolError(W365EndSessionToolName, resultString);
+                return resultString;
+            }).ConfigureAwait(false);
+        logger.LogInformation("W365 session ended");
     }
 
     /// <summary>
@@ -1049,39 +1042,67 @@ public class ComputerUseOrchestrator
     /// </summary>
     public async Task EndSessionOnShutdownAsync()
     {
-        if (_cachedTools == null)
+        try
         {
-            _logger.LogInformation("No tools cached — nothing to clean up on shutdown");
-            return;
-        }
-
-        foreach (var (convId, session) in _sessions)
-        {
-            foreach (var sessionId in session.W365SessionIds.ToArray())
+            foreach (var (convId, session) in _sessions)
             {
-                _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
-                await EndSessionAsync(
-                    _cachedTools,
-                    _logger,
-                    sessionId,
-                    CancellationToken.None,
-                    conversationId: session.ConversationId,
-                    channelId: session.ChannelId);
+                foreach (var sessionId in session.W365SessionIds.ToArray())
+                {
+                    _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
+                    try
+                    {
+                        if (_w365McpClientsBySessionId.TryGetValue(sessionId, out var sessionMcpClient))
+                        {
+                            await EndDirectW365SessionAsync(
+                                sessionMcpClient,
+                                sessionId,
+                                session.ConversationId,
+                                session.ChannelId,
+                                CancellationToken.None);
+                        }
+                        else if (_cachedTools != null)
+                        {
+                            await EndSessionAsync(
+                                _cachedTools,
+                                _logger,
+                                sessionId,
+                                CancellationToken.None,
+                                conversationId: session.ConversationId,
+                                channelId: session.ChannelId);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "No MCP client or cached lifecycle tool is available to end W365 session {SessionId} during shutdown",
+                                sessionId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Failed to end W365 session {SessionId} for conversation {ConversationId} during shutdown",
+                            sessionId,
+                            convId);
+                    }
+                }
             }
         }
-
-        _sessions.Clear();
-        _cachedTools = null;
-        _w365McpClientsBySessionId.Clear();
-
-        foreach (var client in _allMcpClients)
+        finally
         {
-            try { await client.DisposeAsync(); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
-        }
+            _sessions.Clear();
+            _cachedTools = null;
+            _w365McpClientsBySessionId.Clear();
 
-        _allMcpClients.Clear();
-        _cachedMcpClient = null;
+            foreach (var client in _allMcpClients)
+            {
+                try { await client.DisposeAsync(); }
+                catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
+            }
+
+            _allMcpClients.Clear();
+            _cachedMcpClient = null;
+        }
     }
 
     /// <summary>
@@ -1180,7 +1201,7 @@ public class ComputerUseOrchestrator
                 var client = await McpClientFactory.CreateAsync(transport);
                 var tools = (await client.ListToolsAsync()).Cast<AITool>().ToList();
 
-                _allMcpClients.Add(client);
+                AddMcpClientIfMissing(client);
                 allTools.AddRange(tools);
 
                 // Use the W365 server's client for direct screenshot calls.
@@ -1219,23 +1240,40 @@ public class ComputerUseOrchestrator
         string? existingSessionId,
         CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(existingSessionId)
-            && _cachedMcpClient != null
-            && _w365McpClientsBySessionId.TryGetValue(existingSessionId, out var sessionMcpClient))
+        if (!string.IsNullOrWhiteSpace(existingSessionId))
         {
-            try
+            if (_w365McpClientsBySessionId.TryGetValue(existingSessionId, out var sessionMcpClient))
             {
-                var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
-                var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
-                _cachedTools = cachedResult.Tools;
-                _cachedMcpClient = cachedResult.Client;
-                _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
-                return cachedResult;
+                try
+                {
+                    var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
+                    var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
+                    _cachedTools = cachedResult.Tools;
+                    _cachedMcpClient = cachedResult.Client;
+                    AddMcpClientIfMissing(cachedResult.Client);
+                    _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
+                    return cachedResult;
+                }
+                catch (Exception ex) when (
+                    !cancellationToken.IsCancellationRequested
+                    && (IsUnauthorizedMcpTransportFailure(ex)
+                        || IsDisposedMcpClientFailure(ex)
+                        || IsRecoverableSessionLoss(ex)))
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Cached W365 MCP client for session {SessionId} can no longer be reused. Detaching it and starting a fresh session.",
+                        existingSessionId);
+                    await DisposeW365McpClientAsync(existingSessionId);
+                    existingSessionId = null;
+                }
             }
-            catch (Exception ex) when (IsUnauthorizedMcpTransportFailure(ex))
+            else
             {
-                _logger.LogWarning(ex, "Cached W365 MCP client for session {SessionId} was unauthorized. Disposing it and reconnecting with a fresh token.", existingSessionId);
-                await DisposeW365McpClientAsync(existingSessionId);
+                _logger.LogWarning(
+                    "No cached W365 MCP client remains for session {SessionId}. Starting a fresh session instead of reusing the stale session ID.",
+                    existingSessionId);
+                existingSessionId = null;
             }
         }
 
@@ -1244,51 +1282,102 @@ public class ComputerUseOrchestrator
             CreateW365TransportOptions(url, accessToken, agentId, turnContext.Activity),
             httpClient);
         var mcpClient = await McpClientFactory.CreateAsync(transport, cancellationToken: cancellationToken);
+        string? startedSessionId = null;
         try
         {
             var directClient = new W365McpSessionClient(mcpClient);
-            W365McpToolListResult result;
-            if (string.IsNullOrWhiteSpace(existingSessionId))
-            {
-                var startArguments = new Dictionary<string, object?>();
-                W365McpToolListResult? startedResult = null;
-                await ToolTelemetry.InvokeAsync(
-                    toolName: W365StartSessionToolName,
-                    arguments: startArguments,
-                    toolCallId: null,
-                    toolServerName: "w365",
-                    endpoint: null,
-                    conversationId: turnContext.Activity.Conversation?.Id,
-                    channelId: turnContext.Activity.ChannelId,
-                    invokeAsync: async () =>
-                    {
-                        startedResult = await directClient.StartSessionAndListToolsAsync(cancellationToken);
-                        return JsonSerializer.Serialize(new
-                        {
-                            sessionId = startedResult.SessionId,
-                            toolCount = startedResult.Tools.Count,
-                        });
-                    }).ConfigureAwait(false);
-                result = startedResult
-                    ?? throw new InvalidOperationException("W365 session startup telemetry completed without producing a tool-list result.");
-            }
-            else
-            {
-                result = await directClient.ListToolsAsync(existingSessionId, cancellationToken);
-            }
+            var startArguments = new Dictionary<string, object?>();
+            await ToolTelemetry.InvokeAsync(
+                toolName: W365StartSessionToolName,
+                arguments: startArguments,
+                toolCallId: null,
+                toolServerName: "w365",
+                endpoint: null,
+                conversationId: turnContext.Activity.Conversation?.Id,
+                channelId: turnContext.Activity.ChannelId,
+                invokeAsync: async () =>
+                {
+                    startedSessionId = await directClient.StartSessionAsync(cancellationToken);
+                    return JsonSerializer.Serialize(new { sessionId = startedSessionId });
+                }).ConfigureAwait(false);
+
+            var sessionId = startedSessionId
+                ?? throw new InvalidOperationException("W365 session startup telemetry completed without capturing a sessionId.");
+            var result = await directClient.ListToolsAsync(sessionId, cancellationToken);
 
             _cachedTools = result.Tools;
             _cachedMcpClient = result.Client;
             _w365McpClientsBySessionId[result.SessionId] = result.Client;
-            _allMcpClients.Add(result.Client);
+            AddMcpClientIfMissing(result.Client);
             _logger.LogInformation("Started direct W365 session {SessionId} and loaded {ToolCount} tools via MCP transport.", result.SessionId, result.Tools.Count);
             return result;
         }
         catch
         {
-            await mcpClient.DisposeAsync();
+            if (!string.IsNullOrWhiteSpace(startedSessionId))
+            {
+                await TryEndDirectW365SessionAsync(
+                    mcpClient,
+                    startedSessionId,
+                    turnContext.Activity.Conversation?.Id,
+                    turnContext.Activity.ChannelId);
+            }
+
+            await DisposeMcpClientIfUnmappedAsync(mcpClient, startedSessionId);
             throw;
         }
+    }
+
+    private async Task TryEndDirectW365SessionAsync(
+        IMcpClient mcpClient,
+        string sessionId,
+        string? conversationId,
+        string? channelId)
+    {
+        try
+        {
+            await EndDirectW365SessionAsync(
+                mcpClient,
+                sessionId,
+                conversationId,
+                channelId,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to clean up W365 session {SessionId} after direct session startup failed",
+                sessionId);
+        }
+    }
+
+    private static async Task EndDirectW365SessionAsync(
+        IMcpClient mcpClient,
+        string sessionId,
+        string? conversationId,
+        string? channelId,
+        CancellationToken cancellationToken)
+    {
+        var args = new Dictionary<string, object?> { ["sessionId"] = sessionId };
+        await ToolTelemetry.InvokeAsync(
+            toolName: W365EndSessionToolName,
+            arguments: args,
+            toolCallId: null,
+            toolServerName: "w365",
+            endpoint: null,
+            conversationId: conversationId,
+            channelId: channelId,
+            invokeAsync: async () =>
+            {
+                var result = await mcpClient.CallToolAsync(
+                    W365EndSessionToolName,
+                    args,
+                    cancellationToken: cancellationToken);
+                var resultString = JsonSerializer.Serialize(result);
+                ThrowIfW365ToolError(W365EndSessionToolName, resultString);
+                return resultString;
+            }).ConfigureAwait(false);
     }
 
     private static void AddHeaderIfPresent(HttpClient httpClient, string name, string? value)
@@ -1313,6 +1402,19 @@ public class ComputerUseOrchestrator
         }
 
         return exception.InnerException != null && IsUnauthorizedMcpTransportFailure(exception.InnerException);
+    }
+
+    private static bool IsDisposedMcpClientFailure(Exception exception)
+    {
+        for (var ex = exception; ex != null; ex = ex.InnerException)
+        {
+            if (ex is ObjectDisposedException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsEmptyJsonMcpResponse(Exception exception)
@@ -1387,19 +1489,42 @@ public class ComputerUseOrchestrator
             return;
         }
 
-        _allMcpClients.Remove(client);
-        if (ReferenceEquals(_cachedMcpClient, client))
-        {
-            _cachedMcpClient = _w365McpClientsBySessionId.Values.FirstOrDefault();
-        }
+        await DisposeMcpClientIfUnmappedAsync(client, sessionId);
+    }
 
+    private void AddMcpClientIfMissing(IMcpClient client)
+    {
+        if (!_allMcpClients.Any(existingClient => ReferenceEquals(existingClient, client)))
+        {
+            _allMcpClients.Add(client);
+        }
+    }
+
+    private async Task DisposeMcpClientIfUnmappedAsync(IMcpClient client, string? sessionId)
+    {
         try
         {
+            if (_w365McpClientsBySessionId.Values.Any(
+                mappedClient => ReferenceEquals(mappedClient, client)))
+            {
+                return;
+            }
+
+            _allMcpClients.RemoveAll(existingClient => ReferenceEquals(existingClient, client));
+            if (ReferenceEquals(_cachedMcpClient, client))
+            {
+                _cachedMcpClient = null;
+                _cachedTools = null;
+            }
+
             await client.DisposeAsync();
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to dispose W365 MCP client for session {SessionId}", sessionId);
+            _logger.LogWarning(
+                ex,
+                "Failed to dispose W365 MCP client after detaching session {SessionId}",
+                sessionId);
         }
     }
 
@@ -2145,22 +2270,92 @@ public class ComputerUseOrchestrator
                 ct,
                 toolCallId: toolCallId);
         }
-        catch (InvalidOperationException ex) when (IsSessionNotFoundError(ex.Message))
+        catch (Exception ex) when (
+            ex is not OperationCanceledException
+            && IsRecoverableSessionLoss(ex))
         {
             return (ex.Message, true);
         }
 
-        if (IsSessionNotFoundError(resultStr))
-            return (resultStr, true);
         return (resultStr, false);
     }
 
     private static void ThrowIfW365SessionLost(string result)
     {
-        if (IsSessionNotFoundError(result))
+        if (IsUnstructuredSessionLossResponse(result))
         {
             throw new InvalidOperationException(result);
         }
+    }
+
+    private static bool IsUnstructuredSessionLossResponse(string response)
+    {
+        const int MaxPlainTextErrorLength = 512;
+
+        if (string.IsNullOrWhiteSpace(response) || response.Length > MaxPlainTextErrorLength)
+        {
+            return false;
+        }
+
+        var trimmed = response.Trim();
+        if (trimmed.Length == 0
+            || trimmed.StartsWith('<')
+            || trimmed.Any(char.IsControl))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var _ = JsonDocument.Parse(trimmed);
+            return false;
+        }
+        catch (JsonException)
+        {
+            // Only non-JSON, single-line text can be treated as an unstructured server error.
+        }
+
+        var normalized = trimmed.ToLowerInvariant();
+        var hasExplicitErrorPrefix = false;
+        foreach (var prefix in new[] { "error:", "error -", "failed:", "failure:" })
+        {
+            if (normalized.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                normalized = normalized[prefix.Length..].TrimStart();
+                hasExplicitErrorPrefix = true;
+                break;
+            }
+        }
+
+        if (normalized.StartsWith("the ", StringComparison.Ordinal))
+        {
+            normalized = normalized[4..];
+        }
+        else if (normalized.StartsWith("w365 ", StringComparison.Ordinal))
+        {
+            normalized = normalized[5..];
+        }
+
+        foreach (var phrase in new[]
+        {
+            "no active session found",
+            "session not found",
+            "session expired",
+            "session has been terminated",
+        })
+        {
+            if (string.Equals(normalized, phrase, StringComparison.Ordinal)
+                || normalized.StartsWith($"{phrase}.", StringComparison.Ordinal)
+                || normalized.StartsWith($"{phrase}:", StringComparison.Ordinal)
+                || normalized.StartsWith($"{phrase} -", StringComparison.Ordinal)
+                || (hasExplicitErrorPrefix
+                    && normalized.StartsWith($"{phrase} ", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -2199,7 +2394,13 @@ public class ComputerUseOrchestrator
                 ct,
                 conversationId: session.ConversationId,
                 channelId: session.ChannelId);
-
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Best-effort EndSession during recovery failed");
+        }
+        finally
+        {
             if (!string.IsNullOrWhiteSpace(staleSessionId)
                 && _w365McpClientsBySessionId.TryGetValue(staleSessionId, out var staleMcpClient))
             {
@@ -2212,14 +2413,10 @@ public class ComputerUseOrchestrator
                     await DisposeW365McpClientAsync(staleSessionId);
                 }
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.LogWarning(ex, "Best-effort EndSession during recovery failed");
-        }
 
-        session.RemoveSession(staleSessionId);
-        logger.LogInformation("Session state cleared; the next computer-use action will start a new session.");
+            session.RemoveSession(staleSessionId);
+            logger.LogInformation("Session state cleared; the next computer-use action will start a new session.");
+        }
     }
 
     /// <summary>
@@ -2234,19 +2431,30 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient,
         CancellationToken ct)
     {
-        await RecoverSessionAsync(session, w365Tools, mcpClient, _logger, ct);
-        session.ClearActiveSession();
-        await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
-
-        var newSessionId = session.W365SessionId;
-        if (mcpClient != null && !string.IsNullOrWhiteSpace(newSessionId))
+        var staleSessionId = session.W365SessionId;
+        try
         {
-            _w365McpClientsBySessionId[newSessionId] = mcpClient;
-            _cachedMcpClient = mcpClient;
-            if (!_allMcpClients.Any(client => ReferenceEquals(client, mcpClient)))
+            await RecoverSessionAsync(session, w365Tools, mcpClient, _logger, ct);
+            session.ClearActiveSession();
+            await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+
+            var newSessionId = session.W365SessionId;
+            if (mcpClient != null && !string.IsNullOrWhiteSpace(newSessionId))
             {
-                _allMcpClients.Add(mcpClient);
+                _w365McpClientsBySessionId[newSessionId] = mcpClient;
+                _cachedMcpClient = mcpClient;
+                AddMcpClientIfMissing(mcpClient);
             }
+        }
+        catch
+        {
+            session.ClearActiveSession();
+            if (mcpClient != null)
+            {
+                await DisposeMcpClientIfUnmappedAsync(mcpClient, staleSessionId);
+            }
+
+            throw;
         }
     }
 
@@ -2355,6 +2563,12 @@ public class ComputerUseOrchestrator
     {
         for (var ex = exception; ex != null; ex = ex.InnerException)
         {
+            if (ex is HttpRequestException httpException
+                && httpException.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return true;
+            }
+
             if (IsSessionNotFoundError(ex.Message))
             {
                 return true;
