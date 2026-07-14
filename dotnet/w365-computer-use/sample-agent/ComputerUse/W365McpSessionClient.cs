@@ -4,6 +4,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -15,19 +16,15 @@ internal sealed class W365McpSessionClient
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IMcpClient mcpClient;
+    private readonly ILogger? logger;
 
-    public W365McpSessionClient(IMcpClient mcpClient)
+    public W365McpSessionClient(IMcpClient mcpClient, ILogger? logger = null)
     {
         this.mcpClient = mcpClient ?? throw new ArgumentNullException(nameof(mcpClient));
+        this.logger = logger;
     }
 
     public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(CancellationToken cancellationToken)
-    {
-        var sessionId = await StartSessionAsync(cancellationToken);
-        return await ListToolsAsync(sessionId, cancellationToken);
-    }
-
-    public async Task<string> StartSessionAsync(CancellationToken cancellationToken)
     {
         var startResult = await this.mcpClient.CallToolAsync(
             ComputerUseOrchestrator.W365StartSessionToolName,
@@ -37,10 +34,11 @@ internal sealed class W365McpSessionClient
 
         if (!TryExtractStringProperty(startResultJson, "sessionId", out var sessionId))
         {
-            throw new InvalidOperationException("W365 StartSession did not return a sessionId.");
+            var snippet = startResultJson.Length > 800 ? startResultJson[..800] : startResultJson;
+            throw new InvalidOperationException($"W365 StartSession did not return a sessionId. Raw response: {snippet}");
         }
-
-        return sessionId;
+        var result = await ListToolsAsync(sessionId, cancellationToken);
+        return result;
     }
 
     public async Task<W365McpToolListResult> ListToolsAsync(string sessionId, CancellationToken cancellationToken)
@@ -152,37 +150,36 @@ internal sealed class W365McpSessionClient
             if (TryGetProperty(element, "content", out var content)
                 && content.ValueKind == JsonValueKind.Array)
             {
-                var stringTextBlocks = content.EnumerateArray()
-                    .Where(b => TryGetProperty(b, "text", out var t) && t.ValueKind == JsonValueKind.String);
-                foreach (var block in stringTextBlocks)
+                foreach (var block in content.EnumerateArray())
                 {
-                    TryGetProperty(block, "text", out var text);
-                    var nestedText = text.GetString();
-                    if (TryExtractStringProperty(nestedText, propertyName, out value))
+                    if (TryGetProperty(block, "text", out var text)
+                        && text.ValueKind == JsonValueKind.String)
                     {
-                        return true;
+                        var nestedText = text.GetString();
+                        if (TryExtractStringProperty(nestedText, propertyName, out value))
+                        {
+                            return true;
+                        }
                     }
                 }
             }
 
-            var objectHit = element.EnumerateObject()
-                .Select(candidate => TryExtractStringPropertyTuple(candidate.Value, propertyName))
-                .FirstOrDefault(r => r.found);
-            if (objectHit.found)
+            foreach (var candidate in element.EnumerateObject())
             {
-                value = objectHit.value;
-                return true;
+                if (TryExtractStringProperty(candidate.Value, propertyName, out value))
+                {
+                    return true;
+                }
             }
         }
         else if (element.ValueKind == JsonValueKind.Array)
         {
-            var arrayHit = element.EnumerateArray()
-                .Select(item => TryExtractStringPropertyTuple(item, propertyName))
-                .FirstOrDefault(r => r.found);
-            if (arrayHit.found)
+            foreach (var item in element.EnumerateArray())
             {
-                value = arrayHit.value;
-                return true;
+                if (TryExtractStringProperty(item, propertyName, out value))
+                {
+                    return true;
+                }
             }
         }
         else if (element.ValueKind == JsonValueKind.String)
@@ -205,23 +202,17 @@ internal sealed class W365McpSessionClient
         return false;
     }
 
-    private static (bool found, string value) TryExtractStringPropertyTuple(JsonElement element, string propertyName)
-    {
-        return TryExtractStringProperty(element, propertyName, out var value)
-            ? (true, value)
-            : (false, string.Empty);
-    }
-
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
-            var match = element.EnumerateObject()
-                .FirstOrDefault(candidate => string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase));
-            if (match.Value.ValueKind != JsonValueKind.Undefined)
+            foreach (var candidate in element.EnumerateObject())
             {
-                property = match.Value;
-                return true;
+                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    property = candidate.Value;
+                    return true;
+                }
             }
         }
 
@@ -230,4 +221,6 @@ internal sealed class W365McpSessionClient
     }
 }
 
-internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client);
+internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client)
+{
+}

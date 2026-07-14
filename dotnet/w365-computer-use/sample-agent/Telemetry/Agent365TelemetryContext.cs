@@ -78,21 +78,19 @@ public sealed record Agent365TelemetryContext
         agentBlueprintId = FirstNonEmpty(
             ReadBaggage(currentActivity, "microsoft.a365.agent.blueprint.id"),
             agentBlueprintId);
-        var conversationId = FirstNonEmpty(
-            turnContext.Activity.Conversation?.Id,
-            ReadBaggage(currentActivity, "gen_ai.conversation.id"),
-            Guid.NewGuid().ToString("D"))!;
-        var sessionId = FirstNonEmpty(ReadBaggage(currentActivity, "microsoft.session.id"), conversationId);
+        var conversationId = FirstNonEmpty(turnContext.Activity.Conversation?.Id, Guid.NewGuid().ToString("D"))!;
+        var sessionId = conversationId;
         var runtimeEndpoint = TryCreateEndpoint(turnContext.Activity.ServiceUrl, null);
         var baggageChannelLink = ReadBaggage(currentActivity, "microsoft.channel.link");
         var baggageEndpoint = TryCreateEndpoint(baggageChannelLink, null);
         var configuredEndpoint = TryCreateEndpoint(turnContext.Activity.ServiceUrl, options?.MessagingEndpoint);
         var endpoint = runtimeEndpoint ?? baggageEndpoint ?? configuredEndpoint;
-        var serverAddress = FirstValidServerAddress(
+        var serverAddress = FirstNonEmpty(
             runtimeEndpoint?.Host,
             ReadBaggage(currentActivity, "server.address"),
             baggageEndpoint?.Host,
-            endpoint?.Host);
+            endpoint?.Host,
+            "localhost");
         var serverPort = runtimeEndpoint is not null
             ? GetPort(runtimeEndpoint)
             : TryParsePort(ReadBaggage(currentActivity, "server.port"))
@@ -168,7 +166,7 @@ public sealed record Agent365TelemetryContext
         var sessionId = FirstNonEmpty(ReadBaggage(activity, "microsoft.session.id"), conversationId);
         var channelLink = ReadBaggage(activity, "microsoft.channel.link");
         var endpoint = TryCreateEndpoint(channelLink, null);
-        var serverAddress = FirstValidServerAddress(ReadBaggage(activity, "server.address"), endpoint?.Host);
+        var serverAddress = FirstNonEmpty(ReadBaggage(activity, "server.address"), endpoint?.Host, "localhost");
         var serverPort = TryParsePort(ReadBaggage(activity, "server.port")) ?? GetPort(endpoint) ?? 443;
         var agentBlueprintId = FirstNonEmpty(ReadBaggage(activity, "microsoft.a365.agent.blueprint.id"), agentId);
 
@@ -278,7 +276,7 @@ public sealed record Agent365TelemetryContext
             return Endpoint;
         }
 
-        var serverAddress = FirstValidServerAddress(ServerAddress);
+        var serverAddress = FirstNonEmpty(ServerAddress, "localhost")!;
         var serverPort = ServerPort is >= 1 and <= 65535 ? ServerPort.Value : 443;
 
         return new UriBuilder(Uri.UriSchemeHttps, serverAddress, serverPort).Uri;
@@ -287,20 +285,6 @@ public sealed record Agent365TelemetryContext
     private static string NormalizeChannelName(string? channelName, string? defaultChannelName)
     {
         return FirstNonEmpty(channelName, defaultChannelName, "msteams")!.Trim().ToLowerInvariant();
-    }
-
-    private static string FirstValidServerAddress(params string?[] values)
-    {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value)
-                && Uri.CheckHostName(value) != UriHostNameType.Unknown)
-            {
-                return value;
-            }
-        }
-
-        return "localhost";
     }
 
     private static Uri? TryCreateEndpoint(string? serviceUrl, string? fallbackUrl)

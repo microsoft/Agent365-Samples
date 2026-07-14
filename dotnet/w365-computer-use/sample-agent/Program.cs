@@ -12,7 +12,12 @@ using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,18 +38,21 @@ builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationSe
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 // **********  END Configure A365 Services **********
 
-// Register the model provider
+// Register the model provider based on configuration
+var aiProvider = builder.Configuration["AIServices:Provider"] ?? "AzureOpenAI";
 builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
 
-// Add AspNet token validation
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
 // Register IStorage. For development, MemoryStorage is suitable.
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
+// Auto observability middleware mirrors the Agent Framework sample:
+// BaggageTurnMiddleware handles turn context propagation and OutputLoggingMiddleware
+// records outgoing activity output without manual InvokeAgentScope plumbing.
 builder.Services.AddSingleton<BaggageTurnMiddleware>();
 builder.Services.AddSingleton<OutputLoggingMiddleware>();
 builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(sp =>

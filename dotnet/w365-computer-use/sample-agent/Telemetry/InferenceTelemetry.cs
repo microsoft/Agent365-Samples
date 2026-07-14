@@ -16,21 +16,19 @@ public static class InferenceTelemetry
         string providerName,
         Func<Task<string>> sendAsync)
     {
-        ArgumentNullException.ThrowIfNull(requestBody);
         ArgumentNullException.ThrowIfNull(sendAsync);
-
-        var redactedRequestBody = RedactSensitivePayloads(requestBody);
+        requestBody = RedactSensitivePayloads(requestBody);
         var telemetryContext = Agent365TelemetryContext.FromCurrentActivity();
 
         using var scope = InferenceScope.Start(
-            request: telemetryContext.ToRequest(content: redactedRequestBody),
+            request: telemetryContext.ToRequest(content: requestBody),
             details: new InferenceCallDetails(
                 operationName: InferenceOperationType.Chat,
                 model: modelName,
                 providerName: providerName),
             agentDetails: telemetryContext.ToAgentDetails());
 
-        scope.RecordInputMessages([redactedRequestBody]);
+        scope.RecordInputMessages([requestBody]);
 
         try
         {
@@ -76,30 +74,24 @@ public static class InferenceTelemetry
         }
     }
 
+    internal static InferenceResponseMetadata ReadResponseMetadataForTest(string responseBody) =>
+        ReadResponseMetadata(responseBody);
+
     private static string RedactSensitivePayloads(string value)
     {
-        return Regex.Replace(
+        return System.Text.RegularExpressions.Regex.Replace(
             value,
             @"data:image\/[^""\s]+",
             "data:image/redacted;base64,<redacted>",
-            RegexOptions.IgnoreCase);
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     private static InferenceResponseMetadata ReadResponseMetadata(string responseBody)
     {
-        if (string.IsNullOrEmpty(responseBody))
-        {
-            return InferenceResponseMetadata.Empty;
-        }
-
         try
         {
             using var doc = JsonDocument.Parse(responseBody);
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                return InferenceResponseMetadata.Empty;
-            }
 
             var responseId = root.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String
                 ? id.GetString()
@@ -109,27 +101,21 @@ public static class InferenceTelemetry
             int? outputTokens = null;
             if (root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object)
             {
-                if (usage.TryGetProperty("input_tokens", out var input)
-                    && input.ValueKind == JsonValueKind.Number
-                    && input.TryGetInt32(out var inputValue))
+                if (usage.TryGetProperty("input_tokens", out var input) && input.TryGetInt32(out var inputValue))
                 {
                     inputTokens = inputValue;
                 }
 
-                if (usage.TryGetProperty("output_tokens", out var output)
-                    && output.ValueKind == JsonValueKind.Number
-                    && output.TryGetInt32(out var outputValue))
+                if (usage.TryGetProperty("output_tokens", out var output) && output.TryGetInt32(out var outputValue))
                 {
                     outputTokens = outputValue;
                 }
             }
 
-            return new InferenceResponseMetadata(
-                responseId,
-                inputTokens,
-                outputTokens,
-                ReadFinishReasons(root),
-                ReadOutputMessages(root));
+            var finishReasons = ReadFinishReasons(root);
+            var outputMessages = ReadOutputMessages(root);
+
+            return new InferenceResponseMetadata(responseId, inputTokens, outputTokens, finishReasons, outputMessages);
         }
         catch (JsonException)
         {
@@ -139,21 +125,22 @@ public static class InferenceTelemetry
 
     private static string[] ReadFinishReasons(JsonElement root)
     {
-        var finishReasons = new List<string>();
-        AddStringProperty(root, "finish_reason", finishReasons);
-
-        if (root.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.Array)
+        if (root.TryGetProperty("finish_reason", out var finishReason) && finishReason.ValueKind == JsonValueKind.String)
         {
-            foreach (var item in output.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.Object)
-                {
-                    AddStringProperty(item, "finish_reason", finishReasons);
-                }
-            }
+            var value = finishReason.GetString();
+            return string.IsNullOrEmpty(value) ? [] : [value];
         }
 
-        return finishReasons.Distinct(StringComparer.Ordinal).ToArray();
+        if (!root.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return output.EnumerateArray()
+            .Select(item => item.TryGetProperty("finish_reason", out var reason) && reason.ValueKind == JsonValueKind.String ? reason.GetString() : null)
+            .Where(reason => !string.IsNullOrEmpty(reason))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray()!;
     }
 
     private static string[] ReadOutputMessages(JsonElement root)
@@ -166,18 +153,14 @@ public static class InferenceTelemetry
         var messages = new List<string>();
         foreach (var item in output.EnumerateArray())
         {
-            if (item.ValueKind != JsonValueKind.Object
-                || !item.TryGetProperty("content", out var content)
-                || content.ValueKind != JsonValueKind.Array)
+            if (!item.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
             foreach (var part in content.EnumerateArray())
             {
-                if (part.ValueKind == JsonValueKind.Object
-                    && part.TryGetProperty("text", out var text)
-                    && text.ValueKind == JsonValueKind.String)
+                if (part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
                 {
                     var value = text.GetString();
                     if (!string.IsNullOrEmpty(value))
@@ -190,26 +173,14 @@ public static class InferenceTelemetry
 
         return messages.ToArray();
     }
+}
 
-    private static void AddStringProperty(JsonElement element, string propertyName, List<string> values)
-    {
-        if (element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String)
-        {
-            var value = property.GetString();
-            if (!string.IsNullOrEmpty(value))
-            {
-                values.Add(value);
-            }
-        }
-    }
-
-    private sealed record InferenceResponseMetadata(
-        string? ResponseId,
-        int? InputTokens,
-        int? OutputTokens,
-        string[] FinishReasons,
-        string[] OutputMessages)
-    {
-        public static readonly InferenceResponseMetadata Empty = new(null, null, null, [], []);
-    }
+internal sealed record InferenceResponseMetadata(
+    string? ResponseId,
+    int? InputTokens,
+    int? OutputTokens,
+    string[] FinishReasons,
+    string[] OutputMessages)
+{
+    public static readonly InferenceResponseMetadata Empty = new(null, null, null, [], []);
 }

@@ -34,9 +34,9 @@ public class AzureOpenAIModelProvider : ICuaModelProvider
     public async Task<string> SendAsync(string requestBody, CancellationToken cancellationToken)
     {
         return await InferenceTelemetry.InvokeAsync(
-            requestBody,
-            ModelName,
-            "azure-openai",
+        requestBody,
+        ModelName,
+        providerName: "azure-openai",
             async () =>
             {
                 _logger.LogInformation("Azure OpenAI request URL: {Url}", _url);

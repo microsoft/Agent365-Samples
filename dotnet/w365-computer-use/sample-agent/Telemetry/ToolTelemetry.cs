@@ -23,14 +23,13 @@ public static class ToolTelemetry
         ArgumentNullException.ThrowIfNull(arguments);
         ArgumentException.ThrowIfNullOrWhiteSpace(toolServerName);
         ArgumentNullException.ThrowIfNull(invokeAsync);
-
-        var context = Agent365TelemetryContext.FromCurrentActivity(
+        var telemetryContext = Agent365TelemetryContext.FromCurrentActivity(
             conversationIdOverride: conversationId,
             channelNameOverride: channelId);
         var resolvedToolCallId = ResolveToolCallId(toolName, toolCallId);
 
         using var scope = ExecuteToolScope.Start(
-            request: context.ToRequest(conversationId: conversationId, channelName: channelId),
+            request: telemetryContext.ToRequest(conversationId: conversationId, channelName: channelId),
             details: new ToolCallDetails(
                 toolName: toolName,
                 argumentsObject: ToSerializableArguments(arguments),
@@ -38,13 +37,15 @@ public static class ToolTelemetry
                 toolType: ToolType.Function,
                 endpoint: endpoint,
                 toolServerName: toolServerName),
-            agentDetails: context.ToAgentDetails());
+            agentDetails: telemetryContext.ToAgentDetails());
 
         try
         {
             var result = await invokeAsync().ConfigureAwait(false);
-            scope.RecordResponse(RedactSensitiveResult(toolName, result));
-            return result;
+            var originalResult = result;
+            result = RedactSensitiveResult(toolName, result);
+            scope.RecordResponse(result);
+            return originalResult;
         }
         catch (OperationCanceledException)
         {
@@ -53,7 +54,7 @@ public static class ToolTelemetry
         }
         catch (Exception ex)
         {
-            scope.RecordError(RedactSensitiveError(toolName, ex));
+            scope.RecordError(ex);
             throw;
         }
     }
@@ -62,11 +63,13 @@ public static class ToolTelemetry
     {
         return !string.IsNullOrWhiteSpace(toolCallId)
             ? toolCallId
-            : $"{toolName}-{Guid.NewGuid():N}";
+            : $"{toolName}-{Guid.NewGuid().ToString("N")}";
     }
 
-    private static Dictionary<string, object> ToSerializableArguments(
-        IDictionary<string, object?> arguments)
+    internal static string ResolveToolCallIdForTest(string toolName, string? toolCallId) =>
+        ResolveToolCallId(toolName, toolCallId);
+
+    private static Dictionary<string, object> ToSerializableArguments(IDictionary<string, object?> arguments)
     {
         return arguments.ToDictionary(
             pair => pair.Key,
@@ -76,34 +79,32 @@ public static class ToolTelemetry
 
     private static object RedactSensitiveArgument(string key, object? value)
     {
-        if (!string.Equals(key, "text", StringComparison.OrdinalIgnoreCase))
+        if (value == null)
         {
-            return value!;
+            return string.Empty;
         }
 
-        var length = value?.ToString()?.Length ?? 0;
-        return $"<redacted text; length={length}>";
+        if (string.Equals(key, "text", StringComparison.OrdinalIgnoreCase))
+        {
+            var length = value.ToString()?.Length ?? 0;
+            return $"<redacted text; length={length}>";
+        }
+
+        return value;
     }
 
     private static string RedactSensitiveResult(string toolName, string result)
     {
-        if (toolName.Contains("screenshot", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(toolName, "take_screenshot", StringComparison.OrdinalIgnoreCase))
         {
             return "<redacted screenshot result>";
         }
 
-        return Regex.Replace(
+        return System.Text.RegularExpressions.Regex.Replace(
             result,
             @"data:image\/[^""\s]+",
             "data:image/redacted;base64,<redacted>",
-            RegexOptions.IgnoreCase);
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
-    private static Exception RedactSensitiveError(string toolName, Exception exception)
-    {
-        var redactedMessage = RedactSensitiveResult(toolName, exception.Message);
-        return string.Equals(redactedMessage, exception.Message, StringComparison.Ordinal)
-            ? exception
-            : new InvalidOperationException(redactedMessage);
-    }
 }

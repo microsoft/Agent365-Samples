@@ -25,7 +25,6 @@ public static class A365OtelWrapper
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
-        CancellationToken cancellationToken,
         Func<Task> func)
     {
         ArgumentNullException.ThrowIfNull(func);
@@ -40,7 +39,6 @@ public static class A365OtelWrapper
             authSystem,
             authHandlerName,
             logger,
-            cancellationToken,
             async () =>
             {
                 await func().ConfigureAwait(false);
@@ -58,17 +56,12 @@ public static class A365OtelWrapper
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
-        CancellationToken cancellationToken,
         Func<Task<string?>> func)
     {
         ArgumentNullException.ThrowIfNull(func);
 
-        (string agentId, string tenantId) = await ResolveTenantAndAgentId(
-            turnContext,
-            authSystem,
-            authHandlerName,
-            logger,
-            cancellationToken).ConfigureAwait(false);
+        (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName, logger);
+        var observabilityScopes = EnvironmentUtils.GetObservabilityAuthenticationScope();
 
         var telemetryContext = Agent365TelemetryContext.FromTurnContext(
             turnContext,
@@ -82,8 +75,6 @@ public static class A365OtelWrapper
 
         if (!string.IsNullOrWhiteSpace(authHandlerName))
         {
-            var observabilityScopes = EnvironmentUtils.GetObservabilityAuthenticationScope();
-
             try
             {
                 var token = await authSystem.ExchangeTurnTokenAsync(
@@ -91,7 +82,7 @@ public static class A365OtelWrapper
                     authHandlerName,
                     null!,
                     observabilityScopes,
-                    cancellationToken).ConfigureAwait(false);
+                    default).ConfigureAwait(false);
 
                 if (!string.IsNullOrEmpty(token))
                 {
@@ -102,11 +93,11 @@ public static class A365OtelWrapper
                         observabilityScopes);
                 }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger?.LogError(
                     ex,
-                    "Observability token exchange or service-cache registration failed for agent {AgentId}, tenant {TenantId}, and auth handler {AuthHandler}.",
+                    "Observability token exchange failed: agentId={AgentId} tenantId={TenantId} authHandler={AuthHandler}",
                     exportAgentId,
                     exportTenantId,
                     authHandlerName);
@@ -125,7 +116,7 @@ public static class A365OtelWrapper
                     new AgenticTokenStruct(authSystem, turnContext, authHandlerName, null),
                     observabilityScopes);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger?.LogWarning(
                     ex,
@@ -137,7 +128,7 @@ public static class A365OtelWrapper
         }
 
         using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);
-        invokeAgentScope.SetTagMaybe("server.port", telemetryContext.ToServerPortAttribute());
+        ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);
         string? outputMessage = null;
 
         try
@@ -149,11 +140,7 @@ public static class A365OtelWrapper
                 {
                     outputMessage = await func().ConfigureAwait(false);
                 }).ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(outputMessage))
-            {
-                invokeAgentScope.RecordOutputMessages([outputMessage]);
-            }
+            RecordInvokeAgentOutputMessage(invokeAgentScope, outputMessage);
         }
         catch (OperationCanceledException)
         {
@@ -167,18 +154,44 @@ public static class A365OtelWrapper
         }
     }
 
+    private static void RecordInvokeAgentOutputMessage(InvokeAgentScope invokeAgentScope, string? outputMessage)
+    {
+        var outputMessages = GetInvokeAgentOutputMessages(outputMessage);
+        if (outputMessages.Length > 0)
+        {
+            invokeAgentScope.RecordOutputMessages(outputMessages);
+        }
+    }
+
+    private static string[] GetInvokeAgentOutputMessages(string? outputMessage) =>
+        string.IsNullOrWhiteSpace(outputMessage) ? [] : [outputMessage];
+
+    internal static string[] GetInvokeAgentOutputMessagesForTest(string? outputMessage) =>
+        GetInvokeAgentOutputMessages(outputMessage);
+
+    private static void ForceInvokeAgentServerPortTag(
+        InvokeAgentScope invokeAgentScope,
+        Agent365TelemetryContext telemetryContext)
+    {
+        invokeAgentScope.SetTagMaybe("server.port", telemetryContext.ToServerPortAttribute());
+    }
+
     private static InvokeAgentScope StartInvokeAgentScope(
         ITurnContext turnContext,
         Agent365TelemetryContext telemetryContext)
     {
+        var agentDetails = telemetryContext.ToAgentDetails();
+        var request = telemetryContext.ToRequest(content: turnContext.Activity.Text);
+        var callerDetails = telemetryContext.ToCallerDetails();
+
         var scopeDetails = new InvokeAgentScopeDetails(
             endpoint: TryCreateEndpoint(turnContext.Activity.ServiceUrl) ?? telemetryContext.ToInvokeEndpoint());
 
         return InvokeAgentScope.Start(
-            request: telemetryContext.ToRequest(turnContext.Activity.Text),
+            request: request,
             scopeDetails: scopeDetails,
-            agentDetails: telemetryContext.ToAgentDetails(),
-            callerDetails: telemetryContext.ToCallerDetails());
+            agentDetails: agentDetails,
+            callerDetails: callerDetails);
     }
 
     private static Uri? TryCreateEndpoint(string? serviceUrl)
@@ -192,37 +205,34 @@ public static class A365OtelWrapper
         ITurnContext turnContext,
         UserAuthorization authSystem,
         string authHandlerName,
-        ILogger? logger,
-        CancellationToken cancellationToken)
+        ILogger? logger)
     {
         ArgumentNullException.ThrowIfNull(turnContext);
 
-        string agentId = string.Empty;
+        string agentId = "";
         if (turnContext.Activity.IsAgenticRequest())
         {
             agentId = turnContext.Activity.GetAgenticInstanceId();
         }
-        else if (!string.IsNullOrWhiteSpace(authHandlerName))
+        else
         {
-            try
+            if (authSystem != null && !string.IsNullOrEmpty(authHandlerName))
             {
-                var token = await authSystem.GetTurnTokenAsync(
-                    turnContext,
-                    authHandlerName,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                agentId = Utility.ResolveAgentIdentity(turnContext, token);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                logger?.LogWarning(
-                    ex,
-                    "Observability identity resolution failed; falling back to turn context and configured Agent365 observability values.");
+                try
+                {
+                    agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger?.LogWarning(
+                        ex,
+                        "Observability identity resolution failed; falling back to turn context and configured Agent365Observability values.");
+                }
             }
         }
 
-        var tenantId = turnContext.Activity.Conversation?.TenantId
-            ?? turnContext.Activity.Recipient?.TenantId
-            ?? string.Empty;
+        string? tempTenantId = turnContext.Activity?.Conversation?.TenantId ?? turnContext.Activity?.Recipient?.TenantId;
+        string tenantId = tempTenantId ?? string.Empty;
 
         return (agentId, tenantId);
     }
