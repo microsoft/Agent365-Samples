@@ -499,6 +499,7 @@ public class ComputerUseOrchestrator
         {
             session.RemoveSession(session.W365SessionId);
             session.TrackAndSelectSession(prestartedW365SessionId);
+            RegisterW365McpClient(prestartedW365SessionId, mcpClient);
             _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
         }
 
@@ -506,6 +507,7 @@ public class ComputerUseOrchestrator
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
         {
             session.TrackAndSelectSession(requestedSessionId);
+            RegisterW365McpClient(requestedSessionId, mcpClient);
             _logger.LogInformation("Selected W365 session {SessionId} from user message for conversation {ConversationId}", requestedSessionId, conversationId);
         }
 
@@ -939,8 +941,9 @@ public class ComputerUseOrchestrator
         CancellationToken ct,
         string? toolCallId = null)
     {
-        if (!string.IsNullOrEmpty(session.W365SessionId))
+        if (!string.IsNullOrWhiteSpace(session.W365SessionId))
         {
+            RegisterW365McpClient(session.W365SessionId, mcpClient);
             session.SessionStarted = true;
             return;
         }
@@ -998,6 +1001,7 @@ public class ComputerUseOrchestrator
             ?? throw new InvalidOperationException($"Tool '{W365StartSessionToolName}' telemetry completed without capturing a validated sessionId.");
 
         session.TrackAndSelectSession(sessionId);
+        RegisterW365McpClient(sessionId, mcpClient);
         _logger.LogInformation("Started explicit W365 session {SessionId}", sessionId);
     }
 
@@ -1249,8 +1253,7 @@ public class ComputerUseOrchestrator
                     var cachedSessionClient = new W365McpSessionClient(sessionMcpClient);
                     var cachedResult = await cachedSessionClient.ListToolsAsync(existingSessionId, cancellationToken);
                     _cachedTools = cachedResult.Tools;
-                    _cachedMcpClient = cachedResult.Client;
-                    AddMcpClientIfMissing(cachedResult.Client);
+                    RegisterW365McpClient(cachedResult.SessionId, cachedResult.Client);
                     _logger.LogInformation("Reused W365 MCP client for session {SessionId} and loaded {ToolCount} tools.", cachedResult.SessionId, cachedResult.Tools.Count);
                     return cachedResult;
                 }
@@ -1306,9 +1309,7 @@ public class ComputerUseOrchestrator
             var result = await directClient.ListToolsAsync(sessionId, cancellationToken);
 
             _cachedTools = result.Tools;
-            _cachedMcpClient = result.Client;
-            _w365McpClientsBySessionId[result.SessionId] = result.Client;
-            AddMcpClientIfMissing(result.Client);
+            RegisterW365McpClient(result.SessionId, result.Client);
             _logger.LogInformation("Started direct W365 session {SessionId} and loaded {ToolCount} tools via MCP transport.", result.SessionId, result.Tools.Count);
             return result;
         }
@@ -1498,6 +1499,18 @@ public class ComputerUseOrchestrator
         {
             _allMcpClients.Add(client);
         }
+    }
+
+    private void RegisterW365McpClient(string? sessionId, IMcpClient? client)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || client == null)
+        {
+            return;
+        }
+
+        _w365McpClientsBySessionId[sessionId.Trim()] = client;
+        _cachedMcpClient = client;
+        AddMcpClientIfMissing(client);
     }
 
     private async Task DisposeMcpClientIfUnmappedAsync(IMcpClient client, string? sessionId)
@@ -1779,7 +1792,7 @@ public class ComputerUseOrchestrator
                     var result = await mcpClient.CallToolAsync("take_screenshot", screenshotArgs, cancellationToken: ct);
                     var serializedResult = JsonSerializer.Serialize(result);
                     ThrowIfW365ToolError("take_screenshot", serializedResult);
-                    ThrowIfW365SessionLost(serializedResult);
+                    ThrowIfW365SessionLost("take_screenshot", serializedResult);
                     var extracted = ExtractScreenshotBase64(serializedResult, out var contentBlockCount);
                     _logger.LogDebug(
                         "take_screenshot returned {ContentBlockCount} content blocks. Response length: {ResponseLength}; extracted image length: {ImageLength}.",
@@ -1815,7 +1828,7 @@ public class ComputerUseOrchestrator
                 var aiResult = await RawInvokeToolAsync(tools, "take_screenshot", screenshotArgs, ct);
                 var rawResult = aiResult?.ToString() ?? "";
                 ThrowIfW365ToolError("take_screenshot", rawResult);
-                ThrowIfW365SessionLost(rawResult);
+                ThrowIfW365SessionLost("take_screenshot", rawResult);
                 var extracted = ExtractScreenshotBase64(rawResult, out var contentBlockCount);
                 _logger.LogInformation(
                     "Screenshot fallback response length={ResponseLength}, content blocks={ContentBlockCount}, extracted image length={ImageLength}",
@@ -2049,7 +2062,7 @@ public class ComputerUseOrchestrator
                         var result = await mcpClient.CallToolAsync(name, args, cancellationToken: ct);
                         var serializedResult = JsonSerializer.Serialize(result);
                         ThrowIfW365ToolError(name, serializedResult);
-                        ThrowIfW365SessionLost(serializedResult);
+                        ThrowIfW365SessionLost(name, serializedResult);
                         return serializedResult;
                     }).ConfigureAwait(false);
             }
@@ -2068,7 +2081,7 @@ public class ComputerUseOrchestrator
                         var raw = await RawInvokeToolAsync(tools, name, args, ct).ConfigureAwait(false);
                         var rawResult = raw?.ToString() ?? string.Empty;
                         ThrowIfW365ToolError(name, rawResult);
-                        ThrowIfW365SessionLost(rawResult);
+                        ThrowIfW365SessionLost(name, rawResult);
                         return rawResult;
                     }).ConfigureAwait(false);
             }
@@ -2280,12 +2293,22 @@ public class ComputerUseOrchestrator
         return (resultStr, false);
     }
 
-    private static void ThrowIfW365SessionLost(string result)
+    private static void ThrowIfW365SessionLost(string toolName, string result)
     {
-        if (IsUnstructuredSessionLossResponse(result))
+        if (AllowsUnstructuredSessionLossDetection(toolName)
+            && IsUnstructuredSessionLossResponse(result))
         {
             throw new InvalidOperationException(result);
         }
+    }
+
+    private static bool AllowsUnstructuredSessionLossDetection(string toolName)
+    {
+        return W365LifecycleToolNames.Contains(toolName)
+            || W365NativeDuplicateToolNames.Contains(toolName)
+            || toolName.Equals("take_screenshot", StringComparison.OrdinalIgnoreCase)
+            || toolName.Equals("wait_milliseconds", StringComparison.OrdinalIgnoreCase)
+            || toolName.Equals("browser_navigate", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsUnstructuredSessionLossResponse(string response)
@@ -2438,13 +2461,7 @@ public class ComputerUseOrchestrator
             session.ClearActiveSession();
             await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
 
-            var newSessionId = session.W365SessionId;
-            if (mcpClient != null && !string.IsNullOrWhiteSpace(newSessionId))
-            {
-                _w365McpClientsBySessionId[newSessionId] = mcpClient;
-                _cachedMcpClient = mcpClient;
-                AddMcpClientIfMissing(mcpClient);
-            }
+            RegisterW365McpClient(session.W365SessionId, mcpClient);
         }
         catch
         {
