@@ -2181,27 +2181,44 @@ public class ComputerUseOrchestrator
     /// session-state flags so the next computer-use action starts a fresh explicit session.
     /// </summary>
     private async Task RecoverSessionAsync(
-        ConversationSession session, IList<AITool> tools, ILogger logger, CancellationToken ct)
+        ConversationSession session,
+        IList<AITool> tools,
+        IMcpClient? reusableMcpClient,
+        ILogger logger,
+        CancellationToken ct)
     {
         logger.LogWarning("Session lost. Recovering — releasing stale session before starting a new one.");
+        var staleSessionId = session.W365SessionId;
 
         try
         {
             await EndSessionAsync(
                 tools,
                 logger,
-                session.W365SessionId,
+                staleSessionId,
                 ct,
                 conversationId: session.ConversationId,
                 channelId: session.ChannelId);
-            await DisposeW365McpClientAsync(session.W365SessionId);
+
+            if (!string.IsNullOrWhiteSpace(staleSessionId)
+                && _w365McpClientsBySessionId.TryGetValue(staleSessionId, out var staleMcpClient))
+            {
+                if (ReferenceEquals(staleMcpClient, reusableMcpClient))
+                {
+                    _w365McpClientsBySessionId.TryRemove(staleSessionId, out _);
+                }
+                else
+                {
+                    await DisposeW365McpClientAsync(staleSessionId);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Best-effort EndSession during recovery failed");
         }
 
-        session.RemoveSession(session.W365SessionId);
+        session.RemoveSession(staleSessionId);
         logger.LogInformation("Session state cleared; the next computer-use action will start a new session.");
     }
 
@@ -2217,9 +2234,20 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient,
         CancellationToken ct)
     {
-        await RecoverSessionAsync(session, w365Tools, _logger, ct);
+        await RecoverSessionAsync(session, w365Tools, mcpClient, _logger, ct);
         session.ClearActiveSession();
         await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
+
+        var newSessionId = session.W365SessionId;
+        if (mcpClient != null && !string.IsNullOrWhiteSpace(newSessionId))
+        {
+            _w365McpClientsBySessionId[newSessionId] = mcpClient;
+            _cachedMcpClient = mcpClient;
+            if (!_allMcpClients.Any(client => ReferenceEquals(client, mcpClient)))
+            {
+                _allMcpClients.Add(mcpClient);
+            }
+        }
     }
 
     /// <summary>Recovers from an in-turn session loss and retries the failed tool call against a fresh session.</summary>
