@@ -20,6 +20,7 @@ public with sharing class A365ObsConfig {
     @TestVisible private static final String DEF_FMI_SCOPE = 'api://AzureADTokenExchange/.default';
     @TestVisible private static final String DEF_SERVICE_NAME = 'salesforce-apex';
     @TestVisible private static final String DEF_AF_SERVICE_NAME = 'salesforce-agentforce';
+    @TestVisible private static final String DEF_CHANNEL_NAME = 'agentforce';
 
     // Test override — when set, getInstance() returns this instead of querying CMDT
     // (CMDT rows cannot be inserted in tests, so this is how disabled/enabled is exercised).
@@ -90,6 +91,40 @@ public with sharing class A365ObsConfig {
     public static Boolean originateEnabled() {
         A365_Observability_Config__mdt c = getInstance();
         return c != null && c.OriginateEnabled__c == true;
+    }
+
+    // --- Admin Center attribution / enrichment (Option 1 + 3) --------------------
+    //
+    // Agentforce turns have no native Entra user, so an ORIGINATED invoke_agent span is
+    // user-less by default (CloudAppEvents UserKey = 0) and therefore lands only in Defender
+    // raw logs — it never surfaces as a session/run-time in the M365 Admin Center. Setting a
+    // run-as Entra user object id (below) makes Salesforce attribute the session to a real
+    // identity (user.id -> UserKey), which is what the Admin Center "Activity" tab keys on.
+    // The remaining getters enrich the session record (agent/blueprint/channel names).
+
+    // Optional Entra (AAD) user object id to attribute Agentforce-originated sessions to.
+    // Blank => omit user.id (preserves the prior user-less, Defender-only behavior).
+    public static String runAsUserId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.RunAsUserId__c)) ? c.RunAsUserId__c : null;
+    }
+
+    // Optional agent blueprint id (microsoft.a365.agent.blueprint.id). Blank => omit.
+    public static String blueprintId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.BlueprintId__c)) ? c.BlueprintId__c : null;
+    }
+
+    // Display name for the agent (gen_ai.agent.name); falls back to the service name.
+    public static String agentName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.AgentName__c)) ? c.AgentName__c : agentforceServiceName();
+    }
+
+    // Channel name for Agentforce turns (microsoft.channel.name); defaults to 'agentforce'.
+    public static String channelName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.ChannelName__c)) ? c.ChannelName__c : DEF_CHANNEL_NAME;
     }
 
     public static Boolean useS2SEndpoint() {

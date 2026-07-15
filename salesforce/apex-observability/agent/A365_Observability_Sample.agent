@@ -41,14 +41,38 @@ start_agent Echo:
     reasoning:
         instructions: ->
             |For EVERY user message, immediately call the A365 Echo action (APEX).
-            |Pass the user's full message text as `prompt`.
-            |Pass the conversation id as `sessionId` from the RoutableId variable.
-            |Do NOT answer from general knowledge. Do NOT skip the action for greetings or small talk.
-            |Return the action's Reply text verbatim as your response.
+             Pass the user's full message text as `prompt`.
+             If a RoutableId value is available, pass it as `sessionId`; otherwise omit it.
+             Do NOT answer from general knowledge. Do NOT skip the action for greetings or small talk.
+             Return the action's Reply text verbatim as your response.
+            run @actions.APEX
         actions:
+            # `run @actions.APEX` DETERMINISTICALLY invokes the action every turn instead of leaving
+            # the decision to the planner (which may answer conversationally and skip it) — this
+            # guarantees one telemetry span per turn.
+            #
+            # NOTE: if the action is missing from the planner ENTIRELY (enabled_tools =
+            # [__end_session_action__] only, no async job, nothing emitted), the running user is
+            # almost certainly missing the A365_Observability permission set — Salesforce drops Apex
+            # actions the user can't access. On a real channel that user is the bot user, not your
+            # preview user. `run` only matters once the action is available. See agent/README.md.
+            #
+            # IMPORTANT: `run` compiles to a pre-reasoning node that carries NO bound inputs
+            # (verified in the compiled GenAiPlannerBundle graph: boundInputs={}, llmInputs=[]).
+            # So `prompt` MUST be optional (is_required: False below) — otherwise the deterministic
+            # invocation fails input validation and never fires, emitting no telemetry. With prompt
+            # optional the action fires on EVERY turn; A365AgentforceTool echoes a greeting when the
+            # prompt is blank. When the planner also reasons and calls the action via the tool node
+            # below, it fills the real message text.
+            #
+            # Inputs are left model-filled (`...`), NOT eager-bound to @variables.RoutableId
+            # (linked to @MessagingSession.Id): that variable is unresolved in the Agent Builder
+            # preview (no MessagingSession), which drops the action from the tool list. sessionId
+            # is optional; A365AgentforceTool generates a fallback trace seed when it is absent,
+            # so the action still emits a valid span in preview.
             APEX: @actions.APEX
                 with prompt = ...
-                with sessionId = @variables.RoutableId
+                with sessionId = ...
     actions:
         APEX:
             label: "APEX"
@@ -59,7 +83,7 @@ start_agent Echo:
                 prompt: string
                     label: "Prompt"
                     description: "Text sent from the Agentforce turn"
-                    is_required: True
+                    is_required: False
                     complex_data_type_name: "lightning__textType"
                 sessionId: string
                     label: "SessionId"
