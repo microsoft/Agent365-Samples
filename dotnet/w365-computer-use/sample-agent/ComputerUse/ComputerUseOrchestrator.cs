@@ -527,7 +527,14 @@ public class ComputerUseOrchestrator
         // or server-side session expiry) reconnects and swaps both here so the retry and every
         // later loop iteration use the fresh client/tools instead of the disposed ones.
         var w365 = new W365Connection(w365Tools, mcpClient);
-        
+
+        if (includeCuaTool && !string.IsNullOrWhiteSpace(prestartedW365SessionId) && string.IsNullOrEmpty(session.W365SessionId))
+        {
+            session.TrackAndSelectSession(prestartedW365SessionId);
+            _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
+
+        }
+
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
         {
             session.TrackAndSelectSession(requestedSessionId);
@@ -845,10 +852,13 @@ public class ComputerUseOrchestrator
                             var callId = item.GetProperty("call_id").GetString()!;
                             var args = new Dictionary<string, object?>();
                             var sessionIdToInspect = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
-                            if (!string.IsNullOrEmpty(sessionIdToInspect))
+                            if (string.IsNullOrEmpty(sessionIdToInspect))
                             {
-                                args["sessionId"] = sessionIdToInspect;
+                                session.ConversationHistory.Add(CreateFunctionOutput(callId, "No active W365 session exists yet."));
+                                break;
                             }
+
+                            args["sessionId"] = sessionIdToInspect;
 
                             // Route through the session-checked path so a stale session is recovered and retried.
                             var (detailsResult, detailsSessionLost) = await InvokeW365ToolCheckSessionAsync(
@@ -2683,7 +2693,7 @@ public class ComputerUseOrchestrator
         {
             throw;
         }
-        catch (Exception ex) when (ex is HttpRequestException || ex is JsonException || ex is KeyNotFoundException)
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or KeyNotFoundException)
         {
             _logger.LogWarning(ex, "Failed to share conversation folder");
             return null;

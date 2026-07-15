@@ -88,14 +88,14 @@ public static class AgentMetrics
         MessageProcessedCounter.Add(1);
         var activity = InitializeMessageHandlingActivity(operationName, context);
         var stopwatch = Stopwatch.StartNew();
-        var success = true;
+        var success = false;
         try
         {
             await func().ConfigureAwait(false);
+            success = true;
         }
         catch (Exception ex)
         {
-            success = false;
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddEvent(new ActivityEvent("exception", DateTimeOffset.UtcNow, new()
             {

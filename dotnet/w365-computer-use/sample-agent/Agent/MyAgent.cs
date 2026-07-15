@@ -279,7 +279,7 @@ public class MyAgent : AgentApplication
                     {
                         // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
                         // discovery entirely so chit-chat never touches W365.
-                        var (_, nonCuaAdditionalTools, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
+                        var (_, nonCuaAdditionalTools, _, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
                         var directResponse = await _orchestrator.RunAsync(
                             localSessionKey,
                             userText,
@@ -313,7 +313,7 @@ public class MyAgent : AgentApplication
                     }
 
                     // Get MCP tools — direct connection in Dev, SDK in Production
-                    var (w365Tools, additionalTools, mcpClient, prestartedW365SessionId) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true, localSessionKey, cancellationToken);
+                    var (w365Tools, additionalTools, mcpClient, prestartedW365SessionId, reconnectW365Async) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true, localSessionKey, cancellationToken);
 
                     try
                     {
@@ -363,6 +363,7 @@ public class MyAgent : AgentApplication
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
                                 MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
                             prestartedW365SessionId: prestartedW365SessionId,
+                             reconnectW365Async: reconnectW365Async,
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -397,7 +398,7 @@ public class MyAgent : AgentApplication
     /// When <paramref name="includeW365"/> is <c>false</c>, the W365 server(s) are skipped —
     /// used on the non-CUA fast path so chit-chat never starts a Cloud PC session.
     /// </summary>
-    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client, string? PrestartedW365SessionId)> GetToolsAsync(
+    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client, string? PrestartedW365SessionId, ComputerUseOrchestrator.ReconnectW365Async? ReconnectW365Async)> GetToolsAsync(
         ITurnContext context,
         string? authHandlerName,
         bool includeW365,
@@ -433,7 +434,7 @@ public class MyAgent : AgentApplication
         if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
         {
             _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
-            return (null, null, null, null);
+            return (null, null, null, null, null);
         }
 
         try
@@ -487,24 +488,24 @@ public class MyAgent : AgentApplication
                             context,
                             existingSessionId: null,
                             reconnectCt);
-                        
-                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId);
+
+                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId, reconnect);
                 }
 
                 _logger.LogInformation("Skipping production MCP tool discovery for non-CUA turn while ToolingManifest is restricted to W365 CUA.");
-                return (null, Array.Empty<AITool>(), null, null);
+                return (null, Array.Empty<AITool>(), null, null, null);
             }
 
             var w365Tools = includeW365 ? FilterW365Tools(allTools) : null;
             var additionalTools = FilterAdditionalTools(allTools);
-            return (w365Tools, additionalTools, mcpClient, null);
+            return (w365Tools, additionalTools, mcpClient, null, null);
         }
         catch (Exception ex)
         {
             if (ShouldSkipToolingOnErrors())
             {
                 _logger.LogWarning(ex, "Failed to connect to MCP servers. Continuing without tools (SKIP_TOOLING_ON_ERRORS=true).");
-                return (null, null, null, null);
+                return (null, null, null, null, null);
             }
 
             _logger.LogError(ex, "Failed to connect to MCP servers.");
@@ -576,7 +577,7 @@ public class MyAgent : AgentApplication
         var errorTool = additionalTools
             .OfType<AIFunction>()
             .FirstOrDefault(fn => string.Equals(fn.Name, "Error", StringComparison.OrdinalIgnoreCase));
-        
+
         if (errorTool == null)
         {
             return null;
