@@ -74,7 +74,13 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("ScreenShareToken", httpContext =>
     {
         var sid = httpContext.Request.RouteValues["sid"]?.ToString() ?? "unknown";
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        // Prefer the client IP from X-Forwarded-For (App Service / reverse proxies terminate the
+        // connection, so RemoteIpAddress is the proxy). Take the first (original client) hop; fall
+        // back to RemoteIpAddress when the header is absent.
+        var forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        var ip = !string.IsNullOrWhiteSpace(forwardedFor)
+            ? forwardedFor.Split(',')[0].Trim()
+            : httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: $"{sid}|{ip}",
             factory: _ => new FixedWindowRateLimiterOptions

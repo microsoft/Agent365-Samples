@@ -582,22 +582,30 @@ public class MyAgent : AgentApplication
         //    and lets devs validate the end-to-end flow with a supplied token before the agentic
         //    token plumbing is ready.
         var ariToken = Environment.GetEnvironmentVariable("ARI_BEARER_TOKEN");
-        var ariHandlerName = ScreenShareAuthHandlerName ?? "ari";
         if (string.IsNullOrEmpty(ariToken))
         {
+            // No ARI handler section is configured (ScreenShareAuthHandlerName is null) and no
+            // explicit token override — nothing to mint. Skip quietly instead of calling
+            // GetTurnTokenAsync with a guessed handler name and logging a warning every session.
+            if (string.IsNullOrEmpty(ScreenShareAuthHandlerName))
+            {
+                _logger.LogDebug("No ARI auth handler configured and ARI_BEARER_TOKEN not set — skipping screenshare link");
+                return null;
+            }
+
             try
             {
-                ariToken = await UserAuthorization.GetTurnTokenAsync(turnContext, ariHandlerName).ConfigureAwait(false);
+                ariToken = await UserAuthorization.GetTurnTokenAsync(turnContext, ScreenShareAuthHandlerName).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to acquire ARI token via UserAuthorization '{Handler}' handler — skipping screenshare link", ariHandlerName);
+                _logger.LogWarning(ex, "Failed to acquire ARI token via UserAuthorization '{Handler}' handler — skipping screenshare link", ScreenShareAuthHandlerName);
                 return null;
             }
         }
         if (string.IsNullOrEmpty(ariToken))
         {
-            _logger.LogWarning("ARI token not available (GetTurnTokenAsync '{Handler}' returned empty) — skipping screenshare link", ariHandlerName);
+            _logger.LogWarning("ARI token not available (GetTurnTokenAsync '{Handler}' returned empty) — skipping screenshare link", ScreenShareAuthHandlerName ?? "ari");
             return null;
         }
 
@@ -607,6 +615,14 @@ public class MyAgent : AgentApplication
         try
         {
             var parsed = new JwtSecurityTokenHandler().ReadJwtToken(ariToken);
+            // ReadJwtToken succeeds even when the token has no (or an unparsable) exp claim, in which
+            // case ValidTo defaults to DateTime.MinValue. Require a usable, still-valid expiry rather
+            // than emitting a link whose token is already (or effectively) expired.
+            if (parsed.ValidTo == DateTime.MinValue || parsed.ValidTo <= DateTime.UtcNow)
+            {
+                _logger.LogWarning("ARI token has no usable expiry (ValidTo={ValidTo:o}) — skipping screenshare link", parsed.ValidTo);
+                return null;
+            }
             safeExp = parsed.ValidTo.AddMinutes(-5);
         }
         catch (Exception ex)
