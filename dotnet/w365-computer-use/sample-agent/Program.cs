@@ -117,14 +117,12 @@ app.UseRateLimiter();
 // Serve the screenshare SPA (wwwroot/screenshare.html + screenshare.js) so the user can open
 // the link the agent posts in chat.
 //
-// Set frame-ancestors via a real HTTP response header (browsers ignore it when delivered
-// through <meta> per CSP spec). Driven by ScreenShare:AllowedFrameAncestors so it's
-// env-configurable (Teams + new-Teams in prod). Also strip X-Frame-Options if anything sets it
-// — it would conflict with frame-ancestors for Teams.
+// frame-ancestors must be a real HTTP response header (browsers ignore it in <meta>). It's
+// driven by ScreenShare:AllowedFrameAncestors so it's env-configurable.
 var ssOpts = builder.Configuration.GetSection(ScreenShareOptions.SectionName).Get<ScreenShareOptions>() ?? new ScreenShareOptions();
 
-// Fail fast on an unsafe screenshare auth configuration. DevBypass skips the viewer's identity
-// (owner) check and must never be reachable in a non-development deployment.
+// Fail fast on an unsafe screenshare auth configuration: DevBypass skips the viewer's identity
+// check and must never be reachable in a non-development deployment.
 var isDevEnvironment = app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Playground";
 if (ssOpts.AuthMode == ScreenShareAuthMode.DevBypass && !isDevEnvironment)
 {
@@ -145,8 +143,7 @@ app.Use(async (context, next) =>
     {
         context.Response.OnStarting(() =>
         {
-            // Never cache the SPA shell/script — they change between dev iterations and carry no
-            // version in the URL. The versioned viewer bundle still caches.
+            // Never cache the SPA shell/script — they carry no version in the URL.
             context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
             if (isSpaHtml)
             {
@@ -177,8 +174,7 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
 // Health check endpoint for CI/CD pipelines and monitoring
 app.MapGet("/api/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 
-// SPA config probe so screenshare.js gets the CDN origin + SDK version templated server-side
-// (one source of truth — no risk of HTML/JS drift).
+// SPA config probe: hands screenshare.js the CDN origin + SDK version so they live in one place.
 app.MapGet("/api/screenshare/config", () => Results.Ok(new
 {
     cdnOrigin = ssOpts.CdnOrigin,
@@ -186,15 +182,10 @@ app.MapGet("/api/screenshare/config", () => Results.Ok(new
     authMode = ssOpts.AuthMode.ToString(),
 }));
 
-// Exchange the chat-link (sid + hc) for the ARI bearer token. How the viewer's identity is
-// established depends on ScreenShare:AuthMode:
-//   - EasyAuth (prod): the page sits behind Azure App Service Authentication, which authenticates
-//     the browser and injects the signed-in user's object id via X-MS-CLIENT-PRINCIPAL(-ID). We
-//     match that oid against the handoff owner so only the user who received the link can complete
-//     the exchange.
-//   - DevBypass (local/Playground only): the owner check is skipped so the sample can run in a
-//     plain browser tab. Hard-gated at startup to development environments.
-// The handoff record is burned atomically on success — any subsequent valid call returns 403.
+// Exchange the chat-link (sid + hc) for the ARI bearer token. Under EasyAuth (prod) the signed-in
+// user's object id is matched against the handoff owner so only the recipient can complete the
+// exchange; DevBypass (local/Playground only) skips that check. The handoff is burned atomically
+// on success — any later valid call returns 403.
 app.MapPost("/api/screenshare/{sid}/token", (
         HttpContext http,
         string sid,

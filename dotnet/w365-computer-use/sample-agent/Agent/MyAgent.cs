@@ -145,9 +145,8 @@ public class MyAgent : AgentApplication
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
         W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
 
-        // ARI (screenshare) agentic handler. Defaults to "ari" but is only wired in when a matching
-        // handler section exists — otherwise the agent is never signed in for ARI and
-        // GetTurnTokenAsync("ari") returns empty, so no screenshare link is emitted.
+        // ARI (screenshare) agentic handler. Only wired in when a matching handler section exists;
+        // otherwise it stays null and no screenshare link is emitted.
         var ariHandlerName = configuration.GetValue<string>("AgentApplication:ScreenShareAuthHandlerName") ?? "ari";
         ScreenShareAuthHandlerName =
             configuration.GetSection($"AgentApplication:UserAuthorization:Handlers:{ariHandlerName}").Exists()
@@ -256,10 +255,9 @@ public class MyAgent : AgentApplication
                     var localSessionKey = BuildLocalSessionKey(conversationId, fromAccount);
 
                     // Fast path: the user is asking for a (fresh) screen share link. The link is
-                    // otherwise emitted only once when a session starts, and each handoff record is
-                    // single-use + short-lived (5 min) and lost on agent restart — so without this
-                    // there is no recovery path. Handled deterministically here (before the LLM
-                    // classifier) because the model has no tool for it and would otherwise refuse.
+                    // otherwise emitted only once when a session starts, and each handoff is
+                    // single-use and short-lived — so handle re-mint requests here, before the LLM
+                    // classifier (the model has no tool for it and would otherwise refuse).
                     if (IsScreenShareLinkRequest(userText))
                     {
                         string reply;
@@ -521,10 +519,8 @@ public class MyAgent : AgentApplication
     }
 
     /// <summary>
-    /// True when the user is asking for a (fresh) screen-share link for the current session.
-    /// Deterministic keyword match — requires an explicit "screen share" / "screenshare" mention
-    /// plus an intent word (link / again / new / resend / …) so it doesn't swallow normal desktop
-    /// tasks. Used to short-circuit the LLM classifier and re-mint the link directly.
+    /// True when the user is asking for a (fresh) screen-share link. Requires an explicit
+    /// "screen share" mention plus an intent word so it doesn't swallow normal desktop tasks.
     /// </summary>
     private static bool IsScreenShareLinkRequest(string text)
     {
@@ -548,12 +544,10 @@ public class MyAgent : AgentApplication
     }
 
     /// <summary>
-    /// Mint the ARI bearer token in-turn (the only place we have a <see cref="ITurnContext"/>),
-    /// persist a one-time <see cref="HandoffRecord"/> keyed by <paramref name="sessionId"/>, and
-    /// return the chat link the user clicks — which carries only an opaque <c>sid</c>+<c>hc</c>,
-    /// never the token. Returns <c>null</c> (and skips link emission) when
-    /// <c>ScreenShare:PageBaseUrl</c> is unconfigured or <paramref name="screenShareUrl"/> is
-    /// missing.
+    /// Mints the ARI bearer token in-turn, stores a one-time <see cref="HandoffRecord"/> keyed by
+    /// <paramref name="sessionId"/>, and returns the chat link (which carries only an opaque
+    /// <c>sid</c>+<c>hc</c>, never the token). Returns <c>null</c> when <c>ScreenShare:PageBaseUrl</c>
+    /// is unconfigured or no token/URL is available.
     /// </summary>
     private async Task<string?> BuildScreenSharePageUrlAsync(ITurnContext turnContext, string sessionId, string screenShareUrl)
     {
@@ -564,8 +558,7 @@ public class MyAgent : AgentApplication
         }
 
         // PageBaseUrl precedence: explicit config > WEBSITE_HOSTNAME (Azure App Service
-        // auto-populates this) > null (skip). The App Service fallback means prod deployments
-        // don't have to hard-code their URL in appsettings.json.
+        // auto-populates this) > null (skip).
         var pageBaseUrl = _screenShareOptions.PageBaseUrl;
         if (string.IsNullOrWhiteSpace(pageBaseUrl) || pageBaseUrl.Contains("<<", StringComparison.Ordinal))
         {
@@ -578,15 +571,12 @@ public class MyAgent : AgentApplication
             return null;
         }
 
-        // 1. Mint the ARI bearer token. Env override mirrors the existing BEARER_TOKEN dev pattern
-        //    and lets devs validate the end-to-end flow with a supplied token before the agentic
-        //    token plumbing is ready.
+        // 1. Mint the ARI bearer token. The ARI_BEARER_TOKEN env override mirrors the existing
+        //    BEARER_TOKEN dev pattern for local testing.
         var ariToken = Environment.GetEnvironmentVariable("ARI_BEARER_TOKEN");
         if (string.IsNullOrEmpty(ariToken))
         {
-            // No ARI handler section is configured (ScreenShareAuthHandlerName is null) and no
-            // explicit token override — nothing to mint. Skip quietly instead of calling
-            // GetTurnTokenAsync with a guessed handler name and logging a warning every session.
+            // No ARI handler configured and no token override — nothing to mint.
             if (string.IsNullOrEmpty(ScreenShareAuthHandlerName))
             {
                 _logger.LogDebug("No ARI auth handler configured and ARI_BEARER_TOKEN not set — skipping screenshare link");
@@ -609,15 +599,13 @@ public class MyAgent : AgentApplication
             return null;
         }
 
-        // 2. Parse JWT exp — do NOT guess lifetime. -5 min keeps the SDK off the expiry boundary
-        //    (it raises TOKEN_EXPIRED slightly before exp).
+        // 2. Parse the JWT expiry; -5 min keeps the SDK off the expiry boundary.
         DateTime safeExp;
         try
         {
             var parsed = new JwtSecurityTokenHandler().ReadJwtToken(ariToken);
-            // ReadJwtToken succeeds even when the token has no (or an unparsable) exp claim, in which
-            // case ValidTo defaults to DateTime.MinValue. Require a usable, still-valid expiry rather
-            // than emitting a link whose token is already (or effectively) expired.
+            // ValidTo is DateTime.MinValue when the token has no/unparsable exp claim — require a
+            // usable, still-valid expiry rather than emitting an already-expired link.
             if (parsed.ValidTo == DateTime.MinValue || parsed.ValidTo <= DateTime.UtcNow)
             {
                 _logger.LogWarning("ARI token has no usable expiry (ValidTo={ValidTo:o}) — skipping screenshare link", parsed.ValidTo);
@@ -631,8 +619,8 @@ public class MyAgent : AgentApplication
             return null;
         }
 
-        // 3. Generate one-time handoff code (256 bits, URL-safe base64). The raw value travels in
-        //    the chat link and is matched in constant time against the SHA-256 hash kept server-side.
+        // 3. Generate a one-time handoff code (256-bit). The raw value travels in the chat link;
+        //    only its SHA-256 hash is kept server-side.
         var rawHc = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var hcHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawHc));
 
@@ -644,8 +632,7 @@ public class MyAgent : AgentApplication
             return null;
         }
 
-        // 5. Persist record. 5-minute HC TTL; the background sweeper in HandoffStore removes burned
-        //    and expired records.
+        // 5. Persist the record with a 5-minute handoff TTL.
         _handoffStore.Set(sessionId, new HandoffRecord
         {
             ScreenShareUrl = screenShareUrl,
@@ -656,7 +643,7 @@ public class MyAgent : AgentApplication
             AriTokenExpiresAtUtc = safeExp
         });
 
-        // 6. Build the link — sid + hc only. NO token, NO screenShareUrl in the URL.
+        // 6. Build the link — sid + hc only, never the token or the screenShareUrl.
         var baseUrl = pageBaseUrl!.TrimEnd('/');
         var qs = $"sid={Uri.EscapeDataString(sessionId)}&hc={Uri.EscapeDataString(rawHc)}";
         return $"{baseUrl}/screenshare.html?{qs}";

@@ -2,25 +2,14 @@
   Copyright (c) Microsoft Corporation.
   Licensed under the MIT License.
 
-  Screenshare SPA — opened from the link the agent posts in chat.
-  Reads ?sid=...&hc=... from the URL and exchanges sid+hc for the ARI bearer token
-  at POST /api/screenshare/{sid}/token, then mounts the W365 screenshare SDK 1.0.0
-  viewer loaded from the public CDN.
+  Screenshare SPA — opened from the link the agent posts in chat. Reads
+  ?sid=...&hc=... from the URL, exchanges them for the ARI bearer token at
+  POST /api/screenshare/{sid}/token, then mounts the screenshare viewer loaded
+  from the CDN. The CDN origin and SDK version come from ScreenShare:CdnOrigin
+  and ScreenShare:SdkVersion (served via /api/screenshare/config).
 
-  Authentication: the page (and the token endpoint) sit behind Azure App Service
-  Authentication (EasyAuth). When the user clicks the chat link the platform sends
-  the browser through Entra sign-in; once authenticated, EasyAuth injects the user's
-  object id into the X-MS-CLIENT-PRINCIPAL-ID request header which the token endpoint
-  matches against the handoff owner. No teams-js / Teams SSO is required.
-
-  The SDK + viewer iframe are loaded from the public W365 CDN — the iframe origin
-  is therefore the CDN, which ARI already allowlists. Partner pages no longer need
-  their own origin allowlisted in ARI CORS. See PARTNER_GUIDE in the official
-  screenshare-host-starter for the full architecture.
-
-  The SDK URL + version are templated server-side from ScreenShare:CdnOrigin and
-  ScreenShare:SdkVersion. The CSP `script-src`, `connect-src`, and `frame-src`
-  entries must include the CDN origin.
+  In production the page sits behind Azure App Service Authentication (EasyAuth),
+  which signs the user in and lets the token endpoint verify their identity.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -28,12 +17,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <!--
-      CSP for the SPA page itself. The viewer iframe (embed.html under
-      {CdnOrigin}/screenshare-sdk/{version}/) is cross-origin, served by the
-      W365 public CDN — listed below in frame-src.
-      frame-ancestors is NOT here — it is ignored by browsers when delivered via
-      <meta> (per CSP spec). It is set as a real HTTP response header by the
-      middleware in Program.cs (driven by ScreenShare:AllowedFrameAncestors).
+      CSP for the SPA page. The viewer iframe is served cross-origin by the CDN
+      (listed in frame-src). frame-ancestors is set as a real HTTP response header
+      by Program.cs (browsers ignore it in <meta>).
     -->
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
@@ -74,13 +60,7 @@
 
     <div id="error-detail"></div>
 
-    <!--
-      W365 ScreenShare SDK is loaded dynamically by screenshare.js from
-      {ScreenShare:CdnOrigin}/screenshare-sdk/{ScreenShare:SdkVersion}/screenshare-embed.js
-      after fetching /api/screenshare/config. Keeping the SDK load there means a single
-      source of truth for CDN origin + version (no risk of HTML/JS drift).
-    -->
-    <!-- App bootstrap. -->
+    <!-- SDK is loaded dynamically by screenshare.js after fetching /api/screenshare/config. -->
     <script src="/screenshare.js"></script>
 </body>
 </html>

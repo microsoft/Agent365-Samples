@@ -1,37 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// W365 Screen Share SPA bootstrap (SDK 1.0.0 public, agent-delegated user-token flow).
+// Screenshare SPA bootstrap. Opened from the link the agent posts in chat:
+//   1. Read sid + hc from the querystring.
+//   2. GET /api/screenshare/config for the CDN origin + SDK version.
+//   3. Load the screenshare SDK from the CDN.
+//   4. POST /api/screenshare/{sid}/token to exchange sid + hc for the ARI token.
+//   5. Mount the viewer and wire the Take / Release / Stop controls.
 //
-// Flow:
-//   1. Read sid + hc from querystring (the only two params the agent puts in the link).
-//   2. Fetch /api/screenshare/config — gets {cdnOrigin, sdkVersion}.
-//   3. Dynamically <script src=`{cdnOrigin}/screenshare-sdk/{sdkVersion}/screenshare-embed.js`>.
-//   4. POST /api/screenshare/{sid}/token with {hc} body. The page sits behind Azure
-//      App Service Authentication (EasyAuth), so the request carries the EasyAuth
-//      session cookie automatically (same-origin) and the server reads the user's
-//      object id from the X-MS-CLIENT-PRINCIPAL-ID header EasyAuth injects. No
-//      Authorization header / Teams SSO token is sent. Server validates oid + hc +
-//      state, atomically burns the handoff, returns {screenShareUrl, ariToken, expiresAtUtc}.
-//   5. Derive computerUrl = screenShareUrl with the trailing /screenshare stripped — pass
-//      the ARI URL verbatim per PARTNER_GUIDE (api-version stays in the URL). Pass
-//      viewerUrl = `{cdnOrigin}/screenshare-sdk/{sdkVersion}` so the iframe is loaded from
-//      the CDN (origin already allowlisted by ARI — no partner-side CORS).
-//   6. new ScreenShareViewer({container, computerUrl, viewerUrl, mode: 'interactive'}).
-//   7. viewer.connect(ariToken). Wire Take / Release / Stop buttons + status / error events.
-//
-// Sample limitations (documented in README):
-//   - One screenshare session = one ARI token lifetime (~90 min). No re-mint.
-//     On TOKEN_EXPIRED, ask the user to end + restart the W365 session.
-//   - Authentication is selected by ScreenShare:AuthMode (reported via /config):
-//       * EasyAuth  — the page is protected at the platform level by Azure App
-//         Service Authentication; the EasyAuth session cookie rides the same-origin
-//         token request and the server reads the user's oid from the injected
-//         X-MS-CLIENT-PRINCIPAL-ID header. (Production.)
-//       * DevBypass — local/Playground only; the server skips the owner check so the
-//         page works in a plain browser tab. A banner makes this obvious.
-//     Teams SSO (page embedded in Teams as a tab/dialog/stage) is a documented
-//     future extension and is not implemented in this sample.
+// The screenshare session lasts one ARI token lifetime; there is no re-mint. On
+// TOKEN_EXPIRED, the user asks the agent for a new link.
 
 (function () {
     'use strict';
@@ -53,8 +31,8 @@
         errorEl.textContent = detail ? String(detail) : '';
     }
 
-    // DEV-ONLY visual cue: when the server reports AuthMode=DevBypass the viewer's
-    // identity (owner) check is skipped, so make that unmistakable in the UI.
+    // DEV-ONLY visual cue: when the server reports AuthMode=DevBypass the user
+    // identity check is skipped, so make that unmistakable in the UI.
     function showDevBypassBanner() {
         var banner = document.createElement('div');
         banner.textContent = 'DEV BYPASS — user identity check is disabled. Local/Playground testing only.';
@@ -95,11 +73,6 @@
             var src = cdnOrigin + '/screenshare-sdk/' + encodeURIComponent(sdkVersion) + '/screenshare-embed.js';
             var s = document.createElement('script');
             s.src = src;
-            // Intentionally no crossOrigin attribute — the public CDN does not
-            // serve Access-Control-Allow-Origin for opaque script loads. Without
-            // crossorigin, the browser fetches/executes the script normally. SRI
-            // (PARTNER_GUIDE recommends for prod) does require crossorigin and
-            // CDN ACAO support; revisit when the prod CDN exposes both.
             s.onload  = function () {
                 if (typeof window.ScreenShareViewer === 'function') resolve();
                 else reject(new Error('SDK loaded but ScreenShareViewer global missing'));
@@ -118,16 +91,15 @@
             credentials: 'same-origin',
             body: JSON.stringify({ hc: params.hc })
         }).then(function (resp) {
-            if (resp.status === 401) {
-                fatal('Not signed in',
-                      'Your sign-in session has expired. Reload this page to sign in again, or reopen the link from chat.');
-            }
-            if (!resp.ok) {
-                // Surface the HTTP status; body is intentionally generic from the server.
-                return resp.text().then(function (text) {
-                    fatal('Token exchange failed (' + resp.status + ')', text || resp.statusText);
-                });
-            }
+        if (resp.status === 401) {
+            fatal('Not signed in',
+                  'Your sign-in session has expired. Reload this page to sign in again, or reopen the link from chat.');
+        }
+        if (!resp.ok) {
+            return resp.text().then(function (text) {
+                fatal('Token exchange failed (' + resp.status + ')', text || resp.statusText);
+            });
+        }
             return resp.json();
         });
     }
@@ -136,9 +108,8 @@
         var screenShareUrl = payload.screenShareUrl;
         var ariToken       = payload.ariToken;
 
-        // SDK 1.0.0 takes computerUrl verbatim (api-version preserved). The platform returns
-        //   https://{pool}.{region}.../computers/{sessionId}/screenshare?api-version=1.0
-        // but the SDK appends /screenshare itself — strip the trailing segment if present.
+        // The SDK appends /screenshare to computerUrl itself — strip a trailing
+        // /screenshare from the platform URL if present.
         var computerUrl;
         try {
             var u = new URL(screenShareUrl);
@@ -174,7 +145,6 @@
         viewer.on('error', function (code, message) {
             console.error('[screenshare] error', code, message);
             if (code === 'TOKEN_EXPIRED') {
-                // Sample limitation: no out-of-turn re-mint. User restarts the W365 session.
                 setStatus('Session expired', true);
                 setError('Please end this session and start a new one from the agent to get a fresh screen share link.');
                 takeBtn.disabled = releaseBtn.disabled = stopBtn.disabled = true;
@@ -190,10 +160,7 @@
             console.log('[screenshare] stop() called');
             viewer.stop();
             setStatus('Session stopped');
-            // Hint to the user how to get back in — the link they clicked is single-use,
-            // so the only path back is to ask the agent for a new one. The agent listens
-            // for any "screen share" + intent word (link / new / again / resend / …) and
-            // re-mints a fresh handoff for the active W365 session.
+            // The link is single-use — the only way back is to ask the agent for a new one.
             setError('To reconnect, ask the agent in chat for a new screen share link (e.g. "give me a new screen share link" or "resend the screen share link"). You can close this tab.');
             takeBtn.disabled = releaseBtn.disabled = stopBtn.disabled = true;
         });
