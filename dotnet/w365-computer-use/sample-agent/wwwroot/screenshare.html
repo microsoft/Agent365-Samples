@@ -1,0 +1,86 @@
+<!--
+  Copyright (c) Microsoft Corporation.
+  Licensed under the MIT License.
+
+  Screenshare SPA — opened from the link the agent posts in chat.
+  Reads ?sid=...&hc=... from the URL and exchanges sid+hc for the ARI bearer token
+  at POST /api/screenshare/{sid}/token, then mounts the W365 screenshare SDK 1.0.0
+  viewer loaded from the public CDN.
+
+  Authentication: the page (and the token endpoint) sit behind Azure App Service
+  Authentication (EasyAuth). When the user clicks the chat link the platform sends
+  the browser through Entra sign-in; once authenticated, EasyAuth injects the user's
+  object id into the X-MS-CLIENT-PRINCIPAL-ID request header which the token endpoint
+  matches against the handoff owner. No teams-js / Teams SSO is required.
+
+  The SDK + viewer iframe are loaded from the public W365 CDN — the iframe origin
+  is therefore the CDN, which ARI already allowlists. Partner pages no longer need
+  their own origin allowlisted in ARI CORS. See PARTNER_GUIDE in the official
+  screenshare-host-starter for the full architecture.
+
+  The SDK URL + version are templated server-side from ScreenShare:CdnOrigin and
+  ScreenShare:SdkVersion. The CSP `script-src`, `connect-src`, and `frame-src`
+  entries must include the CDN origin.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <!--
+      CSP for the SPA page itself. The viewer iframe (embed.html under
+      {CdnOrigin}/screenshare-sdk/{version}/) is cross-origin, served by the
+      W365 public CDN — listed below in frame-src.
+      frame-ancestors is NOT here — it is ignored by browsers when delivered via
+      <meta> (per CSP spec). It is set as a real HTTP response header by the
+      middleware in Program.cs (driven by ScreenShare:AllowedFrameAncestors).
+    -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src  'self' https://packages.global.cloudinferenceplatform.azure.com https://packages.global.cloudinferenceplatform-int.azure.com;
+        style-src   'self' 'unsafe-inline';
+        img-src     'self' data:;
+        connect-src 'self';
+        frame-src   https://packages.global.cloudinferenceplatform.azure.com https://packages.global.cloudinferenceplatform-int.azure.com;
+    " />
+    <title>W365 Screen Share</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background: #f3f3f3; color: #1f1f1f; }
+        header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+        #status { font-size: 13px; color: #555; flex: 1; }
+        #status.error { color: #c4314b; font-weight: 600; }
+        #controls { display: flex; gap: 8px; margin-bottom: 12px; }
+        button { padding: 6px 14px; font-size: 13px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.primary { background: #0078d4; color: #fff; border-color: #0078d4; }
+        #viewer { width: 100%; height: 80vh; background: #000; border: 1px solid #ccc; border-radius: 4px; }
+        #error-detail { font-size: 12px; color: #888; margin-top: 8px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>W365 Screen Share</h1>
+        <span id="status">Initializing…</span>
+    </header>
+
+    <div id="controls">
+        <button id="btn-take" disabled>Take control</button>
+        <button id="btn-release" disabled>Release control</button>
+        <button id="btn-stop" disabled>Stop session</button>
+    </div>
+
+    <div id="viewer"></div>
+
+    <div id="error-detail"></div>
+
+    <!--
+      W365 ScreenShare SDK is loaded dynamically by screenshare.js from
+      {ScreenShare:CdnOrigin}/screenshare-sdk/{ScreenShare:SdkVersion}/screenshare-embed.js
+      after fetching /api/screenshare/config. Keeping the SDK load there means a single
+      source of truth for CDN origin + version (no risk of HTML/JS drift).
+    -->
+    <!-- App bootstrap. -->
+    <script src="/screenshare.js"></script>
+</body>
+</html>
