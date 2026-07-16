@@ -1,8 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
@@ -18,63 +20,150 @@ public static class A365OtelWrapper
         ITurnContext turnContext,
         ITurnState turnState,
         IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
+        ServiceTokenCache? serviceTokenCache,
+        Agent365TelemetryOptions? telemetryOptions,
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
         Func<Task> func)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
-            operationName,
+        (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName, logger);
+        var observabilityScopes = EnvironmentUtils.GetObservabilityAuthenticationScope();
+
+        var telemetryContext = Agent365TelemetryContext.FromTurnContext(
             turnContext,
-            async () =>
+            agentId,
+            tenantId,
+            telemetryOptions);
+        var exportAgentId = telemetryContext.AgentId ?? Guid.Empty.ToString();
+        var exportTenantId = telemetryContext.TenantId ?? Guid.Empty.ToString();
+
+        using var baggageScope = telemetryContext.BuildBaggageScope();
+
+        if (!string.IsNullOrWhiteSpace(authHandlerName))
+        {
+            try
             {
-                (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName);
+                var token = await authSystem.ExchangeTurnTokenAsync(
+                    turnContext,
+                    authHandlerName,
+                    null!,
+                    observabilityScopes,
+                    default).ConfigureAwait(false);
 
-                using var baggageScope = new BaggageBuilder()
-                    .TenantId(tenantId)
-                    .AgentId(agentId)
-                    .Build();
-
-                try
+                if (!string.IsNullOrEmpty(token))
                 {
-                    agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
-                    {
-                        UserAuthorization = authSystem,
-                        TurnContext = turnContext,
-                        AuthHandlerName = authHandlerName
-                    }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                    serviceTokenCache?.RegisterObservability(
+                        exportAgentId,
+                        exportTenantId,
+                        token,
+                        observabilityScopes);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogError(
+                    ex,
+                    "Observability token exchange failed: agentId={AgentId} tenantId={TenantId} authHandler={AuthHandler}",
+                    exportAgentId,
+                    exportTenantId,
+                    authHandlerName);
+            }
+
+            try
+            {
+                if (agentTokenCache is AgenticTokenCache agenticTokenCache)
                 {
-                    logger?.LogWarning("There was an error registering for observability: {Message}", ex.Message);
+                    agenticTokenCache.InvalidateToken(exportAgentId, exportTenantId);
                 }
 
-                await func().ConfigureAwait(false);
-            }).ConfigureAwait(false);
+                agentTokenCache?.RegisterObservability(
+                    exportAgentId,
+                    exportTenantId,
+                    new AgenticTokenStruct(authSystem, turnContext, authHandlerName, null),
+                    observabilityScopes);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogWarning("There was an error registering for observability: {Message}", ex.Message);
+            }
+        }
+
+        using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);
+
+        try
+        {
+            await AgentMetrics.InvokeObservedAgentOperation(
+                operationName,
+                turnContext,
+                func).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            invokeAgentScope.RecordCancellation();
+            throw;
+        }
+        catch (Exception ex)
+        {
+            invokeAgentScope.RecordError(ex);
+            throw;
+        }
     }
 
-    private static async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(ITurnContext turnContext, UserAuthorization authSystem, string authHandlerName)
+    private static InvokeAgentScope StartInvokeAgentScope(
+        ITurnContext turnContext,
+        Agent365TelemetryContext telemetryContext)
+    {
+        var agentDetails = telemetryContext.ToAgentDetails();
+        var request = telemetryContext.ToRequest(content: turnContext.Activity.Text);
+        var callerDetails = telemetryContext.ToCallerDetails();
+
+        var scopeDetails = new InvokeAgentScopeDetails(
+            endpoint: TryCreateEndpoint(turnContext.Activity.ServiceUrl) ?? telemetryContext.ToInvokeEndpoint());
+
+        return InvokeAgentScope.Start(
+            request: request,
+            scopeDetails: scopeDetails,
+            agentDetails: agentDetails,
+            callerDetails: callerDetails);
+    }
+
+    private static Uri? TryCreateEndpoint(string? serviceUrl)
+    {
+        return Uri.TryCreate(serviceUrl, UriKind.Absolute, out var endpoint)
+            ? endpoint
+            : null;
+    }
+
+    private static async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(
+        ITurnContext turnContext,
+        UserAuthorization authSystem,
+        string authHandlerName,
+        ILogger? logger)
     {
         ArgumentNullException.ThrowIfNull(turnContext);
 
-        string? agentId = null;
+        string agentId = "";
         if (turnContext.Activity.IsAgenticRequest())
         {
             agentId = turnContext.Activity.GetAgenticInstanceId();
         }
         else if (authSystem != null && !string.IsNullOrEmpty(authHandlerName))
         {
-            agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
+            try
+            {
+                agentId = Utility.ResolveAgentIdentity(turnContext, await authSystem.GetTurnTokenAsync(turnContext, authHandlerName));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger?.LogWarning(
+                    ex,
+                    "Observability identity resolution failed; falling back to turn context and configured Agent365Observability values.");
+            }
         }
 
-        if (string.IsNullOrEmpty(agentId))
-        {
-            agentId = Guid.Empty.ToString();
-        }
-
-        string tenantId = turnContext.Activity?.Conversation?.TenantId
-            ?? turnContext.Activity?.Recipient?.TenantId
-            ?? Guid.Empty.ToString();
+        string? tempTenantId = turnContext.Activity?.Conversation?.TenantId ?? turnContext.Activity?.Recipient?.TenantId;
+        string tenantId = tempTenantId ?? string.Empty;
 
         return (agentId, tenantId);
     }

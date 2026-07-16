@@ -8,7 +8,7 @@ using System.Text;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.Builder;
@@ -30,6 +30,8 @@ public class MyAgent : AgentApplication
     private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
     private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache;
+    private readonly ServiceTokenCache _observabilityTokenCache;
+    private readonly Agent365TelemetryOptions _agent365TelemetryOptions;
     private readonly ILogger<MyAgent> _logger;
     private readonly IMcpToolRegistrationService _toolService;
     private readonly ComputerUseOrchestrator _orchestrator;
@@ -52,6 +54,7 @@ public class MyAgent : AgentApplication
     private readonly string _w365GatewayUrl;
 
     private readonly string? AgenticAuthHandlerName;
+    private readonly string? OboAuthHandlerName;
     private readonly string? W365AuthHandlerName;
 
     /// <summary>
@@ -112,18 +115,22 @@ public class MyAgent : AgentApplication
         AgentApplicationOptions options,
         IConfiguration configuration,
         IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
+        ServiceTokenCache observabilityTokenCache,
         IMcpToolRegistrationService toolService,
         ComputerUseOrchestrator orchestrator,
         IOptions<ScreenShareOptions> screenShareOptions,
         HandoffStore handoffStore,
+        IOptions<Agent365TelemetryOptions> agent365TelemetryOptions,
         ILogger<MyAgent> logger) : base(options)
     {
         _agentTokenCache = agentTokenCache;
+        _observabilityTokenCache = observabilityTokenCache;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
         _screenShareOptions = screenShareOptions.Value;
         _handoffStore = handoffStore;
+        _agent365TelemetryOptions = agent365TelemetryOptions.Value;
 
         // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
         _mcpServerUrls = configuration.GetSection("McpServers").Get<string[]>() ?? [];
@@ -143,6 +150,7 @@ public class MyAgent : AgentApplication
             ?? "https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse";
 
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
+        OboAuthHandlerName = configuration.GetValue<string>("AgentApplication:OboAuthHandlerName");
         W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
 
         // ARI (screenshare) agentic handler. Only wired in when a matching handler section exists;
@@ -162,6 +170,7 @@ public class MyAgent : AgentApplication
             .Where(handler => !string.IsNullOrEmpty(handler))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var oboHandlers = !string.IsNullOrEmpty(OboAuthHandlerName) ? [OboAuthHandlerName] : Array.Empty<string>();
 
         // Handle install/uninstall
         OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
@@ -169,14 +178,21 @@ public class MyAgent : AgentApplication
 
         // Handle messages — MUST BE AFTER any other message handlers
         OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
-        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false);
+        OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false, autoSignInHandlers: oboHandlers);
     }
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "WelcomeMessage",
             turnContext,
+            turnState,
+            _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
+            UserAuthorization,
+            GetObservabilityAuthHandlerName(turnContext),
+            _logger,
             async () =>
             {
                 var recipientId = turnContext.Activity.Recipient.Id;
@@ -190,9 +206,16 @@ public class MyAgent : AgentApplication
 
     protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "InstallationUpdate",
             turnContext,
+            turnState,
+            _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
+            UserAuthorization,
+            GetObservabilityAuthHandlerName(turnContext),
+            _logger,
             async () =>
             {
                 _logger.LogInformation(
@@ -226,18 +249,20 @@ public class MyAgent : AgentApplication
             fromAccount?.Id ?? "(unknown)",
             fromAccount?.AadObjectId ?? "(none)");
 
-        // Agentic requests use the agentic handler; non-agentic requests fall back to env
-        // bearer token / no auth (handled inside GetToolsAsync).
-        var ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
-        var ToolAuthHandlerName = ObservabilityAuthHandlerName;
+        var ObservabilityAuthHandlerName = GetObservabilityAuthHandlerName(turnContext);
+        var ToolAuthHandlerName = turnContext.IsAgenticRequest()
+            ? AgenticAuthHandlerName
+            : OboAuthHandlerName;
 
         await A365OtelWrapper.InvokeObservedAgentOperation(
             "MessageProcessor",
             turnContext,
             turnState,
             _agentTokenCache,
+            _observabilityTokenCache,
+            _agent365TelemetryOptions,
             UserAuthorization,
-            ObservabilityAuthHandlerName ?? string.Empty,
+            ObservabilityAuthHandlerName,
             _logger,
             async () =>
             {
@@ -402,6 +427,13 @@ public class MyAgent : AgentApplication
                     catch (ObjectDisposedException) { /* stream already disposed */ }
                 }
             });
+    }
+
+    private string GetObservabilityAuthHandlerName(ITurnContext turnContext)
+    {
+        return turnContext.IsAgenticRequest()
+            ? AgenticAuthHandlerName ?? string.Empty
+            : OboAuthHandlerName ?? string.Empty;
     }
 
     /// <summary>

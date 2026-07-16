@@ -6,9 +6,7 @@ using W365ComputerUseSample.Agent;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability;
-using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
-using Microsoft.Agents.A365.Observability.Runtime;
+using Microsoft.Agents.A365.Observability.Hosting.Middleware;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
@@ -24,8 +22,10 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup ASP service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
-builder.ConfigureOpenTelemetry();
+builder.Services.AddW365ComputerUseOpenTelemetry(builder.Configuration);
+
+builder.Services.Configure<Agent365TelemetryOptions>(
+    builder.Configuration.GetSection(Agent365TelemetryOptions.SectionName));
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
 builder.Services.AddControllers();
@@ -34,15 +34,6 @@ builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
-
-// Add A365 tracing with Agent Framework integration
-builder.AddA365Tracing(config =>
-{
-    config.WithAgentFramework();
-});
-
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
@@ -95,6 +86,17 @@ builder.Services.AddRateLimiter(options =>
 
 // Register IStorage. For development, MemoryStorage is suitable.
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
+
+// Auto observability middleware mirrors the Agent Framework sample:
+// BaggageTurnMiddleware handles turn context propagation and OutputLoggingMiddleware
+// records outgoing activity output without manual InvokeAgentScope plumbing.
+builder.Services.AddSingleton<BaggageTurnMiddleware>();
+builder.Services.AddSingleton<OutputLoggingMiddleware>();
+builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(sp =>
+[
+    sp.GetRequiredService<BaggageTurnMiddleware>(),
+    sp.GetRequiredService<OutputLoggingMiddleware>()
+]);
 
 // Add AgentApplicationOptions from config.
 builder.AddAgentApplicationOptions();
