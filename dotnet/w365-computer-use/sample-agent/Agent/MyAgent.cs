@@ -1,8 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using W365ComputerUseSample.ComputerUse;
+using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
 using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
@@ -12,7 +16,9 @@ using Microsoft.Agents.Builder.App;
 using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Core;
 using Microsoft.Agents.Core.Models;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Client;
 
 namespace W365ComputerUseSample.Agent;
@@ -28,6 +34,8 @@ public class MyAgent : AgentApplication
     private readonly IMcpToolRegistrationService _toolService;
     private readonly ComputerUseOrchestrator _orchestrator;
     private readonly string[] _mcpServerUrls;
+    private readonly ScreenShareOptions _screenShareOptions;
+    private readonly HandoffStore _handoffStore;
 
     /// <summary>
     /// Subset of <see cref="_mcpServerUrls"/> whose path names the W365 Computer-Use server.
@@ -45,6 +53,13 @@ public class MyAgent : AgentApplication
 
     private readonly string? AgenticAuthHandlerName;
     private readonly string? W365AuthHandlerName;
+
+    /// <summary>
+    /// ARI (screenshare) agentic handler. Defaults to "ari" but is only wired in when a matching
+    /// handler is configured under AgentApplication:UserAuthorization:Handlers — otherwise it stays
+    /// null and screenshare link emission is skipped (no ARI token available).
+    /// </summary>
+    private readonly string? ScreenShareAuthHandlerName;
 
     /// <summary>
     /// Check if a bearer token is available in the environment for development/testing.
@@ -99,12 +114,16 @@ public class MyAgent : AgentApplication
         IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
         IMcpToolRegistrationService toolService,
         ComputerUseOrchestrator orchestrator,
+        IOptions<ScreenShareOptions> screenShareOptions,
+        HandoffStore handoffStore,
         ILogger<MyAgent> logger) : base(options)
     {
         _agentTokenCache = agentTokenCache;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
+        _screenShareOptions = screenShareOptions.Value;
+        _handoffStore = handoffStore;
 
         // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
         _mcpServerUrls = configuration.GetSection("McpServers").Get<string[]>() ?? [];
@@ -126,11 +145,19 @@ public class MyAgent : AgentApplication
         AgenticAuthHandlerName = configuration.GetValue<string>("AgentApplication:AgenticAuthHandlerName");
         W365AuthHandlerName = configuration.GetValue<string>("AgentApplication:W365AuthHandlerName");
 
+        // ARI (screenshare) agentic handler. Only wired in when a matching handler section exists;
+        // otherwise it stays null and no screenshare link is emitted.
+        var ariHandlerName = configuration.GetValue<string>("AgentApplication:ScreenShareAuthHandlerName") ?? "ari";
+        ScreenShareAuthHandlerName =
+            configuration.GetSection($"AgentApplication:UserAuthorization:Handlers:{ariHandlerName}").Exists()
+                ? ariHandlerName
+                : null;
+
         // Greet when members are added
         OnConversationUpdate(ConversationUpdateEvents.MembersAdded, WelcomeMessageAsync);
 
         // Compute auth handler arrays once
-        var agenticHandlers = new[] { AgenticAuthHandlerName, W365AuthHandlerName }
+        var agenticHandlers = new[] { AgenticAuthHandlerName, W365AuthHandlerName, ScreenShareAuthHandlerName }
             .OfType<string>()
             .Where(handler => !string.IsNullOrEmpty(handler))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -227,6 +254,32 @@ public class MyAgent : AgentApplication
                     var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
                     var localSessionKey = BuildLocalSessionKey(conversationId, fromAccount);
 
+                    // Fast path: the user is asking for a (fresh) screen share link. The link is
+                    // otherwise emitted only once when a session starts, and each handoff is
+                    // single-use and short-lived — so handle re-mint requests here, before the LLM
+                    // classifier (the model has no tool for it and would otherwise refuse).
+                    if (IsScreenShareLinkRequest(userText))
+                    {
+                        string reply;
+                        var (ssFound, ssSessionId, ssUrl) = await _orchestrator
+                            .TryGetActiveScreenShareAsync(localSessionKey, cancellationToken)
+                            .ConfigureAwait(false);
+                        if (ssFound)
+                        {
+                            var freshLink = await BuildScreenSharePageUrlAsync(turnContext, ssSessionId, ssUrl)
+                                .ConfigureAwait(false);
+                            reply = freshLink != null
+                                ? $"🖥️ Watch this session live: [Open screen share]({freshLink})"
+                                : "I couldn't generate a screen share link right now. Please try again in a moment.";
+                        }
+                        else
+                        {
+                            reply = "There's no active Windows 365 session yet. Ask me to do something on the desktop first, then I can share a live link.";
+                        }
+                        turnContext.StreamingResponse.QueueTextChunk(reply);
+                        return;
+                    }
+
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
                     // W365 tool loading and explicit session startup entirely.
@@ -236,7 +289,7 @@ public class MyAgent : AgentApplication
                     {
                         // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
                         // discovery entirely so chit-chat never touches W365.
-                        var (_, nonCuaAdditionalTools, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
+                        var (_, nonCuaAdditionalTools, _, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
                         var directResponse = await _orchestrator.RunAsync(
                             localSessionKey,
                             userText,
@@ -270,7 +323,7 @@ public class MyAgent : AgentApplication
                     }
 
                     // Get MCP tools — direct connection in Dev, SDK in Production
-                    var (w365Tools, additionalTools, mcpClient, prestartedW365SessionId) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true, localSessionKey, cancellationToken);
+                    var (w365Tools, additionalTools, mcpClient, prestartedW365SessionId, prestartedScreenShareUrl) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: true, localSessionKey, cancellationToken);
 
                     try
                     {
@@ -319,7 +372,19 @@ public class MyAgent : AgentApplication
                             },
                             onFolderLinkReady: async url => await turnContext.SendActivityAsync(
                                 MessageFactory.Text($"📸 Screenshots for this session: [View folder]({url})"), cancellationToken),
+                            onScreenShareLinkReady: async (sessionId, screenShareUrl) =>
+                            {
+                                var link = await BuildScreenSharePageUrlAsync(turnContext, sessionId, screenShareUrl)
+                                    .ConfigureAwait(false);
+                                if (link != null)
+                                {
+                                    await turnContext.SendActivityAsync(
+                                        MessageFactory.Text($"🖥️ Watch this session live: [Open screen share]({link})"),
+                                        cancellationToken);
+                                }
+                            },
                             prestartedW365SessionId: prestartedW365SessionId,
+                            prestartedScreenShareUrl: prestartedScreenShareUrl,
                             cancellationToken: cancellationToken);
 
                         // Send the response
@@ -346,7 +411,7 @@ public class MyAgent : AgentApplication
     /// When <paramref name="includeW365"/> is <c>false</c>, the W365 server(s) are skipped —
     /// used on the non-CUA fast path so chit-chat never starts a Cloud PC session.
     /// </summary>
-    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client, string? PrestartedW365SessionId)> GetToolsAsync(
+    private async Task<(IList<AITool>? W365Tools, IList<AITool>? AdditionalTools, IMcpClient? Client, string? PrestartedW365SessionId, string? PrestartedScreenShareUrl)> GetToolsAsync(
         ITurnContext context,
         string? authHandlerName,
         bool includeW365,
@@ -382,7 +447,7 @@ public class MyAgent : AgentApplication
         if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
         {
             _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
-            return (null, null, null, null);
+            return (null, null, null, null, null);
         }
 
         try
@@ -421,23 +486,23 @@ public class MyAgent : AgentApplication
                         existingSessionId,
                         cancellationToken);
                     var additionalToolsForCua = Array.Empty<AITool>();
-                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId);
+                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId, w365Result.ScreenShareUrl);
                 }
 
                 _logger.LogInformation("Skipping production MCP tool discovery for non-CUA turn while ToolingManifest is restricted to W365 CUA.");
-                return (null, Array.Empty<AITool>(), null, null);
+                return (null, Array.Empty<AITool>(), null, null, null);
             }
 
             var w365Tools = includeW365 ? FilterW365Tools(allTools) : null;
             var additionalTools = FilterAdditionalTools(allTools);
-            return (w365Tools, additionalTools, mcpClient, null);
+            return (w365Tools, additionalTools, mcpClient, null, null);
         }
         catch (Exception ex)
         {
             if (ShouldSkipToolingOnErrors())
             {
                 _logger.LogWarning(ex, "Failed to connect to MCP servers. Continuing without tools (SKIP_TOOLING_ON_ERRORS=true).");
-                return (null, null, null, null);
+                return (null, null, null, null, null);
             }
 
             _logger.LogError(ex, "Failed to connect to MCP servers.");
@@ -451,6 +516,137 @@ public class MyAgent : AgentApplication
                ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
                ?? "Production";
         return env.Equals("Development", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// True when the user is asking for a (fresh) screen-share link. Requires an explicit
+    /// "screen share" mention plus an intent word so it doesn't swallow normal desktop tasks.
+    /// </summary>
+    private static bool IsScreenShareLinkRequest(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var t = text.ToLowerInvariant();
+
+        var mentionsScreenShare = t.Contains("screen share")
+            || t.Contains("screenshare")
+            || t.Contains("screen-share");
+        if (!mentionsScreenShare) return false;
+
+        return t.Contains("link")
+            || t.Contains("again")
+            || t.Contains("new")
+            || t.Contains("another")
+            || t.Contains("fresh")
+            || t.Contains("resend")
+            || t.Contains("re-send")
+            || t.Contains("regenerate")
+            || t.Contains("watch");
+    }
+
+    /// <summary>
+    /// Mints the ARI bearer token in-turn, stores a one-time <see cref="HandoffRecord"/> keyed by
+    /// <paramref name="sessionId"/>, and returns the chat link (which carries only an opaque
+    /// <c>sid</c>+<c>hc</c>, never the token). Returns <c>null</c> when <c>ScreenShare:PageBaseUrl</c>
+    /// is unconfigured or no token/URL is available.
+    /// </summary>
+    private async Task<string?> BuildScreenSharePageUrlAsync(ITurnContext turnContext, string sessionId, string screenShareUrl)
+    {
+        if (string.IsNullOrWhiteSpace(screenShareUrl))
+        {
+            _logger.LogDebug("No screenShareUrl on platform response — skipping screenshare link emission");
+            return null;
+        }
+
+        // PageBaseUrl precedence: explicit config > WEBSITE_HOSTNAME (Azure App Service
+        // auto-populates this) > null (skip).
+        var pageBaseUrl = _screenShareOptions.PageBaseUrl;
+        if (string.IsNullOrWhiteSpace(pageBaseUrl) || pageBaseUrl.Contains("<<", StringComparison.Ordinal))
+        {
+            var hostname = Environment.GetEnvironmentVariable("WEBSITE_HOSTNAME");
+            pageBaseUrl = string.IsNullOrWhiteSpace(hostname) ? null : $"https://{hostname}";
+        }
+        if (string.IsNullOrWhiteSpace(pageBaseUrl))
+        {
+            _logger.LogWarning("ScreenShare:PageBaseUrl not configured and WEBSITE_HOSTNAME not set — skipping screenshare link emission");
+            return null;
+        }
+
+        // 1. Mint the ARI bearer token. The ARI_BEARER_TOKEN env override mirrors the existing
+        //    BEARER_TOKEN dev pattern for local testing.
+        var ariToken = Environment.GetEnvironmentVariable("ARI_BEARER_TOKEN");
+        if (string.IsNullOrEmpty(ariToken))
+        {
+            // No ARI handler configured and no token override — nothing to mint.
+            if (string.IsNullOrEmpty(ScreenShareAuthHandlerName))
+            {
+                _logger.LogDebug("No ARI auth handler configured and ARI_BEARER_TOKEN not set — skipping screenshare link");
+                return null;
+            }
+
+            try
+            {
+                ariToken = await UserAuthorization.GetTurnTokenAsync(turnContext, ScreenShareAuthHandlerName).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to acquire ARI token via UserAuthorization '{Handler}' handler — skipping screenshare link", ScreenShareAuthHandlerName);
+                return null;
+            }
+        }
+        if (string.IsNullOrEmpty(ariToken))
+        {
+            _logger.LogWarning("ARI token not available (GetTurnTokenAsync '{Handler}' returned empty) — skipping screenshare link", ScreenShareAuthHandlerName ?? "ari");
+            return null;
+        }
+
+        // 2. Parse the JWT expiry; -5 min keeps the SDK off the expiry boundary.
+        DateTime safeExp;
+        try
+        {
+            var parsed = new JwtSecurityTokenHandler().ReadJwtToken(ariToken);
+            // ValidTo is DateTime.MinValue when the token has no/unparsable exp claim — require a
+            // usable, still-valid expiry rather than emitting an already-expired link.
+            if (parsed.ValidTo == DateTime.MinValue || parsed.ValidTo <= DateTime.UtcNow)
+            {
+                _logger.LogWarning("ARI token has no usable expiry (ValidTo={ValidTo:o}) — skipping screenshare link", parsed.ValidTo);
+                return null;
+            }
+            safeExp = parsed.ValidTo.AddMinutes(-5);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse ARI token JWT — skipping screenshare link");
+            return null;
+        }
+
+        // 3. Generate a one-time handoff code (256-bit). The raw value travels in the chat link;
+        //    only its SHA-256 hash is kept server-side.
+        var rawHc = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        var hcHash = SHA256.HashData(Encoding.UTF8.GetBytes(rawHc));
+
+        // 4. Capture owner identity (fail-closed: oid must be present).
+        var ownerOid = turnContext.Activity.From?.AadObjectId;
+        if (string.IsNullOrEmpty(ownerOid))
+        {
+            _logger.LogWarning("Activity.From.AadObjectId is missing — cannot bind screenshare link to a user; skipping");
+            return null;
+        }
+
+        // 5. Persist the record with a 5-minute handoff TTL.
+        _handoffStore.Set(sessionId, new HandoffRecord
+        {
+            ScreenShareUrl = screenShareUrl,
+            OwnerAadObjectId = ownerOid,
+            HandoffCodeHash = hcHash,
+            HandoffExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
+            AriToken = ariToken,
+            AriTokenExpiresAtUtc = safeExp
+        });
+
+        // 6. Build the link — sid + hc only, never the token or the screenShareUrl.
+        var baseUrl = pageBaseUrl!.TrimEnd('/');
+        var qs = $"sid={Uri.EscapeDataString(sessionId)}&hc={Uri.EscapeDataString(rawHc)}";
+        return $"{baseUrl}/screenshare.html?{qs}";
     }
 
     private IList<AITool>? FilterW365Tools(IList<AITool>? allTools)

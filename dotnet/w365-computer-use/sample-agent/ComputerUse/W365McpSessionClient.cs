@@ -34,7 +34,15 @@ internal sealed class W365McpSessionClient
             throw new InvalidOperationException("W365 StartSession did not return a sessionId.");
         }
 
-        return await ListToolsAsync(sessionId, cancellationToken);
+        // Capture the screenShareUrl from the StartSession response so the prestart path can
+        // emit a screen-share link. (The in-turn StartSession that normally drives emission
+        // is skipped when the session is prestarted out-of-band.)
+        TryExtractStringProperty(startResultJson, "screenShareUrl", out var screenShareUrl);
+
+        var result = await ListToolsAsync(sessionId, cancellationToken);
+        return string.IsNullOrWhiteSpace(screenShareUrl)
+            ? result
+            : result with { ScreenShareUrl = screenShareUrl };
     }
 
     public async Task<W365McpToolListResult> ListToolsAsync(string sessionId, CancellationToken cancellationToken)
@@ -224,4 +232,12 @@ internal sealed class W365McpSessionClient
     }
 }
 
-internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client);
+internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client)
+{
+    /// <summary>
+    /// screenShareUrl captured from the StartSession response (prestart path only). Null when
+    /// the session was reused/listed rather than freshly started, or when the platform did not
+    /// return a screenShareUrl.
+    /// </summary>
+    public string? ScreenShareUrl { get; init; }
+}

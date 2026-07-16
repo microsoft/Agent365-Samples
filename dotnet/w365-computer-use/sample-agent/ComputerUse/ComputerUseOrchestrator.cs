@@ -417,8 +417,10 @@ public class ComputerUseOrchestrator
         Func<string, Task>? onStatusUpdate = null,
         Func<bool, Task>? onCuaStarting = null,
         Func<string, Task>? onFolderLinkReady = null,
+        Func<string, string, Task>? onScreenShareLinkReady = null,
         bool includeCuaTool = true,
         string? prestartedW365SessionId = null,
+        string? prestartedScreenShareUrl = null,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}: {Message}", conversationId, Truncate(userMessage, 100));
@@ -451,8 +453,10 @@ public class ComputerUseOrchestrator
                 onStatusUpdate,
                 onCuaStarting,
                 onFolderLinkReady,
+                onScreenShareLinkReady,
                 includeCuaTool,
                 prestartedW365SessionId,
+                prestartedScreenShareUrl,
                 cancellationToken);
         }
         finally
@@ -472,8 +476,10 @@ public class ComputerUseOrchestrator
         Func<string, Task>? onStatusUpdate,
         Func<bool, Task>? onCuaStarting,
         Func<string, Task>? onFolderLinkReady,
+        Func<string, string, Task>? onScreenShareLinkReady,
         bool includeCuaTool,
         string? prestartedW365SessionId,
+        string? prestartedScreenShareUrl,
         CancellationToken cancellationToken)
     {
         if (session.SessionStarted)
@@ -481,10 +487,32 @@ public class ComputerUseOrchestrator
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
         }
 
+        // One-time emission of the browser handoff link once a W365 session (with a
+        // screenShareUrl) is available. Mirrors the onFolderLinkReady pattern.
+        async Task EmitScreenShareLinkIfReadyAsync()
+        {
+            if (onScreenShareLinkReady == null || session.ScreenShareLinkEmitted) return;
+            var sid = session.W365SessionId;
+            if (string.IsNullOrWhiteSpace(sid)) return;
+            if (!session.ScreenShareUrlsBySessionId.TryGetValue(sid, out var url)
+                || string.IsNullOrWhiteSpace(url)) return;
+            session.ScreenShareLinkEmitted = true;
+            await onScreenShareLinkReady(sid, url);
+        }
+
         if (includeCuaTool && !string.IsNullOrWhiteSpace(prestartedW365SessionId) && string.IsNullOrEmpty(session.W365SessionId))
         {
             session.TrackAndSelectSession(prestartedW365SessionId);
+            if (!string.IsNullOrWhiteSpace(prestartedScreenShareUrl))
+            {
+                session.ScreenShareUrlsBySessionId[prestartedW365SessionId] = prestartedScreenShareUrl;
+            }
             _logger.LogInformation("Using prestarted W365 session {SessionId} for conversation {ConversationId}", prestartedW365SessionId, conversationId);
+        }
+
+        if (includeCuaTool)
+        {
+            await EmitScreenShareLinkIfReadyAsync();
         }
 
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
@@ -700,6 +728,7 @@ public class ComputerUseOrchestrator
                                 }
                                 await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, cancellationToken);
                                 _logger.LogInformation("Session marked started for conversation {ConversationId}", conversationId);
+                                await EmitScreenShareLinkIfReadyAsync();
                             }
                             else if (onCuaStarting != null)
                             {
@@ -900,6 +929,11 @@ public class ComputerUseOrchestrator
         }
 
         session.TrackAndSelectSession(sessionId);
+        if (TryExtractStringProperty(resultStr, "screenShareUrl", out var screenShareUrl)
+            && !string.IsNullOrWhiteSpace(screenShareUrl))
+        {
+            session.ScreenShareUrlsBySessionId[sessionId] = screenShareUrl;
+        }
         _logger.LogInformation("Started explicit W365 session {SessionId}", sessionId);
     }
 
@@ -1092,6 +1126,82 @@ public class ComputerUseOrchestrator
             && _sessions.TryGetValue(conversationId, out var session)
             ? session.W365SessionId
             : null;
+    }
+
+    /// <summary>
+    /// Returns the cached screenShareUrl for the conversation's active W365 session, if one was
+    /// captured at start time. Does not perform any network calls.
+    /// </summary>
+    public bool TryGetActiveScreenShare(string conversationId, out string sessionId, out string screenShareUrl)
+    {
+        sessionId = string.Empty;
+        screenShareUrl = string.Empty;
+        if (string.IsNullOrWhiteSpace(conversationId)) return false;
+        if (!_sessions.TryGetValue(conversationId, out var session)) return false;
+
+        var sid = session.W365SessionId;
+        if (string.IsNullOrWhiteSpace(sid)) return false;
+        if (!session.ScreenShareUrlsBySessionId.TryGetValue(sid, out var url)
+            || string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        sessionId = sid;
+        screenShareUrl = url;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the conversation's active W365 session and its screenShareUrl. Returns the
+    /// start-time cached value when available; otherwise falls back to a GetSessionDetails call
+    /// against the live session (and caches the result). Used by the deterministic "give me a
+    /// screen share link" path, where the model has no tool to satisfy the request.
+    /// </summary>
+    public async Task<(bool Found, string SessionId, string ScreenShareUrl)> TryGetActiveScreenShareAsync(
+        string conversationId, CancellationToken ct = default)
+    {
+        if (TryGetActiveScreenShare(conversationId, out var cachedSid, out var cachedUrl))
+        {
+            return (true, cachedSid, cachedUrl);
+        }
+
+        if (string.IsNullOrWhiteSpace(conversationId)) return (false, string.Empty, string.Empty);
+        if (!_sessions.TryGetValue(conversationId, out var session)) return (false, string.Empty, string.Empty);
+
+        var sessionId = session.W365SessionId;
+        if (string.IsNullOrWhiteSpace(sessionId)) return (false, string.Empty, string.Empty);
+
+        var mcpClient = _w365McpClientsBySessionId.TryGetValue(sessionId, out var perSessionClient)
+            ? perSessionClient
+            : _cachedMcpClient;
+        if (mcpClient == null && _cachedTools == null)
+        {
+            return (false, string.Empty, string.Empty);
+        }
+
+        try
+        {
+            var args = new Dictionary<string, object?> { ["sessionId"] = sessionId };
+            var resultStr = await InvokeW365ToolAsync(_cachedTools ?? [], mcpClient, W365GetSessionDetailsToolName, args, ct)
+                .ConfigureAwait(false);
+
+            if (TryExtractStringProperty(resultStr, "screenShareUrl", out var freshUrl)
+                && !string.IsNullOrWhiteSpace(freshUrl))
+            {
+                session.ScreenShareUrlsBySessionId[sessionId] = freshUrl;
+                _logger.LogInformation("Fetched screenShareUrl via GetSessionDetails for session {SessionId} (start-time capture had none).", sessionId);
+                return (true, sessionId, freshUrl);
+            }
+
+            _logger.LogWarning("GetSessionDetails for session {SessionId} returned no screenShareUrl.", sessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Failed to fetch screenShareUrl via GetSessionDetails for session {SessionId}.", sessionId);
+        }
+
+        return (false, string.Empty, string.Empty);
     }
 
     internal async Task<W365McpToolListResult> StartDirectW365SessionAndListToolsAsync(
@@ -2197,6 +2307,11 @@ public class ComputerUseOrchestrator
                 if (TryExtractStringProperty(resultStr, "sessionId", out var sessionId))
                 {
                     session.TrackAndSelectSession(sessionId);
+                    if (TryExtractStringProperty(resultStr, "screenShareUrl", out var screenShareUrl)
+                        && !string.IsNullOrWhiteSpace(screenShareUrl))
+                    {
+                        session.ScreenShareUrlsBySessionId[sessionId] = screenShareUrl;
+                    }
                     _logger.LogInformation("Stored explicit W365 session {SessionId} from model-requested StartSession", sessionId);
                 }
             }
@@ -2391,6 +2506,18 @@ public class ComputerUseOrchestrator
         public int ScreenshotCounter { get; set; }
         public string? ScreenshotSubfolder { get; set; }
         public bool FolderShared { get; set; }
+
+        /// <summary>
+        /// screenShareUrl captured per W365 session id (from StartSession or a GetSessionDetails
+        /// fallback). Used to build the browser handoff link the agent posts in chat.
+        /// </summary>
+        public Dictionary<string, string> ScreenShareUrlsBySessionId { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// Guards one-time emission of the screen-share link per session lifetime so the link
+        /// isn't re-posted on every turn. A fresh link is re-minted on explicit user request.
+        /// </summary>
+        public bool ScreenShareLinkEmitted { get; set; }
 
         /// <summary>
         /// Serializes turns for this conversation so two concurrent turns cannot both append a

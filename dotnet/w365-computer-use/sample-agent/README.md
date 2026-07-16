@@ -186,6 +186,14 @@ dotnet run
 | `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
 | `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
 | `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
+| `AgentApplication:ScreenShareAuthHandlerName` | Auth handler used to mint ARI screenshare tokens | `ari` |
+| `AgentApplication:UserAuthorization:Handlers:ari:Settings:Scopes` | ARI audience (production `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/.default`) | - |
+| `ScreenShare:AuthMode` | `EasyAuth` for Azure deployment, `DevBypass` for local development | `EasyAuth` |
+| `ScreenShare:SdkVersion` | Screenshare SDK version loaded from the CDN | `1.0.0` |
+| `ScreenShare:CdnOrigin` | Public Microsoft CDN origin for the screenshare SDK | `https://packages.global.cloudinferenceplatform.azure.com` |
+| `ScreenShare:PageBaseUrl` | Public base URL for links to `screenshare.html`; defaults to the App Service host if unset | - |
+| `ScreenShare:AllowedFrameAncestors` | CSP `frame-ancestors` values allowed to embed the screenshare page | Teams / M365 hosts |
+| `ARI_BEARER_TOKEN` (env var) | Optional local ARI token override for screenshare development | - |
 
 ## Supported Models
 
@@ -218,6 +226,39 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 - Conversation history accumulates across messages, giving the model context for follow-up tasks
 - On app shutdown (`Ctrl+C`), the agent calls `EndSession` for each cached `sessionId` to release VMs back to the pool
 - If the app crashes, sessions auto-expire after ~30 minutes on the W365 backend
+
+## Screenshare
+
+The agent can expose a live screenshare link to the running Cloud PC through the W365 / ARI screenshare SDK. The link is created during the bot turn, when `turnContext` is available.
+
+1. The W365 MCP start-session response includes a `screenShareUrl`.
+2. The agent mints an ARI token through the `ari` auth handler, or uses `ARI_BEARER_TOKEN` in local development.
+3. The agent stores a one-time handoff record in memory (`HandoffStore`):
+   - `sessionId`
+   - `screenShareUrl`
+   - owner Entra object id from the original Teams activity
+   - hashed handoff code
+   - ARI token and parsed token expiry
+4. The bot posts a link to `/screenshare.html?sid=<sessionId>&hc=<handoffCode>`.
+5. The browser signs in through EasyAuth and calls `POST /api/screenshare/{sid}/token`.
+6. The server validates the EasyAuth identity against the original owner object id and returns the ARI token to the page.
+7. The page loads the screenshare SDK from `ScreenShare:CdnOrigin` and starts the session.
+
+The screenshare SDK is served from the public Microsoft CDN (`ScreenShare:CdnOrigin`, default `https://packages.global.cloudinferenceplatform.azure.com`); `/api/screenshare/config` templates the origin and SDK version so `screenshare.js` stays in sync.
+
+The in-memory handoff store is single-process. If the web app is scaled out to multiple instances, replace it with a distributed cache.
+
+### Local testing
+
+- Run the agent — it binds `http://localhost:3978` and `https://localhost:3979` (the SPA requires a secure context).
+- Set `ScreenShare:AuthMode` to `DevBypass` to skip the EasyAuth identity check locally.
+- Set `ARI_BEARER_TOKEN` to a valid ARI token so the page can start the SDK without EasyAuth.
+
+### Production
+
+- Enable App Service Authentication (EasyAuth) with Microsoft Entra ID so browser requests to `screenshare.html` are authenticated.
+- Set `ScreenShare:AuthMode=EasyAuth` and `ScreenShare:PageBaseUrl=https://<webapp-name>.azurewebsites.net`.
+- Register the `ari` auth handler scopes and grant the agent identity the ARI screenshare permissions on the target W365 Cloud PC pool.
 
 ## Production Deployment
 
