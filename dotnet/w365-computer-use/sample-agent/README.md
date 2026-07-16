@@ -36,6 +36,7 @@ Response to User
 | `ComputerUse/ComputerUseOrchestrator.cs` | CUA loop - sends screenshots to model, maps actions to MCP tools |
 | `ComputerUse/ICuaModelProvider.cs` | Abstraction for the CUA model API |
 | `ComputerUse/AzureOpenAIModelProvider.cs` | Azure OpenAI Responses API provider |
+| `ComputerUse/CustomEndpointProvider.cs` | Certificate-authenticated custom Responses API provider |
 
 ## Prerequisites
 
@@ -98,6 +99,24 @@ Create `appsettings.Development.json` (this file is gitignored):
   },
   "McpServer": {
     "Url": "http://localhost:52857/mcp/environments/Default-{your-tenant-id}/servers/mcp_W365ComputerUse"
+  }
+}
+```
+
+**For a certificate-authenticated custom endpoint:**
+```json
+{
+  "AIServices": {
+    "Provider": "CustomEndpoint",
+    "CustomEndpoint": {
+      "Endpoint": "https://your-custom-endpoint.example.com",
+      "CustomerId": "<<YOUR_CUSTOMER_ID>>",
+      "Scope": "<<YOUR_MODEL_SCOPE>>",
+      "Model": "computer-use-preview-2025-03-11",
+      "CertificateSubject": "<<YOUR_CERTIFICATE_SUBJECT>>",
+      "ClientId": "<<YOUR_CLIENT_ID>>",
+      "TenantId": "<<YOUR_TENANT_ID>>"
+    }
   }
 }
 ```
@@ -171,7 +190,17 @@ dotnet run
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `AIServices:Provider` | Model provider | `AzureOpenAI` |
+| `AIServices:Provider` | Model provider (`AzureOpenAI` or `CustomEndpoint`) | `AzureOpenAI` |
+| `AIServices:CustomEndpoint:Endpoint` | Custom Responses API endpoint (required for `CustomEndpoint`) | - |
+| `AIServices:CustomEndpoint:CustomerId` | Customer identifier sent to the custom endpoint (required) | - |
+| `AIServices:CustomEndpoint:Scope` | Model scope sent to the custom endpoint (required) | - |
+| `AIServices:CustomEndpoint:Model` | Model identifier sent in Responses API requests (required) | - |
+| `AIServices:CustomEndpoint:CertificateSubject` | Subject of the client certificate in the current user's certificate store (required) | - |
+| `AIServices:CustomEndpoint:ClientId` | Microsoft Entra application client ID used for certificate authentication (required) | - |
+| `AIServices:CustomEndpoint:TenantId` | Microsoft Entra tenant ID used for certificate authentication (required) | - |
+| `AIServices:CustomEndpoint:ModelTenantId` | Optional model-tenant header value | - |
+| `AIServices:CustomEndpoint:ClientPrincipalId` | Optional client-principal header value | - |
+| `AIServices:CustomEndpoint:PartnerSource` | Optional partner-source header value | - |
 | `AIServices:AzureOpenAI:Endpoint` | Azure OpenAI resource URL | - |
 | `AIServices:AzureOpenAI:ApiKey` | API key | - |
 | `AIServices:AzureOpenAI:DeploymentName` | Backward-compatible model identifier fallback when `ModelName` is not set | `computer-use-preview` |
@@ -186,6 +215,7 @@ dotnet run
 | `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
 | `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
 | `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
+| `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` (env var) | Opt in to sanitized prompt, response, and tool content in telemetry; content is metadata-only unless set to `true` | `false` |
 | `AgentApplication:ScreenShareAuthHandlerName` | Auth handler used to mint ARI screenshare tokens | `ari` |
 | `AgentApplication:UserAuthorization:Handlers:ari:Settings:Scopes` | ARI audience (production `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/.default`) | - |
 | `ScreenShare:AuthMode` | `EasyAuth` for Azure deployment, `DevBypass` for local development | `EasyAuth` |

@@ -16,7 +16,7 @@ public static class InferenceTelemetry
         Func<Task<string>> sendAsync)
     {
         ArgumentNullException.ThrowIfNull(sendAsync);
-        requestBody = RedactSensitivePayloads(requestBody);
+        requestBody = TelemetryContentPolicy.PrepareText(requestBody, "inference request");
         var telemetryContext = Agent365TelemetryContext.FromCurrentActivity();
 
         using var scope = InferenceScope.Start(
@@ -36,7 +36,10 @@ public static class InferenceTelemetry
 
             if (metadata.OutputMessages.Length > 0)
             {
-                scope.RecordOutputMessages(metadata.OutputMessages);
+                scope.RecordOutputMessages(
+                    metadata.OutputMessages
+                        .Select(message => TelemetryContentPolicy.PrepareText(message, "inference output"))
+                        .ToArray());
             }
 
             if (metadata.InputTokens is { } inputTokens)
@@ -75,15 +78,6 @@ public static class InferenceTelemetry
 
     internal static InferenceResponseMetadata ReadResponseMetadataForTest(string responseBody) =>
         ReadResponseMetadata(responseBody);
-
-    private static string RedactSensitivePayloads(string value)
-    {
-        return System.Text.RegularExpressions.Regex.Replace(
-            value,
-            @"data:image\/[^""\s]+",
-            "data:image/redacted;base64,<redacted>",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    }
 
     private static InferenceResponseMetadata ReadResponseMetadata(string responseBody)
     {

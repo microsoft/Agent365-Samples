@@ -7,6 +7,7 @@ using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
 using OpenTelemetry;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 
 namespace W365ComputerUseSample.Telemetry;
@@ -200,7 +201,7 @@ public sealed record Agent365TelemetryContext
 
     public IDisposable BuildBaggageScope()
     {
-        return new BaggageBuilder()
+        var builder = new BaggageBuilder()
             .TenantId(TenantId)
             .AgentId(AgentId)
             .AgentName(AgentName)
@@ -217,8 +218,17 @@ public sealed record Agent365TelemetryContext
             .ChannelName(ChannelName)
             .ChannelLink(ChannelLink)
             .SessionId(SessionId)
-            .OperationSource(OperationSource)
-            .Build();
+            .OperationSource(OperationSource);
+
+        builder.Set("server.port", ToServerPortAttribute());
+
+        return builder.Build();
+    }
+
+    public string ToServerPortAttribute()
+    {
+        var serverPort = ServerPort is >= 1 and <= 65535 ? ServerPort.Value : 443;
+        return serverPort.ToString(CultureInfo.InvariantCulture);
     }
 
     public AgentDetails ToAgentDetails()

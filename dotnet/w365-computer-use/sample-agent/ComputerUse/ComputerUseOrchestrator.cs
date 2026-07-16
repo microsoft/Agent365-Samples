@@ -1359,7 +1359,10 @@ public class ComputerUseOrchestrator
         {
             var directClient = new W365McpSessionClient(mcpClient);
             var result = string.IsNullOrWhiteSpace(existingSessionId)
-                ? await directClient.StartSessionAndListToolsAsync(cancellationToken)
+                ? await directClient.StartSessionAndListToolsAsync(
+                    cancellationToken,
+                    turnContext.Activity.Conversation?.Id,
+                    turnContext.Activity.ChannelId)
                 : await directClient.ListToolsAsync(existingSessionId, cancellationToken);
             _cachedTools = result.Tools;
             _cachedMcpClient = result.Client;
@@ -1698,12 +1701,18 @@ public class ComputerUseOrchestrator
             string? rawResultJson = resultStr;
             try
             {
-                _logger.LogDebug("take_screenshot returned {Count} content blocks. Raw JSON (truncated): {Raw}",
-                    JsonDocument.Parse(rawResultJson).RootElement.TryGetProperty("content", out var content)
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+                    using var responseDocument = JsonDocument.Parse(rawResultJson);
+                    var contentCount = responseDocument.RootElement.TryGetProperty("content", out var content)
                         && content.ValueKind == JsonValueKind.Array
-                            ? content.GetArrayLength()
-                            : 0,
-                    rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
+                        ? content.GetArrayLength()
+                        : 0;
+                    _logger.LogDebug(
+                        "take_screenshot returned {Count} content blocks. Raw JSON (truncated): {Raw}",
+                        contentCount,
+                        rawResultJson[..Math.Min(2000, rawResultJson.Length)]);
+                }
             }
             catch (Exception logEx)
             {

@@ -34,6 +34,9 @@ public static class ObservabilityServiceCollectionExtensions
 
                 options.Agent365.ClusterCategory = "production";
                 options.Agent365.TokenResolver = serviceTokenCache.GetObservabilityToken;
+                options.Instrumentation.EnableHttpClientInstrumentation = true;
+                options.Instrumentation.EnableAspNetCoreInstrumentation = true;
+                options.Instrumentation.EnableAgent365Instrumentation = true;
             })
             .WithTracing(tracing => tracing.AddSource(AgentMetrics.SourceName))
             .WithMetrics(metrics => metrics.AddMeter(AgentMetrics.SourceName));

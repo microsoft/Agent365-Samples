@@ -302,7 +302,7 @@ public class MyAgent : AgentApplication
                             reply = "There's no active Windows 365 session yet. Ask me to do something on the desktop first, then I can share a live link.";
                         }
                         turnContext.StreamingResponse.QueueTextChunk(reply);
-                        return;
+                        return reply;
                     }
 
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
@@ -328,7 +328,7 @@ public class MyAgent : AgentApplication
                             includeCuaTool: false,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
-                        return;
+                        return directResponse;
                     }
 
                     // CUA path: SendActivity the "Got it" acknowledgment FIRST, before the streaming
@@ -363,7 +363,7 @@ public class MyAgent : AgentApplication
                             // Write the error into the streaming response so EndStreamAsync doesn't
                             // emit a confusing 'No text was streamed' alongside the real message.
                             turnContext.StreamingResponse.QueueTextChunk(errorMessage);
-                            return;
+                            return errorMessage;
                         }
 
                         // Get Graph token for OneDrive screenshot upload.
@@ -414,6 +414,7 @@ public class MyAgent : AgentApplication
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
+                        return response;
                     }
                     finally
                     {

@@ -15,7 +15,7 @@ namespace W365ComputerUseSample;
 
 public static class A365OtelWrapper
 {
-    public static async Task InvokeObservedAgentOperation(
+    public static Task InvokeObservedAgentOperation(
         string operationName,
         ITurnContext turnContext,
         ITurnState turnState,
@@ -27,6 +27,39 @@ public static class A365OtelWrapper
         ILogger? logger,
         Func<Task> func)
     {
+        ArgumentNullException.ThrowIfNull(func);
+
+        return InvokeObservedAgentOperation(
+            operationName,
+            turnContext,
+            turnState,
+            agentTokenCache,
+            serviceTokenCache,
+            telemetryOptions,
+            authSystem,
+            authHandlerName,
+            logger,
+            async () =>
+            {
+                await func().ConfigureAwait(false);
+                return null;
+            });
+    }
+
+    public static async Task InvokeObservedAgentOperation(
+        string operationName,
+        ITurnContext turnContext,
+        ITurnState turnState,
+        IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
+        ServiceTokenCache? serviceTokenCache,
+        Agent365TelemetryOptions? telemetryOptions,
+        UserAuthorization authSystem,
+        string authHandlerName,
+        ILogger? logger,
+        Func<Task<string?>> func)
+    {
+        ArgumentNullException.ThrowIfNull(func);
+
         (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName, logger);
         var observabilityScopes = EnvironmentUtils.GetObservabilityAuthenticationScope();
 
@@ -90,13 +123,19 @@ public static class A365OtelWrapper
         }
 
         using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);
+        ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);
+        string? outputMessage = null;
 
         try
         {
             await AgentMetrics.InvokeObservedAgentOperation(
                 operationName,
                 turnContext,
-                func).ConfigureAwait(false);
+                async () =>
+                {
+                    outputMessage = await func().ConfigureAwait(false);
+                }).ConfigureAwait(false);
+            RecordInvokeAgentOutputMessage(invokeAgentScope, outputMessage);
         }
         catch (OperationCanceledException)
         {
@@ -110,12 +149,37 @@ public static class A365OtelWrapper
         }
     }
 
+    private static void RecordInvokeAgentOutputMessage(InvokeAgentScope invokeAgentScope, string? outputMessage)
+    {
+        var outputMessages = GetInvokeAgentOutputMessages(outputMessage);
+        if (outputMessages.Length > 0)
+        {
+            invokeAgentScope.RecordOutputMessages(outputMessages);
+        }
+    }
+
+    private static string[] GetInvokeAgentOutputMessages(string? outputMessage) =>
+        string.IsNullOrWhiteSpace(outputMessage)
+            ? []
+            : [TelemetryContentPolicy.PrepareText(outputMessage, "agent output")];
+
+    internal static string[] GetInvokeAgentOutputMessagesForTest(string? outputMessage) =>
+        GetInvokeAgentOutputMessages(outputMessage);
+
+    private static void ForceInvokeAgentServerPortTag(
+        InvokeAgentScope invokeAgentScope,
+        Agent365TelemetryContext telemetryContext)
+    {
+        invokeAgentScope.SetTagMaybe("server.port", telemetryContext.ToServerPortAttribute());
+    }
+
     private static InvokeAgentScope StartInvokeAgentScope(
         ITurnContext turnContext,
         Agent365TelemetryContext telemetryContext)
     {
         var agentDetails = telemetryContext.ToAgentDetails();
-        var request = telemetryContext.ToRequest(content: turnContext.Activity.Text);
+        var request = telemetryContext.ToRequest(
+            content: TelemetryContentPolicy.PrepareText(turnContext.Activity.Text ?? string.Empty, "agent input"));
         var callerDetails = telemetryContext.ToCallerDetails();
 
         var scopeDetails = new InvokeAgentScopeDetails(

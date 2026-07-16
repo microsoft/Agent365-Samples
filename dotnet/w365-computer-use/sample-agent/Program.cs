@@ -40,7 +40,7 @@ builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerC
 // **********  END Configure A365 Services **********
 
 // Register the model provider
-builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
+builder.Services.AddConfiguredCuaModelProvider(builder.Configuration);
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();

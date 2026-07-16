@@ -7,6 +7,7 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using W365ComputerUseSample.Telemetry;
 
 namespace W365ComputerUseSample.ComputerUse;
 
@@ -21,13 +22,28 @@ internal sealed class W365McpSessionClient
         this.mcpClient = mcpClient ?? throw new ArgumentNullException(nameof(mcpClient));
     }
 
-    public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(CancellationToken cancellationToken)
+    public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(
+        CancellationToken cancellationToken,
+        string? conversationId = null,
+        string? channelId = null)
     {
-        var startResult = await this.mcpClient.CallToolAsync(
-            ComputerUseOrchestrator.W365StartSessionToolName,
-            new Dictionary<string, object?>(),
-            cancellationToken: cancellationToken);
-        var startResultJson = JsonSerializer.Serialize(startResult, JsonOptions);
+        var startArguments = new Dictionary<string, object?>();
+        var startResultJson = await ToolTelemetry.InvokeAsync(
+            toolName: ComputerUseOrchestrator.W365StartSessionToolName,
+            arguments: startArguments,
+            toolCallId: null,
+            toolServerName: "w365",
+            endpoint: null,
+            conversationId: conversationId,
+            channelId: channelId,
+            invokeAsync: async () =>
+            {
+                var startResult = await this.mcpClient.CallToolAsync(
+                    ComputerUseOrchestrator.W365StartSessionToolName,
+                    startArguments,
+                    cancellationToken: cancellationToken);
+                return JsonSerializer.Serialize(startResult, JsonOptions);
+            }).ConfigureAwait(false);
 
         if (!TryExtractStringProperty(startResultJson, "sessionId", out var sessionId))
         {

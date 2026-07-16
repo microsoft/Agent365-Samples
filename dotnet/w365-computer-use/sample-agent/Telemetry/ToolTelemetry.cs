@@ -25,13 +25,14 @@ public static class ToolTelemetry
         var telemetryContext = Agent365TelemetryContext.FromCurrentActivity(
             conversationIdOverride: conversationId,
             channelNameOverride: channelId);
+        var resolvedToolCallId = ResolveToolCallId(toolName, toolCallId);
 
         using var scope = ExecuteToolScope.Start(
             request: telemetryContext.ToRequest(conversationId: conversationId, channelName: channelId),
             details: new ToolCallDetails(
                 toolName: toolName,
                 argumentsObject: ToSerializableArguments(arguments),
-                toolCallId: toolCallId,
+                toolCallId: resolvedToolCallId,
                 toolType: ToolType.Function,
                 endpoint: endpoint,
                 toolServerName: toolServerName),
@@ -57,42 +58,27 @@ public static class ToolTelemetry
         }
     }
 
-    private static Dictionary<string, object> ToSerializableArguments(IDictionary<string, object?> arguments)
+    private static string ResolveToolCallId(string toolName, string? toolCallId)
     {
-        return arguments.ToDictionary(
-            pair => pair.Key,
-            pair => RedactSensitiveArgument(pair.Key, pair.Value),
-            StringComparer.Ordinal);
+        return !string.IsNullOrWhiteSpace(toolCallId)
+            ? toolCallId
+            : $"{toolName}-{Guid.NewGuid().ToString("N")}";
     }
 
-    private static object RedactSensitiveArgument(string key, object? value)
+    internal static string ResolveToolCallIdForTest(string toolName, string? toolCallId) =>
+        ResolveToolCallId(toolName, toolCallId);
+
+    private static Dictionary<string, object> ToSerializableArguments(IDictionary<string, object?> arguments)
     {
-        if (value == null)
-        {
-            return string.Empty;
-        }
-
-        if (string.Equals(key, "text", StringComparison.OrdinalIgnoreCase))
-        {
-            var length = value.ToString()?.Length ?? 0;
-            return $"<redacted text; length={length}>";
-        }
-
-        return value;
+        return TelemetryContentPolicy.PrepareArguments(arguments);
     }
 
     private static string RedactSensitiveResult(string toolName, string result)
     {
-        if (string.Equals(toolName, "take_screenshot", StringComparison.OrdinalIgnoreCase))
-        {
-            return "<redacted screenshot result>";
-        }
-
-        return System.Text.RegularExpressions.Regex.Replace(
-            result,
-            @"data:image\/[^""\s]+",
-            "data:image/redacted;base64,<redacted>",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var contentKind = string.Equals(toolName, "take_screenshot", StringComparison.OrdinalIgnoreCase)
+            ? "screenshot result"
+            : "tool result";
+        return TelemetryContentPolicy.PrepareText(result, contentKind);
     }
 
 }

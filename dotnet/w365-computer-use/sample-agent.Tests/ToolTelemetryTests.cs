@@ -49,6 +49,42 @@ public sealed class ToolTelemetryTests
     }
 
     [Fact]
+    public void HelperGeneratesToolCallIdWhenCallerDoesNotHaveOne()
+    {
+        var helper = ReadRepoFile("sample-agent", "Telemetry", "ToolTelemetry.cs");
+        var invokeAsyncBody = ExtractMethodBody(helper, "public static async Task<string> InvokeAsync");
+
+        Assert.Contains("var resolvedToolCallId = ResolveToolCallId(toolName, toolCallId);", invokeAsyncBody);
+        Assert.Contains("toolCallId: resolvedToolCallId", invokeAsyncBody);
+        Assert.Contains("private static string ResolveToolCallId(string toolName, string? toolCallId)", helper);
+        Assert.Contains("toolCallId", helper);
+        Assert.Contains("toolName", helper);
+        Assert.Contains("Guid.NewGuid().ToString(\"N\")", helper);
+    }
+
+    [Fact]
+    public void ResolveToolCallId_preserves_caller_supplied_id()
+    {
+        var toolCallId = ToolTelemetry.ResolveToolCallIdForTest("click", "call-1");
+
+        Assert.Equal("call-1", toolCallId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveToolCallId_generates_prefixed_guid_when_missing(string? providedToolCallId)
+    {
+        var toolCallId = ToolTelemetry.ResolveToolCallIdForTest("click", providedToolCallId);
+
+        Assert.StartsWith("click-", toolCallId);
+        Assert.True(
+            Guid.TryParseExact(toolCallId["click-".Length..], "N", out _),
+            $"Expected generated tool call id to end with an N-formatted GUID, got '{toolCallId}'.");
+    }
+
+    [Fact]
     public async Task InvokeAsync_rethrows_tool_failures()
     {
         var exception = new InvalidOperationException("tool failed");
@@ -100,7 +136,7 @@ public sealed class ToolTelemetryTests
         Assert.Contains("request: telemetryContext.ToRequest(conversationId: conversationId, channelName: channelId)", invokeAsyncBody);
         Assert.Contains("toolName: toolName", invokeAsyncBody);
         Assert.Contains("argumentsObject: ToSerializableArguments(arguments)", invokeAsyncBody);
-        Assert.Contains("toolCallId: toolCallId", invokeAsyncBody);
+        Assert.Contains("toolCallId: resolvedToolCallId", invokeAsyncBody);
         Assert.Contains("ToolType.Function", invokeAsyncBody);
         Assert.Contains("toolType: ToolType.Function", invokeAsyncBody);
         Assert.Contains("endpoint: endpoint", invokeAsyncBody);

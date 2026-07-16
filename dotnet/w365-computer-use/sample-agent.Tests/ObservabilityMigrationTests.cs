@@ -132,9 +132,10 @@ public sealed class ObservabilityMigrationTests
 
         Assert.Contains("Func<Task> func", wrapper);
         Assert.Contains("AgentMetrics.InvokeObservedAgentOperation(", wrapper);
-        Assert.Contains("func).ConfigureAwait(false);", wrapper);
+        Assert.Contains("outputMessage = await func().ConfigureAwait(false);", wrapper);
         Assert.Contains("InvokeAgentScope.Start(", wrapper);
-        Assert.DoesNotContain("RecordOutputMessages", wrapper);
+        Assert.Contains("RecordInvokeAgentOutputMessage(invokeAgentScope, outputMessage);", wrapper);
+        Assert.Contains("ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);", wrapper);
     }
 
     [Fact]
@@ -374,7 +375,7 @@ public sealed class ObservabilityMigrationTests
 
         var normalizedWrapper = wrapper.Replace("\r\n", "\n");
         Assert.Contains(
-            "using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);\n\n        try\n        {\n            await AgentMetrics.InvokeObservedAgentOperation(",
+            "using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);\n        ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);\n        string? outputMessage = null;\n\n        try\n        {\n            await AgentMetrics.InvokeObservedAgentOperation(",
             normalizedWrapper);
         Assert.Contains("using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);", wrapper);
         Assert.Contains("private static InvokeAgentScope StartInvokeAgentScope(", wrapper);
@@ -399,13 +400,13 @@ public sealed class ObservabilityMigrationTests
         var normalizedHelperBody = helperBody.Replace("\r\n", "\n");
 
         Assert.Contains("var agentDetails = telemetryContext.ToAgentDetails();", normalizedHelperBody);
-        Assert.Contains("var request = telemetryContext.ToRequest(content: turnContext.Activity.Text);", normalizedHelperBody);
+        Assert.Contains("TelemetryContentPolicy.PrepareText(turnContext.Activity.Text ?? string.Empty, \"agent input\")", normalizedHelperBody);
         Assert.Contains("var callerDetails = telemetryContext.ToCallerDetails();", normalizedHelperBody);
         Assert.Contains(
             "return InvokeAgentScope.Start(\n            request: request,\n            scopeDetails: scopeDetails,\n            agentDetails: agentDetails,\n            callerDetails: callerDetails);",
             normalizedHelperBody);
         Assert.Contains("Agent365TelemetryContext telemetryContext", helperBody);
-        Assert.Contains("telemetryContext.ToRequest(content: turnContext.Activity.Text)", helperBody);
+        Assert.Contains("telemetryContext.ToRequest(", helperBody);
         Assert.Contains("telemetryContext.ToAgentDetails()", helperBody);
         Assert.Contains("telemetryContext.ToCallerDetails()", helperBody);
         Assert.DoesNotContain("new Request(", helperBody);
@@ -426,13 +427,19 @@ public sealed class ObservabilityMigrationTests
         Assert.Contains(
             """
             using var invokeAgentScope = StartInvokeAgentScope(turnContext, telemetryContext);
+                    ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);
+                    string? outputMessage = null;
 
                     try
                     {
                         await AgentMetrics.InvokeObservedAgentOperation(
                             operationName,
                             turnContext,
-                            func).ConfigureAwait(false);
+                            async () =>
+                            {
+                                outputMessage = await func().ConfigureAwait(false);
+                            }).ConfigureAwait(false);
+                        RecordInvokeAgentOutputMessage(invokeAgentScope, outputMessage);
                     }
                     catch (OperationCanceledException)
                     {
@@ -446,6 +453,56 @@ public sealed class ObservabilityMigrationTests
                     }
             """.Replace("\r\n", "\n"),
             normalizedWrapper);
+    }
+
+    [Fact]
+    public void AgentOperationRecordsReturnedOutputMessagesOnInvokeAgentScope()
+    {
+        var wrapper = ReadRepoFile("sample-agent", "Telemetry", "A365OtelWrapper.cs");
+        var agent = ReadRepoFile("sample-agent", "Agent", "MyAgent.cs");
+
+        Assert.Contains("Func<Task<string?>> func", wrapper);
+        Assert.Contains("string? outputMessage = null;", wrapper);
+        Assert.Contains("outputMessage = await func().ConfigureAwait(false);", wrapper);
+        Assert.Contains("RecordInvokeAgentOutputMessage(invokeAgentScope, outputMessage);", wrapper);
+        Assert.Contains("invokeAgentScope.RecordOutputMessages(outputMessages);", wrapper);
+        Assert.Contains("GetInvokeAgentOutputMessages(outputMessage)", wrapper);
+
+        Assert.Contains("return reply;", agent);
+        Assert.Contains("return directResponse;", agent);
+        Assert.Contains("return errorMessage;", agent);
+        Assert.Contains("return response;", agent);
+    }
+
+    [Fact]
+    public void AgentOperationOutputMessages_include_nonblank_returned_message()
+    {
+        var messages = A365OtelWrapper.GetInvokeAgentOutputMessagesForTest("hello world");
+
+        var message = Assert.Single(messages);
+        Assert.Equal("<redacted agent output; length=11>", message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AgentOperationOutputMessages_skip_blank_returned_messages(string? outputMessage)
+    {
+        Assert.Empty(A365OtelWrapper.GetInvokeAgentOutputMessagesForTest(outputMessage));
+    }
+
+    [Fact]
+    public void AgentOperationForcesStringEncodedServerPortOnInvokeAgentScope()
+    {
+        var wrapper = ReadRepoFile("sample-agent", "Telemetry", "A365OtelWrapper.cs");
+        var context = ReadRepoFile("sample-agent", "Telemetry", "Agent365TelemetryContext.cs");
+
+        Assert.Contains("ForceInvokeAgentServerPortTag(invokeAgentScope, telemetryContext);", wrapper);
+        Assert.Contains("invokeAgentScope.SetTagMaybe(\"server.port\", telemetryContext.ToServerPortAttribute());", wrapper);
+        Assert.Contains("public string ToServerPortAttribute()", context);
+        Assert.Contains("CultureInfo.InvariantCulture", context);
+        Assert.Contains("builder.Set(\"server.port\", ToServerPortAttribute());", context);
     }
 
     [Fact]
@@ -595,6 +652,7 @@ return await ToolTelemetry.InvokeAsync(
             runTurnAsync.IndexOf("InvokeFunctionCallAsync", StringComparison.Ordinal),
             runTurnAsync.IndexOf("EndSessionAsync", StringComparison.Ordinal),
         }
+
         .Where(index => index >= 0)
         .DefaultIfEmpty(-1)
         .Min();
@@ -913,6 +971,29 @@ return await ToolTelemetry.InvokeAsync(
         Assert.Contains("RecordResponse", helper);
         Assert.Contains("RecordCancellation()", helper);
         Assert.Contains("RecordError(ex)", helper);
+    }
+
+    [Fact]
+    public void ProductionSessionPrestartUsesSharedToolTelemetry()
+    {
+        var client = ReadRepoFile("sample-agent", "ComputerUse", "W365McpSessionClient.cs");
+        var method = ExtractMethodBody(client, "public async Task<W365McpToolListResult> StartSessionAndListToolsAsync");
+
+        Assert.Contains("ToolTelemetry.InvokeAsync(", method);
+        Assert.Contains("toolName: ComputerUseOrchestrator.W365StartSessionToolName", method);
+        Assert.Contains("mcpClient.CallToolAsync(", method);
+        Assert.Contains("conversationId: conversationId", method);
+        Assert.Contains("channelId: channelId", method);
+    }
+
+    [Fact]
+    public void ScreenshotDebugJsonDocumentIsDisposed()
+    {
+        var orchestrator = ReadRepoFile("sample-agent", "ComputerUse", "ComputerUseOrchestrator.cs");
+        var method = ExtractMethodBody(orchestrator, "private async Task<string> CaptureScreenshotAsync");
+
+        Assert.Contains("using var responseDocument = JsonDocument.Parse(rawResultJson);", method);
+        Assert.Contains("responseDocument.RootElement", method);
     }
 
     private static void AssertDoesNotCallInstrumentedToolHelpers(string telemetryDelegateBody)
