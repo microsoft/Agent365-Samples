@@ -102,7 +102,7 @@ apex-observability/
 ## Deploy
 
 ```bash
-cd salesforce/apex-observability
+cd agent-platforms/salesforce/apex-observability
 sf project deploy start --source-dir force-app/main/default --target-org <your-org-alias> --test-level RunLocalTests
 ```
 
