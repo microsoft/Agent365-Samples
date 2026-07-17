@@ -6,9 +6,7 @@ using W365ComputerUseSample.Agent;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability;
-using Microsoft.Agents.A365.Observability.Extensions.AgentFramework;
-using Microsoft.Agents.A365.Observability.Runtime;
+using Microsoft.Agents.A365.Observability.Hosting.Middleware;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
 using Microsoft.Agents.Builder;
@@ -24,32 +22,21 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Setup ASP service defaults, including OpenTelemetry, Service Discovery, Resilience, and Health Checks
-builder.ConfigureOpenTelemetry();
-
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
+builder.Services.AddW365ComputerUseOpenTelemetry(builder.Configuration);
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
 builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
 
 // **********  Configure A365 Services **********
-// Configure observability.
-builder.Services.AddAgenticTracingExporter(clusterCategory: "production");
-
-// Add A365 tracing with Agent Framework integration
-builder.AddA365Tracing(config =>
-{
-    config.WithAgentFramework();
-});
-
 // Add A365 Tooling Server integration
 builder.Services.AddSingleton<IMcpToolRegistrationService, McpToolRegistrationService>();
 builder.Services.AddSingleton<IMcpToolServerConfigurationService, McpToolServerConfigurationService>();
 // **********  END Configure A365 Services **********
 
 // Register the model provider
-builder.Services.AddSingleton<ICuaModelProvider, AzureOpenAIModelProvider>();
+builder.Services.AddCuaModelProvider(builder.Configuration);
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
@@ -95,6 +82,16 @@ builder.Services.AddRateLimiter(options =>
 
 // Register IStorage. For development, MemoryStorage is suitable.
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
+
+builder.Services.Configure<Agent365TelemetryOptions>(
+    builder.Configuration.GetSection(Agent365TelemetryOptions.SectionName));
+builder.Services.AddSingleton<BaggageTurnMiddleware>();
+builder.Services.AddSingleton<OutputLoggingMiddleware>();
+builder.Services.AddSingleton<Microsoft.Agents.Builder.IMiddleware[]>(serviceProvider =>
+[
+    serviceProvider.GetRequiredService<BaggageTurnMiddleware>(),
+    serviceProvider.GetRequiredService<OutputLoggingMiddleware>(),
+]);
 
 // Add AgentApplicationOptions from config.
 builder.AddAgentApplicationOptions();

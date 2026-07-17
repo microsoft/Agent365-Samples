@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.Text;
+using W365ComputerUseSample.Telemetry;
 
 namespace W365ComputerUseSample.ComputerUse;
 
@@ -33,17 +34,20 @@ public class AzureOpenAIModelProvider : ICuaModelProvider
     public async Task<string> SendAsync(string requestBody, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Azure OpenAI request URL: {Url}", _url);
-        using var req = new HttpRequestMessage(HttpMethod.Post, _url);
-        req.Headers.Add("api-key", _apiKey);
-        req.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
-
-        var resp = await _httpClient.SendAsync(req, cancellationToken);
-        if (!resp.IsSuccessStatusCode)
+        return await InferenceTelemetry.InvokeAsync(requestBody, ModelName, "azure.openai", async () =>
         {
-            var err = await resp.Content.ReadAsStringAsync(cancellationToken);
-            throw new HttpRequestException($"Azure OpenAI returned {resp.StatusCode}: {err}");
-        }
+            using var req = new HttpRequestMessage(HttpMethod.Post, _url);
+            req.Headers.Add("api-key", _apiKey);
+            req.Content = new StringContent(requestBody, Encoding.UTF8, "application/json");
 
-        return await resp.Content.ReadAsStringAsync(cancellationToken);
+            using var resp = await _httpClient.SendAsync(req, cancellationToken);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync(cancellationToken);
+                throw new HttpRequestException($"Azure OpenAI returned {resp.StatusCode}: {err}");
+            }
+
+            return await resp.Content.ReadAsStringAsync(cancellationToken);
+        }).ConfigureAwait(false);
     }
 }

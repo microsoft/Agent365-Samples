@@ -3,31 +3,48 @@
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using W365ComputerUseSample.Telemetry;
 
 namespace W365ComputerUseSample.ComputerUse;
 
 internal sealed class W365McpSessionClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly ConditionalWeakTable<AIFunction, object> TelemetryOwnedTools = new();
+    private static readonly object TelemetryOwnedToolMarker = new();
 
     private readonly IMcpClient mcpClient;
+
+    internal const string ToolCallIdArgumentName = "__agent365_tool_call_id";
 
     public W365McpSessionClient(IMcpClient mcpClient)
     {
         this.mcpClient = mcpClient ?? throw new ArgumentNullException(nameof(mcpClient));
     }
 
-    public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(CancellationToken cancellationToken)
+    public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(
+        CancellationToken cancellationToken,
+        string? conversationId = null,
+        string? channelId = null)
     {
-        var startResult = await this.mcpClient.CallToolAsync(
-            ComputerUseOrchestrator.W365StartSessionToolName,
-            new Dictionary<string, object?>(),
-            cancellationToken: cancellationToken);
-        var startResultJson = JsonSerializer.Serialize(startResult, JsonOptions);
+        var startArguments = new Dictionary<string, object?>();
+        var startResultJson = await ToolTelemetry.InvokeAsync(
+            toolName: ComputerUseOrchestrator.W365StartSessionToolName,
+            arguments: startArguments,
+            toolCallId: null,
+            toolServerName: "w365",
+            endpoint: null,
+            conversationId: conversationId,
+            channelId: channelId,
+            invokeAsync: () => this.CallToolRawAsync(
+                ComputerUseOrchestrator.W365StartSessionToolName,
+                startArguments,
+                cancellationToken)).ConfigureAwait(false);
 
         if (!TryExtractStringProperty(startResultJson, "sessionId", out var sessionId))
         {
@@ -39,13 +56,17 @@ internal sealed class W365McpSessionClient
         // is skipped when the session is prestarted out-of-band.)
         TryExtractStringProperty(startResultJson, "screenShareUrl", out var screenShareUrl);
 
-        var result = await ListToolsAsync(sessionId, cancellationToken);
+        var result = await ListToolsAsync(sessionId, cancellationToken, conversationId, channelId);
         return string.IsNullOrWhiteSpace(screenShareUrl)
             ? result
             : result with { ScreenShareUrl = screenShareUrl };
     }
 
-    public async Task<W365McpToolListResult> ListToolsAsync(string sessionId, CancellationToken cancellationToken)
+    public async Task<W365McpToolListResult> ListToolsAsync(
+        string sessionId,
+        CancellationToken cancellationToken,
+        string? conversationId = null,
+        string? channelId = null)
     {
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -68,11 +89,28 @@ internal sealed class W365McpSessionClient
         var response = await this.mcpClient.SendRequestAsync(request, cancellationToken);
         var toolsResult = response.Result?.Deserialize<ListToolsResult>(JsonOptions)
             ?? throw new InvalidOperationException("W365 tools/list response did not contain a result.");
-        var tools = CreateTools(toolsResult, sessionId);
+        var tools = CreateTools(toolsResult, sessionId, conversationId, channelId);
         return new W365McpToolListResult(sessionId, tools, this.mcpClient);
     }
 
-    private IList<AITool> CreateTools(ListToolsResult toolsResult, string sessionId)
+    internal static bool OwnsTelemetry(AITool tool) =>
+        tool is AIFunction function && TelemetryOwnedTools.TryGetValue(function, out _);
+
+    internal static void AttachToolCallId(IDictionary<string, object?> arguments, string? toolCallId)
+    {
+        ArgumentNullException.ThrowIfNull(arguments);
+
+        if (!string.IsNullOrWhiteSpace(toolCallId))
+        {
+            arguments[ToolCallIdArgumentName] = toolCallId;
+        }
+    }
+
+    private IList<AITool> CreateTools(
+        ListToolsResult toolsResult,
+        string sessionId,
+        string? conversationId,
+        string? channelId)
     {
         var tools = new List<AITool>();
         foreach (var tool in toolsResult.Tools)
@@ -82,42 +120,125 @@ internal sealed class W365McpSessionClient
                 continue;
             }
 
-            tools.Add(CreateTool(tool.Name, tool.Description ?? string.Empty, sessionId, includeSessionId: true));
+            tools.Add(CreateTool(
+                tool.Name,
+                tool.Description ?? string.Empty,
+                sessionId,
+                includeSessionId: true,
+                conversationId,
+                channelId));
         }
 
-        AddLifecycleToolIfMissing(tools, ComputerUseOrchestrator.W365StartSessionToolName, "Starts a W365 Computer Use session.", sessionId, includeSessionId: false);
-        AddLifecycleToolIfMissing(tools, ComputerUseOrchestrator.W365GetSessionDetailsToolName, "Returns details for the current W365 Computer Use session.", sessionId, includeSessionId: true);
-        AddLifecycleToolIfMissing(tools, ComputerUseOrchestrator.W365EndSessionToolName, "Ends the current W365 Computer Use session.", sessionId, includeSessionId: true);
+        AddLifecycleToolIfMissing(
+            tools,
+            ComputerUseOrchestrator.W365StartSessionToolName,
+            "Starts a W365 Computer Use session.",
+            sessionId,
+            includeSessionId: false,
+            conversationId,
+            channelId);
+        AddLifecycleToolIfMissing(
+            tools,
+            ComputerUseOrchestrator.W365GetSessionDetailsToolName,
+            "Returns details for the current W365 Computer Use session.",
+            sessionId,
+            includeSessionId: true,
+            conversationId,
+            channelId);
+        AddLifecycleToolIfMissing(
+            tools,
+            ComputerUseOrchestrator.W365EndSessionToolName,
+            "Ends the current W365 Computer Use session.",
+            sessionId,
+            includeSessionId: true,
+            conversationId,
+            channelId);
 
         return tools;
     }
 
-    private AIFunction CreateTool(string name, string description, string sessionId, bool includeSessionId)
+    private AIFunction CreateTool(
+        string name,
+        string description,
+        string sessionId,
+        bool includeSessionId,
+        string? conversationId,
+        string? channelId)
     {
-        return AIFunctionFactory.Create(
+        var tool = AIFunctionFactory.Create(
             async (AIFunctionArguments arguments, CancellationToken cancellationToken) =>
             {
                 var callArguments = arguments.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                var toolCallId = ExtractToolCallId(callArguments);
                 if (includeSessionId && !callArguments.ContainsKey("sessionId"))
                 {
                     callArguments["sessionId"] = sessionId;
                 }
 
-                var result = await this.mcpClient.CallToolAsync(name, callArguments, cancellationToken: cancellationToken);
-                return JsonSerializer.Serialize(result, JsonOptions);
+                return await ToolTelemetry.InvokeAsync(
+                    toolName: name,
+                    arguments: callArguments,
+                    toolCallId: toolCallId,
+                    toolServerName: "w365",
+                    endpoint: null,
+                    conversationId: conversationId,
+                    channelId: channelId,
+                    invokeAsync: () => this.CallToolRawAsync(name, callArguments, cancellationToken))
+                    .ConfigureAwait(false);
             },
             name,
             description);
+        TelemetryOwnedTools.Add(tool, TelemetryOwnedToolMarker);
+        return tool;
     }
 
-    private void AddLifecycleToolIfMissing(List<AITool> tools, string name, string description, string sessionId, bool includeSessionId)
+    private void AddLifecycleToolIfMissing(
+        List<AITool> tools,
+        string name,
+        string description,
+        string sessionId,
+        bool includeSessionId,
+        string? conversationId,
+        string? channelId)
     {
         if (tools.OfType<AIFunction>().Any(tool => string.Equals(tool.Name, name, StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
 
-        tools.Add(CreateTool(name, description, sessionId, includeSessionId));
+        tools.Add(CreateTool(name, description, sessionId, includeSessionId, conversationId, channelId));
+    }
+
+    private async Task<string> CallToolRawAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken)
+    {
+        var result = await this.mcpClient
+            .CallToolAsync(name, arguments, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        return JsonSerializer.Serialize(result, JsonOptions);
+    }
+
+    private static string? ExtractToolCallId(IDictionary<string, object?> arguments)
+    {
+        if (!arguments.TryGetValue(ToolCallIdArgumentName, out var value))
+        {
+            return null;
+        }
+
+        arguments.Remove(ToolCallIdArgumentName);
+        if (value is null)
+        {
+            return null;
+        }
+
+        return value switch
+        {
+            string callId => callId,
+            JsonElement { ValueKind: JsonValueKind.String } element => element.GetString(),
+            _ => value.ToString(),
+        };
     }
 
     private static bool TryExtractStringProperty(string? response, string propertyName, out string value)
