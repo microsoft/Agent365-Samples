@@ -29,8 +29,9 @@ Agent365-Samples/
 │   ├── n8n/
 │   ├── perplexity/
 │   └── vercel-sdk/
-├── salesforce/                # Salesforce/Apex samples (SFDX projects)
-│   └── apex-observability/    # Native Apex Agent 365 observability + tool boundary
+├── agent-platforms/           # Agent platform samples (deployed into a SaaS platform)
+│   └── salesforce/            # Salesforce/Apex samples (SFDX projects)
+│       └── apex-observability/ # Native Apex Agent 365 observability + tool boundary
 ├── docs/                      # Repository-wide documentation
 │   └── design.md             # Architectural patterns
 ├── prompts/                   # AI development prompts
@@ -82,7 +83,7 @@ Salesforce samples are SFDX projects (no hosted process). Use the Salesforce CLI
 
 **Validate (no persist):**
 ```bash
-cd salesforce/<sample-directory>
+cd agent-platforms/salesforce/<sample-directory>
 sf project deploy start --source-dir force-app/main/default --target-org <alias> --dry-run --test-level RunLocalTests
 ```
 
