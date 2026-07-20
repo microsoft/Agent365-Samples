@@ -8,7 +8,7 @@ using System.Text;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability.Caching;
+using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.Builder;
@@ -30,6 +30,8 @@ public class MyAgent : AgentApplication
     private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
     private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache;
+    private readonly ServiceTokenCache _serviceTokenCache;
+    private readonly Agent365TelemetryOptions _telemetryOptions;
     private readonly ILogger<MyAgent> _logger;
     private readonly IMcpToolRegistrationService _toolService;
     private readonly ComputerUseOrchestrator _orchestrator;
@@ -112,17 +114,21 @@ public class MyAgent : AgentApplication
         AgentApplicationOptions options,
         IConfiguration configuration,
         IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
+        ServiceTokenCache serviceTokenCache,
         IMcpToolRegistrationService toolService,
         ComputerUseOrchestrator orchestrator,
         IOptions<ScreenShareOptions> screenShareOptions,
+        IOptions<Agent365TelemetryOptions> telemetryOptions,
         HandoffStore handoffStore,
         ILogger<MyAgent> logger) : base(options)
     {
         _agentTokenCache = agentTokenCache;
+        _serviceTokenCache = serviceTokenCache;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
         _screenShareOptions = screenShareOptions.Value;
+        _telemetryOptions = telemetryOptions.Value;
         _handoffStore = handoffStore;
 
         // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
@@ -174,25 +180,47 @@ public class MyAgent : AgentApplication
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        var observabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "WelcomeMessage",
             turnContext,
+            turnState,
+            cancellationToken,
+            _agentTokenCache,
+            _serviceTokenCache,
+            _telemetryOptions,
+            UserAuthorization,
+            observabilityAuthHandlerName ?? string.Empty,
+            _logger,
             async () =>
             {
                 var recipientId = turnContext.Activity.Recipient.Id;
                 var newMembers = turnContext.Activity.MembersAdded.Where(m => m.Id != recipientId);
+                var sentWelcomeMessage = false;
                 foreach (var _ in newMembers)
                 {
                     await turnContext.SendActivityAsync(AgentWelcomeMessage);
+                    sentWelcomeMessage = true;
                 }
+
+                return sentWelcomeMessage ? AgentWelcomeMessage : null;
             });
     }
 
     protected async Task OnInstallationUpdateAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
     {
-        await AgentMetrics.InvokeObservedAgentOperation(
+        var observabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
+        await A365OtelWrapper.InvokeObservedAgentOperation(
             "InstallationUpdate",
             turnContext,
+            turnState,
+            cancellationToken,
+            _agentTokenCache,
+            _serviceTokenCache,
+            _telemetryOptions,
+            UserAuthorization,
+            observabilityAuthHandlerName ?? string.Empty,
+            _logger,
             async () =>
             {
                 _logger.LogInformation(
@@ -204,11 +232,15 @@ public class MyAgent : AgentApplication
                 if (turnContext.Activity.Action == InstallationUpdateActionTypes.Add)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentHireMessage), cancellationToken);
+                    return AgentHireMessage;
                 }
                 else if (turnContext.Activity.Action == InstallationUpdateActionTypes.Remove)
                 {
                     await turnContext.SendActivityAsync(MessageFactory.Text(AgentFarewellMessage), cancellationToken);
+                    return AgentFarewellMessage;
                 }
+
+                return null;
             });
     }
 
@@ -235,7 +267,10 @@ public class MyAgent : AgentApplication
             "MessageProcessor",
             turnContext,
             turnState,
+            cancellationToken,
             _agentTokenCache,
+            _serviceTokenCache,
+            _telemetryOptions,
             UserAuthorization,
             ObservabilityAuthHandlerName ?? string.Empty,
             _logger,
@@ -277,7 +312,7 @@ public class MyAgent : AgentApplication
                             reply = "There's no active Windows 365 session yet. Ask me to do something on the desktop first, then I can share a live link.";
                         }
                         turnContext.StreamingResponse.QueueTextChunk(reply);
-                        return;
+                        return reply;
                     }
 
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
@@ -301,9 +336,11 @@ public class MyAgent : AgentApplication
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
+                            telemetryConversationId: conversationId,
+                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
-                        return;
+                        return directResponse;
                     }
 
                     // CUA path: SendActivity the "Got it" acknowledgment FIRST, before the streaming
@@ -338,7 +375,7 @@ public class MyAgent : AgentApplication
                             // Write the error into the streaming response so EndStreamAsync doesn't
                             // emit a confusing 'No text was streamed' alongside the real message.
                             turnContext.StreamingResponse.QueueTextChunk(errorMessage);
-                            return;
+                            return errorMessage;
                         }
 
                         // Get Graph token for OneDrive screenshot upload.
@@ -385,10 +422,13 @@ public class MyAgent : AgentApplication
                             },
                             prestartedW365SessionId: prestartedW365SessionId,
                             prestartedScreenShareUrl: prestartedScreenShareUrl,
+                            telemetryConversationId: conversationId,
+                            telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
+                        return response;
                     }
                     finally
                     {
