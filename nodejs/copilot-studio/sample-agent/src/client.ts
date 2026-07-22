@@ -12,8 +12,8 @@ import {
   Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
+  Request,
   Agent365ExporterOptions,
 } from '@microsoft/agents-a365-observability';
 import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
@@ -124,6 +124,10 @@ class McsClient implements Client {
    * @returns The agent's response text.
    */
   async invokeInferenceScope(prompt: string): Promise<string> {
+    const request: Request = {
+      conversationId: this.conversationId || `conv-${Date.now()}`,
+    };
+
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: 'copilot-studio-agent',
@@ -132,15 +136,11 @@ class McsClient implements Client {
     const agentDetails: AgentDetails = {
       agentId: 'copilot-studio-sample-agent',
       agentName: 'Copilot Studio Sample Agent',
-      conversationId: this.conversationId || `conv-${Date.now()}`,
-    };
-
-    const tenantDetails: TenantDetails = {
       tenantId: process.env.tenantId || 'unknown-tenant',
     };
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
 
     try {
       await scope.withActiveSpanAsync(async () => {
@@ -149,7 +149,6 @@ class McsClient implements Client {
         // Record the inference telemetry
         scope.recordInputMessages([prompt]);
         scope.recordOutputMessages([response]);
-        scope.recordResponseId(`resp-${Date.now()}`);
         scope.recordFinishReasons(['stop']);
       });
     } catch (error) {
@@ -197,6 +196,5 @@ export async function getClient(
 
   // Create the Copilot Studio client with the token
   const copilotClient = new CopilotStudioClient(settings, tokenResult.token);
-
   return new McsClient(copilotClient);
 }
