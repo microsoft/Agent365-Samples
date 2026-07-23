@@ -1,0 +1,34 @@
+[
+    {
+        "Title": "Alice (Scrum Master)",
+        "Email": "alice@contoso.com",
+        "AadObjectId": "00000000-0000-0000-0000-000000000001",
+        "JiraAccountId": "557058:00000000-0000-0000-0000-000000000001",
+        "TimeZone": "UTC",
+        "Role": "SM"
+    },
+    {
+        "Title": "Bob (Developer)",
+        "Email": "bob@contoso.com",
+        "AadObjectId": "00000000-0000-0000-0000-000000000002",
+        "JiraAccountId": "557058:00000000-0000-0000-0000-000000000002",
+        "TimeZone": "UTC",
+        "Role": "Dev"
+    },
+    {
+        "Title": "Charlie (Developer)",
+        "Email": "charlie@contoso.com",
+        "AadObjectId": "00000000-0000-0000-0000-000000000003",
+        "JiraAccountId": "557058:00000000-0000-0000-0000-000000000003",
+        "TimeZone": "UTC",
+        "Role": "Dev"
+    },
+    {
+        "Title": "Dana (QA)",
+        "Email": "dana@contoso.com",
+        "AadObjectId": "00000000-0000-0000-0000-000000000004",
+        "JiraAccountId": "557058:00000000-0000-0000-0000-000000000004",
+        "TimeZone": "UTC",
+        "Role": "QA"
+    }
+]

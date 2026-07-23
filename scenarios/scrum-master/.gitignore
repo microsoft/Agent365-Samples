@@ -1,0 +1,22 @@
+# dependencies + build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# env & secrets — never commit
+.env
+.env.local
+.env.*.local
+.mstoken-cache.json
+
+# generated at first `npx a365` run — contains tenant/agent IDs
+a365.generated.config.json
+
+# dev logs
+dev-out.txt
+seed-out.txt
+setup-out.txt
+*.log
+
+# editor
+.vscode/*.log
