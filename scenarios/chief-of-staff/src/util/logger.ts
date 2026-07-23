@@ -36,7 +36,9 @@ function fmt(scope: string, level: Level, msg: string): string {
 
 /** Redact obvious secrets from a value before printing. */
 function safe(meta: unknown): unknown {
-  if (!meta) return '';
+  // Use a nullish check (not falsy) so legitimate diagnostic values like 0,
+  // false, or '' are still logged.
+  if (meta === undefined || meta === null) return '';
   try {
     const json = JSON.stringify(meta, (k, v) => {
       if (typeof k === 'string' && /token|secret|password|api[-_]?key|authorization/i.test(k)) {

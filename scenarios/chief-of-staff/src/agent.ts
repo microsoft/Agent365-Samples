@@ -209,8 +209,12 @@ export class CosAgent extends AgentApplication<TurnState> {
       const authorization = this.authorization as any;
       const originalActivity = context.activity;
 
-      if (!adapter) {
-        console.error('[agent] handleUserMessage(cardSubmit): no CloudAdapter available; falling back to sync path.');
+      if (!adapter || !botAppId) {
+        console.error(
+          '[agent] handleUserMessage(cardSubmit): missing adapter or botAppId ' +
+            '(set agent_id or connections__service_connection__settings__clientId); ' +
+            'falling back to sync path.'
+        );
       } else {
         void (async () => {
           try {
