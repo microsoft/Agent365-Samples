@@ -24,7 +24,8 @@
     "build": "tsc",
     "setup:sharepoint": "ts-node --transpile-only src/scripts/setup-sharepoint.ts",
     "seed": "ts-node --transpile-only src/scripts/seed-team.ts",
-    "seed:helpers": "ts-node --transpile-only src/scripts/seed-helper-roster.ts"
+    "seed:helpers": "ts-node --transpile-only src/scripts/seed-helper-roster.ts",
+    "seed:jira": "ts-node --transpile-only src/scripts/seed-jira-sample.ts"
   },
   "license": "MIT",
   "dependencies": {
