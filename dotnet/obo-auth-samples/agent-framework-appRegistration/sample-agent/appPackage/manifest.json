@@ -1,0 +1,55 @@
+{
+    "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.22/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.22",
+    "version": "1.0.3",
+    "id": "<YOUR-APP-ID>",
+    "developer": {
+        "name": "Microsoft, Inc.",
+        "websiteUrl": "https://www.example.com",
+        "privacyUrl": "https://www.example.com/privacy",
+        "termsOfUseUrl": "https://www.example.com/termofuse"
+    },
+    "icons": {
+        "color": "color.png",
+        "outline": "outline.png"
+    },
+    "name": {
+        "short": "agent-a365-app",
+        "full": "Agent 365 SDK Agent Framework Sample Agent (App Registration)"
+    },
+    "description": {
+        "short": "Sample demonstrating Agent 365 SDK, Teams, and Agent Framework",
+        "full": "Sample demonstrating Agent 365 SDK, Teams, and Agent Framework"
+    },
+    "accentColor": "#FFFFFF",
+    "copilotAgents": {
+        "customEngineAgents": [
+            {
+                "id": "<YOUR-APP-ID>",
+                "type": "bot"
+            }
+        ]
+    },
+    "bots": [
+        {
+            "botId": "<YOUR-APP-ID>",
+            "scopes": [
+                "personal"
+            ],
+            "supportsFiles": false,
+            "isNotificationOnly": false
+        }
+    ],
+    "permissions": [
+        "identity",
+        "messageTeamMembers"
+    ],
+    "validDomains": [
+        "token.botframework.com",
+        "<YOUR-WEBAPP-NAME>.azurewebsites.net"
+    ],
+    "webApplicationInfo": {
+        "id": "<YOUR-APP-ID>",
+        "resource": "api://botid-<YOUR-APP-ID>"
+    }
+}
