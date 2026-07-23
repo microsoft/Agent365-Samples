@@ -42,10 +42,11 @@ A running Node service on your dev machine (or Azure App Service) that:
 | **Task complete (chat)** — owner tells the agent in plain language ("`The task "X" is done`"), agent PATCHes Planner to 100 % and notifies leader | Message router matches completion phrase + quoted title, fuzzy-matches Planner |
 | **Recall / chit-chat** — the leader asks "where are we on X?" and gets a status answer, restricted to leadership team members | LLM turn with `planner_list_tasks` + `mcp_CalendarTools` |
 
-Everything is deterministic **except** the two flows that explicitly need
-natural-language understanding: capture extraction (LLM parses the transcript)
-and recall/chit-chat. All routing, dedup, date math, and Planner writes are
-TypeScript.
+Everything is deterministic **except** the flows that explicitly need
+natural-language understanding: capture extraction (LLM parses the transcript),
+recall/chit-chat, and the legacy standalone Escalate scan (`runEscalate` — LLM
+drafts re-plan proposals for the leader; see `src/cos/escalate.ts`). All
+routing, dedup, date math, and Planner writes are TypeScript.
 
 ---
 

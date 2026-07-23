@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 //
 // FR-7 Task Complete handler.
-// Triggered by a `[COS-TASK-COMPLETE]` email from Power Automate when a Planner
-// task in the tracked plan is marked complete.
+// Triggered by the in-process scheduler when plannerPoller detects a Planner
+// task transition to percentComplete === 100 in the tracked plan.
 //
 // Deterministic implementation — no LLM in the loop:
 //   1. Read the task from Graph (title + assignees).
