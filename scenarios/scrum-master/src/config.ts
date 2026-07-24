@@ -32,7 +32,10 @@ function numeric(name: string, fallback: number): number {
 export type JiraMode = 'live' | 'mock';
 
 export function getJiraMode(): JiraMode {
-    return optional('JIRA_MODE', 'live').toLowerCase() === 'mock' ? 'mock' : 'live';
+    // Default to 'mock' so a fresh clone with no `.env` runs offline against
+    // src/mock/jira-mock.ts instead of throwing on missing Jira credentials.
+    // README documents mock as the default; keep them aligned.
+    return optional('JIRA_MODE', 'mock').toLowerCase() === 'live' ? 'live' : 'mock';
 }
 
 export interface JiraConfig {

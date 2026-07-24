@@ -36,7 +36,7 @@ export function installHttpLogging(): void {
         t._traceId = Math.random().toString(36).slice(2, 8);
         const host = safeHost(cfg.baseURL ?? cfg.url ?? '');
         const method = (cfg.method ?? 'GET').toUpperCase();
-        console.log(`[http] ${t._traceId} → ${method} ${host}${cfg.url ?? ''}`);
+        console.log(`[http] ${t._traceId} → ${method} ${host}${safePath(cfg.url)}`);
         return cfg;
     });
 
@@ -46,7 +46,7 @@ export function installHttpLogging(): void {
             const ms = t._startedAt ? Date.now() - t._startedAt : -1;
             const host = safeHost(res.config.baseURL ?? res.config.url ?? '');
             console.log(
-                `[http] ${t._traceId} ← ${res.status} ${host}${res.config.url ?? ''} (${ms}ms)`,
+                `[http] ${t._traceId} ← ${res.status} ${host}${safePath(res.config.url)} (${ms}ms)`,
             );
             return res;
         },
@@ -56,7 +56,7 @@ export function installHttpLogging(): void {
             const host = safeHost(cfg?.baseURL ?? cfg?.url ?? '');
             const status = err.response?.status ?? 'ERR';
             console.warn(
-                `[http] ${cfg?._traceId ?? '??????'} ← ${status} ${host}${cfg?.url ?? ''} (${ms}ms) ${err.message}`,
+                `[http] ${cfg?._traceId ?? '??????'} ← ${status} ${host}${safePath(cfg?.url)} (${ms}ms) ${err.message}`,
             );
             return Promise.reject(err);
         },
@@ -78,4 +78,17 @@ function safeHost(u: string): string {
     } catch {
         return '';
     }
+}
+
+/**
+ * Strip query string and fragment from a URL/path before logging so
+ * credential-shaped values in `?token=…` or `?apikey=…` never leak.
+ * Preserves the path itself, which is safe and useful for debugging.
+ */
+function safePath(u: string | undefined): string {
+    if (!u) return '';
+    const q = u.indexOf('?');
+    const h = u.indexOf('#');
+    const idx = q === -1 ? h : h === -1 ? q : Math.min(q, h);
+    return idx === -1 ? u : u.slice(0, idx);
 }

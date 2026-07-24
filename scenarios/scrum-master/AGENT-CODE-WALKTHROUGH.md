@@ -189,13 +189,13 @@ async invokeAgentWithScope(prompt: string) {
   };
 
   const agentDetails: AgentDetails = {
-    agentId: 'typescript-compliance-agent',
-    agentName: 'TypeScript Compliance Agent',
+    agentId: 'scrum-master-sample-agent',
+    agentName: 'Scrum Master Sample Agent',
     conversationId: 'conv-12345',
   };
 
   const tenantDetails: TenantDetails = {
-    tenantId: 'typescript-sample-tenant',
+    tenantId: 'scrum-master-sample-tenant',
   };
 
   const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);

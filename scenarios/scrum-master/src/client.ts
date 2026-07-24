@@ -41,7 +41,7 @@ export const a365Observability = ObservabilityManager.configure((builder: Builde
   exporterOptions.maxQueueSize = 10; // customized queue size
 
   builder
-    .withService('TypeScript Claude Sample Agent', '1.0.0')
+    .withService('Scrum Master Sample Agent', '1.0.0')
     .withExporterOptions(exporterOptions);
 
   // Configure token resolver is required if environment variable ENABLE_A365_OBSERVABILITY_EXPORTER is true, otherwise use console exporter by default
@@ -152,8 +152,8 @@ class OpenAIClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: process.env.agent365Observability__agentId || 'typescript-compliance-agent',
-      agentName: process.env.agent365Observability__agentName || 'TypeScript Compliance Agent',
+      agentId: process.env.agent365Observability__agentId || 'scrum-master-sample-agent',
+      agentName: process.env.agent365Observability__agentName || 'Scrum Master Sample Agent',
       tenantId: process.env.agent365Observability__tenantId || process.env.connections__service_connection__settings__tenantId || '',
     };
 

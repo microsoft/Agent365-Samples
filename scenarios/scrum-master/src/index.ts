@@ -76,10 +76,20 @@ server.get('/api/health', (req, res: Response) => {
 // secret (`INTERNAL_TRIGGER_TOKEN`) sent in the `x-internal-token` header. Placed
 // BEFORE the JWT middleware because Functions call this over plain HTTP.
 const internalToken = getInternalTriggerToken();
+if (!internalToken) {
+  // Loud one-shot warning so production deployments don't accidentally ship
+  // open internal endpoints. Dev convention still allows an empty token so a
+  // solo developer can curl the endpoints without setting a secret.
+  console.warn(
+    '[security] INTERNAL_TRIGGER_TOKEN is empty — /api/internal/* is UNAUTHENTICATED. ' +
+    'Set INTERNAL_TRIGGER_TOKEN in .env before deploying anywhere non-local.',
+  );
+}
 function requireInternalToken(req: express.Request, res: Response): boolean {
   const provided = req.get('x-internal-token') ?? '';
   if (!internalToken) {
-    // Convention: empty token in .env => endpoint is open (dev-only). Log a warning once.
+    // Convention: empty token in .env => endpoint is open (dev-only). The one-shot
+    // warning above logs this condition; each request stays quiet.
     return true;
   }
   if (provided !== internalToken) {
@@ -159,17 +169,6 @@ server.post('/api/messages', (req: Request, res: Response) => {
 const port = Number(process.env.PORT) || 3978
 // Host is configurable; default to localhost for development, 0.0.0.0 for everything else
 const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
-
-// Global safety net: keep the dev server alive when a background task (SMA
-// standup/reconcile/chase, MSAL token refresh, etc.) throws an uncaught error.
-// Without these handlers Node 20+ exits the process on any unhandled rejection.
-process.on('unhandledRejection', (reason) => {
-  const err = reason instanceof Error ? reason : new Error(String(reason));
-  console.error('[unhandledRejection]', err.stack ?? err.message);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err.stack ?? err.message);
-});
 
 server.listen(port, host, async () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
