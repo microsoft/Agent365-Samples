@@ -4,9 +4,28 @@ An autonomous **Scrum Master** built on the [Microsoft Agent 365 SDK](https://gi
 
 > **Stack:** Node.js · TypeScript · Microsoft Agent 365 SDK · OpenAI Agents SDK · Jira Cloud REST v3 + Agile 1.0 · Microsoft Graph (delegated) · MCP Calendar tools · Adaptive Cards.
 
+> 📘 Architecture, per-flow sequence diagrams, module responsibilities, and extension points live in **[`docs/design.md`](docs/design.md)**. This README is only about **getting the agent running end-to-end** and trying each capability.
+
+## Contents
+
+1. [What it does](#what-it-does)
+2. [Prerequisites](#prerequisites)
+3. [Quick start — mock mode (no external services)](#quick-start--mock-mode-no-external-services)
+4. [Full setup — live mode](#full-setup--live-mode)
+5. [First live proof](#first-live-proof)
+6. [Try each capability](#try-each-capability)
+7. [Configuration reference](#configuration-reference)
+8. [Internal HTTP endpoints](#internal-http-endpoints)
+9. [SharePoint schema](#sharepoint-schema)
+10. [Reset the demo](#reset-the-demo)
+11. [Troubleshooting](#troubleshooting)
+12. [Deploy to Azure](#deploy-to-azure)
+13. [Known limitations](#known-limitations)
+14. [Support · Contributing · Trademarks · License](#support)
+
 ## What it does
 
-Seven capabilities, each a handler under [`src/handlers/`](src/handlers). All of them use proactive DMs, single-source-of-truth state in SharePoint, and grounded tool calls into Jira — no hallucinated status.
+Seven capabilities, each a handler under [`src/handlers/`](src/handlers). All use proactive DMs, durable state in SharePoint, and grounded tool calls into Jira — no hallucinated status.
 
 1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary card posted to the configured channel. See [`handlers/standup.ts`](src/handlers/standup.ts).
 2. **Board reconciliation** — A deterministic phrase classifier reads each update, maps it to a Jira status, and either auto-applies safe forward transitions or DMs the Scrum Master an approval card for ambiguous moves. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
@@ -16,36 +35,7 @@ Seven capabilities, each a handler under [`src/handlers/`](src/handlers). All of
 6. **Mid-sprint RAG report** — Two days before sprint end, classifies every task Red/Amber/Green by due date and posts a prioritised risk table to the channel. See [`handlers/sprint-summary.ts`](src/handlers/sprint-summary.ts).
 7. **Sprint close report** — On sprint end, auto-generates a management-ready summary (completed stories, deliverables, release notes, action items, metrics) and posts inline to the channel. See [`handlers/report.ts`](src/handlers/report.ts).
 
-## Architecture
-
-```mermaid
-flowchart LR
-    User[Teams user<br/>DM or channel]
-    Timer[Azure Function timer<br/>or in-process node-cron]
-
-    subgraph Agent[Scrum Master agent — Node.js]
-        Router[agent.ts<br/>router]
-        Handlers[handlers/*<br/>standup · reconcile · chase<br/>warn · answer · sprint-summary · report]
-        Cards[cards/*<br/>Adaptive Card factories]
-    end
-
-    Jira[(Jira Cloud<br/>REST v3 + Agile 1.0)]
-    SP[(SharePoint<br/>SMA_* lists)]
-    MCP[MCP Calendar<br/>tool server]
-    LLM[Azure OpenAI<br/>/ OpenAI]
-
-    User -- slash command / card submit / free-text --> Router
-    Timer -- x-internal-token --> Router
-    Router --> Handlers
-    Handlers --> Cards
-    Handlers <--> Jira
-    Handlers <--> SP
-    Handlers <--> MCP
-    Handlers <--> LLM
-    Cards -- proactive DM / channel post --> User
-```
-
-State lives in seven `SMA_*` SharePoint lists ([schema reference](docs/sharepoint-schema.md)). Jira is treated as the source of truth for issue state; the agent writes back via comments and transitions but never invents data. The MCP calendar server handles meeting creation on the agent's own mailbox so no delegated user calendar consent is required.
+Full flow diagrams for each capability are in [`docs/design.md#5-the-seven-flows`](docs/design.md#5-the-seven-flows).
 
 ## Prerequisites
 
@@ -125,7 +115,7 @@ SHAREPOINT_SITE_URL=https://<your-tenant>.sharepoint.com/sites/<your-site>
 INTERNAL_TRIGGER_TOKEN=<any-random-string>
 ```
 
-Full var reference below.
+Full var reference in [Configuration reference](#configuration-reference) below.
 
 ### 4. Provision & seed
 
@@ -157,13 +147,39 @@ If you ran `npm run seed:jira`, open your Jira board and click **Start sprint** 
 npm run dev
 ```
 
-In another terminal, either connect via the Agents Playground:
+You should see the startup banner listing all resolved config, followed by the Express server binding to `:3978`. In another terminal, either connect via the Agents Playground:
 
 ```powershell
 npm run test-tool
 ```
 
-Or hire the agent inside your Teams tenant using the manifest in [`manifest/`](manifest) — see the [Configure Agent Testing guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) for the full teams-side flow.
+Or hire the agent inside your Teams tenant using the manifest in [`manifest/`](manifest) — see the [Configure Agent Testing guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) for the full Teams-side flow.
+
+## First live proof
+
+Sanity check that the runtime is wired correctly, in three minutes:
+
+1. **Health check.** With `npm run dev` running, in another terminal:
+   ```powershell
+   Invoke-RestMethod http://localhost:3978/api/health
+   ```
+   Expected: `{ status = 'healthy'; timestamp = '...' }`
+
+2. **Standup fire.** Trigger the flow via the internal endpoint (equivalent to a Scrum Master DM'ing `/standup`):
+   ```powershell
+   Invoke-RestMethod -Method Post `
+     -Uri 'http://localhost:3978/api/internal/standup-trigger' `
+     -Headers @{ 'x-internal-token' = '<INTERNAL_TRIGGER_TOKEN>' } -Body '{}'
+   ```
+   Expected: `{ standupId = '1#2026-07-24'; sentTo = 4; skipped = 0 }`. Every roster member with a cached conversation reference receives a standup card DM.
+
+3. **Grounded Q&A.** In the Agents Playground (or Teams DM):
+   ```
+   What's the status of Task-1?
+   ```
+   Expected: a reply that names the assignee, status, story points, and a link to the Jira issue. If the reply says "Task-1", the [`issue-labels.ts`](src/services/issue-labels.ts) mapping is working; if it says the raw project key (e.g. `DEMO-1`), the mapping is not being applied — see [Troubleshooting](#troubleshooting).
+
+If all three succeed the sample is fully wired.
 
 ## Try each capability
 
@@ -187,6 +203,8 @@ Every scenario-specific env var — see [`.env.template`](.env.template) for the
 
 | Variable | Default | Required for | Description |
 |---|---|---|---|
+| `LOG_LEVEL` | `info` | Never | `error` / `warn` / `info` / `debug` / `trace` |
+| `LOG_HTTP` | `false` | Debugging | `true` traces every outbound axios call (Jira / Graph / MCP) |
 | `JIRA_MODE` | `mock` | Everything | `mock` runs offline; `live` calls Atlassian. |
 | `JIRA_BASE_URL` | *(none)* | live | `https://<org>.atlassian.net` |
 | `JIRA_EMAIL` | *(none)* | live | Atlassian account email |
@@ -240,78 +258,6 @@ Fires the mid-sprint RAG report to the configured channel.
 Query params:
 - `force=true` — bypass the "T-2 days from sprint end" gate
 
-## Reconcile rules
-
-Free-text updates are classified in [`handlers/reconcile.ts`](src/handlers/reconcile.ts). First rule to match wins.
-
-| Target | Trigger patterns (case-insensitive) |
-|---|---|
-| `Done` | `done`, `completed`, `finished`, `merged`, `shipped`, `deployed`, `closed`, `ready to close` |
-| `In Review` | `in review`, `code review`, `pr up`, `pull request`, `reviewing`, `waiting for/on review` |
-| `In Progress` | `started`, `starting`, `began`, `beginning`, `kicked off`, `working on`, `in progress`, `picked up`, `am/i'm/now implementing/building/coding/writing` |
-
-A blocker toggle on any item forces `unchanged`. Any status difference that maps to a **safe forward step** on `To Do → In Progress → In Review → Done` is auto-applied; anything else (backwards, skip, ambiguous) becomes a confirm card DM to the SM.
-
-## Warn thresholds
-
-Sprint is flagged **at risk** when both hold:
-
-```
-progressPct         >= WARN_SPRINT_PROGRESS_PCT     (default 0.50)
-pointsInToDo / total >= WARN_TODO_PCT               (default 0.40)
-```
-
-If story points are missing on any issue, the check falls back to item counts.
-
-## Calendar path
-
-**Propose unblock meeting** and **Book it** on the Adaptive Cards drive the A365 `mcp_CalendarTools` MCP server via a scenario-specific OpenAI Agent whose output is Zod-validated. The event is created on the **agent's own** mailbox; SM plus blocker owner + reporter are attached as attendees and receive Teams meeting invitations. No delegated user calendar consent is required.
-
-Fallback: if `findMeetingTimes` yields no candidates, the code synthesizes three consecutive hour slots so the demo still moves forward.
-
-## File layout
-
-```
-scenarios/scrum-master/
-├─ README.md                       (this file)
-├─ AGENT-CODE-WALKTHROUGH.md       file-by-file source tour
-├─ .env.template                   env var template
-├─ package.json                    scripts: dev · build · test-tool · setup:sharepoint · seed · seed:helpers · seed:jira
-├─ a365.config.json                Agent 365 CLI config
-├─ manifest/                       Teams app + agentic-user templates
-├─ docs/
-│  ├─ sharepoint-schema.md         reference for every SMA_* list column
-│  └─ design.md                    architecture notes
-├─ src/
-│  ├─ index.ts                     Express server, JWT + internal-token routes
-│  ├─ agent.ts                     activity router — commands, card submits, free-text
-│  ├─ config.ts                    typed env-var reader
-│  ├─ openai-config.ts             Azure/OpenAI client factory
-│  ├─ handlers/                    the 7 capabilities (see "What it does" above)
-│  ├─ cards/                       Adaptive Card factories
-│  ├─ services/
-│  │  ├─ jira.ts                   Jira REST + Agile 1.0 wrapper (live)
-│  │  ├─ jira-tool.ts              OpenAI Agents tools for Q&A
-│  │  ├─ issue-labels.ts           Task-N ↔ PROJ-N label translation
-│  │  ├─ graph.ts                  MSAL device-code + delegated Graph
-│  │  ├─ sharepoint.ts             list/library CRUD + LIST_SCHEMAS
-│  │  ├─ team-roster.ts            SMA_TeamMembers cached wrapper
-│  │  ├─ helperMatcher.ts          keyword matching for the chase flow
-│  │  ├─ session-store.ts          in-memory session cache
-│  │  ├─ proactive.ts              adapter.continueConversation wrapper
-│  │  └─ calendar.ts               MCP Calendar client
-│  ├─ cron/local-scheduler.ts      node-cron (dev only)
-│  ├─ mock/jira-mock.ts            offline seeded sprint for JIRA_MODE=mock
-│  └─ scripts/
-│     ├─ setup-sharepoint.ts       provisions site collateral
-│     ├─ seed-team.ts              seeds SMA_TeamMembers
-│     ├─ seed-helper-roster.ts     seeds SMA_HelperRoster
-│     ├─ seed-jira-sample.ts       optional: seeds Jira with sample stories
-│     ├─ team.sample.json          personas topology
-│     └─ sprint.sample.json        Jira seed topology
-└─ azure-functions/                sibling package: nightly + mid-sprint timers
-```
-
 ## SharePoint schema
 
 Full reference: [`docs/sharepoint-schema.md`](docs/sharepoint-schema.md).
@@ -328,12 +274,58 @@ Remove-Item .mstoken-cache.json      # force a fresh device-code sign-in
 
 To reset Jira sprint issues, use the Atlassian UI or `POST /rest/agile/1.0/sprint/{sprintId}/issue`.
 
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Agent says `Couldn't fetch information on Task-N` and the same `Task-N` clearly exists in Jira. | `issue-labels.ts` fallback project key doesn't match `JIRA_PROJECT_KEY`, or nodemon is running stale code. | Confirm `JIRA_PROJECT_KEY` in `.env` matches your project. Restart `npm run dev`. |
+| `/standup` responds `sentTo: 0`. | No roster member has an active conversation reference yet — nobody has DM'd the agent since the last SharePoint provisioning. | Ask each squad member to DM the agent `hi` once. `SMA_TeamMembers.ConversationRef` populates on their first turn. |
+| `MSAL: no cached account` on any seed script. | Delegated token cache missing / expired. | Run `npm run setup:sharepoint` again to trigger a fresh device-code sign-in. |
+| Jira REST calls 401 during standup summarisation. | `JIRA_API_TOKEN` was revoked or `JIRA_EMAIL` is wrong. | Recreate the token in Atlassian Account → Security → API tokens; make sure `JIRA_EMAIL` matches the account the token belongs to. |
+| Adaptive Card submit hangs, then Teams says *"Something went wrong"*. | Handler did heavy work synchronously and blew the ~15 s Invoke SLA. | All submits should ack in <200 ms and defer via `setImmediate`. See [`docs/design.md#9-concurrency-idempotency-and-dedup`](docs/design.md#9-concurrency-idempotency-and-dedup). |
+| MCP calendar tool call returns `-32001 Session not found` on the second run. | MCP transport was closed after the first call. | Check `services/calendar.ts` — the `withServers()` helper should NOT close after each call; a retry-once on session-lost is expected on cold starts. |
+| `Cannot find module '../services/xxx'` after `git pull`. | ts-node cached the old module tree. | `Ctrl+C` the dev server and restart. If persistent, `rm -rf dist && npm run build`. |
+| Duplicate standup summary cards. | Both local `node-cron` and the Azure Function timer fired the same day. | Set `LOCAL_CRON=false` once the Function is deployed. |
+
+### Enable HTTP tracing
+
+If a live call fails silently, set `LOG_HTTP=true` in `.env` and restart. Every outbound axios call prints `method host path status latency`. Credentials are redacted automatically.
+
+## Deploy to Azure
+
+Recommended target: **Azure App Service (Node 18/20) + Azure Functions timers**.
+
+Minimum runtime configuration:
+
+- Azure App Service (Linux, Node 20 LTS). Set `WEBSITES_PORT=3978`.
+- Application Settings: all `.env` vars mapped one-to-one.
+- Health check path: `/api/health`.
+- Always-On: enabled — the local cron scheduler needs the process to stay warm. Alternative: set `LOCAL_CRON=false` and use the sibling [`azure-functions/`](azure-functions) package for timer triggers.
+- `.mstoken-cache.json` — for local dev only. In production, replace `graph.ts`'s file-backed MSAL cache with an Azure Key Vault-backed one (out of scope for this sample).
+
+Deploy pattern used successfully in dev tenants:
+
+```powershell
+# From the scenario folder
+npm run build
+az webapp up --name <app-name> --resource-group <rg> --runtime "NODE|20-lts"
+```
+
+Wire the Function App to point at your App Service:
+
+```powershell
+# From the sibling azure-functions folder
+func azure functionapp publish <func-app-name>
+```
+
+Set `INTERNAL_TRIGGER_URL` and `INTERNAL_TRIGGER_TOKEN` on the Function App so its timers can call `/api/internal/*` on the App Service.
+
 ## Known limitations
 
 - **MSAL token cache is unencrypted on disk** (`.mstoken-cache.json`, git-ignored). Fine for local dev; swap for Key Vault or a DPAPI-backed extension in production.
 - **`GRAPH_CLIENT_ID` defaults to the well-known "Microsoft Graph Command Line Tools" public client** for zero-setup device-code sign-in. Register your own multi-tenant public client for a real deployment.
-- **Single-team by design.** The sample assumes one scrum team per process (single project key, single board, single channel). Multi-team support (per-team config, isolated Jira credentials, sharded timers) is called out as future work in [`docs/design.md`](docs/design.md).
-- **Proactive DMs require prior interaction.** Every squad member must have said "hi" to the agent at least once so their conversation reference is captured in `SMA_TeamMembers`. `upsertConversationReference` populates it on every incoming activity.
+- **Single-team by design.** The sample assumes one scrum team per process (single project key, single board, single channel). Multi-team support (per-team config, isolated Jira credentials, sharded timers) is called out as future work in [`docs/design.md#12-known-limitations--hardening-roadmap`](docs/design.md#12-known-limitations--hardening-roadmap).
+- **Proactive DMs require prior interaction.** Every squad member must have said "hi" to the agent at least once so their conversation reference is captured in `SMA_TeamMembers`.
 - **Running local `node-cron` and Azure Function timers simultaneously is safe** (`standupId = <sprintId>#<yyyy-mm-dd>` provides idempotency) but does two Jira reads per tick. Set `LOCAL_CRON=false` once the Function is deployed.
 
 ## Support

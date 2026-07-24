@@ -6,6 +6,35 @@
 import { configDotenv } from 'dotenv';
 configDotenv();
 
+// Install global axios HTTP tracing (only active when LOG_HTTP=true). MUST run
+// before any module that imports axios makes a request, otherwise we miss the
+// early Jira / Graph calls.
+import { installHttpLogging } from './util/httpLogger';
+installHttpLogging();
+
+// Print boot-time config summary so misconfig shows up before Jira/SharePoint
+// clients start swallowing/complaining. Non-fatal — never throws.
+import { printStartupBanner } from './startup-check';
+printStartupBanner();
+
+// Last-resort safety nets. Without these, an unhandled rejection from the
+// connector (e.g. a 502 trying to send an outbound Activity, or an axios error
+// bubbling up from a scheduler tick) tears the whole Node process down —
+// which also kills the local-cron loops. Log and keep the server alive.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[process] unhandledRejection — keeping process alive.', {
+    reason: (reason as Error)?.message ?? reason,
+    stack: (reason as Error)?.stack,
+    promise: String(promise),
+  });
+});
+process.on('uncaughtException', (err) => {
+  console.error('[process] uncaughtException — keeping process alive.', {
+    message: err?.message,
+    stack: err?.stack,
+  });
+});
+
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
