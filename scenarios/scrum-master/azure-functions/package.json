@@ -1,0 +1,21 @@
+{
+    "name": "sma-azure-functions",
+    "version": "1.0.0",
+    "description": "Scheduled timers for the Scrum Master Assistant: kicks the async standup and the nightly warn+report check.",
+    "main": "dist/{index.js,functions/*.js}",
+    "scripts": {
+        "build": "tsc",
+        "watch": "tsc -w",
+        "start": "func start",
+        "clean": "rimraf dist node_modules"
+    },
+    "dependencies": {
+        "@azure/functions": "^4.5.0",
+        "axios": "^1.7.4"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.9",
+        "rimraf": "^5.0.0",
+        "typescript": "^5.9.2"
+    }
+}
