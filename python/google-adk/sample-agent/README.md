@@ -265,7 +265,6 @@ All values below come from `a365.config.json` and `a365.generated.config.json` (
 | `A365_AGENTIC_USER_ID` | Same as `AGENTIC_USER_ID` | Used by SDK/distro for FIC auth |
 | `ENABLE_OBSERVABILITY` | — | `true` |
 | `ENABLE_A365_OBSERVABILITY_EXPORTER` | — | `true` |
-| `ENABLE_KAIRO_EXPORTER` | — | `true` |
 | `PYTHON_ENVIRONMENT` | — | `production` |
 | `OBSERVABILITY_SERVICE_NAME` | — | `GoogleADKSampleAgent` |
 | `OBSERVABILITY_SERVICE_NAMESPACE` | — | `GoogleADKTesting` |
@@ -401,7 +400,6 @@ All configuration is via environment variables (`.env` for local, App Settings f
 | `PORT` | `3978` | Server port (Azure sets `8000` automatically) |
 | `ENABLE_OBSERVABILITY` | `true` | Enable OpenTelemetry tracing |
 | `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` | Send traces to A365 backend (`true` for production) |
-| `ENABLE_KAIRO_EXPORTER` | `false` | Enable Kairo exporter (`true` for production) |
 | `PYTHON_ENVIRONMENT` | `development` | `development` or `production` |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `OBSERVABILITY_SERVICE_NAME` | `GoogleADKSampleAgent` | Service name for OpenTelemetry traces |
