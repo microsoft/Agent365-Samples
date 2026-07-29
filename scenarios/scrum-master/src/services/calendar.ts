@@ -245,6 +245,16 @@ export async function createUnblockMeeting(cc: CalendarContext, opts: {
     if (!out || !out.webLink) {
         throw new Error(`Calendar tool returned no event link. Raw: ${JSON.stringify(out)}`);
     }
+    // Guard against the LLM emitting rule-#6 error shape or garbage that still
+    // type-checks (e.g. webLink="onlineMeetingUrl") after the tool succeeded.
+    const looksLikeUrl = /^https?:\/\//i.test(out.webLink);
+    const idLooksLikeError = /^error\b/i.test(out.id);
+    if (!looksLikeUrl || idLooksLikeError) {
+        throw new Error(
+            `CALENDAR_VERIFY_FAILED: The event may have been created — the calendar tool ` +
+            `returned an invalid response shape. Please verify in Outlook. Raw: ${JSON.stringify(out)}`,
+        );
+    }
     return {
         id: out.id,
         webLink: out.webLink,

@@ -261,9 +261,19 @@ async function bookMeetingAsync(
             await ctx.sendActivity(parts.join(' '));
         } catch (e) {
             console.error('[chase] createUnblockMeeting failed:', (e as Error).message);
-            await ctx.sendActivity(
-                `Sorry — couldn't book the meeting: ${(e as Error).message}. The blocker is still open.`,
-            );
+            const msg = (e as Error).message;
+            if (msg.startsWith('CALENDAR_VERIFY_FAILED')) {
+                await updateBlockerState(rows[0].id, 'booked');
+                await ctx.sendActivity(
+                    `⚠️ Calendar tool returned a garbled response for **${issueKey}**. ` +
+                    `The meeting was most likely created — please check Outlook to confirm. ` +
+                    `Blocker marked as booked so future flows don't re-trigger.`,
+                );
+            } else {
+                await ctx.sendActivity(
+                    `Sorry — couldn't book the meeting: ${msg}. The blocker is still open.`,
+                );
+            }
         }
     });
 }
