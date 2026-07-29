@@ -322,8 +322,14 @@ async function advanceCapture(
         8
       )} transcript=✓ content=${cap.transcriptContent ? `✓ (${cap.transcriptContent.length}ch)` : '✗'} insights=${insightsCount > 0 ? `✓ (${insightsCount})` : '✗'} after ${cap.attempts} attempt(s)`
     );
-    markCaptureComplete(cap.eventId);
-    return {
+
+    // Snapshot the fat fields BEFORE markCaptureComplete() runs. That
+    // helper strips transcriptContent / insightsActionItems /
+    // insightsMeetingNotes in place (same object reference as `cap`), so
+    // reading them AFTER the mark-complete call yields undefined and the
+    // downstream LLM gets an empty transcript → hallucinates a fetch
+    // error. See pendingCaptureStore.markCaptureComplete().
+    const result = {
       meetingId: cap.meetingId,
       transcriptId: cap.transcriptId!,
       organizerId: cap.organizerAad ?? '',
@@ -334,6 +340,8 @@ async function advanceCapture(
       actionItems: cap.insightsActionItems,
       meetingNotes: cap.insightsMeetingNotes,
     };
+    markCaptureComplete(cap.eventId);
+    return result;
   }
 
   // 4) Schedule next retry.
