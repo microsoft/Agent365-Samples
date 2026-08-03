@@ -20,6 +20,7 @@ import {
   NotificationType,
   createEmailResponseActivity,
 } from '@microsoft/agents-a365-notifications';
+import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
 
 import { getClient } from './client';
 import { cacheConversationReference, startScheduler } from './scheduler';
@@ -27,6 +28,9 @@ import { handleCardActionIfAny } from './cards/actionRouter';
 import { rememberConversationRef } from './state/conversationRefs';
 
 const AUTH_HANDLER_NAME = 'agentic';
+
+// Observability API resource. Same across every A365 tenant.
+const OBSERVABILITY_SCOPE = 'api://9b975845-388f-4429-889e-eab1ef63949c/.default';
 
 // ─── Agent ─────────────────────────────────────────────────────────────────
 export class CosAgent extends AgentApplication<TurnState> {
@@ -78,11 +82,41 @@ export class CosAgent extends AgentApplication<TurnState> {
     console.log(`[agent] CosAgent initialized (agentic auth)`);
   }
 
+  private async ensureObservabilityToken(context: TurnContext): Promise<void> {
+    const blueprintId =
+      process.env.agent365Observability__agentId?.trim() ||
+      process.env.agent_id?.trim();
+    const tenantId =
+      process.env.agent365Observability__tenantId?.trim() ||
+      process.env.connections__service_connection__settings__tenantId?.trim();
+    // The exporter partitions spans by (agentId, tenantId). Blueprint spans and
+    // agentic-instance spans have different agentIds — cache a token for each.
+    const instanceId = (context.activity.recipient as any)?.agenticAppId?.trim();
+    if (!tenantId) return;
+    const identities = [blueprintId, instanceId].filter((id): id is string => !!id);
+    for (const agentId of identities) {
+      try {
+        await AgenticTokenCacheInstance.RefreshObservabilityToken(
+          agentId,
+          tenantId,
+          context,
+          this.authorization as any,
+          [OBSERVABILITY_SCOPE]
+        );
+      } catch (err) {
+        console.warn(
+          `[observability] token refresh failed for agentId=${agentId.slice(0, 8)}… — spans for this turn may be dropped: ${(err as Error)?.message ?? err}`
+        );
+      }
+    }
+  }
+
   private async handleAgentNotification(
     context: TurnContext,
     state: TurnState,
     activity: AgentNotificationActivity
   ): Promise<void> {
+    await this.ensureObservabilityToken(context);
     switch (activity.notificationType) {
       case NotificationType.EmailNotification:
         // Every email is treated as a normal user message. Scheduled stages
@@ -163,6 +197,7 @@ export class CosAgent extends AgentApplication<TurnState> {
     context: TurnContext,
     _state: TurnState
   ): Promise<void> {
+    await this.ensureObservabilityToken(context);
     // Cache the conversation reference on the first inbound turn so the
     // scheduler can reconstitute a valid TurnContext for cron/poll-driven work.
     cacheConversationReference(context.activity);
@@ -209,12 +244,8 @@ export class CosAgent extends AgentApplication<TurnState> {
       const authorization = this.authorization as any;
       const originalActivity = context.activity;
 
-      if (!adapter || !botAppId) {
-        console.error(
-          '[agent] handleUserMessage(cardSubmit): missing adapter or botAppId ' +
-            '(set agent_id or connections__service_connection__settings__clientId); ' +
-            'falling back to sync path.'
-        );
+      if (!adapter) {
+        console.error('[agent] handleUserMessage(cardSubmit): no CloudAdapter available; falling back to sync path.');
       } else {
         void (async () => {
           try {
@@ -307,6 +338,7 @@ export class CosAgent extends AgentApplication<TurnState> {
   }
 
   private async handleInvoke(context: TurnContext, _state: TurnState): Promise<void> {
+    await this.ensureObservabilityToken(context);
     const invokeName = (context.activity as any).name as string | undefined;
     const from = context.activity.from;
     const value = (context.activity as any).value;
@@ -406,6 +438,7 @@ export class CosAgent extends AgentApplication<TurnState> {
   }
 
   private async handleInstallationUpdate(context: TurnContext): Promise<void> {
+    await this.ensureObservabilityToken(context);
     const action = context.activity.action;
     const from = context.activity.from;
     console.log(

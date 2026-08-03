@@ -23,6 +23,7 @@ import {
   loadAuthConfigFromEnv,
   Request,
 } from '@microsoft/agents-hosting';
+import { ObservabilityHostingManager } from '@microsoft/agents-a365-observability-hosting';
 import express, { Response } from 'express';
 
 import { agentApplication } from './agent';
@@ -35,6 +36,14 @@ const authConfig: AuthConfiguration = loadAuthConfigFromEnv();
 console.log(
   `[server] NODE_ENV=${process.env.NODE_ENV}, isDevelopment=${isDevelopment}`
 );
+
+// Install hosting-layer observability middleware on the shared adapter so every
+// turn gets baggage (caller/tenant/agent id) + outbound-span logging.
+const sharedAdapter = (agentApplication as unknown as { adapter: CloudAdapter }).adapter;
+new ObservabilityHostingManager().configure(sharedAdapter, {
+  enableBaggage: true,
+  enableOutputLogging: true,
+});
 
 // Last-resort safety net. Without these, an unhandled rejection from the
 // connector (e.g. a 502 Bad Gateway trying to send an outbound Activity, or
@@ -69,8 +78,7 @@ server.use(authorizeJWT(authConfig));
 
 // Bot Framework / Agent 365 Activity Bus endpoint.
 server.post('/api/messages', (req: Request, res: Response) => {
-  const adapter = (agentApplication as unknown as { adapter: CloudAdapter }).adapter;
-  adapter.process(req, res, async (context) => {
+  sharedAdapter.process(req, res, async (context) => {
     await agentApplication.run(context);
   });
 });

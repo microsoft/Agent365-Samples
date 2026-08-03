@@ -929,11 +929,31 @@ FOLLOWUP_STATE_RETENTION_HOURS=72
 
 ### 11.2 Agent 365 Observability
 
-Configured in `src/client.ts` via `@microsoft/agents-a365-observability` +
-`@microsoft/agents-a365-observability-extensions-openai`. Each LLM run is a
-span (`Chat gpt-4o`) exported to
-`https://agent365.svc.cloud.microsoft/observability/tenants/{tenantId}/agents/{agentId}/traces`.
-`InferenceScope.start(...)` wraps every `invokeAgentWithScope` call.
+Spans surface in the M365 admin center under **Copilot → Agents → Activity** for the agentic instance, keyed on the `agenticAppId` the platform assigns your agent. Wiring is in three layers:
+
+**11.2.1 Tracer + exporter (`src/client.ts`)** — `ObservabilityManager.configure(...)` from `@microsoft/agents-a365-observability` sets up the OTLP exporter and a `withTokenResolver(agentId, tenantId => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId))`. `OpenAIAgentsTraceInstrumentor` auto-traces the OpenAI Agents SDK; `InferenceScope.start(request, inferenceDetails, agentDetails)` wraps every `invokeAgentWithScope` call. Spans post to `https://agent365.svc.cloud.microsoft/observability/tenants/{tenantId}/agents/{agentId}/traces`.
+
+**11.2.2 Hosting middleware (`src/index.ts`)** — a single shared `CloudAdapter` is pulled off `agentApplication` and passed to `new ObservabilityHostingManager().configure(sharedAdapter, { enableBaggage: true, enableOutputLogging: true })` before `/api/messages`. That installs `BaggageMiddleware` (writes caller / tenant / agent id into OTEL baggage per turn) and `OutputLoggingMiddleware` on every activity. **Do not construct a second adapter inside the handler** — the middleware must be on the same adapter the handler uses.
+
+**11.2.3 Per-turn token refresh (`src/agent.ts`)** — `ensureObservabilityToken(context)` is called at the top of every turn handler (`handleAgentNotification`, `handleUserMessage`, `handleInvoke`, `handleInstallationUpdate`). It refreshes tokens for **both** identities the exporter partitions on:
+
+- `blueprintId` = `process.env.agent365Observability__agentId || process.env.agent_id`
+- `agenticInstanceId` = `context.activity.recipient.agenticAppId`
+- `tenantId` = `process.env.agent365Observability__tenantId || process.env.connections__service_connection__settings__tenantId`
+
+For each id it calls `AgenticTokenCacheInstance.RefreshObservabilityToken(agentId, tenantId, context, this.authorization, ['api://9b975845-388f-4429-889e-eab1ef63949c/.default'])`. Failures are warned but not thrown — telemetry is fail-open.
+
+> **Gotcha:** refreshing only the blueprint id leaves the admin-center Activity tab empty even though `agent365-export succeeded` events still fire. The exporter partitions groups by `(agentId, tenantId)`; groups without a cached token log `skip exporting: no token from resolver` and return silently. The admin center is keyed on the agentic-instance id, so both identities must be refreshed every turn.
+
+**Verifying delivery.** In `log.txt`, per-group success looks like:
+
+```
+[INFO] [Agent365Exporter] Token resolved successfully via tokenResolver
+[INFO] [Agent365Exporter] Posting OTLP export request - Attempt 1
+[EVENT]: export-group succeeded in Nms - Spans exported successfully { tenantId, agentId, correlationId }
+```
+
+The `correlationId` is issued by the traces API — a client can't fake it. If you only see the batch-level `agent365-export succeeded` event without the per-group ones, tokens are missing.
 
 ### 11.3 Startup banner
 
