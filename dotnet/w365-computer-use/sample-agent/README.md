@@ -167,6 +167,87 @@ dotnet run
 3. Send a message like: *"Open Notepad and type Hello World"*
 4. Screenshots are saved under `./Screenshots/<session-id>/` automatically
 
+## Authentication to the W365 Computer Use MCP server
+
+The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Streamable HTTP / SSE). Every request is authenticated with an OAuth 2.0 **bearer token for the calling agent's identity**; the agent's identity is carried by the token, so no separate identity header is required. The sample also sends optional `x-ms-*` correlation headers (see below).
+
+### Endpoint
+
+| Environment | URL |
+|-------------|-----|
+| Production (gateway) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
+| Local development | Your local MCP Platform URL (`McpServer:Url`) |
+
+### Token
+
+The bearer token must be issued for the **Windows 365 for Agents MCP** resource:
+
+| Field | Value |
+|-------|-------|
+| Resource / audience (app ID) | `da81128c-e5b5-4f9e-8d89-50d906f107c5` |
+| Scope string | `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default` |
+| Delegated scope | `Tools.ListInvoke.All` |
+| Token type | Agent-identity ("agentic") token — the agent acts as itself, not the end user |
+
+- **Production:** the Microsoft Agents (A365) SDK acquires and attaches the token automatically through the `w365` auth handler (`AgenticUserAuthorization`, configured under `AgentApplication:UserAuthorization:Handlers:w365`). See `MyAgent.GetToolsAsync` → `UserAuthorization.GetTurnTokenAsync(context, "w365")`.
+- **Local development:** mint the token with [`Get-CuaAgentUserToken.ps1`](#get-the-windows-365-for-agents-mcp-token) and set it as `BEARER_TOKEN`; the sample sends it directly on the MCP connection.
+
+### Headers
+
+Only one header is required: `Authorization: Bearer <token>` for the resource above. The sample also sends a few optional `x-ms-*` correlation headers (`x-ms-conversation-id`, `x-ms-channel-id`, `x-ms-user-message-id`, `x-ms-user-agent`) for telemetry — none are required.
+
+> **Note:** the calling agent's identity is taken from the bearer token itself — you don't send a separate identity header.
+
+### Minimal request example
+
+The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. Starting a session (`mcp_W365ComputerUse_StartSession`) takes no arguments and returns a `sessionId`; every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes that `sessionId`.
+
+```http
+POST /agents/servers/mcp_W365ComputerUse HTTP/1.1
+Host: agent365.svc.cloud.microsoft
+Authorization: Bearer <token>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_StartSession",
+    "arguments": {}
+  }
+}
+```
+
+The response includes a `sessionId` (and, on start, a `screenShareUrl`). Pass the `sessionId` on the next call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_GetSessionDetails",
+    "arguments": { "sessionId": "<sessionId-from-StartSession>" }
+  }
+}
+```
+
+In .NET, the sample uses the MCP SDK rather than hand-rolling JSON-RPC — it attaches the headers via `SseClientTransportOptions.AdditionalHeaders` and calls `IMcpClient.CallToolAsync(...)` (see `ComputerUse/W365McpSessionClient.cs`):
+
+```csharp
+var transport = new SseClientTransportOptions
+{
+    Endpoint = new Uri("https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse"),
+    TransportMode = HttpTransportMode.AutoDetect,
+    AdditionalHeaders = new Dictionary<string, string>
+    {
+        ["Authorization"] = $"Bearer {accessToken}",
+    },
+};
+```
+
 ## Configuration Reference
 
 | Setting | Description | Default |
@@ -186,6 +267,7 @@ dotnet run
 | `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
 | `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
 | `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
+| `AgentApplication:UserAuthorization:Handlers:w365:Settings:Scopes` | W365 MCP audience (`da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`, scope `Tools.ListInvoke.All`) | - |
 | `AgentApplication:ScreenShareAuthHandlerName` | Auth handler used to mint ARI screenshare tokens | `ari` |
 | `AgentApplication:UserAuthorization:Handlers:ari:Settings:Scopes` | ARI audience (production `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/.default`) | - |
 | `ScreenShare:AuthMode` | `EasyAuth` for Azure deployment, `DevBypass` for local development | `EasyAuth` |
