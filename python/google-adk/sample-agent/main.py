@@ -15,8 +15,8 @@ from microsoft_agents.hosting.core import AgentApplication, ClaimsIdentity, Auth
 from microsoft_agents.hosting.core.authorization import AgentAuthConfiguration
 from microsoft_agents.hosting.aiohttp import start_agent_process, jwt_authorization_middleware
 
-# Microsoft Agent 365 Observability Imports
-from microsoft_agents_a365.observability.core.config import configure
+# Microsoft OpenTelemetry Distro — replaces standalone configure()
+from microsoft.opentelemetry import use_microsoft_opentelemetry
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -140,13 +140,16 @@ def main():
     # ENABLE_A365_OBSERVABILITY_EXPORTER=true sends traces to the A365 backend;
     # false falls back to the console exporter (expected in local/dev).
     if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
-        configure(
-            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
-            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "GoogleADKTesting"),
+        # Use the Microsoft OpenTelemetry Distro with built-in FIC token resolver.
+        # The distro reads CONNECTIONS__SERVICE_CONNECTION__SETTINGS__* env vars
+        # and A365_AGENT_APP_INSTANCE_ID / A365_AGENTIC_USER_ID for FIC auth.
+        use_microsoft_opentelemetry(
+            enable_a365=True,
+            enable_azure_monitor=False,
         )
         logger.info(
-            "Observability configured (service=%s, a365_exporter=%s)",
-            os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
+            "Observability configured via Microsoft OpenTelemetry Distro "
+            "(enable_a365=True, a365_exporter=%s)",
             os.getenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "false"),
         )
     else:

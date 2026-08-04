@@ -171,6 +171,11 @@ class MyAgent(AgentApplication):
             notification_type = notification_activity.notification_type
             logger.info(f"Received agent notification of type: {notification_type}")
 
+            # Lifecycle notifications (onboarding, etc.) don't support replies — just log and return.
+            if notification_type == NotificationTypes.AGENT_LIFECYCLE:
+                logger.info("Agent lifecycle event received — no reply needed.")
+                return
+
             # Handle Email Notifications
             if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
                 await self.email_notification_handler(context, notification_activity)
