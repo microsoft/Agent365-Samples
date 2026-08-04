@@ -2,14 +2,13 @@
 // Licensed under the MIT License.
 
 import {
-  ExecutionType,
-  InvokeAgentDetails,
+  AgentDetails,
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
 import { TurnContext } from "@microsoft/agents-hosting";
 
 // Helper functions to extract agent and tenant details from context
-export function getAgentDetails(context: TurnContext): InvokeAgentDetails {
+export function getAgentDetails(context: TurnContext): AgentDetails {
   // Extract agent ID from activity recipient - use agenticAppId (camelCase, not underscore)
   const agentId =
     (context.activity.recipient as any)?.agenticAppId ||
@@ -30,12 +29,6 @@ export function getAgentDetails(context: TurnContext): InvokeAgentDetails {
       (context.activity.recipient as any)?.name ||
       process.env.AGENT_NAME ||
       "Devin Agent Sample",
-    conversationId: context.activity.conversation?.id,
-    request: {
-      content: context.activity.text || "Unknown text",
-      executionType: ExecutionType.HumanToAgent,
-      sessionId: context.activity.conversation?.id,
-    },
   };
 }
 

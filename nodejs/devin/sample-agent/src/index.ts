@@ -33,7 +33,7 @@ const server = app
       `\nServer listening to port ${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`
     );
   })
-  .on("error", async (err) => {
+  .on("error", async (err: Error) => {
     console.error(err);
     process.exit(1);
   })
