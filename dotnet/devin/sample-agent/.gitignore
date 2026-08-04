@@ -1,0 +1,38 @@
+# Agent secrets and local overrides
+appsettings.Development.json
+appsettings.Local.json
+
+# .NET build output
+bin/
+obj/
+publish/
+
+# User secrets
+secrets.json
+
+# IDE
+.vs/
+*.user
+*.suo
+
+# A365 CLI generated files (keep a365.config.json as template)
+a365.generated.config.json
+scope-update*.json
+required-access.json
+
+# Deployment artifacts
+deploy.zip
+*.zip
+web.config
+
+# Logs
+*.log
+log.txt
+logs/
+
+# Dev tools
+devTools/
+
+# Environment files
+.env
+.env.*
