@@ -23,7 +23,6 @@ import { PerplexityClient } from "./perplexityClient";
 
 // Load environment variables from .env file FIRST
 config();
-
 /**
  * Create a cache key for the agentic token
  */
@@ -98,7 +97,6 @@ console.log("  - CLUSTER_CATEGORY:", process.env["CLUSTER_CATEGORY"]);
 async function queryModel(
   userInput: string,
   agentDetails: AgentDetails,
-  tenantDetails: TenantDetails,
   client: PerplexityClient,
   systemPrompt: string,
 ) {
@@ -109,13 +107,12 @@ async function queryModel(
     inputTokens: Math.ceil(userInput.length / 4), // Rough estimate
     outputTokens: 0, // Will be updated after response
     finishReasons: [],
-    responseId: `inference-${Date.now()}`,
   };
 
   const inferenceScope = InferenceScope.start(
+    { content: userInput },
     inferenceDetails,
     agentDetails,
-    tenantDetails,
   );
 
   try {
@@ -232,13 +229,12 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const baggageScope = new BaggageBuilder()
     .tenantId(tenantId)
     .agentId(agentId)
-    .correlationId(activityId || `corr-${Date.now()}`)
     .agentName(agentName)
     .agentDescription(
       "AI answer engine for research, writing, and task assistance using live web search and citations",
     )
-    .callerId(userId)
-    .callerName(userName)
+    .userId(userId)
+    .userName(userName)
     .conversationId(conversationId)
     .operationSource("sdk")
     .build();
@@ -247,6 +243,7 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const agentDetails = {
     agentId: agentId,
     agentName: agentName,
+    tenantId: tenantId,
     agentDescription:
       "AI answer engine for research, writing, and task assistance using live web search and citations",
     botId: activity.recipient?.id,
@@ -334,10 +331,20 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     await baggageScope.run(async () => {
       // Start agent invocation scope
       const agentScope = InvokeAgentScope.start(
-        invokeDetails,
-        tenantDetails,
-        undefined, // No caller agent (human-to-agent interaction)
-        callerDetails,
+        {
+          content: userMessage,
+          sessionId: sessionId,
+          conversationId: conversationId,
+        },
+        { endpoint: invokeDetails.endpoint },
+        agentDetails,
+        {
+          userDetails: {
+            userId: userId,
+            userName: userName,
+            tenantId: tenantId,
+          },
+        },
       );
 
       try {
@@ -382,7 +389,6 @@ app.onActivity(ActivityTypes.Message, async (context) => {
         let modelResponse = await queryModel(
           userMessage,
           agentDetails,
-          tenantDetails,
           perplexityClient,
           systemPrompt,
         );
