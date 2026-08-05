@@ -20,17 +20,14 @@ import {
   NotificationType,
   createEmailResponseActivity,
 } from '@microsoft/agents-a365-notifications';
-import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
 
 import { getClient } from './client';
+import { ensureObservabilityToken, runWithObservabilityContext } from './observability';
 import { cacheConversationReference, startScheduler } from './scheduler';
 import { handleCardActionIfAny } from './cards/actionRouter';
 import { rememberConversationRef } from './state/conversationRefs';
 
 const AUTH_HANDLER_NAME = 'agentic';
-
-// Observability API resource. Same across every A365 tenant.
-const OBSERVABILITY_SCOPE = 'api://9b975845-388f-4429-889e-eab1ef63949c/.default';
 
 // ─── Agent ─────────────────────────────────────────────────────────────────
 export class CosAgent extends AgentApplication<TurnState> {
@@ -83,32 +80,7 @@ export class CosAgent extends AgentApplication<TurnState> {
   }
 
   private async ensureObservabilityToken(context: TurnContext): Promise<void> {
-    const blueprintId =
-      process.env.agent365Observability__agentId?.trim() ||
-      process.env.agent_id?.trim();
-    const tenantId =
-      process.env.agent365Observability__tenantId?.trim() ||
-      process.env.connections__service_connection__settings__tenantId?.trim();
-    // The exporter partitions spans by (agentId, tenantId). Blueprint spans and
-    // agentic-instance spans have different agentIds — cache a token for each.
-    const instanceId = (context.activity.recipient as any)?.agenticAppId?.trim();
-    if (!tenantId) return;
-    const identities = [blueprintId, instanceId].filter((id): id is string => !!id);
-    for (const agentId of identities) {
-      try {
-        await AgenticTokenCacheInstance.RefreshObservabilityToken(
-          agentId,
-          tenantId,
-          context,
-          this.authorization as any,
-          [OBSERVABILITY_SCOPE]
-        );
-      } catch (err) {
-        console.warn(
-          `[observability] token refresh failed for agentId=${agentId.slice(0, 8)}… — spans for this turn may be dropped: ${(err as Error)?.message ?? err}`
-        );
-      }
-    }
+    await ensureObservabilityToken(context, this.authorization as any);
   }
 
   private async handleAgentNotification(
@@ -268,20 +240,24 @@ export class CosAgent extends AgentApplication<TurnState> {
                   from: (originalActivity as any).from,
                   id: (originalActivity as any).id,
                 });
-                const client = await getClient(
-                  authorization,
-                  AUTH_HANDLER_NAME,
-                  proactiveCtx,
-                  displayName
-                );
-                const leaderAad =
-                  process.env.LEADER_AAD_ID?.trim() ||
-                  (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
-                  '<LEADER_AAD_ID missing>';
-                const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
-                if (!routed.handled) {
-                  console.log('[agent] cardSubmit was not recognized by router — ignored.');
-                }
+                // Proactive turns bypass the adapter's BaggageMiddleware, so
+                // identity has to be re-established here or spans are dropped.
+                await runWithObservabilityContext(proactiveCtx, authorization, async () => {
+                  const client = await getClient(
+                    authorization,
+                    AUTH_HANDLER_NAME,
+                    proactiveCtx,
+                    displayName
+                  );
+                  const leaderAad =
+                    process.env.LEADER_AAD_ID?.trim() ||
+                    (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
+                    '<LEADER_AAD_ID missing>';
+                  const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
+                  if (!routed.handled) {
+                    console.log('[agent] cardSubmit was not recognized by router — ignored.');
+                  }
+                });
               }
             );
           } catch (err) {
@@ -405,30 +381,34 @@ export class CosAgent extends AgentApplication<TurnState> {
           botAppId as any,
           conversationRef as any,
           async (proactiveCtx: TurnContext) => {
-            const client = await getClient(
-              authorization,
-              AUTH_HANDLER_NAME,
-              proactiveCtx,
-              displayName
-            );
-            const leaderAad =
-              process.env.LEADER_AAD_ID?.trim() ||
-              (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
-              '<LEADER_AAD_ID missing>';
-            // Copy the original invoke activity fields onto the proactive
-            // activity so handleCardActionIfAny can read the same
-            // value/from/name/type. `TurnContext.activity` is a getter-only
-            // property — do NOT reassign it; mutate the underlying object.
-            Object.assign(proactiveCtx.activity as any, {
-              type: (context.activity as any).type,
-              name: (context.activity as any).name,
-              value: (context.activity as any).value,
-              from: (context.activity as any).from,
+            // Proactive turns bypass the adapter's BaggageMiddleware, so
+            // identity has to be re-established here or spans are dropped.
+            await runWithObservabilityContext(proactiveCtx, authorization, async () => {
+              const client = await getClient(
+                authorization,
+                AUTH_HANDLER_NAME,
+                proactiveCtx,
+                displayName
+              );
+              const leaderAad =
+                process.env.LEADER_AAD_ID?.trim() ||
+                (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
+                '<LEADER_AAD_ID missing>';
+              // Copy the original invoke activity fields onto the proactive
+              // activity so handleCardActionIfAny can read the same
+              // value/from/name/type. `TurnContext.activity` is a getter-only
+              // property — do NOT reassign it; mutate the underlying object.
+              Object.assign(proactiveCtx.activity as any, {
+                type: (context.activity as any).type,
+                name: (context.activity as any).name,
+                value: (context.activity as any).value,
+                from: (context.activity as any).from,
+              });
+              const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
+              if (!routed.handled) {
+                console.log('[agent] Invoke was not recognized as a card action — ignored.');
+              }
             });
-            const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
-            if (!routed.handled) {
-              console.log('[agent] Invoke was not recognized as a card action — ignored.');
-            }
           }
         );
       } catch (err) {

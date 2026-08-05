@@ -25,6 +25,7 @@ import {
 import type { Activity, ConversationReference } from '@microsoft/agents-activity';
 
 import { getClient, Client } from './client';
+import { runWithObservabilityContext } from './observability';
 import { runBrief } from './cos/brief';
 import { runFollowup } from './cos/followup';
 import { runEscalate } from './cos/escalate';
@@ -356,24 +357,21 @@ async function fireInAuthedContext(
       process.env.agent_id?.trim() ||
       process.env.connections__service_connection__settings__clientId?.trim() ||
       '';
-    if (!botAppId) {
-      // Without a bot app id continueConversation() would throw a cryptic
-      // MSAL/OBO error deep in the SDK. Fail fast with a clear log line so
-      // misconfiguration is obvious.
-      console.warn(
-        `[scheduler] ${name} skipped — botAppId is empty (set agent_id or connections__service_connection__settings__clientId in .env).`
-      );
-      return;
-    }
     await (deps.adapter as any).continueConversation(botAppId, cachedRef, async (ctx: TurnContext) => {
-      const state = {} as TurnState;
-      const client = await getClient(
-        deps.authorization,
-        deps.authHandlerName,
-        ctx,
-        'CoS Scheduler'
-      );
-      await work(ctx, state, client);
+      // Cron/poller turns never pass through the adapter's BaggageMiddleware,
+      // and the token cached on the last inbound turn may have expired hours
+      // ago — re-establish both or the batch is dropped.
+      await runWithObservabilityContext(ctx, deps.authorization, async () => {
+        const state = {} as TurnState;
+        const client = await getClient(
+          deps.authorization,
+          deps.authHandlerName,
+          ctx,
+          'CoS Scheduler',
+          { humanInitiated: false }
+        );
+        await work(ctx, state, client);
+      });
     });
   } catch (err) {
     console.error(`[scheduler] ${name} error:`, err);

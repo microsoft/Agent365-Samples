@@ -929,21 +929,34 @@ FOLLOWUP_STATE_RETENTION_HOURS=72
 
 ### 11.2 Agent 365 Observability
 
-Spans surface in the M365 admin center under **Copilot → Agents → Activity** for the agentic instance, keyed on the `agenticAppId` the platform assigns your agent. Wiring is in three layers:
+Spans surface in the M365 admin center under **Copilot → Agents → Activity** for the agentic **instance**, keyed on the `agenticAppId` the platform assigns your agent — NOT the blueprint id. Wiring is in four layers:
 
-**11.2.1 Tracer + exporter (`src/client.ts`)** — `ObservabilityManager.configure(...)` from `@microsoft/agents-a365-observability` sets up the OTLP exporter and a `withTokenResolver(agentId, tenantId => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId))`. `OpenAIAgentsTraceInstrumentor` auto-traces the OpenAI Agents SDK; `InferenceScope.start(request, inferenceDetails, agentDetails)` wraps every `invokeAgentWithScope` call. Spans post to `https://agent365.svc.cloud.microsoft/observability/tenants/{tenantId}/agents/{agentId}/traces`.
+**11.2.1 Shared helpers (`src/observability.ts`)** — Single source of truth for identity resolution and per-turn scope setup. Exports:
 
-**11.2.2 Hosting middleware (`src/index.ts`)** — a single shared `CloudAdapter` is pulled off `agentApplication` and passed to `new ObservabilityHostingManager().configure(sharedAdapter, { enableBaggage: true, enableOutputLogging: true })` before `/api/messages`. That installs `BaggageMiddleware` (writes caller / tenant / agent id into OTEL baggage per turn) and `OutputLoggingMiddleware` on every activity. **Do not construct a second adapter inside the handler** — the middleware must be on the same adapter the handler uses.
+- `getAgentId(context)` — the **runtime** agent identity from `context.activity.recipient.agenticAppId`. This is what goes into `gen_ai.agent.id` and into the exporter's route (`…/agents/{agentId}/traces`). Falls back to `agent365Observability__agentInstanceId` for edge deployments where inbound activities don't carry the field.
+- `getAgentBlueprintId(context)` — the blueprint id (`agent365Observability__agentId` / `agent_id`). Kept as **metadata only** on the span (`agentBlueprintId`); it must never be the primary `agentId` or spans go to a partition the backend won't bind.
+- `getTenantId(context)` — resolves from activity first, then env.
+- `buildAgentDetails(context)` — returns `undefined` when the runtime identity or tenant can't be resolved; callers skip the span rather than emit an unbindable one.
+- `buildUserDetails(context, peopleOpts)` — human caller identity. Emits `user.id` (AAD Object ID) and `user.name`. For `user.email` (the MAC Activity "User principal name" column), tries `from.agenticUserId` / `from.userPrincipalName`; on Teams-channel activities where neither is populated it falls back to `resolveAadToUpn(userId, peopleOpts)` — a Graph `/users/{aad}` lookup cached in `graph/peopleTools.ts::aadUpnCache`. First turn per new user costs one Graph call (~200 ms); subsequent turns are free.
+- `ensureObservabilityToken(context, authorization)` — warms the exporter's token cache. Loops over `[getAgentId, getAgentBlueprintId]` deduped via `Set` and calls `AgenticTokenCacheInstance.RefreshObservabilityToken(agentId, tenantId, context, authorization, ['api://9b975845-388f-4429-889e-eab1ef63949c/.default'])`. Failures are warned but not thrown — telemetry is fail-open.
+- `runWithObservabilityContext(context, authorization, work)` — wraps proactive / scheduled callbacks in `BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context).build().run(work)` so spans emitted inside cron / poller / `continueConversation` paths carry the same tenant + agent + caller baggage that inbound `/api/messages` turns get from the hosting middleware.
 
-**11.2.3 Per-turn token refresh (`src/agent.ts`)** — `ensureObservabilityToken(context)` is called at the top of every turn handler (`handleAgentNotification`, `handleUserMessage`, `handleInvoke`, `handleInstallationUpdate`). It refreshes tokens for **both** identities the exporter partitions on:
+**11.2.2 Tracer + exporter (`src/client.ts`)** — `ObservabilityManager.configure(...)` from `@microsoft/agents-a365-observability` sets up the OTLP exporter with `withTokenResolver(agentId, tenantId => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId))`. `OpenAIAgentsTraceInstrumentor` auto-traces the OpenAI Agents SDK; `InferenceScope.start(request, inferenceDetails, agentDetails, userDetails)` wraps every `invokeAgentWithScope` call. `userDetails` is populated only when the client's `humanInitiated` flag is `true` (default) — scheduler runs pass `humanInitiated: false` so the last inbound caller isn't reported as the human who ran an autonomous cron. Spans post to `https://agent365.svc.cloud.microsoft/observability/tenants/{tenantId}/agents/{agentId}/traces`.
 
-- `blueprintId` = `process.env.agent365Observability__agentId || process.env.agent_id`
-- `agenticInstanceId` = `context.activity.recipient.agenticAppId`
-- `tenantId` = `process.env.agent365Observability__tenantId || process.env.connections__service_connection__settings__tenantId`
+**11.2.3 Hosting middleware (`src/index.ts`)** — a single shared `CloudAdapter` is pulled off `agentApplication` and passed to `new ObservabilityHostingManager().configure(sharedAdapter, { enableBaggage: true, enableOutputLogging: true })` before `/api/messages`. That installs `BaggageMiddleware` (writes caller / tenant / agent id into OTEL baggage per turn) and `OutputLoggingMiddleware` on every activity. **Do not construct a second adapter inside the handler** — the middleware must be on the same adapter the handler uses.
 
-For each id it calls `AgenticTokenCacheInstance.RefreshObservabilityToken(agentId, tenantId, context, this.authorization, ['api://9b975845-388f-4429-889e-eab1ef63949c/.default'])`. Failures are warned but not thrown — telemetry is fail-open.
+**11.2.4 Per-turn wiring (`src/agent.ts`, `src/scheduler.ts`)** — two paths:
 
-> **Gotcha:** refreshing only the blueprint id leaves the admin-center Activity tab empty even though `agent365-export succeeded` events still fire. The exporter partitions groups by `(agentId, tenantId)`; groups without a cached token log `skip exporting: no token from resolver` and return silently. The admin center is keyed on the agentic-instance id, so both identities must be refreshed every turn.
+- **Inbound turns** (`handleAgentNotification`, `handleUserMessage`, `handleInvoke`, `handleInstallationUpdate`) call `ensureObservabilityToken(context)` at the top. Baggage is applied automatically by the hosting middleware.
+- **Proactive / scheduled turns** — the card-submit async continuation, the `handleInvoke` `continueConversation`, and every scheduler `fireInAuthedContext` — wrap their work in `runWithObservabilityContext(proactiveCtx, authorization, async () => { … })`. This re-establishes both the token AND the baggage that `adapter.continueConversation`'s fresh `TurnContext` doesn't inherit. Scheduler-created clients also pass `{ humanInitiated: false }` to `getClient(...)` to suppress caller attribution.
+
+> **Gotcha 1 — Blueprint-vs-instance identity.** The exporter partitions groups by `(agentId, tenantId)`. If you pass the blueprint id as the primary `agentId` (either directly or by skipping the recipient lookup), spans go to a partition the backend refuses, get logged as `skip exporting: no token from resolver`, and the batch-level `agent365-export succeeded` event still fires with no data delivered. The admin-center Activity tab is keyed on the agentic-instance id, so you MUST derive `agentId` from `recipient.agenticAppId`.
+
+> **Gotcha 2 — Teams channel doesn't carry the UPN.** On Teams, `activity.from` has only `id`, `name`, `aadObjectId`. Without an explicit Graph resolve, `user.email` stays empty and the admin center's "User principal name" column falls back to hashing `user.id` (the AAD Object ID GUID). `buildUserDetails` performs the resolve automatically when `peopleOpts` is supplied.
+
+> **Gotcha 3 — Proactive turns bypass BaggageMiddleware.** `adapter.continueConversation` creates a new `TurnContext` that hasn't gone through `/api/messages` and therefore has no baggage. Any span emitted inside such a callback ships without caller / tenant / agent context and is dropped by the backend. Wrap the callback body in `runWithObservabilityContext`.
+
+> **Tenant policy.** Even when the code emits real UPNs, the M365 admin center **hashes** them if **Settings → Org Settings → Services → Reports → "Conceal user, group, and site names in all reports"** is enabled. Global admins can uncheck it. See [Microsoft 365 reports show anonymous instead of actual user names](https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name).
 
 **Verifying delivery.** In `log.txt`, per-group success looks like:
 
@@ -1084,6 +1097,7 @@ chief-of-staff/
 │   ├── index.ts                              # Express server + JWT middleware + endpoints
 │   ├── agent.ts                              # CosAgent class + message/Invoke handlers + prompt builder
 │   ├── client.ts                             # OpenAI Agents SDK + MCP + observability + system prompt
+│   ├── observability.ts                      # Shared A365 observability helpers (identity, token cache, baggage)
 │   ├── openai-config.ts                      # Azure OpenAI / Foundry client
 │   ├── startup-check.ts                      # Boot-time env validation banner
 │   ├── scheduler.ts                          # node-cron + polling + escalation sweep + meeting-poll dedup
@@ -1282,12 +1296,17 @@ no TurnContext.
 
 | Env | Default | Notes |
 |---|---|---|
-| `ENABLE_A365_OBSERVABILITY_EXPORTER` | `true` | |
+| `ENABLE_A365_OBSERVABILITY_EXPORTER` | `true` | Set `false` to disable the exporter entirely (spans stay in-process). |
 | `A365_OBSERVABILITY_LOG_LEVEL` | `info` | |
-| `agent365Observability__agentId` | — | Optional override |
+| `agent365Observability__agentInstanceId` | — | Optional override. Normally left blank; the runtime agent identity is read per turn from `activity.recipient.agenticAppId`. Set it only for deployments where inbound activities don't carry the field — a wrong value here makes every span unbindable and MAC Activity stays empty. |
+| `agent365Observability__agentId` | — | **BLUEPRINT id.** Used only as span metadata (`agentBlueprintId`) and to warm the blueprint's observability token. NOT the primary agent id. |
+| `agent365Observability__agentBlueprintId` | — | Optional explicit blueprint id (fallback to `agent365Observability__agentId` / `agent_id`). |
 | `agent365Observability__agentName` | `Chief of Staff` | |
-| `agent365Observability__tenantId` | — | Optional override |
-| `agent365Observability__clientId` / `__clientSecret` | — | If Observability uses a different app |
+| `agent365Observability__agentDescription` | `Chief of Staff` | |
+| `agent365Observability__tenantId` | — | Optional override. |
+| `agent365Observability__clientId` / `__clientSecret` | — | If Observability uses a different app. |
+
+> The MAC Activity "User principal name" column will show a hashed value if the tenant setting **Microsoft 365 admin center → Settings → Org Settings → Services → Reports → "Conceal user, group, and site names in all reports"** is enabled. Global admin can uncheck it.
 
 ---
 
