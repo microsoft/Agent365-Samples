@@ -7,7 +7,7 @@
  * and how to call the GitHub Search API.
  */
 
-import { AzureOpenAI } from 'openai';
+import OpenAI, { AzureOpenAI } from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 
 import {
@@ -34,6 +34,12 @@ export interface TrendingServiceConfig {
   endpoint: string;
   apiKey: string;
   deployment: string;
+  /**
+   * API version for the classic AzureOpenAI client. Ignored when the endpoint host
+   * matches a Foundry / AI Services pattern (the `/openai/v1` path rejects `api-version`).
+   * Defaults to `2024-10-21` when omitted.
+   */
+  apiVersion?: string;
   agentDetails: AgentDetails;
   language: string;
   minStars: number;
@@ -49,12 +55,49 @@ export interface TrendingServiceConfig {
  * @param delayFirstRunMs Optional delay (ms) before the first cycle, e.g. to let token service warm up.
  */
 export function startTrendingService(config: TrendingServiceConfig, delayFirstRunMs: number = 0): AbortController {
-  const client = new AzureOpenAI({
-    endpoint: config.endpoint,
-    apiKey: config.apiKey,
-    apiVersion: '2024-12-01-preview',
-    deployment: config.deployment,
-  });
+  const apiVersion = config.apiVersion ?? '2024-10-21';
+
+  // Normalize the endpoint to just <scheme>://<host> — strip any path the user may have
+  // pasted from the Foundry portal (e.g. /api/projects/<name>, /openai/v1, /openai/v1/responses).
+  // Validate up-front so misconfigured values fail with a clear message rather than a
+  // confusing TypeError from the URL constructor.
+  let parsedEndpoint: URL;
+  try {
+    parsedEndpoint = new URL(config.endpoint);
+  } catch {
+    throw new Error(
+      `AZURE_OPENAI_ENDPOINT must be an absolute URL (e.g. https://<your-resource>.openai.azure.com/), got: ${config.endpoint}`,
+    );
+  }
+  if (!/^https?:$/.test(parsedEndpoint.protocol) || !parsedEndpoint.host) {
+    throw new Error(
+      `AZURE_OPENAI_ENDPOINT must be an absolute http(s) URL with a host, got: ${config.endpoint}`,
+    );
+  }
+  const resourceEndpoint = `${parsedEndpoint.protocol}//${parsedEndpoint.host}`;
+
+  // Foundry resources (services.ai.azure.com / cognitiveservices.azure.com) use the
+  // OpenAI-compatible /openai/v1 path which does NOT accept the api-version query.
+  // Classic Azure OpenAI resources (.openai.azure.com) use the legacy deployments path.
+  const useFoundryV1Path = /services\.ai\.azure\.com|cognitiveservices\.azure\.com/i.test(parsedEndpoint.host);
+
+  const foundryBaseURL = `${resourceEndpoint}/openai/v1`;
+  // Foundry's /openai/v1 path authenticates via the `api-key` request header. The OpenAI SDK
+  // requires `apiKey` on construction, so we pass a placeholder string — the real credential
+  // is sent via `defaultHeaders["api-key"]` and Foundry ignores the placeholder Bearer token.
+  // (Mirrors the placeholder-auth pattern in python/autonomous/github-trending/main.py.)
+  const client: OpenAI = useFoundryV1Path
+    ? new OpenAI({
+        baseURL: foundryBaseURL,
+        apiKey: 'placeholder-foundry-uses-api-key-header',
+        defaultHeaders: { 'api-key': config.apiKey },
+      })
+    : new AzureOpenAI({
+        endpoint: resourceEndpoint,
+        apiKey: config.apiKey,
+        apiVersion,
+        deployment: config.deployment,
+      });
 
   console.log(`GitHubTrendingService started. Interval: ${config.intervalMs}ms`);
 
@@ -81,7 +124,7 @@ export function startTrendingService(config: TrendingServiceConfig, delayFirstRu
   return controller;
 }
 
-async function runCycle(client: AzureOpenAI, config: TrendingServiceConfig): Promise<void> {
+async function runCycle(client: OpenAI, config: TrendingServiceConfig): Promise<void> {
   const { deployment, agentDetails, endpoint, language, minStars, maxResults } = config;
 
   // A365 Observability — propagate baggage context for this cycle.

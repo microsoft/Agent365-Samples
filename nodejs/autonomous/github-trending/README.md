@@ -55,25 +55,42 @@ a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9
 
 ### Configuration
 
-Copy `.env.template` to `.env` and fill in the values from `a365 setup all` output:
+Copy `.env.template` to `.env`. Most values are auto-stamped by `a365 setup all`; fill in the Azure OpenAI fields manually.
 
 ```bash
 cp .env.template .env
 ```
 
+#### Azure OpenAI
+
 | Variable | Set by | Description |
 |----------|--------|-------------|
-| `AZURE_OPENAI_ENDPOINT` | Manual | Azure OpenAI resource endpoint |
+| `AZURE_OPENAI_ENDPOINT` | Manual | Azure OpenAI resource endpoint. Both classic Azure OpenAI (`*.openai.azure.com`) and Foundry / AI Services (`*.services.ai.azure.com`, `*.cognitiveservices.azure.com`) are supported. Any path you paste from the Foundry portal (e.g. `/api/projects/.../openai/v1/responses`) is stripped automatically. |
 | `AZURE_OPENAI_API_KEY` | Manual | Azure OpenAI API key |
 | `AZURE_OPENAI_DEPLOYMENT` | Manual | Model deployment name (default: `gpt-4o`) |
-| `AGENT365_TENANT_ID` | CLI | Entra tenant ID |
-| `AGENT365_AGENT_ID` | CLI | Agent identity ID (separate from blueprint) |
-| `AGENT365_BLUEPRINT_ID` | CLI | Blueprint app registration ID |
-| `AGENT365_CLIENT_ID` | CLI | Blueprint app ID (same as blueprint ID) |
-| `AGENT365_CLIENT_SECRET` | CLI | Blueprint client secret |
-| `AGENT365_AGENT_NAME` | CLI | Display name shown in traces |
-| `AGENT365_AGENT_DESCRIPTION` | CLI | Agent description shown in traces |
-| `AGENT365_USE_MANAGED_IDENTITY` | Manual | `true` for production (MSI), `false` for local dev. **Defaults to `true` when unset.** |
+| `AZURE_OPENAI_API_VERSION` | Manual | API version for **classic** Azure OpenAI endpoints only. Foundry endpoints use `/openai/v1` and ignore this value. Default: `2024-10-21`. |
+
+#### Agent 365 observability credentials
+
+The Agent 365 CLI stamps these values directly into `.env` when you run `a365 setup all`. Both the canonical `agent365Observability__*` keys and legacy `AGENT365_*` aliases are accepted; the canonical keys are preferred and take precedence when both are present.
+
+| Variable (canonical) | Legacy alias | Set by | Description |
+|----------------------|--------------|--------|-------------|
+| `agent365Observability__tenantId` | `AGENT365_TENANT_ID` | CLI | Entra tenant ID |
+| `agent365Observability__agentId` | `AGENT365_AGENT_ID` | CLI | Agent identity ID (separate from blueprint) |
+| `agent365Observability__agentBlueprintId` | `AGENT365_BLUEPRINT_ID` | CLI | Blueprint app registration ID |
+| `agent365Observability__clientId` | `AGENT365_CLIENT_ID` | CLI | Blueprint app ID (same as blueprint ID) |
+| `agent365Observability__clientSecret` | `AGENT365_CLIENT_SECRET` | CLI | Blueprint client secret |
+| `agent365Observability__agentName` | `AGENT365_AGENT_NAME` | CLI | Display name shown in traces |
+| `agent365Observability__agentDescription` | `AGENT365_AGENT_DESCRIPTION` | CLI | Agent description shown in traces |
+| `AGENT365_USE_MANAGED_IDENTITY` | — | Manual | `true` for production (MSI), `false` for local dev. **Defaults to `true` when unset.** |
+
+#### Observability feature flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_A365_OBSERVABILITY` | `true` | Master switch for the OpenTelemetry pipeline. Set `false` to skip `useMicrosoftOpenTelemetry()` entirely (no spans generated). |
+| `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` | When `true`, spans are uploaded to the A365 observability backend. When `false`, spans are produced but only printed to the console exporter. **Set to `true` to ship traces to the A365 portal.** |
 
 ### GitHub Trending Configuration
 
@@ -93,7 +110,11 @@ The GitHub Search API is unauthenticated — no API key required (rate limit: 10
 You can run the agent with **just Azure OpenAI credentials** — no Agent 365 setup required. Create a minimal `.env`:
 
 ```bash
+# Classic Azure OpenAI:
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+# — or Foundry / AI Services:
+# AZURE_OPENAI_ENDPOINT=https://your-foundry-account.services.ai.azure.com/
+
 AZURE_OPENAI_API_KEY=your-api-key
 AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AGENT365_USE_MANAGED_IDENTITY=false
