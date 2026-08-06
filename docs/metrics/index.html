@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent 365 SDK Integration Testing Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-green: #238636;
+            --accent-red: #da3633;
+            --accent-yellow: #d29922;
+            --accent-blue: #58a6ff;
+            --accent-purple: #a371f7;
+            --border-color: #30363d;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        @keyframes countUp {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 30px;
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .last-updated {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h3 {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+
+        .card .value {
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+
+        .card .value.green { color: var(--accent-green); }
+        .card .value.red { color: var(--accent-red); }
+        .card .value.yellow { color: var(--accent-yellow); }
+        .card .value.blue { color: var(--accent-blue); }
+        .card .value.purple { color: var(--accent-purple); }
+
+        .card .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+
+        /* Stage Cards - Key Metrics */
+        .stage-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .stage-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
+        }
+
+        .stage-card:nth-child(1) { animation-delay: 0.1s; }
+        .stage-card:nth-child(2) { animation-delay: 0.2s; }
+        .stage-card:nth-child(3) { animation-delay: 0.3s; }
+        .stage-card:nth-child(4) { animation-delay: 0.4s; }
+
+        .stage-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .stage-card.pre-release:hover { border-color: var(--accent-blue); }
+        .stage-card.pre-checkin:hover { border-color: var(--accent-green); }
+        .stage-card.post-checkin:hover { border-color: var(--accent-yellow); }
+        .stage-card.release:hover { border-color: var(--accent-red); }
+
+        .stage-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+        }
+
+        .stage-card.pre-release::before { background: var(--accent-blue); }
+        .stage-card.pre-checkin::before { background: var(--accent-green); }
+        .stage-card.post-checkin::before { background: var(--accent-yellow); }
+        .stage-card.release::before { background: var(--accent-red); }
+
+        .stage-card h3 {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stage-card .bugs-caught {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .stage-card .description {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
+
+        .stage-card .sdk-versions {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 0.85rem;
+        }
+
+        .stage-card .sdk-versions h4 {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin-bottom: 8px;
+        }
+
+        .sdk-tag {
+            display: inline-block;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-size: 0.8rem;
+            margin: 2px;
+            font-family: monospace;
+        }
+
+        .sdk-tag.buggy {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        /* Charts Section */
+        .charts-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .chart-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            animation: fadeInUp 0.6s ease-out backwards;
+        }
+
+        .chart-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .chart-card h3 {
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        /* SDK Version Table */
+        .sdk-section {
+            margin-bottom: 40px;
+        }
+
+        .sdk-section h2 {
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        tbody tr {
+            transition: background-color 0.15s ease;
+        }
+
+        tbody tr:hover {
+            background-color: var(--bg-tertiary);
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+        }
+
+        tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .status-badge.passed {
+            background: rgba(35, 134, 54, 0.2);
+            color: var(--accent-green);
+        }
+
+        .status-badge.failed {
+            background: rgba(218, 54, 51, 0.2);
+            color: var(--accent-red);
+        }
+
+        .status-badge.warning {
+            background: rgba(210, 153, 34, 0.2);
+            color: var(--accent-yellow);
+        }
+
+        .status-badge.prerelease {
+            background: rgba(163, 113, 247, 0.2);
+            color: var(--accent-purple);
+        }
+
+        .version-compare {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .version-compare .arrow {
+            color: var(--text-secondary);
+        }
+
+        .version-compare .outdated {
+            color: var(--accent-yellow);
+        }
+
+        .version-compare .current {
+            color: var(--accent-green);
+        }
+
+        .version-compare .prerelease-badge {
+            font-size: 0.7rem;
+            background: var(--accent-purple);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 4px;
+        }
+
+        /* Bug Details */
+        .bug-list {
+            margin-top: 20px;
+        }
+
+        .bug-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--accent-red);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 10px;
+        }
+
+        .bug-item .bug-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .bug-item .bug-stage {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .bug-item .bug-sdk {
+            font-family: monospace;
+            background: var(--bg-tertiary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .bug-item .bug-test {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .bug-item .bug-error {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* Error Categories Table */
+        .error-category-row {
+            border-left: 4px solid transparent;
+        }
+
+        .error-category-row.sdk-auth { border-left-color: #da3633; }
+        .error-category-row.sdk-connection { border-left-color: #d29922; }
+        .error-category-row.sdk-config { border-left-color: #58a6ff; }
+        .error-category-row.sdk-breaking { border-left-color: #f85149; }
+        .error-category-row.sdk-type { border-left-color: #a371f7; }
+        .error-category-row.test-assertion { border-left-color: #8b949e; }
+        .error-category-row.other { border-left-color: #6e7681; }
+
+        .category-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        .category-badge.sdk { background: rgba(218, 54, 51, 0.15); color: #f85149; }
+        .category-badge.test { background: rgba(139, 148, 158, 0.15); color: #8b949e; }
+        .category-badge.infra { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+        .category-badge.other { background: rgba(110, 118, 129, 0.15); color: #6e7681; }
+
+        /* Issue Links */
+        .issue-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--accent-blue);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+
+        .issue-link:hover {
+            background: var(--bg-primary);
+            text-decoration: underline;
+        }
+
+        .issue-link.open { border-color: var(--accent-green); }
+        .issue-link.closed { border-color: var(--accent-purple); color: var(--accent-purple); }
+
+        /* PR Section */
+        .pr-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-left: 4px solid var(--accent-purple);
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 10px;
+        }
+
+        .pr-item.merged { border-left-color: var(--accent-purple); }
+        .pr-item.open { border-left-color: var(--accent-green); }
+        .pr-item.draft { border-left-color: var(--text-secondary); }
+
+        .pr-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .pr-title {
+            font-weight: 600;
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        .pr-title:hover {
+            text-decoration: underline;
+        }
+
+        .pr-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .pr-fixes {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+
+        /* Impact Bar */
+        .impact-bar {
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .impact-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .impact-bar-fill.low { background: var(--accent-green); }
+        .impact-bar-fill.medium { background: var(--accent-yellow); }
+        .impact-bar-fill.high { background: var(--accent-red); }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px 30px;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+            background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+        }
+
+        footer p {
+            margin: 5px 0;
+        }
+
+        footer .footer-links {
+            margin-top: 15px;
+        }
+
+        footer .footer-links a {
+            color: var(--accent-blue);
+            text-decoration: none;
+            margin: 0 15px;
+            transition: color 0.2s;
+        }
+
+        footer .footer-links a:hover {
+            color: var(--accent-purple);
+            text-decoration: underline;
+        }
+
+        /* Live Status Indicator */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 15px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .status-dot.live { background: var(--accent-green); }
+        .status-dot.stale { background: var(--accent-yellow); }
+
+        /* Value Proposition */
+        .value-prop {
+            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 40px;
+            text-align: center;
+        }
+
+        .value-prop h2 {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+
+        .value-prop .highlight {
+            color: var(--accent-green);
+            font-size: 3rem;
+            font-weight: bold;
+        }
+
+        .value-prop p {
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ Agent 365 SDK Integration Testing</h1>
+            <p>Catching SDK issues before they reach production</p>
+            <div class="last-updated" id="lastUpdated">Loading...</div>
+            <div class="status-indicator">
+                <span class="status-dot live" id="statusDot"></span>
+                <span id="statusText">Live data</span>
+            </div>
+        </header>
+
+        <!-- Value Proposition -->
+        <div class="value-prop">
+            <h2>SDK Issues Caught Before Production</h2>
+            <div class="highlight" id="totalBugsCaught">0</div>
+            <p>E2E test failures that caught SDK compatibility issues before they reached customers.<br>
+            <small style="color: var(--text-secondary);">Each "issue" = a test failure indicating an Agent 365 SDK incompatibility with sample code</small></p>
+        </div>
+
+        <!-- Stage Cards - Main Focus -->
+        <div class="stage-cards">
+            <div class="stage-card pre-release">
+                <h3><span role="img" aria-label="microscope">🔬</span> Pre-Release Testing</h3>
+                <div class="bugs-caught" id="preReleaseBugs">0</div>
+                <div class="description">Issues caught testing pre-release Agent 365 SDK versions</div>
+                <div class="sdk-versions">
+                    <h4>Agent 365 SDK Versions</h4>
+                    <div id="preReleaseSdkList">No data yet</div>
+                </div>
+            </div>
+
+            <div class="stage-card pre-checkin">
+                <h3>📝 Pre-Checkin (PR)</h3>
+                <div class="bugs-caught" id="preCheckinBugs">0</div>
+                <div class="description">Issues caught in PRs before sample code is merged</div>
+                <div class="sdk-versions">
+                    <h4>Agent 365 SDK Versions</h4>
+                    <div id="preCheckinSdkList">No data yet</div>
+                </div>
+            </div>
+
+            <div class="stage-card post-checkin">
+                <h3>✅ Post-Checkin (Main)</h3>
+                <div class="bugs-caught" id="postCheckinBugs">0</div>
+                <div class="description">SDK regressions detected after merge to main</div>
+                <div class="sdk-versions">
+                    <h4>Agent 365 SDK Versions</h4>
+                    <div id="postCheckinSdkList">No data yet</div>
+                </div>
+            </div>
+
+            <div class="stage-card release">
+                <h3>🚀 Release Validation</h3>
+                <div class="bugs-caught" id="releaseBugs">0</div>
+                <div class="description">Final SDK compatibility check before release</div>
+                <div class="sdk-versions">
+                    <h4>Agent 365 SDK Versions</h4>
+                    <div id="releaseSdkList">No data yet</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-section">
+            <div class="chart-card">
+                <h3><span role="img" aria-label="chart">📊</span> Bugs Caught by Testing Stage</h3>
+                <div class="chart-container">
+                    <canvas id="bugsByStageChart" role="img" aria-label="Bar chart showing number of SDK issues caught at each testing stage"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3><span role="img" aria-label="package">📦</span> SDK Test Results by Package</h3>
+                <div class="chart-container">
+                    <canvas id="sdkVersionChart" role="img" aria-label="Chart showing SDK test results by package and version"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error Categories Table -->
+        <div class="sdk-section">
+            <h2>🔍 Error Categories</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                Categorized errors to identify patterns and SDK issues
+            </p>
+            <table id="errorCategoryTable">
+                <thead>
+                    <tr>
+                        <th>Issue Type</th>
+                        <th>Failure Count</th>
+                        <th>Affected Samples</th>
+                        <th>Failure %</th>
+                        <th>Impact</th>
+                        <th>Linked Issues</th>
+                    </tr>
+                </thead>
+                <tbody id="errorCategoryTableBody">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- SDK Version Tracking Tables by Language -->
+        <div class="sdk-section">
+            <h2>📦 Agent 365 SDK Version Validation</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                Tracking Agent 365 SDK packages used in E2E tests to catch compatibility issues early
+            </p>
+            
+            <!-- Node.js SDK Packages -->
+            <div class="language-sdk-section">
+                <h3 style="color: var(--accent-green); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟢</span> Node.js Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">@microsoft/agents-*</code>
+                </h3>
+                <table id="sdkTableNodejs">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyNodejs">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- .NET SDK Packages -->
+            <div class="language-sdk-section" style="margin-top: 25px;">
+                <h3 style="color: var(--accent-purple); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟣</span> .NET Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">Microsoft.Agents.*</code>
+                </h3>
+                <table id="sdkTableDotnet">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyDotnet">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Python SDK Packages -->
+            <div class="language-sdk-section" style="margin-top: 25px;">
+                <h3 style="color: var(--accent-yellow); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.2rem;">🟡</span> Python Packages
+                    <code style="font-size: 0.8rem; color: var(--text-secondary);">microsoft-agents-*</code>
+                </h3>
+                <table id="sdkTablePython">
+                    <thead>
+                        <tr>
+                            <th>SDK Package</th>
+                            <th>Installed</th>
+                            <th>Latest Available</th>
+                            <th>Test Runs</th>
+                            <th>Bugs Caught</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sdkTableBodyPython">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Recent SDK Issues Caught -->
+        <div class="sdk-section">
+            <h2>🐛 Recent SDK Compatibility Issues</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                Test failures that indicate Agent 365 SDK incompatibilities with sample code
+            </p>
+            <div class="bug-list" id="bugList">
+                <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
+                    No issues caught yet. When E2E tests detect SDK compatibility problems, they'll appear here.
+                </p>
+            </div>
+        </div>
+
+        <!-- Pull Requests Section -->
+        <div class="sdk-section">
+            <h2>🔀 Related Pull Requests</h2>
+            <p style="color: var(--text-secondary); margin-bottom: 15px;">
+                PRs created to fix E2E test failures
+            </p>
+            <div id="prList">
+                <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
+                    No related PRs yet. When fixes are submitted, they'll appear here.
+                </p>
+            </div>
+        </div>
+
+        <!-- Sample Breakdown -->
+        <div class="sdk-section">
+            <h2>🧪 Sample Test Results</h2>
+            <table id="sampleTable">
+                <thead>
+                    <tr>
+                        <th>Sample</th>
+                        <th>SDK Version</th>
+                        <th>Total Runs</th>
+                        <th>Bugs Caught</th>
+                        <th>Success Rate</th>
+                    </tr>
+                </thead>
+                <tbody id="sampleTableBody">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <footer>
+            <p><strong>Agent 365 SDK Integration Testing Dashboard</strong></p>
+            <p>Automated E2E testing ensures SDK compatibility across all sample implementations</p>
+            <div class="footer-links">
+                <a href="https://github.com/microsoft/Agent365-Samples/actions" target="_blank">📋 View All Runs</a>
+                <a href="https://github.com/microsoft/Agent365-Samples/issues?q=is%3Aissue+label%3Ae2e-failure" target="_blank">🐛 E2E Issues</a>
+                <a href="https://github.com/microsoft/Agent365-Samples" target="_blank">📂 Repository</a>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Chart.js default styling
+        Chart.defaults.color = '#8b949e';
+        Chart.defaults.borderColor = '#30363d';
+
+        // HTML escape function to prevent XSS
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return String(unsafe)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        let metricsData = null;
+        
+        // Fallback data in case fetch fails (for local file:// access)
+        // Updated with comprehensive Agent 365 SDK packages
+        const fallbackData = {
+            "lastUpdated": "2026-02-05T15:40:00Z",
+            "totalRuns": 12,
+            "entries": [
+                {
+                    "id": "run-83",
+                    "timestamp": "2026-02-05T15:30:00Z",
+                    "stage": "post-checkin",
+                    "sampleName": "python-openai",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.6",
+                        "microsoft-agents-hosting-aiohttp": "0.1.6",
+                        "microsoft-agents-tooling": "0.1.6",
+                        "microsoft-agents-observability": "0.1.6"
+                    },
+                    "testResults": { "status": "passed", "total": 8, "passed": 8, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21732666002"
+                },
+                {
+                    "id": "run-82",
+                    "timestamp": "2026-02-05T14:00:00Z",
+                    "stage": "pre-checkin",
+                    "sampleName": "python-notifications",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.6",
+                        "microsoft-agents-notifications": "0.1.6",
+                        "microsoft-agents-hosting-aiohttp": "0.1.6"
+                    },
+                    "testResults": { "status": "failed", "total": 6, "passed": 4, "failed": 2, "skipped": 0 },
+                    "bugsCaught": {
+                        "count": 2,
+                        "details": [
+                            { "testName": "test_notification_send", "errorMessage": "Notification channel connection timeout", "issueNumber": 220, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/220", "issueState": "open" },
+                            { "testName": "test_notification_ack", "errorMessage": "Notification acknowledgment failed - missing callback", "issueNumber": 221, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/221", "issueState": "open" }
+                        ]
+                    },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21730000001"
+                },
+                {
+                    "id": "run-81",
+                    "timestamp": "2026-02-05T12:00:00Z",
+                    "stage": "pre-checkin",
+                    "sampleName": "dotnet-semantic-kernel",
+                    "sdkVersions": {
+                        "Microsoft.Agents.Core": "0.1.15-preview",
+                        "Microsoft.Agents.Hosting.AspNetCore": "0.1.15-preview",
+                        "Microsoft.Agents.Tooling": "0.1.15-preview",
+                        "Microsoft.Agents.Observability": "0.1.15-preview"
+                    },
+                    "testResults": { "status": "passed", "total": 10, "passed": 10, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21728000001"
+                },
+                {
+                    "id": "run-80",
+                    "timestamp": "2026-02-05T10:00:00Z",
+                    "stage": "pre-release",
+                    "sampleName": "python-claude",
+                    "sdkVersions": {
+                        "microsoft-agents-core": "0.1.7-preview",
+                        "microsoft-agents-tooling": "0.1.7-preview",
+                        "microsoft-agents-hosting-aiohttp": "0.1.7-preview"
+                    },
+                    "testResults": { "status": "failed", "total": 6, "passed": 5, "failed": 1, "skipped": 0 },
+                    "bugsCaught": {
+                        "count": 1,
+                        "details": [
+                            { "testName": "test_tool_schema_validation", "errorMessage": "Breaking change in tool schema format in 0.1.7-preview", "issueNumber": 225, "issueUrl": "https://github.com/microsoft/Agent365-Samples/issues/225", "issueState": "open" }
+                        ]
+                    },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21725000001"
+                },
+                {
+                    "id": "run-79",
+                    "timestamp": "2026-02-04T18:00:00Z",
+                    "stage": "post-checkin",
+                    "sampleName": "nodejs-langchain",
+                    "sdkVersions": {
+                        "@microsoft/agents-core": "0.1.6",
+                        "@microsoft/agents-hosting-express": "0.1.6",
+                        "@microsoft/agents-tooling": "0.1.6"
+                    },
+                    "testResults": { "status": "passed", "total": 7, "passed": 7, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21720000001"
+                },
+                {
+                    "id": "run-78",
+                    "timestamp": "2026-02-04T14:00:00Z",
+                    "stage": "release",
+                    "sampleName": "dotnet-agent-framework",
+                    "sdkVersions": {
+                        "Microsoft.Agents.Core": "0.1.14",
+                        "Microsoft.Agents.Hosting.AspNetCore": "0.1.14",
+                        "Microsoft.Agents.Notifications": "0.1.14"
+                    },
+                    "testResults": { "status": "passed", "total": 12, "passed": 12, "failed": 0, "skipped": 0 },
+                    "bugsCaught": { "count": 0, "details": [] },
+                    "runUrl": "https://github.com/microsoft/Agent365-Samples/actions/runs/21715000001"
+                }
+            ],
+            "summary": {},
+            "pullRequests": [
+                { "number": 205, "title": "Adding new samples to the test suite", "url": "https://github.com/microsoft/Agent365-Samples/pull/205", "author": "abdulanu0", "createdAt": "2026-02-05T11:30:00Z", "merged": false, "draft": false, "fixes": [{ "number": 220, "url": "https://github.com/microsoft/Agent365-Samples/issues/220" }] },
+                { "number": 190, "title": "Adding notifications to python agent", "url": "https://github.com/microsoft/Agent365-Samples/pull/190", "author": "abdulanu0", "createdAt": "2026-02-05T11:30:00Z", "merged": false, "draft": false, "fixes": [] }
+            ]
+        };
+
+        async function loadMetrics() {
+            try {
+                console.log('Fetching history.json...');
+                const response = await fetch('history.json');
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    throw new Error('Failed to load metrics data: ' + response.status);
+                }
+                const text = await response.text();
+                console.log('Response length:', text.length);
+                metricsData = JSON.parse(text);
+                console.log('Parsed data, totalBugsCaught:', metricsData.summary?.totalBugsCaught);
+                renderDashboard();
+            } catch (error) {
+                console.warn('Fetch failed, using embedded fallback data:', error.message);
+                metricsData = fallbackData;
+                renderDashboard();
+            }
+        }
+
+        // Animate counter from 0 to target value
+        function animateCounter(elementId, target) {
+            const element = document.getElementById(elementId);
+            const duration = 1000;
+            const steps = 30;
+            const stepDuration = duration / steps;
+            let current = 0;
+            const increment = target / steps;
+            
+            const timer = setInterval(() => {
+                current += increment;
+                if (current >= target) {
+                    element.textContent = target.toLocaleString();
+                    clearInterval(timer);
+                } else {
+                    element.textContent = Math.floor(current).toLocaleString();
+                }
+            }, stepDuration);
+        }
+
+        function renderDashboard() {
+            if (!metricsData) return;
+
+            // Calculate actual bug counts from entries (more accurate than summary)
+            const actualBugCounts = { total: 0, byStage: {} };
+            metricsData.entries.forEach(entry => {
+                const bugCount = entry.bugsCaught?.details?.length || 0;
+                actualBugCounts.total += bugCount;
+                if (!actualBugCounts.byStage[entry.stage]) {
+                    actualBugCounts.byStage[entry.stage] = 0;
+                }
+                actualBugCounts.byStage[entry.stage] += bugCount;
+            });
+
+            // Update last updated with status indicator
+            // Handle null lastUpdated gracefully
+            const lastUpdatedDate = metricsData.lastUpdated ? new Date(metricsData.lastUpdated) : null;
+            const now = new Date();
+            const hoursSinceUpdate = lastUpdatedDate ? (now - lastUpdatedDate) / (1000 * 60 * 60) : Infinity;
+            
+            document.getElementById('lastUpdated').textContent = 
+                lastUpdatedDate ? `Last updated: ${lastUpdatedDate.toLocaleString()}` : 'Awaiting first E2E run';
+            
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (!lastUpdatedDate) {
+                statusDot.className = 'status-dot stale';
+                statusText.textContent = 'No data yet';
+            } else if (hoursSinceUpdate < 24) {
+                statusDot.className = 'status-dot live';
+                statusText.textContent = 'Live data';
+            } else {
+                statusDot.className = 'status-dot stale';
+                statusText.textContent = `Updated ${Math.floor(hoursSinceUpdate / 24)}d ago`;
+            }
+
+            // Update total issues caught with animation (use actual count from entries)
+            animateCounter('totalBugsCaught', actualBugCounts.total);
+
+            // Update stage cards with actual counts
+            animateCounter('preReleaseBugs', actualBugCounts.byStage['pre-release'] || 0);
+            animateCounter('preCheckinBugs', actualBugCounts.byStage['pre-checkin'] || 0);
+            animateCounter('postCheckinBugs', actualBugCounts.byStage['post-checkin'] || 0);
+            animateCounter('releaseBugs', actualBugCounts.byStage['release'] || 0);
+
+            // Update SDK version lists for each stage
+            renderSdkListForStage('pre-release', 'preReleaseSdkList');
+            renderSdkListForStage('pre-checkin', 'preCheckinSdkList');
+            renderSdkListForStage('post-checkin', 'postCheckinSdkList');
+            renderSdkListForStage('release', 'releaseSdkList');
+
+            // Render charts
+            renderBugsByStageChart();
+            renderSdkVersionChart();
+
+            // Render tables
+            renderErrorCategoryTable();
+            renderSdkTable();
+            renderSampleTable();
+
+            // Render lists
+            renderBugList();
+            renderPRList();
+        }
+
+        // Helper to check if package is an Agent 365 SDK package
+        function isAgent365Package(pkg) {
+            const a365Patterns = ['microsoft-agents', 'microsoft.agents', '@microsoft/agents'];
+            return a365Patterns.some(p => pkg.toLowerCase().includes(p));
+        }
+
+        // Helper to detect package language/platform
+        function getPackageLanguage(pkg) {
+            const pkgLower = pkg.toLowerCase();
+            // Node.js: @microsoft/agents-* or scoped npm packages
+            if (pkgLower.startsWith('@microsoft/agents')) return 'nodejs';
+            // .NET: Microsoft.Agents.* (PascalCase NuGet convention)
+            if (pkg.startsWith('Microsoft.Agents.')) return 'dotnet';
+            // Python: microsoft-agents-* (lowercase with hyphens, pip convention)
+            if (pkgLower.startsWith('microsoft-agents-')) return 'python';
+            // Fallback based on common patterns
+            if (pkgLower.includes('.')) return 'dotnet'; // NuGet uses dots
+            if (pkgLower.includes('-')) return 'python'; // pip uses hyphens
+            return 'unknown';
+        }
+
+        function renderSdkListForStage(stage, elementId) {
+            const container = document.getElementById(elementId);
+            
+            // Find entries for this stage
+            const stageEntries = metricsData.entries.filter(e => e.stage === stage);
+            
+            // Collect unique Agent 365 SDK versions only
+            const sdkVersions = new Map();
+            stageEntries.forEach(entry => {
+                if (entry.sdkVersions) {
+                    Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
+                        const key = `${pkg}@${version}`;
+                        if (!sdkVersions.has(key)) {
+                            sdkVersions.set(key, {
+                                pkg,
+                                version,
+                                hadBugs: entry.testResults.failed > 0
+                            });
+                        } else if (entry.testResults.failed > 0) {
+                            sdkVersions.get(key).hadBugs = true;
+                        }
+                    });
+                }
+            });
+
+            if (sdkVersions.size === 0) {
+                container.innerHTML = '<span style="color: var(--text-secondary)">No Agent 365 SDK data yet</span>';
+                return;
+            }
+
+            container.innerHTML = Array.from(sdkVersions.values())
+                .map(sdk => `<span class="sdk-tag ${sdk.hadBugs ? 'buggy' : ''}">${sdk.pkg} ${sdk.version}</span>`)
+                .join(' ');
+        }
+
+        // Calculate actual bug counts from entries
+        function getActualBugCounts() {
+            const counts = { total: 0, byStage: {} };
+            metricsData.entries.forEach(entry => {
+                const bugCount = entry.bugsCaught?.details?.length || 0;
+                counts.total += bugCount;
+                if (!counts.byStage[entry.stage]) {
+                    counts.byStage[entry.stage] = 0;
+                }
+                counts.byStage[entry.stage] += bugCount;
+            });
+            return counts;
+        }
+
+        function renderBugsByStageChart() {
+            const ctx = document.getElementById('bugsByStageChart').getContext('2d');
+            const actualCounts = getActualBugCounts();
+            
+            const data = [
+                actualCounts.byStage['pre-release'] || 0,
+                actualCounts.byStage['pre-checkin'] || 0,
+                actualCounts.byStage['post-checkin'] || 0,
+                actualCounts.byStage['release'] || 0
+            ];
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Pre-Release', 'Pre-Checkin', 'Post-Checkin', 'Release'],
+                    datasets: [{
+                        label: 'SDK Issues Caught',
+                        data: data,
+                        backgroundColor: ['#58a6ff', '#238636', '#d29922', '#da3633'],
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { stepSize: 1 }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderSdkVersionChart() {
+            const ctx = document.getElementById('sdkVersionChart').getContext('2d');
+            
+            // Group by SDK package and show pass/fail for each - ONLY Agent 365 SDK packages
+            const packageData = {};
+            metricsData.entries.forEach(entry => {
+                if (entry.sdkVersions) {
+                    Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
+                        // Shorten package name for display
+                        const shortPkg = pkg.replace('microsoft-agents-', '')
+                                            .replace('Microsoft.Agents.', '')
+                                            .replace('microsoft.agents.', '');
+                        const label = `${shortPkg}@${version}`;
+                        
+                        if (!packageData[label]) {
+                            packageData[label] = { passed: 0, failed: 0, pkg: shortPkg, version };
+                        }
+                        packageData[label].passed += entry.testResults.passed;
+                        packageData[label].failed += entry.testResults.failed;
+                    });
+                }
+            });
+
+            // Sort by total tests (most active first) and take top packages
+            const sortedPackages = Object.entries(packageData)
+                .sort((a, b) => (b[1].passed + b[1].failed) - (a[1].passed + a[1].failed))
+                .slice(0, 8);
+            
+            const labels = sortedPackages.map(([label]) => label);
+            const passedData = sortedPackages.map(([, data]) => data.passed);
+            const failedData = sortedPackages.map(([, data]) => data.failed);
+
+            if (labels.length === 0) {
+                ctx.font = '14px sans-serif';
+                ctx.fillStyle = '#8b949e';
+                ctx.textAlign = 'center';
+                ctx.fillText('No Agent 365 SDK data yet', ctx.canvas.width / 2, ctx.canvas.height / 2);
+                return;
+            }
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Tests Passed',
+                            data: passedData,
+                            backgroundColor: '#238636',
+                            borderRadius: 4
+                        },
+                        {
+                            label: 'Tests Failed',
+                            data: failedData,
+                            backgroundColor: '#da3633',
+                            borderRadius: 4
+                        }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y',  // Horizontal bars for better readability
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    },
+                    scales: {
+                        x: { stacked: true, beginAtZero: true },
+                        y: { stacked: true }
+                    }
+                }
+            });
+        }
+
+        function renderSdkTable() {
+            // Aggregate SDK version stats by language - ONLY Agent 365 SDK packages
+            const sdkStatsByLang = { nodejs: {}, dotnet: {}, python: {} };
+            
+            metricsData.entries.forEach(entry => {
+                if (entry.sdkVersions) {
+                    Object.entries(entry.sdkVersions).forEach(([pkg, version]) => {
+                        // Only include Agent 365 SDK packages
+                        if (!isAgent365Package(pkg)) return;
+                        
+                        const lang = getPackageLanguage(pkg);
+                        if (!sdkStatsByLang[lang]) sdkStatsByLang[lang] = {};
+                        
+                        const key = `${pkg}|${version}`;
+                        if (!sdkStatsByLang[lang][key]) {
+                            sdkStatsByLang[lang][key] = { pkg, version, runs: 0, passed: 0, failed: 0 };
+                        }
+                        sdkStatsByLang[lang][key].runs++;
+                        sdkStatsByLang[lang][key].passed += entry.testResults.passed;
+                        sdkStatsByLang[lang][key].failed += entry.testResults.failed;
+                    });
+                }
+            });
+
+            // Collect bug details for each SDK package
+            const sdkBugs = {};
+            metricsData.entries.forEach(entry => {
+                if (entry.bugsCaught?.details?.length > 0 && entry.sdkVersions) {
+                    Object.keys(entry.sdkVersions).forEach(pkg => {
+                        if (isAgent365Package(pkg)) {
+                            const key = `${pkg}|${entry.sdkVersions[pkg]}`;
+                            if (!sdkBugs[key]) sdkBugs[key] = [];
+                            sdkBugs[key].push(...entry.bugsCaught.details);
+                        }
+                    });
+                }
+            });
+
+            // Helper to render a single language table
+            function renderLanguageTable(lang, tbodyId, emptyMessage) {
+                const tbody = document.getElementById(tbodyId);
+                const rows = Object.values(sdkStatsByLang[lang] || {});
+                
+                if (rows.length === 0) {
+                    tbody.innerHTML = `
+                        <tr>
+                            <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 30px;">
+                                ${emptyMessage}
+                            </td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tbody.innerHTML = rows.map(sdk => {
+                    const key = `${sdk.pkg}|${sdk.version}`;
+                    const bugs = sdkBugs[key] || [];
+                    const bugsCaught = bugs.length;
+                    const isPreRelease = sdk.version.includes('preview') || sdk.version.includes('alpha') || sdk.version.includes('beta');
+                    
+                    // Determine status
+                    let statusBadge, statusText;
+                    if (bugsCaught > 0) {
+                        statusBadge = 'failed';
+                        statusText = `🐛 ${bugsCaught} bugs`;
+                    } else if (isPreRelease) {
+                        statusBadge = 'prerelease';
+                        statusText = '🔬 Pre-release';
+                    } else {
+                        statusBadge = 'passed';
+                        statusText = '✅ Current';
+                    }
+                    
+                    const preReleaseBadge = isPreRelease ? '<span class="prerelease-badge">PRE</span>' : '';
+                    
+                    // Make bugs clickable if there are bugs
+                    const bugsCell = bugsCaught > 0 
+                        ? `<a href="#bugList" class="bug-link" title="${bugs.map(b => b.testName).join(', ')}" style="color: var(--accent-red); cursor: pointer; text-decoration: underline;">${bugsCaught}</a>`
+                        : `<span style="color: var(--accent-green)">0</span>`;
+                    
+                    return `
+                        <tr>
+                            <td><code>${sdk.pkg}</code></td>
+                            <td><code>${sdk.version}</code>${preReleaseBadge}</td>
+                            <td><code>${sdk.version}</code></td>
+                            <td>${sdk.runs}</td>
+                            <td>${bugsCell}</td>
+                            <td><span class="status-badge ${statusBadge}">${statusText}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Render each language table
+            renderLanguageTable('nodejs', 'sdkTableBodyNodejs', 'No Node.js SDK packages detected yet');
+            renderLanguageTable('dotnet', 'sdkTableBodyDotnet', 'No .NET SDK packages detected yet');
+            renderLanguageTable('python', 'sdkTableBodyPython', 'No Python SDK packages detected yet');
+        }
+
+        function renderSampleTable() {
+            const tbody = document.getElementById('sampleTableBody');
+            
+            // Calculate sample data from entries
+            const sampleData = {};
+            metricsData.entries.forEach(entry => {
+                const sample = entry.sampleName;
+                if (!sampleData[sample]) {
+                    sampleData[sample] = { runs: 0, passed: 0, failed: 0, bugsCaught: 0, sdkVersions: {} };
+                }
+                sampleData[sample].runs++;
+                sampleData[sample].passed += entry.testResults.passed;
+                sampleData[sample].failed += entry.testResults.failed;
+                sampleData[sample].bugsCaught += entry.bugsCaught?.details?.length || 0;
+                // Store Agent 365 SDK versions only
+                if (entry.sdkVersions) {
+                    Object.entries(entry.sdkVersions).forEach(([pkg, ver]) => {
+                        if (isAgent365Package(pkg)) {
+                            sampleData[sample].sdkVersions[pkg] = ver;
+                        }
+                    });
+                }
+            });
+
+            if (Object.keys(sampleData).length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+                            Sample test data will appear after E2E tests run
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = Object.entries(sampleData).map(([sample, data]) => {
+                const total = data.passed + data.failed;
+                const successRate = total > 0 ? ((data.passed / total) * 100).toFixed(1) : 100;
+                
+                // Get Agent 365 SDK version (first one found)
+                const sdkVersion = Object.entries(data.sdkVersions)
+                    .map(([k, v]) => v)
+                    .slice(0, 2)
+                    .join(', ') || 'N/A';
+                
+                return `
+                    <tr>
+                        <td>${sample}</td>
+                        <td><code>${sdkVersion}</code></td>
+                        <td>${data.runs}</td>
+                        <td><span style="color: ${data.bugsCaught > 0 ? 'var(--accent-red)' : 'var(--accent-green)'}">${data.bugsCaught}</span></td>
+                        <td>
+                            <span class="status-badge ${successRate >= 90 ? 'passed' : 'failed'}">
+                                ${successRate}%
+                            </span>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderBugList() {
+            const container = document.getElementById('bugList');
+            
+            // Find entries with bugs (check details array length, not count)
+            const bugsFound = metricsData.entries
+                .filter(e => e.bugsCaught?.details?.length > 0)
+                .slice(0, 10);
+
+            if (bugsFound.length === 0) {
+                container.innerHTML = `
+                    <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
+                        ✅ No SDK issues caught yet. When E2E tests detect compatibility problems, they'll appear here.
+                    </p>
+                `;
+                return;
+            }
+
+            container.innerHTML = bugsFound.map(entry => {
+                // Only show Agent 365 SDK versions
+                const sdkInfo = entry.sdkVersions ? 
+                    Object.entries(entry.sdkVersions)
+                        .filter(([k]) => isAgent365Package(k))
+                        .map(([k,v]) => {
+                            const shortName = k.replace('microsoft-agents-', '').replace('Microsoft.Agents.', '').replace('@microsoft/agents-', '');
+                            return `${shortName}@${v}`;
+                        })
+                        .join(', ') : 
+                    'Unknown';
+                
+                return entry.bugsCaught.details.map(bug => {
+                    const issueLink = bug.issueUrl 
+                        ? `<a href="${bug.issueUrl}" target="_blank" class="issue-link ${bug.issueState || 'open'}">#${bug.issueNumber}</a>`
+                        : '';
+                    const runLink = entry.runUrl 
+                        ? `<a href="${entry.runUrl}" target="_blank" style="color: var(--accent-blue); font-size: 0.85rem;">View Run →</a>`
+                        : '';
+                        
+                    return `
+                    <div class="bug-item">
+                        <div class="bug-header">
+                            <span class="bug-stage">${getStageLabel(entry.stage)} • ${escapeHtml(entry.sampleName)}</span>
+                            <span class="bug-sdk">${escapeHtml(sdkInfo)}</span>
+                        </div>
+                        <div class="bug-test">${escapeHtml(bug.testName)} ${issueLink}</div>
+                        <div class="bug-error">${escapeHtml(bug.errorMessage) || 'Test failed'}</div>
+                        <div style="margin-top: 8px;">${runLink}</div>
+                    </div>
+                `;
+                }).join('');
+            }).join('');
+        }
+
+        function getStageLabel(stage) {
+            const labels = {
+                'pre-release': '🔬 Pre-Release',
+                'pre-checkin': '📝 Pre-Checkin',
+                'post-checkin': '✅ Post-Checkin',
+                'release': '🚀 Release'
+            };
+            return labels[stage] || stage;
+        }
+
+        // Error category classification patterns - comprehensive coverage
+        const errorPatterns = {
+            'SDK:Authentication': ['authentication', 'auth failed', 'unauthorized', '401', 'credential', 'token', 'api key', 'secret', 'permission denied', 'access denied', 'forbidden', '403'],
+            'SDK:Connection': ['connection', 'timeout', 'network', 'socket', 'ECONNREFUSED', 'ETIMEDOUT', 'connection refused', 'connection reset', 'dns', 'resolve', 'unreachable'],
+            'SDK:Configuration': ['configuration', 'config', 'missing', 'environment variable', 'appsettings', 'not configured', 'invalid setting', 'required field', 'missing field'],
+            'SDK:BreakingChange': ['breaking change', 'deprecated', 'removed', 'api changed', 'schema', 'incompatible', 'version mismatch', 'not supported', 'no longer'],
+            'SDK:TypeMismatch': ['type error', 'cannot convert', 'invalid cast', 'type mismatch', 'expected type', 'wrong type', 'serialization', 'deserialization', 'json', 'parse error'],
+            'SDK:MissingDependency': ['module not found', 'package not found', 'import error', 'could not load', 'dependency', 'not installed', 'missing module', 'no module named'],
+            'SDK:RateLimiting': ['rate limit', 'throttl', '429', 'too many requests', 'quota exceeded', 'limit exceeded'],
+            'SDK:ResourceNotFound': ['not found', '404', 'does not exist', 'no such', 'missing resource', 'resource not found'],
+            'Test:Assertion': ['assert', 'expected', 'should be', 'to equal', 'to be', 'not equal', 'mismatch', 'failed assertion'],
+            'Test:Timeout': ['test timeout', 'exceeded time', 'took too long', 'deadline exceeded', 'operation timed out'],
+            'Infrastructure:Service': ['service unavailable', '503', '502', 'bad gateway', 'server error', '500', 'internal server error'],
+            'Infrastructure:Memory': ['out of memory', 'memory', 'heap', 'stack overflow', 'allocation failed'],
+            'Agent:ToolExecution': ['tool execution', 'tool failed', 'function call', 'tool error', 'mcp', 'toolset'],
+            'Agent:LLMResponse': ['llm', 'model', 'completion', 'chat', 'response generation', 'openai', 'azure openai']
+        };
+
+        function categorizeError(errorMessage) {
+            const lowerMessage = (errorMessage || '').toLowerCase();
+            for (const [category, patterns] of Object.entries(errorPatterns)) {
+                for (const pattern of patterns) {
+                    if (lowerMessage.includes(pattern)) {
+                        return category;
+                    }
+                }
+            }
+            // Default to most likely category based on context
+            return 'Test:Assertion';
+        }
+
+        function getCategoryBadgeClass(category) {
+            if (category.startsWith('SDK:')) return 'sdk';
+            if (category.startsWith('Test:')) return 'test';
+            if (category.startsWith('Infrastructure:')) return 'infra';
+            return 'other';
+        }
+
+        function renderErrorCategoryTable() {
+            const tbody = document.getElementById('errorCategoryTableBody');
+            
+            // Aggregate errors by category
+            const categories = {};
+            let totalFailures = 0;
+            
+            metricsData.entries.forEach(entry => {
+                if (entry.bugsCaught && entry.bugsCaught.details) {
+                    entry.bugsCaught.details.forEach(bug => {
+                        const category = categorizeError(bug.errorMessage);
+                        totalFailures++;
+                        
+                        if (!categories[category]) {
+                            categories[category] = {
+                                count: 0,
+                                samples: new Set(),
+                                issues: [],
+                                tests: []
+                            };
+                        }
+                        categories[category].count++;
+                        categories[category].samples.add(entry.sampleName);
+                        categories[category].tests.push(bug.testName);
+                        
+                        // Add linked issue if exists
+                        if (bug.issueUrl) {
+                            categories[category].issues.push({
+                                number: bug.issueNumber,
+                                url: bug.issueUrl,
+                                state: bug.issueState || 'open'
+                            });
+                        }
+                    });
+                }
+            });
+
+            if (Object.keys(categories).length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 40px;">
+                            No error categories yet. Errors will be categorized when E2E tests detect issues.
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // Sort by count descending
+            const sortedCategories = Object.entries(categories)
+                .sort((a, b) => b[1].count - a[1].count);
+
+            tbody.innerHTML = sortedCategories.map(([category, data]) => {
+                const failurePercentage = totalFailures > 0 ? ((data.count / totalFailures) * 100).toFixed(1) : 0;
+                const impact = data.count >= 5 ? 'high' : data.count >= 2 ? 'medium' : 'low';
+                const badgeClass = getCategoryBadgeClass(category);
+                
+                // Render linked issues
+                const issueLinks = data.issues.length > 0 
+                    ? data.issues.map(i => `<a href="${i.url}" class="issue-link ${i.state}" target="_blank">#${i.number}</a>`).join('')
+                    : '<span style="color: var(--text-secondary)">—</span>';
+                
+                return `
+                    <tr class="error-category-row ${category.toLowerCase().replace(':', '-')}">
+                        <td><span class="category-badge ${badgeClass}">${category}</span></td>
+                        <td><strong>${data.count}</strong></td>
+                        <td>${data.samples.size}</td>
+                        <td>${failurePercentage}%</td>
+                        <td>
+                            <div class="impact-bar">
+                                <div class="impact-bar-fill ${impact}" style="width: ${failurePercentage}%"></div>
+                            </div>
+                        </td>
+                        <td>${issueLinks}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function renderPRList() {
+            const container = document.getElementById('prList');
+            
+            // Get PRs from metrics data
+            const prs = metricsData.pullRequests || [];
+            
+            if (prs.length === 0) {
+                container.innerHTML = `
+                    <p style="color: var(--text-secondary); text-align: center; padding: 40px;">
+                        No related PRs yet. When fixes are submitted, they'll appear here.
+                    </p>
+                `;
+                return;
+            }
+
+            container.innerHTML = prs.slice(0, 10).map(pr => {
+                const stateClass = pr.merged ? 'merged' : pr.draft ? 'draft' : 'open';
+                const stateIcon = pr.merged ? '🟣' : pr.draft ? '⚪' : '🟢';
+                
+                // Render linked issues this PR fixes
+                const fixesLinks = pr.fixes && pr.fixes.length > 0
+                    ? pr.fixes.map(i => `<a href="${escapeHtml(i.url)}" class="issue-link closed" target="_blank">#${i.number}</a>`).join('')
+                    : '';
+                
+                return `
+                    <div class="pr-item ${stateClass}">
+                        <div class="pr-header">
+                            <a href="${escapeHtml(pr.url)}" class="pr-title" target="_blank">
+                                ${stateIcon} ${escapeHtml(pr.title)}
+                            </a>
+                            <span class="status-badge ${stateClass}">${pr.merged ? 'Merged' : pr.draft ? 'Draft' : 'Open'}</span>
+                        </div>
+                        <div class="pr-meta">
+                            <span>📅 ${new Date(pr.createdAt).toLocaleDateString()}</span>
+                            <span>👤 ${escapeHtml(pr.author)}</span>
+                            <span>🏷️ #${pr.number}</span>
+                        </div>
+                        ${fixesLinks ? `<div class="pr-fixes">Fixes: ${fixesLinks}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Load metrics on page load
+        // Use fallback data immediately, then try to fetch fresh data
+        metricsData = fallbackData;
+        renderDashboard();
+        
+        // Also try to fetch fresh data
+        loadMetrics();
+    </script>
+</body>
+</html>
