@@ -261,9 +261,34 @@ All values below come from `a365.config.json` and `a365.generated.config.json` (
 
 See [Deploy agent to GCP](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-gcp) for full instructions.
 
+Use the provided deploy script — it reads your local `.env`, applies the
+production overrides the A365 observability exporter needs, and deploys via
+Cloud Run source buildpacks (`Procfile` → `python main.py`):
+
+```powershell
+./deploy-cloudrun.ps1 -ProjectId <gcp-project-id> [-Region us-central1] [-ServiceName gcp-a365-agent]
+```
+
+The script deploys with **`--no-cpu-throttling`, which is required**: the
+OpenTelemetry `BatchSpanProcessor` exports genAI spans on a background thread
+*after* the turn returns. With default Cloud Run CPU throttling that thread
+wakes on a frozen CPU and its TLS write stalls, so the gateway drops the
+connection (`SSL UNEXPECTED_EOF_WHILE_READING`) and spans are silently lost.
+
+> Cloud Run injects `PORT` and `K_SERVICE` automatically; `main.py` reads both,
+> so the JWT middleware and production host binding engage with no extra config.
+
+Build inputs are controlled by three scaffolding files in this folder:
+`Procfile` (start command), `.python-version` (runtime), and `.gcloudignore`
+(forces the pip/`requirements.txt` buildpack and excludes the local `.venv`,
+`.env`, and a365 config from the upload).
+
+To deploy manually instead of using the script:
+
 ```bash
-# Deploy to Cloud Run
-gcloud run deploy gcp-a365-agent --source . --region us-central1 --platform managed --allow-unauthenticated
+gcloud run deploy gcp-a365-agent --source . --region us-central1 \
+  --platform managed --allow-unauthenticated --no-cpu-throttling \
+  --set-env-vars "ENABLE_OBSERVABILITY=true,ENABLE_A365_OBSERVABILITY_EXPORTER=true,AUTH_HANDLER_NAME=AGENTIC,..."
 ```
 
 Set `a365.config.json` with your Cloud Run URL and `needDeployment: false`:
@@ -282,6 +307,33 @@ Register only the messaging endpoint (skip Azure deploy):
 ```bash
 a365 setup blueprint --endpoint-only
 ```
+
+### Production observability (A365 exporter)
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, genAI spans are exported to the
+Agent 365 backend instead of the console. Two pieces of wiring make this work:
+
+**1. Per-turn token exchange + cache.** The A365 exporter authenticates each
+span export with a Bearer token, but export happens asynchronously *after* the
+turn handler returns. During each authenticated turn, `agent.py` exchanges an
+observability-scoped agentic token and caches it per `(tenant, agent)` in
+`token_cache.py`. `main.py` passes `observability_token_resolver` to
+`configure()`, which the exporter calls to retrieve that cached token. Token
+exchange is best-effort — a failure only means spans aren't exported that cycle,
+it never breaks the turn.
+
+> The observability **agent id is the app instance id (`AGENTIC_APP_ID`)**, not
+> `AGENTIC_USER_ID`. The ingestion endpoint enforces `ValidateAgentIdentity`:
+> the `{agentId}` in the export URL must equal the `azp`/`appid` in the agentic
+> token, which is the app instance id.
+
+**2. Span operation-name remap.** Google ADK tags its inference span with
+`gen_ai.operation.name = "generate_content"` (or no operation name at all),
+which A365/Maven ingestion drops — it only accepts `invoke_agent`,
+`execute_tool`, `chat`, and `output_messages`. `observability_remap.py`
+rewrites these inference spans to `chat` on export (via the SDK's
+`register_span_enricher` hook) so model and token-usage data reaches Maven's
+`InferenceCall` table. No SDK or Maven changes are required.
 
 ### Messaging endpoint reference
 
@@ -367,9 +419,9 @@ All configuration is via environment variables (`.env` for local, App Settings f
 | `GOOGLE_GENAI_USE_VERTEXAI` | `FALSE` | Set `TRUE` to use Vertex AI instead of Gemini API |
 | `AUTH_HANDLER_NAME` | _(empty)_ | Empty = anonymous (Playground/local), `AGENTIC` = production |
 | `BEARER_TOKEN` | _(empty)_ | Token for MCP tool access. Get with `a365 develop get-token -o raw` |
-| `AGENTIC_APP_ID` | — | Agent App ID from A365 portal |
+| `AGENTIC_APP_ID` | — | Agent **app instance** ID. Used as the observability agent id (must match the token `azp`) |
 | `AGENTIC_TENANT_ID` | — | Azure tenant ID |
-| `AGENTIC_USER_ID` | — | Agent User ID from A365 portal |
+| `AGENTIC_USER_ID` | — | Agent **user** ID (identity enrichment); populated after admin approves the instance |
 | `PORT` | `3978` | Server port (Azure sets this to `8000` automatically) |
 | `ENABLE_OBSERVABILITY` | `true` | Enable OpenTelemetry tracing |
 | `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` | Send traces to A365 backend (`true` for production) |

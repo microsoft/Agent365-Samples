@@ -1,0 +1,14 @@
+# Cloud Run source upload allowlist.
+# Ignore everything, then re-include only what the container needs at build/run.
+# This forces the pip buildpack (requirements.txt) and avoids uploading the
+# uv.lock (stale, missing mcp), the local .venv, secrets (.env), and a365 config.
+*
+
+!*.py
+!Procfile
+!requirements.txt
+!.python-version
+!ToolingManifest.json
+
+# Re-exclude helper/local-only python files matched by !*.py above.
+_freeze.py

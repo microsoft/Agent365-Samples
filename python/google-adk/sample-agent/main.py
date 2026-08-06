@@ -140,10 +140,22 @@ def main():
     # ENABLE_A365_OBSERVABILITY_EXPORTER=true sends traces to the A365 backend;
     # false falls back to the console exporter (expected in local/dev).
     if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
+        # token_resolver supplies the Bearer token the A365 exporter uses to POST
+        # spans. It reads the agentic token cached during each authenticated turn
+        # (see agent.py invoke_agent_with_scope). When the A365 exporter is disabled
+        # (console exporter), the resolver is simply never called.
+        from token_cache import observability_token_resolver
         configure(
             service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
             service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "GoogleADKTesting"),
+            token_resolver=observability_token_resolver,
         )
+        # Google ADK tags the LLM span as gen_ai.operation.name="generate_content",
+        # which A365/Maven ingestion drops (it only accepts invoke_agent, execute_tool,
+        # chat, output_messages). Remap generate_content -> chat on export so the
+        # inference span (model + token usage) reaches Maven's InferenceCall table.
+        from observability_remap import register_generate_content_remap
+        register_generate_content_remap()
         logger.info(
             "Observability configured (service=%s, a365_exporter=%s)",
             os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
