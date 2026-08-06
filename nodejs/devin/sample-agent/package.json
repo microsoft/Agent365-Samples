@@ -5,7 +5,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node --env-file=.env dist/index.js",
-    "test-tool": "agentsplayground"
+    "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
+    "test-tool": "agentsplayground",
+    "dev:teamsfx:playground": "env-cmd --silent -f .localConfigs.playground npm run dev",
+    "dev:teamsfx:launch-playground": "env-cmd --silent -f env/.env.playground agentsplayground start"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -23,6 +26,10 @@
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.20",
+    "@types/node": "^20.14.9",
+    "env-cmd": "^11.0.0",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   }
 }

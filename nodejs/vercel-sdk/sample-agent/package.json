@@ -6,10 +6,12 @@
   "type": "commonjs",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
     "eval": "node --env-file .env src/evals/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "dev:teamsfx:playground": "env-cmd --silent -f .localConfigs.playground npm run dev",
+    "dev:teamsfx:launch-playground": "env-cmd --silent -f env/.env.playground agentsplayground start"
   },
   "keywords": [
     "vercel-ai-sdk",
@@ -40,6 +42,7 @@
     "@babel/preset-env": "^7.28.3",
     "@microsoft/m365agentsplayground": "^0.2.16",
     "@types/express": "^5.0.6",
+    "env-cmd": "^11.0.0",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2"
   }

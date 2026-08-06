@@ -18,6 +18,17 @@ For comprehensive documentation and guidance on building agents with the Microso
 - OpenAI Agents SDK
 - Azure/OpenAI API credentials
 
+## Running the Agent in Microsoft 365 Agents Playground
+
+1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
+1. In file *env/.env.playground.user*, fill in your OpenAI key `SECRET_OPENAI_API_KEY=<your-key>` if you're using OpenAI.
+1. In file *env/.env.playground.user*, fill in your Azure OpenAI key `SECRET_AZURE_OPENAI_API_KEY=<your-key>`, endpoint `AZURE_OPENAI_ENDPOINT=<your-endpoint>`, and deployment `AZURE_OPENAI_DEPLOYMENT=<your-deployment>` if you're using Azure OpenAI.
+1. In file *env/.env.playground*, fill in your custom app registration client id `CLIENT_APP_ID`.
+1. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
+1. You can send any message to get a response from the agent.
+
+**Congratulations**! You are running an agent that can now interact with users in Microsoft 365 Agents Playground.
+
 ## Working with User Identity
 
 On every incoming message, the A365 platform populates `activity.from` with basic user
