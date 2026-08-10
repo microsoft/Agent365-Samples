@@ -17,6 +17,7 @@ import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 
 import { Client, getClient } from './client';
+import { ensureObservabilityToken } from './observability';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 
 // Scrum Master Assistant extensions
@@ -59,6 +60,15 @@ export class MyAgent extends AgentApplication<TurnState> {
  * Handles incoming user messages and sends responses.
  */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
+    // Warm the observability token cache for both blueprint + agentic-instance
+    // identities before any handler runs so spans this turn have a chance of
+    // binding to MAC Activity.
+    try {
+      await ensureObservabilityToken(turnContext, this.authorization as any);
+    } catch (err) {
+      console.warn('[SMA] ensureObservabilityToken failed (non-fatal):', (err as Error).message);
+    }
+
     const userMessage = turnContext.activity.text?.trim() || '';
 
     const from = turnContext.activity?.from;

@@ -43,7 +43,7 @@ export function buildTransitionConfirmCard(p: TransitionConfirmCardParams): Atta
                 type: 'Input.Toggle',
                 id: `approve_${t.issueKey}`,
                 title: 'Approve this change',
-                value: 'true',
+                value: 'false',
                 valueOn: 'true', valueOff: 'false',
             },
         ],

@@ -77,9 +77,14 @@ server.get('/api/health', (req, res: Response) => {
 // BEFORE the JWT middleware because Functions call this over plain HTTP.
 const internalToken = getInternalTriggerToken();
 if (!internalToken) {
-  // Loud one-shot warning so production deployments don't accidentally ship
-  // open internal endpoints. Dev convention still allows an empty token so a
-  // solo developer can curl the endpoints without setting a secret.
+  // Fail-shut in production so open /api/internal/* can never ship by mistake.
+  if (process.env.NODE_ENV === 'production') {
+    console.error(
+      '[security] FATAL: INTERNAL_TRIGGER_TOKEN is required when NODE_ENV=production. ' +
+      'Refusing to start with unauthenticated /api/internal/* endpoints.',
+    );
+    process.exit(1);
+  }
   console.warn(
     '[security] INTERNAL_TRIGGER_TOKEN is empty — /api/internal/* is UNAUTHENTICATED. ' +
     'Set INTERNAL_TRIGGER_TOKEN in .env before deploying anywhere non-local.',

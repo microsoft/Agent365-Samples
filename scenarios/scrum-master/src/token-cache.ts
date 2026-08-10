@@ -9,14 +9,14 @@ export function createAgenticTokenCacheKey(agentId: string, tenantId?: string): 
 
 // A simple example of custom token resolver which will be called by observability SDK when needing tokens for exporting telemetry
 export const tokenResolver = (agentId: string, tenantId: string): string | null => {
-  try {    
+  try {
     // Use cached agentic token from agent authentication
     const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
     const cachedToken = tokenCache.get(cacheKey);
-    
-    if (cachedToken) {      
+
+    if (cachedToken) {
       return cachedToken;
-    } else {      
+    } else {
       return null;
     }
   } catch (error) {
@@ -47,12 +47,12 @@ class TokenCache {
    */
   get(key: string): string | null {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
       console.log(`🔍 Token cache miss for key: ${key}`);
       return null;
     }
-    
+
     return entry;
   }
 
@@ -61,7 +61,7 @@ class TokenCache {
    */
   has(key: string): boolean {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
       return false;
     }

@@ -13,23 +13,26 @@ import { ConversationReference } from '@microsoft/agents-activity';
 import { CloudAdapter, TurnContext } from '@microsoft/agents-hosting';
 
 import { agentApplication } from '../agent';
+import { runWithObservabilityContext } from '../observability';
 
 /**
  * Sends one activity (string or Activity) to a previously-known conversation.
  * Best-effort — swallow errors so a single missing user does not tank a fan-out.
+ * The proactive turn is wrapped in `runWithObservabilityContext` so its spans
+ * carry the same tenant+agent baggage as inbound /api/messages turns.
  */
 export async function sendProactive(
     reference: Partial<ConversationReference>,
     logic: (context: TurnContext) => Promise<void>,
 ): Promise<{ ok: boolean; error?: string }> {
     const adapter = agentApplication.adapter as CloudAdapter;
+    const authorization = (agentApplication as any).authorization;
     const botAppId = getBotAppId();
     try {
-        // Cast: stored references always come from `activity.getConversationReference()`
-        // which returns a fully-populated ConversationReference, but our storage layer
-        // deserializes as `Partial<>`. Adapter throws at runtime on truly-incomplete refs.
         await adapter.continueConversation(botAppId, reference as ConversationReference, async (context) => {
-            await logic(context);
+            await runWithObservabilityContext(context, authorization, async () => {
+                await logic(context);
+            });
         });
         return { ok: true };
     } catch (e) {
@@ -40,8 +43,12 @@ export async function sendProactive(
 }
 
 export function getBotAppId(): string {
-    return (
-        process.env.connections__service_connection__settings__clientId ??
-        ''
-    );
+    const id = process.env.connections__service_connection__settings__clientId?.trim();
+    if (!id) {
+        throw new Error(
+            'connections__service_connection__settings__clientId is required for proactive messaging. ' +
+            'Set it in .env before running the agent — see .env.template.',
+        );
+    }
+    return id;
 }

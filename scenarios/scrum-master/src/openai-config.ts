@@ -28,6 +28,17 @@ export function isAzureOpenAI(): boolean {
   );
 }
 
+// Log only scheme+host without any resource name so internal hostnames don't leak.
+function maskEndpoint(u: string | undefined): string {
+  if (!u) return '(unset)';
+  try {
+    const url = new URL(u);
+    return `${url.protocol}//<masked-host>`;
+  } catch {
+    return '[set]';
+  }
+}
+
 /**
  * Gets the model/deployment name to use.
  * For Azure OpenAI, this is the deployment name (required).
@@ -51,8 +62,8 @@ export function getModelName(): string {
 export function configureOpenAIClient(): void {
   if (isAzureOpenAI()) {
     console.log('[OpenAI Config] Using Azure OpenAI');
-    console.log(`[OpenAI Config] Endpoint: ${process.env.AZURE_OPENAI_ENDPOINT}`);
-    console.log(`[OpenAI Config] Deployment: ${process.env.AZURE_OPENAI_DEPLOYMENT}`);
+    console.log(`[OpenAI Config] Endpoint: ${maskEndpoint(process.env.AZURE_OPENAI_ENDPOINT)}`);
+    console.log(`[OpenAI Config] Deployment: ${process.env.AZURE_OPENAI_DEPLOYMENT ? '[set]' : '(unset)'}`);
 
     const azureClient = new AzureOpenAI({
       apiKey: process.env.AZURE_OPENAI_API_KEY,
