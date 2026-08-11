@@ -15,6 +15,7 @@ import { Agent, run } from '@openai/agents';
 
 import { getModelName } from '../openai-config';
 import { JIRA_TOOLS } from '../services/jira-tool';
+import { withInvokeAgentScope } from '../observability';
 
 const SYSTEM_PROMPT = `You are the Scrum Master — an AI teammate that answers questions about the team's live Jira sprint.
 
@@ -70,8 +71,10 @@ export async function handleAnswer(context: TurnContext, userMessage: string): P
     const input: HistoryItem[] = [...prior, { role: 'user' as const, content: userMessage }];
 
     try {
-        const result = await run(agent, input as any);
-        const reply = result.finalOutput?.trim() || "Sorry, I couldn't put an answer together.";
+        const reply = await withInvokeAgentScope(context, userMessage, async () => {
+            const result = await run(agent, input as any);
+            return result.finalOutput?.trim() || "Sorry, I couldn't put an answer together.";
+        });
         await context.sendActivity(reply);
 
         const next: HistoryItem[] = [...input, { role: 'assistant' as const, content: reply }].slice(-HISTORY_MAX);

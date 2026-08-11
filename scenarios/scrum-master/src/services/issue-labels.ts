@@ -30,15 +30,13 @@ export function toTaskLabel(issueKey: string | null | undefined): string {
 export function toJiraKey(input: string | null | undefined): string {
     if (!input) return '';
     const s = String(input).trim();
-    // Already a canonical PROJ-N key? Just normalize case.
+    const project = (process.env.JIRA_PROJECT_KEY ?? 'EDP').toUpperCase();
+    // Match task/Task/# prefixes BEFORE the generic canonical regex so
+    // "Task-9" is treated as a friendly label, not a made-up TASK project key.
+    const taskish = s.match(/^(?:task\s*-?\s*|#)?(\d+)$/i);
+    if (taskish) return `${project}-${taskish[1]}`;
     const canonical = s.match(/^([A-Za-z][A-Za-z0-9]*)-(\d+)$/);
     if (canonical) return `${canonical[1].toUpperCase()}-${canonical[2]}`;
-    // "Task-14" / "task 14" / "task14" / "#14" / "14"
-    const taskish = s.match(/^(?:task\s*-?\s*|#)?(\d+)$/i);
-    if (taskish) {
-        const project = (process.env.JIRA_PROJECT_KEY ?? 'EDP').toUpperCase();
-        return `${project}-${taskish[1]}`;
-    }
     return s.toUpperCase();
 }
 

@@ -8,8 +8,7 @@ configDotenv();
 
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { Activity, ActivityTypes } from '@microsoft/agents-activity';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting'
+import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting'
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 
 // Notification Imports
@@ -17,7 +16,7 @@ import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 
 import { Client, getClient } from './client';
-import { ensureObservabilityToken } from './observability';
+import { ensureObservabilityToken, runWithTurnBaggage } from './observability';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 
 // Scrum Master Assistant extensions
@@ -69,6 +68,23 @@ export class MyAgent extends AgentApplication<TurnState> {
       console.warn('[SMA] ensureObservabilityToken failed (non-fatal):', (err as Error).message);
     }
 
+    try {
+      await this.preloadObservabilityToken(turnContext);
+    } catch (err) {
+      console.warn('[SMA] preloadObservabilityToken failed (non-fatal):', (err as Error).message);
+    }
+
+    // Every dispatch branch below — cards, slash commands, Answer, and the
+    // generic LLM path — must run inside this baggage scope, otherwise its
+    // spans carry no identity and the exporter drops them.
+    await runWithTurnBaggage(
+      turnContext,
+      () => this.dispatchTurn(turnContext, state),
+      'Initial onboarding session'
+    );
+  }
+
+  private async dispatchTurn(turnContext: TurnContext, state: TurnState): Promise<void> {
     const userMessage = turnContext.activity.text?.trim() || '';
 
     const from = turnContext.activity?.from;
@@ -143,30 +159,17 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
-    // Populate baggage consistently from TurnContext using hosting utilities
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
-      new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Initial onboarding session')
-      .build();
-
-    // Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
-    await this.preloadObservabilityToken(turnContext);
-
     try {
-      await baggageScope.run(async () => {
-        const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
-        const response = await client.invokeAgentWithScope(userMessage);
-        // Message 2: the LLM response
-        await turnContext.sendActivity(response);
-      });
+      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
+      const response = await client.invokeAgentWithScope(userMessage);
+      // Message 2: the LLM response
+      await turnContext.sendActivity(response);
     } catch (error) {
       console.error('LLM query error:', error);
       const err = error as any;
       await turnContext.sendActivity(`Error: ${err.message || err}`);
     } finally {
       stopTypingLoop();
-      baggageScope.dispose();
     }
   }
 
@@ -215,13 +218,22 @@ export class MyAgent extends AgentApplication<TurnState> {
   }
 
   async handleAgentNotificationActivity(context: TurnContext, state: TurnState, agentNotificationActivity: AgentNotificationActivity) {
-    switch (agentNotificationActivity.notificationType) {
-      case NotificationType.EmailNotification:
-        await this.handleEmailNotification(context, state, agentNotificationActivity);
-        break;
-      default:
-        await context.sendActivity(`Received notification of type: ${agentNotificationActivity.notificationType}`);
+    try {
+      await ensureObservabilityToken(context, this.authorization as any);
+      await this.preloadObservabilityToken(context);
+    } catch (err) {
+      console.warn('[SMA] observability token warm-up failed (non-fatal):', (err as Error).message);
     }
+
+    await runWithTurnBaggage(context, async () => {
+      switch (agentNotificationActivity.notificationType) {
+        case NotificationType.EmailNotification:
+          await this.handleEmailNotification(context, state, agentNotificationActivity);
+          break;
+        default:
+          await context.sendActivity(`Received notification of type: ${agentNotificationActivity.notificationType}`);
+      }
+    });
   }
 
   private async handleEmailNotification(context: TurnContext, state: TurnState, activity: AgentNotificationActivity): Promise<void> {

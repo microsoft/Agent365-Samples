@@ -3,6 +3,14 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# TS compile artefacts inside src (only source .ts should be tracked)
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+azure-functions/src/**/*.js
+azure-functions/src/**/*.d.ts
+azure-functions/src/**/*.js.map
+
 # env & secrets — never commit
 .env
 .env.local
@@ -18,5 +26,8 @@ seed-out.txt
 setup-out.txt
 *.log
 
-# editor
-.vscode/*.log
+# agent skills installed via `gh skill add microsoft/agent365-skills` — workspace-local
+.agents/
+.claude/
+.github/copilot-instructions.md
+.github/copilot-instructions.md.bak

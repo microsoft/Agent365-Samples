@@ -15,12 +15,20 @@
 // Adapted from the Chief-of-Staff scenario (PR #333) so both samples share the
 // same wiring conventions.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type { Authorization, TurnContext } from '@microsoft/agents-hosting';
 import {
     BaggageBuilder,
+    ExecuteToolScope,
+    InvokeAgentScope,
     type AgentDetails,
+    type CallerDetails,
     type Channel,
+    type InvokeAgentScopeDetails,
     type Request,
+    type ToolCallDetails,
+    type UserDetails,
 } from '@microsoft/agents-a365-observability';
 import {
     AgenticTokenCacheInstance,
@@ -153,9 +161,133 @@ export async function runWithObservabilityContext<T>(
     work: () => Promise<T>
 ): Promise<T> {
     await ensureObservabilityToken(context, authorization);
-    const scope = BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context).build();
+    return runWithTurnBaggage(context, work);
+}
+
+/**
+ * The turn currently being handled. Deep helpers (LLM function-tools) have no
+ * TurnContext parameter, so they read identity from here instead of taking one.
+ */
+const currentTurn = new AsyncLocalStorage<TurnContext>();
+
+export function getCurrentTurnContext(): TurnContext | undefined {
+    return currentTurn.getStore();
+}
+
+/**
+ * Build the A365 baggage scope and publish the turn so every span created by
+ * `work` — including ones started deeper in the call tree — lands in the same
+ * (agentId, tenantId) identity group the exporter partitions on.
+ *
+ * Callers are responsible for warming the observability token first.
+ */
+export async function runWithTurnBaggage<T>(
+    context: TurnContext,
+    work: () => Promise<T>,
+    sessionDescription?: string
+): Promise<T> {
+    let builder = BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context);
+    if (sessionDescription) builder = builder.sessionDescription(sessionDescription);
+    const scope = builder.build();
     try {
-        return await scope.run(work);
+        return await scope.run(() => currentTurn.run(context, work));
+    } finally {
+        scope.dispose();
+    }
+}
+
+export function buildUserDetails(context: TurnContext): UserDetails {
+    const from = context?.activity?.from as { id?: string; name?: string; aadObjectId?: string } | undefined;
+    return {
+        userId: from?.aadObjectId ?? from?.id ?? '',
+        userName: from?.name ?? '',
+        // `from.id` is an MRI in 1:1 Teams chats; only notification/email turns carry a UPN.
+        userEmail: from?.id?.includes('@') ? from.id : '',
+    } as UserDetails;
+}
+
+export function buildCallerDetails(context: TurnContext): CallerDetails {
+    return { userDetails: buildUserDetails(context) } as CallerDetails;
+}
+
+/**
+ * Emit the `invoke_agent` parent span MAC Activity anchors the agent-turn view
+ * on. Falls through to plain execution when identity can't be resolved, so we
+ * never publish orphan spans the exporter would drop anyway.
+ */
+export async function withInvokeAgentScope<T>(
+    context: TurnContext | undefined,
+    input: string,
+    work: () => Promise<T>,
+    toOutput: (result: T) => string[] = (result) => [String(result ?? '')]
+): Promise<T> {
+    const agentDetails = context ? buildAgentDetails(context) : undefined;
+    if (!context || !agentDetails) return work();
+
+    const scopeDetails = {
+        endpoint: { host: process.env.WEBSITE_HOSTNAME ?? 'localhost', port: Number(process.env.PORT) || 3978 },
+    } as InvokeAgentScopeDetails;
+
+    const scope = InvokeAgentScope.start(
+        buildRequest(context),
+        scopeDetails,
+        agentDetails,
+        buildCallerDetails(context)
+    );
+    try {
+        return await scope.withActiveSpanAsync(async () => {
+            scope.recordInputMessages([input]);
+            try {
+                const result = await work();
+                scope.recordOutputMessages(toOutput(result));
+                return result;
+            } catch (err) {
+                scope.recordError(err as Error);
+                throw err;
+            }
+        });
+    } finally {
+        scope.dispose();
+    }
+}
+
+/**
+ * Emit an `execute_tool` span around an LLM function-tool. Reads the turn from
+ * AsyncLocalStorage so tool definitions stay context-free.
+ */
+export async function withExecuteToolScope<T>(
+    toolName: string,
+    args: unknown,
+    work: () => Promise<T>
+): Promise<T> {
+    const context = getCurrentTurnContext();
+    const agentDetails = context ? buildAgentDetails(context) : undefined;
+    if (!context || !agentDetails) return work();
+
+    const toolDetails = {
+        toolName,
+        toolType: 'function',
+        toolCallId: `${toolName}-${Date.now()}`,
+        arguments: JSON.stringify(args ?? {}),
+    } as ToolCallDetails;
+
+    const scope = ExecuteToolScope.start(
+        buildRequest(context),
+        toolDetails,
+        agentDetails,
+        buildUserDetails(context)
+    );
+    try {
+        return await scope.withActiveSpanAsync(async () => {
+            try {
+                const result = await work();
+                scope.recordResponse(JSON.stringify(result ?? null));
+                return result;
+            } catch (err) {
+                scope.recordError(err as Error);
+                throw err;
+            }
+        });
     } finally {
         scope.dispose();
     }

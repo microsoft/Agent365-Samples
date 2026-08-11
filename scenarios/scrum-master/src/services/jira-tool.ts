@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { getJiraClient } from './jira';
 import { toTaskLabel, toJiraKey, cleanIssueTitle } from './issue-labels';
+import { withExecuteToolScope } from '../observability';
 
 export const getIssueTool = tool({
     name: 'jira_get_issue',
@@ -25,7 +26,7 @@ export const getIssueTool = tool({
     parameters: z.object({
         issueKey: z.string().describe('The task key, e.g. "Task-14". Bare numbers like "14" are also accepted.'),
     }),
-    execute: async ({ issueKey }) => {
+    execute: async ({ issueKey }) => withExecuteToolScope('jira_get_issue', { issueKey }, async () => {
         const jiraKey = toJiraKey(issueKey);
         console.log(`[jira-tool] jira_get_issue received=${JSON.stringify(issueKey)} mapped=${jiraKey}`);
         try {
@@ -42,7 +43,7 @@ export const getIssueTool = tool({
             console.error(`[jira-tool] jira_get_issue failed key=${jiraKey}:`, (e as Error).message);
             return { error: `Could not fetch ${toTaskLabel(jiraKey)}: ${(e as Error).message}` };
         }
-    },
+    }),
 });
 
 export const listSprintIssuesTool = tool({
@@ -52,7 +53,7 @@ export const listSprintIssuesTool = tool({
         '{ key (as Task-N), summary (cleaned), status, assignee, storyPoints }. Use this when the user ' +
         'asks about "the sprint", "what\'s left", or general progress questions.',
     parameters: z.object({}).describe('No parameters.'),
-    execute: async () => {
+    execute: async () => withExecuteToolScope('jira_list_sprint_issues', {}, async () => {
         const jira = getJiraClient();
         const sprint = await jira.getActiveSprint();
         if (!sprint) return { error: 'No active sprint found.' };
@@ -67,7 +68,7 @@ export const listSprintIssuesTool = tool({
                 storyPoints: i.storyPoints,
             })),
         };
-    },
+    }),
 });
 
 export const getIssueCommentsTool = tool({
@@ -81,7 +82,7 @@ export const getIssueCommentsTool = tool({
         limit: z.number().int().min(1).max(20).default(5)
             .describe('How many most-recent comments to return. Default 5.'),
     }),
-    execute: async ({ issueKey, limit }) => {
+    execute: async ({ issueKey, limit }) => withExecuteToolScope('jira_get_issue_comments', { issueKey, limit }, async () => {
         const jiraKey = toJiraKey(issueKey);
         const taskLabel = toTaskLabel(jiraKey);
         try {
@@ -101,7 +102,7 @@ export const getIssueCommentsTool = tool({
         } catch (e) {
             return { error: `Could not fetch comments for ${taskLabel}: ${(e as Error).message}` };
         }
-    },
+    }),
 });
 
 export const JIRA_TOOLS = [getIssueTool, listSprintIssuesTool, getIssueCommentsTool];
