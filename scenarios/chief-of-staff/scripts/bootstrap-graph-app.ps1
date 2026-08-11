@@ -101,7 +101,7 @@ foreach ($g in $grantsRaw.value) {
 
 Write-Host ''
 Write-Host '========================================================='
-Write-Host 'PASTE THE FOLLOWING INTO .env'
+Write-Host 'PASTE THE FOLLOWING INTO Chief of staff/cos-agent/.env'
 Write-Host '========================================================='
 Write-Host "GRAPH_APP_ID=$APP_ID"
 Write-Host "GRAPH_APP_SECRET=$($cred.password)"

@@ -361,17 +361,22 @@ async function fireInAuthedContext(
       // Cron/poller turns never pass through the adapter's BaggageMiddleware,
       // and the token cached on the last inbound turn may have expired hours
       // ago — re-establish both or the batch is dropped.
-      await runWithObservabilityContext(ctx, deps.authorization, async () => {
-        const state = {} as TurnState;
-        const client = await getClient(
-          deps.authorization,
-          deps.authHandlerName,
-          ctx,
-          'CoS Scheduler',
-          { humanInitiated: false }
-        );
-        await work(ctx, state, client);
-      });
+      await runWithObservabilityContext(
+        ctx,
+        deps.authorization,
+        async () => {
+          const state = {} as TurnState;
+          const client = await getClient(
+            deps.authorization,
+            deps.authHandlerName,
+            ctx,
+            'CoS Scheduler',
+            { humanInitiated: false }
+          );
+          await work(ctx, state, client);
+        },
+        { input: `scheduled run: ${name}`, humanInitiated: false }
+      );
     });
   } catch (err) {
     console.error(`[scheduler] ${name} error:`, err);

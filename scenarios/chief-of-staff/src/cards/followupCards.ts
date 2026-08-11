@@ -144,7 +144,7 @@ function taskTitleBlock(taskTitle: string): object {
 
 /**
  * Compact metadata row rendered as a ColumnSet — e.g.
- *   Due  Thu 16 Jul     ·     Owner  Adele Vance
+ *   Due  Thu 16 Jul     ·     Owner  Peyton Davis
  * Each entry has a subtle label and a normal-weight value stacked. Much
  * lighter visually than a FactSet and reads well on mobile.
  */

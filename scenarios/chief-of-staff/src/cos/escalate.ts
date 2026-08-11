@@ -2,8 +2,7 @@
 // Licensed under the MIT License.
 //
 // FR-5 Escalate handler.
-// Triggered by the in-process scheduler (CRON_ESCALATE, default every 4h) to
-// scan for stalled/conflicting tasks and propose re-plan options to the leader.
+// Triggered by a `[COS-ESCALATE]` email from Power Automate (every 4h).
 
 import { TurnContext, TurnState } from '@microsoft/agents-hosting';
 import type { Client } from '../client';

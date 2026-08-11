@@ -1,4 +1,4 @@
-# Chief of Staff Teammate — `chief-of-staff`
+# Chief of Staff Teammate — `cos-agent`
 
 Autonomous Microsoft Agent 365 teammate that runs a leader's operating rhythm.
 It captures decisions and action items from Teams meetings into Planner, sends
@@ -42,11 +42,10 @@ A running Node service on your dev machine (or Azure App Service) that:
 | **Task complete (chat)** — owner tells the agent in plain language ("`The task "X" is done`"), agent PATCHes Planner to 100 % and notifies leader | Message router matches completion phrase + quoted title, fuzzy-matches Planner |
 | **Recall / chit-chat** — the leader asks "where are we on X?" and gets a status answer, restricted to leadership team members | LLM turn with `planner_list_tasks` + `mcp_CalendarTools` |
 
-Everything is deterministic **except** the flows that explicitly need
-natural-language understanding: capture extraction (LLM parses the transcript),
-recall/chit-chat, and the legacy standalone Escalate scan (`runEscalate` — LLM
-drafts re-plan proposals for the leader; see `src/cos/escalate.ts`). All
-routing, dedup, date math, and Planner writes are TypeScript.
+Everything is deterministic **except** the two flows that explicitly need
+natural-language understanding: capture extraction (LLM parses the transcript)
+and recall/chit-chat. All routing, dedup, date math, and Planner writes are
+TypeScript.
 
 ---
 
@@ -77,15 +76,15 @@ Install on your dev box:
 You need one M365 tenant with:
 
 - A **Global Administrator** account (needed for admin-consenting Graph scopes)
-- A **leader** test account with a mailbox (e.g. `alex@…`)
-- At least one **second test user** with a mailbox (e.g. `adele@…`)
+- A **leader** test account with a mailbox (e.g. `mario@…`)
+- At least one **second test user** with a mailbox (e.g. `peyton@…`)
 - (Optional) **Microsoft 365 Copilot** license on the leader — enables
   pre-extracted `aiInsights` on meetings. Without it the agent falls back to
   LLM extraction from the raw transcript. Nothing else changes.
 
 ### 3a. Create the agent identity
 
-From `chief-of-staff/`:
+From `Chief of staff/cos-agent/`:
 
 ```powershell
 a365 develop setup --agent-name "Chief-of-Staff"
@@ -103,19 +102,6 @@ Sign in as Global Admin when asked and let the CLI:
 **Note the agent's UPN** — usually `chief-of-staff@<tenant>.onmicrosoft.com`.
 Leaders will invite this UPN to their meetings so the CoS can capture them.
 
-**Publish the agent to Teams** so the leader can install it and DM it.
-From the same folder:
-
-```powershell
-a365 publish --agent-name "Chief-of-Staff" --aiteammate
-```
-
-This command generates the `manifest/` folder with your blueprint id baked
-in (locally — gitignored) and pushes it to your tenant. After it runs, the
-Chief-of-Staff agent user becomes discoverable in the Teams app catalog
-and can be added to Teams / meetings by any tenant user. No manual
-`manifest.json` editing, no `manifest.zip` sideload.
-
 ### 3b. Provision the standalone Graph worker app (required)
 
 The agent hits Microsoft Graph constantly (calendar view, transcripts,
@@ -129,7 +115,7 @@ etc.) are needed on those apps.
 **In one command:**
 
 ```powershell
-cd chief-of-staff
+cd "Chief of staff/cos-agent"
 .\scripts\bootstrap-graph-app.ps1
 ```
 
@@ -139,8 +125,7 @@ The script (idempotent — safe to re-run):
 2. Adds the application permissions Graph needs:
    `Calendars.Read`, `OnlineMeetings.Read.All`,
    `OnlineMeetingTranscript.Read.All`, `OnlineMeetingAiInsight.Read.All`,
-   `Chat.Create`, `Chat.ReadWrite.All`,
-   `Tasks.ReadWrite.All`, `User.Read.All`, `Group.Read.All`.
+   `Tasks.ReadWrite.All`, `User.Read.All`, `GroupMember.Read.All`.
 3. Admin-consents them tenant-wide via `az` (no browser, avoids
    AADSTS82007 in demo tenants).
 4. Rotates a client secret and prints:
@@ -181,16 +166,13 @@ For strategy 1 (recommended), leave `CAPTURE_GRAPH_OWNER=cos-agent` in `.env`
 
 Verify:
 
-Verify (get `<sp-object-id>` from step 6 of the bootstrap script output, or
-`az ad sp list --filter "appId eq '$env:GRAPH_APP_ID'" --query [0].id -o tsv`):
-
 ```powershell
 az rest --method GET `
   --uri "https://graph.microsoft.com/v1.0/servicePrincipals/<sp-object-id>/appRoleAssignments" `
   -o table
 ```
 
-Nine rows expected — one per scope listed in step 2 above.
+Seven rows expected.
 
 > **Adaptive-card DMs** are sent via Bot Framework proactive messaging, not
 > Graph — so they need no Graph scope. The recipient must have DM'd the
@@ -213,9 +195,6 @@ grant these three scopes if `a365 develop setup` didn't:
 Grant admin consent.
 
 ### 3d. Create the leadership Team
-
-> Requires §3a (both the identity-creation and the publish step) so that the
-> `Chief-of-Staff@…` user is discoverable in the Teams people picker.
 
 In Teams:
 
@@ -283,7 +262,7 @@ extraction from the raw WebVTT transcript. Nothing else changes.
 ## 4. Clone + install
 
 ```powershell
-cd chief-of-staff
+cd "Chief of staff/cos-agent"
 npm install
 ```
 
@@ -313,7 +292,7 @@ AZURE_OPENAI_API_KEY=<foundry-key>
 AZURE_OPENAI_API_VERSION=2024-10-21
 
 # Leader (only UPN needed — AAD auto-resolves on first turn)
-LEADER_UPN=alex@yourdomain.onmicrosoft.com
+LEADER_UPN=mario@yourdomain.onmicrosoft.com
 
 # CoS agent's own inviteable UPN — REQUIRED for meeting capture
 COS_AGENT_UPN=chief-of-staff@yourdomain.onmicrosoft.com
@@ -337,6 +316,11 @@ PLANNER_BUCKET_NEW=
 
 # Team access control for Recall gate (also drives Planner auto-resolve)
 LEADERSHIP_TEAM_ID=<team-group-id-OR-display-name-OR-channel-email>
+
+# Local dev
+NODE_ENV=development
+HOST=127.0.0.1
+PORT=3978
 ```
 
 **Optional tunables** (all have sensible code defaults — see `.env.template`
@@ -344,7 +328,7 @@ for the exhaustive list):
 
 | Env | Default | Description |
 |---|---|---|
-| `LEADER_NAME` | — | Display name used in card copy (e.g. "Assigned by: Alex"). Falls back to "the Leader" when unset |
+| `LEADER_NAME` | — | Display name used in card copy (e.g. "Assigned by: Mario"). Falls back to "the Leader" when unset |
 | `BRIEF_ENABLED` | `false` | Set to `true` to turn on the daily Brief cron |
 | `CRON_BRIEF` | `0 8 * * 1-5` | When the Brief card fires (8 AM weekdays) |
 | `CRON_FOLLOWUP` | `0 * * * *` | When follow-up cards fire (also runs escalation sweep) |
@@ -363,7 +347,7 @@ for the exhaustive list):
 | `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` / `trace` |
 | `LOG_HTTP` | `false` | Log every outbound HTTP call with status + latency |
 | `SCHEDULER_ENABLED` | `true` | Set `false` to disable all crons + pollers |
-| `BRIEF_DISPLAY_TZ` | `UTC` | Wall-clock TZ used in card copy — set to the leader's home TZ (e.g. `America/Los_Angeles`, `Europe/London`, `Asia/Kolkata`) |
+| `BRIEF_DISPLAY_TZ` | `Asia/Kolkata` | Wall-clock TZ used in card copy |
 | `STATE_BACKEND` | `file` | `file` (persist to disk) or `null` (in-memory only, for tests) |
 | `STATE_DIR` | `./.cos-state` | Root dir for state files. On Azure App Service: `/home/data/cos-state` |
 | `CAPTURE_STATE_RETENTION_DAYS` | `30` | TTL for finished captures on disk. In-flight records always kept |
@@ -385,7 +369,7 @@ Expected boot output:
 [startup] ─── Chief of Staff — Configuration Check ───
 [startup] ✅ AZURE_OPENAI_DEPLOYMENT=gpt-4o — endpoint=… api-version=2024-10-21
 [startup] ✅ agent_id=e320…4964 — tenant=1fe4…8d81
-[startup] ✅ LEADER_UPN=alex@… — LEADER_AAD_ID will auto-resolve on first turn
+[startup] ✅ LEADER_UPN=mario@… — LEADER_AAD_ID will auto-resolve on first turn
 [startup] ✅ PLANNER_PLAN_ID=9H_e2N…AGlda
 [startup] ✅ PLANNER_BUCKET_NEW=09dDjr…FVgg
 [startup] ✅ LEADERSHIP_TEAM_ID=… — Recall gated to team members
@@ -411,18 +395,9 @@ In a **second** terminal:
 devtunnel host -p 3978 --allow-anonymous
 ```
 
-Copy the `https://….devtunnels.ms` URL and set it as the **Messaging
-endpoint** of the Azure Bot resource that `a365 develop setup` created for
-your agent — append `/api/messages` to the tunnel URL:
-
-1. Azure Portal → **Bot services** → select the bot named after your
-   agent (e.g. `Chief-of-Staff`)
-2. **Settings → Configuration**
-3. **Messaging endpoint** = `https://<random>.devtunnels.ms/api/messages`
-4. **Apply**
-
-For Azure App Service deployments (§10), point the same field at
-`https://<app>.azurewebsites.net/api/messages` instead.
+Copy the `https://….devtunnels.ms` URL and register it as the messaging
+endpoint of your agent's bot channel (via the Agent 365 Toolkit or the Teams
+admin center).
 
 ---
 
@@ -452,7 +427,7 @@ acceptance test — if all pass, someone else can reproduce your setup.
 1. As the leader, create a Teams meeting for the next few minutes.
 2. Invitees: the second test user **and** the CoS agent (`COS_AGENT_UPN`).
 3. Both real users join and record. Say clear action items:
-   *"Adele will send the pricing model by Friday"*,
+   *"Peyton will send the pricing model by Friday"*,
    *"Decision: we go with tiered pricing"*.
 4. End the meeting.
 5. Within ~60 s the meeting watcher picks it up. It waits for the transcript
@@ -521,7 +496,7 @@ the in-memory resolve fired by `runTaskComplete`).
 - Within ~5 min (`POLL_TASKS_MS`) `plannerPoller` detects the
   `percentComplete: 100` transition and fires `runTaskComplete`.
 - The owner gets a *"Thanks — X is marked complete"* DM.
-- The leader gets a *"Adele completed X"* (or *"Blocker resolved — Adele
+- The leader gets a *"Peyton completed X"* (or *"Blocker resolved — Peyton
   completed X"* if the task was `[BLOCKER]` / `[RISK]` prefixed) DM.
 - Any open follow-up for that task is auto-resolved so escalation won't fire.
 
@@ -529,7 +504,7 @@ the in-memory resolve fired by `runTaskComplete`).
 
 - The owner DMs the CoS in plain English, including the task name in quotes:
   ```text
-  Hi — the task "Send Contoso proposal to Alex" is done.
+  Hi — the task "Send Contoso proposal to Mario" is done.
   ```
 - Agent recognises the completion intent (`complete|completed|done|finished|
   closed|wrapped`), fuzzy-matches the quoted title against open Planner
@@ -607,14 +582,6 @@ the in-memory resolve fired by `runTaskComplete`).
 Set `LOG_LEVEL=debug` and `LOG_HTTP=true` to see everything at the wire
 level. Every log line is single-line JSON-ish, easy to grep.
 
-### Diagnostic scripts
-
-- **`compare_grants.ps1`** — compares delegated permission grants + app-role
-  assignments between two agent-instance service principals. Useful when
-  diagnosing "why does agent A see tool X but agent B doesn't?" — set the
-  two `<AGENT_*_INSTANCE_APP_ID>` placeholders at the top, run
-  `pwsh ./compare_grants.ps1`, and diff the output.
-
 ---
 
 ## 10. Deploy to Azure
@@ -649,39 +616,3 @@ our `PersistentMap`-backed stores).
 - Test each of the seven flows in §8 against a fresh tenant to prove
   reproducibility.
 - File issues if something in the setup guide doesn't match your experience.
-
----
-
-## Support
-
-For issues, questions, or feedback:
-
-- **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Security**: For security issues, please see [SECURITY.md](../../SECURITY.md)
-
-## Contributing
-
-This project welcomes contributions and suggestions. Most contributions require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit <https://cla.opensource.microsoft.com>.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## Additional Resources
-
-- **[DESIGN.md](DESIGN.md)** — architecture, per-flow sequence diagrams, all env vars explained, and extension points for this sample
-- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
-- [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
-- [OpenAI API documentation](https://platform.openai.com/docs/)
-- [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
-
-## Trademarks
-
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the MIT License - see the [LICENSE](../../LICENSE.md) file for details.

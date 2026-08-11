@@ -22,7 +22,7 @@ import {
 import { DefaultConfigurationProvider } from '@microsoft/agents-a365-runtime';
 import { OpenAIAgentsTraceInstrumentor } from '@microsoft/agents-a365-observability-extensions-openai';
 
-import { buildAgentDetails, buildRequest, buildUserDetails } from './observability';
+import { buildAgentDetails, buildRequest, buildUserDetails, instrumentMcpServers, instrumentTools } from './observability';
 import { configureOpenAIClient, getModelName, isFoundryEndpoint } from './openai-config';
 import { createPlannerTools } from './graph/plannerTools';
 import { createPeopleTools, resolveUpnToAad, isUserInTeam } from './graph/peopleTools';
@@ -148,39 +148,37 @@ export async function getClient(
     `[client] Creating agent (model=${modelName}, foundry=${isFoundryEndpoint()}, user=${displayName})`
   );
 
-  // Graph-backed Planner tools (mcp_PlannerServer isn't hosted in this tenant).
-  const plannerTools = createPlannerTools({
+  const peopleOpts = {
     authorization,
     context: turnContext,
     authHandlerName,
-  });
+  };
+  const humanInitiated = options.humanInitiated ?? true;
+  // Groups every span this run emits (invoke_agent, chat, execute_tool).
+  const runId = randomUUID();
+  const scopeOptions = { sessionId: runId, humanInitiated, peopleOpts };
+
+  // Graph-backed Planner tools (mcp_PlannerServer isn't hosted in this tenant).
+  const plannerTools = createPlannerTools(peopleOpts);
 
   // Graph-backed people/directory tools: resolve display names to AAD Object IDs.
-  const peopleTools = createPeopleTools({
-    authorization,
-    context: turnContext,
-    authHandlerName,
-  });
+  const peopleTools = createPeopleTools(peopleOpts);
 
   // Adaptive Card DM helper for the daily Brief.
-  const briefCardTool = createBriefCardTool({
-    authorization,
-    context: turnContext,
-    authHandlerName,
-  });
+  const briefCardTool = createBriefCardTool(peopleOpts);
 
   // Adaptive Card DM tools for the interactive Follow-up flow.
-  const followupCardTools = createFollowupCardTools({
-    authorization,
-    context: turnContext,
-    authHandlerName,
-  });
+  const followupCardTools = createFollowupCardTools(peopleOpts);
 
   const agent = new Agent({
     name: 'Chief of Staff Agent',
     model: modelName,
     instructions: `${AGENT_INSTRUCTIONS}\n\nThe display name of the current user is "${displayName}".`,
-    tools: [...plannerTools, ...peopleTools, briefCardTool, ...followupCardTools],
+    tools: instrumentTools(
+      [...plannerTools, ...peopleTools, briefCardTool, ...followupCardTools],
+      turnContext,
+      scopeOptions
+    ),
   });
 
   try {
@@ -199,6 +197,7 @@ export async function getClient(
           'mcp_TeamsServer / mcp_MailTools / mcp_CalendarTools will be unavailable to the LLM.'
       );
     } else {
+      instrumentMcpServers(attachedMcp, turnContext, scopeOptions);
       const names = attachedMcp.map((s: any) => s?.name ?? s?.serverName ?? '(unnamed)');
       console.log(
         `[client] MCP tool servers attached: ${attachedMcp.length} — ${names.join(', ')}`
@@ -208,15 +207,7 @@ export async function getClient(
     console.warn('[client] Failed to register MCP tool servers:', error);
   }
 
-  return new CosAgentClient(
-    agent,
-    {
-      authorization,
-      context: turnContext,
-      authHandlerName,
-    },
-    options.humanInitiated ?? true
-  );
+  return new CosAgentClient(agent, peopleOpts, humanInitiated, runId);
 }
 
 // ─── Client wrapper ──────────────────────────────────────────────
@@ -225,16 +216,18 @@ class CosAgentClient implements Client {
   private peopleOpts: { authorization: Authorization; context: TurnContext; authHandlerName: string };
   private humanInitiated: boolean;
   // Groups every span this client emits into one logical run.
-  private runId = randomUUID();
+  private runId: string;
 
   constructor(
     agent: Agent,
     peopleOpts: { authorization: Authorization; context: TurnContext; authHandlerName: string },
-    humanInitiated = true
+    humanInitiated = true,
+    runId = randomUUID()
   ) {
     this.agent = agent;
     this.peopleOpts = peopleOpts;
     this.humanInitiated = humanInitiated;
+    this.runId = runId;
   }
 
   getAgent(): Agent {

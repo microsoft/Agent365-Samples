@@ -235,7 +235,7 @@ function extractIntent(
 
   // Fuzzy completion intent detection — matches phrases the exact-prefix
   // keyword map above won't catch, e.g.:
-  //   "The task 'Send draft proposal to Alex' is completed"
+  //   "The task 'Send draft proposal to Mario' is completed"
   //   "Hi — I finished the Contoso proposal"
   //   "'Send proposal' is done"
   // Two conditions: a completion verb appears AND either a quoted title
@@ -625,7 +625,7 @@ DM the leader via mcp_TeamsServer: ask them who to reassign to (reply with a nam
       const ownerMsg =
         `📅 **Meeting scheduled to unblock: ${taskTitle}**\n\n` +
         `Time: ${timeslot}\n` +
-        `The leader (Alex) picked this slot. Calendar invite coming next.` +
+        `The leader (Mario) picked this slot. Calendar invite coming next.` +
         (timeslotIso ? `\n\n_ISO start: ${timeslotIso}_` : '');
       const r = await sendPlainDmToUser(client.getPeopleOpts(), ownerAad, ownerMsg);
       ownerNotified = r.ok;
@@ -675,7 +675,7 @@ DM the leader via mcp_TeamsServer: ask them who to reassign to (reply with a nam
       // FIX (Bug 4): resolve owner AAD → UPN DETERMINISTICALLY before the
       // LLM call. Previously the prompt told the LLM to call graph_find_user
       // and silently fell through to a leader-only invite on failure —
-      // meaning the blocker owner (e.g. Adele) never made it onto the
+      // meaning the blocker owner (e.g. Peyton) never made it onto the
       // calendar invite for their own unblock meeting.
       let ownerUpn: string | null = null;
       if (ownerAad) {

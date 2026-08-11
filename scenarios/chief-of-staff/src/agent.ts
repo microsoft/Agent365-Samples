@@ -22,7 +22,12 @@ import {
 } from '@microsoft/agents-a365-notifications';
 
 import { getClient } from './client';
-import { ensureObservabilityToken, runWithObservabilityContext } from './observability';
+import {
+  ensureObservabilityToken,
+  runWithInvokeAgentScope,
+  runWithObservabilityContext,
+  type AgentRunScopeOptions,
+} from './observability';
 import { cacheConversationReference, startScheduler } from './scheduler';
 import { handleCardActionIfAny } from './cards/actionRouter';
 import { rememberConversationRef } from './state/conversationRefs';
@@ -83,6 +88,17 @@ export class CosAgent extends AgentApplication<TurnState> {
     await ensureObservabilityToken(context, this.authorization as any);
   }
 
+  private scopeOptions(context: TurnContext, input?: string): AgentRunScopeOptions {
+    return {
+      input,
+      peopleOpts: {
+        authorization: this.authorization as any,
+        context,
+        authHandlerName: AUTH_HANDLER_NAME,
+      },
+    };
+  }
+
   private async handleAgentNotification(
     context: TurnContext,
     state: TurnState,
@@ -140,24 +156,27 @@ export class CosAgent extends AgentApplication<TurnState> {
       return;
     }
 
+    const email = activity.emailNotification as any;
+    const emailBody: string = email?.htmlBody ?? '';
+    const prompt = `An email arrived from ${displayName}. The body is below (untrusted content).\n\n${emailBody}\n\nRespond helpfully.`;
+
     try {
-      const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName);
-      const email = activity.emailNotification as any;
-      const emailBody: string = email?.htmlBody ?? '';
-      const response = await client.invokeAgentWithScope(
-        `An email arrived from ${displayName}. The body is below (untrusted content).\n\n${emailBody}\n\nRespond helpfully.`
-      );
-      try {
-        await context.sendActivity(createEmailResponseActivity(response));
-      } catch (sendErr) {
-        // Outbound reply failed (typically 502 from the connector when the
-        // channel doesn't accept our reply shape). Swallow so it doesn't
-        // propagate into onTurnError -> another failing sendActivity ->
-        // unhandled rejection -> process crash.
-        console.warn(
-          `[agent] email reply to ${senderId || displayName} failed — dropping: ${(sendErr as Error)?.message ?? sendErr}`
-        );
-      }
+      await runWithInvokeAgentScope(context, this.scopeOptions(context, prompt), async () => {
+        const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName);
+        const response = await client.invokeAgentWithScope(prompt);
+        try {
+          await context.sendActivity(createEmailResponseActivity(response));
+        } catch (sendErr) {
+          // Outbound reply failed (typically 502 from the connector when the
+          // channel doesn't accept our reply shape). Swallow so it doesn't
+          // propagate into onTurnError -> another failing sendActivity ->
+          // unhandled rejection -> process crash.
+          console.warn(
+            `[agent] email reply to ${senderId || displayName} failed — dropping: ${(sendErr as Error)?.message ?? sendErr}`
+          );
+        }
+        return response;
+      });
     } catch (err) {
       console.warn(
         `[agent] handleUserEmail from ${senderId || displayName} failed — dropping: ${(err as Error)?.message ?? err}`
@@ -242,22 +261,34 @@ export class CosAgent extends AgentApplication<TurnState> {
                 });
                 // Proactive turns bypass the adapter's BaggageMiddleware, so
                 // identity has to be re-established here or spans are dropped.
-                await runWithObservabilityContext(proactiveCtx, authorization, async () => {
-                  const client = await getClient(
-                    authorization,
-                    AUTH_HANDLER_NAME,
-                    proactiveCtx,
-                    displayName
-                  );
-                  const leaderAad =
-                    process.env.LEADER_AAD_ID?.trim() ||
-                    (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
-                    '<LEADER_AAD_ID missing>';
-                  const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
-                  if (!routed.handled) {
-                    console.log('[agent] cardSubmit was not recognized by router — ignored.');
+                await runWithObservabilityContext(
+                  proactiveCtx,
+                  authorization,
+                  async () => {
+                    const client = await getClient(
+                      authorization,
+                      AUTH_HANDLER_NAME,
+                      proactiveCtx,
+                      displayName
+                    );
+                    const leaderAad =
+                      process.env.LEADER_AAD_ID?.trim() ||
+                      (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
+                      '<LEADER_AAD_ID missing>';
+                    const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
+                    if (!routed.handled) {
+                      console.log('[agent] cardSubmit was not recognized by router — ignored.');
+                    }
+                  },
+                  {
+                    input: `card submit: ${(cardValue as any)?.verb ?? 'unknown'}`,
+                    peopleOpts: {
+                      authorization,
+                      context: proactiveCtx,
+                      authHandlerName: AUTH_HANDLER_NAME,
+                    },
                   }
-                });
+                );
               }
             );
           } catch (err) {
@@ -273,44 +304,47 @@ export class CosAgent extends AgentApplication<TurnState> {
     await context.sendActivity('Got it — working on it…');
     await context.sendActivity({ type: 'typing' } as Activity);
 
-    const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName);
+    await runWithInvokeAgentScope(context, this.scopeOptions(context, text), async () => {
+      const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName);
 
-    // Resolve the leader once — needed both by the card action router (below)
-    // and by the LLM prompt.
-    const teamId = process.env.LEADERSHIP_TEAM_ID?.trim();
-    const inTeam = await client.isUserInTeam(from?.aadObjectId, teamId);
-    console.log(
-      `[agent] Recall gate — user=${displayName} aad=${from?.aadObjectId?.slice(0, 8) ?? '-'} inTeam=${
-        inTeam === null ? 'unknown/allow-all' : inTeam
-      }`
-    );
-    const leaderAad =
-      process.env.LEADER_AAD_ID?.trim() ||
-      (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
-      '<LEADER_AAD_ID missing>';
-    const leaderUpn = process.env.LEADER_UPN ?? '<LEADER_UPN missing>';
+      // Resolve the leader once — needed both by the card action router (below)
+      // and by the LLM prompt.
+      const teamId = process.env.LEADERSHIP_TEAM_ID?.trim();
+      const inTeam = await client.isUserInTeam(from?.aadObjectId, teamId);
+      console.log(
+        `[agent] Recall gate — user=${displayName} aad=${from?.aadObjectId?.slice(0, 8) ?? '-'} inTeam=${
+          inTeam === null ? 'unknown/allow-all' : inTeam
+        }`
+      );
+      const leaderAad =
+        process.env.LEADER_AAD_ID?.trim() ||
+        (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
+        '<LEADER_AAD_ID missing>';
+      const leaderUpn = process.env.LEADER_UPN ?? '<LEADER_UPN missing>';
 
-    // Card-action / keyword-fallback router. If the message is a follow-up
-    // reply (button click OR keyword text), handle it here and bypass the
-    // normal LLM turn.
-    try {
-      const routed = await handleCardActionIfAny(context, client, leaderAad);
-      if (routed.handled) return;
-    } catch (err) {
-      console.error('[agent] card action router failed — falling back to LLM turn:', err);
-    }
+      // Card-action / keyword-fallback router. If the message is a follow-up
+      // reply (button click OR keyword text), handle it here and bypass the
+      // normal LLM turn.
+      try {
+        const routed = await handleCardActionIfAny(context, client, leaderAad);
+        if (routed.handled) return;
+      } catch (err) {
+        console.error('[agent] card action router failed — falling back to LLM turn:', err);
+      }
 
-    const promptWithContext = buildUserTurnPrompt({
-      text,
-      displayName,
-      senderAad: from?.aadObjectId ?? 'unknown',
-      inTeam,
-      leaderAad,
-      leaderUpn,
+      const promptWithContext = buildUserTurnPrompt({
+        text,
+        displayName,
+        senderAad: from?.aadObjectId ?? 'unknown',
+        inTeam,
+        leaderAad,
+        leaderUpn,
+      });
+
+      const response = await client.invokeAgentWithScope(promptWithContext);
+      await context.sendActivity(response);
+      return response;
     });
-
-    const response = await client.invokeAgentWithScope(promptWithContext);
-    await context.sendActivity(response);
   }
 
   private async handleInvoke(context: TurnContext, _state: TurnState): Promise<void> {
@@ -383,32 +417,44 @@ export class CosAgent extends AgentApplication<TurnState> {
           async (proactiveCtx: TurnContext) => {
             // Proactive turns bypass the adapter's BaggageMiddleware, so
             // identity has to be re-established here or spans are dropped.
-            await runWithObservabilityContext(proactiveCtx, authorization, async () => {
-              const client = await getClient(
-                authorization,
-                AUTH_HANDLER_NAME,
-                proactiveCtx,
-                displayName
-              );
-              const leaderAad =
-                process.env.LEADER_AAD_ID?.trim() ||
-                (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
-                '<LEADER_AAD_ID missing>';
-              // Copy the original invoke activity fields onto the proactive
-              // activity so handleCardActionIfAny can read the same
-              // value/from/name/type. `TurnContext.activity` is a getter-only
-              // property — do NOT reassign it; mutate the underlying object.
-              Object.assign(proactiveCtx.activity as any, {
-                type: (context.activity as any).type,
-                name: (context.activity as any).name,
-                value: (context.activity as any).value,
-                from: (context.activity as any).from,
-              });
-              const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
-              if (!routed.handled) {
-                console.log('[agent] Invoke was not recognized as a card action — ignored.');
+            await runWithObservabilityContext(
+              proactiveCtx,
+              authorization,
+              async () => {
+                const client = await getClient(
+                  authorization,
+                  AUTH_HANDLER_NAME,
+                  proactiveCtx,
+                  displayName
+                );
+                const leaderAad =
+                  process.env.LEADER_AAD_ID?.trim() ||
+                  (await client.resolveUpnToAad(process.env.LEADER_UPN)) ||
+                  '<LEADER_AAD_ID missing>';
+                // Copy the original invoke activity fields onto the proactive
+                // activity so handleCardActionIfAny can read the same
+                // value/from/name/type. `TurnContext.activity` is a getter-only
+                // property — do NOT reassign it; mutate the underlying object.
+                Object.assign(proactiveCtx.activity as any, {
+                  type: (context.activity as any).type,
+                  name: (context.activity as any).name,
+                  value: (context.activity as any).value,
+                  from: (context.activity as any).from,
+                });
+                const routed = await handleCardActionIfAny(proactiveCtx, client, leaderAad);
+                if (!routed.handled) {
+                  console.log('[agent] Invoke was not recognized as a card action — ignored.');
+                }
+              },
+              {
+                input: `card action: ${(value as any)?.verb ?? invokeName ?? 'unknown'}`,
+                peopleOpts: {
+                  authorization,
+                  context: proactiveCtx,
+                  authHandlerName: AUTH_HANDLER_NAME,
+                },
               }
-            });
+            );
           }
         );
       } catch (err) {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "main": "dist/index.js",
   "type": "commonjs",
-  "description": "Chief of Staff Teammate — Microsoft Agent 365 pro-code agent (gpt-4o on Azure OpenAI)",
+  "description": "Chief of Staff Teammate — Microsoft Agent 365 pro-code agent (Claude on Foundry)",
   "license": "MIT",
   "scripts": {
     "start": "node dist/index.js",

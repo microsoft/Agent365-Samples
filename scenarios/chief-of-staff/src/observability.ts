@@ -14,11 +14,16 @@
 // exporter ("N spans skipped"), so export succeeds while Activity stays empty.
 
 import type { Authorization, TurnContext } from '@microsoft/agents-hosting';
+import { randomUUID } from 'node:crypto';
 import {
   BaggageBuilder,
+  ExecuteToolScope,
+  InvokeAgentScope,
   type AgentDetails,
+  type CallerDetails,
   type Channel,
   type Request,
+  type ToolCallDetails,
   type UserDetails,
 } from '@microsoft/agents-a365-observability';
 import {
@@ -197,17 +202,180 @@ export async function ensureObservabilityToken(
  * the hosting middleware applies to inbound `/api/messages` turns. Without
  * this, spans from continueConversation and cron paths have no identity and
  * the exporter discards them.
+ *
+ * Pass `scopeOptions` to also open the `invoke_agent` root span for the run.
  */
 export async function runWithObservabilityContext<T>(
   context: TurnContext,
   authorization: Authorization,
-  work: () => Promise<T>
+  work: () => Promise<T>,
+  scopeOptions?: AgentRunScopeOptions
 ): Promise<T> {
   await ensureObservabilityToken(context, authorization);
   const scope = BaggageBuilderUtils.fromTurnContext(new BaggageBuilder(), context).build();
   try {
-    return await scope.run(work);
+    return await scope.run(() =>
+      scopeOptions ? runWithInvokeAgentScope(context, scopeOptions, work) : work()
+    );
   } finally {
     scope.dispose();
   }
+}
+
+export interface AgentRunScopeOptions {
+  /** Trigger text recorded as `gen_ai.input.messages` on the invoke_agent span. */
+  input?: string;
+  /** Groups every span emitted by one logical run. */
+  sessionId?: string;
+  /**
+   * False for cron/poller-driven runs. Suppresses `user.id` so an autonomous
+   * run never reports the cached inbound caller as the human who ran it.
+   */
+  humanInitiated?: boolean;
+  peopleOpts?: PeopleToolOptions;
+}
+
+/**
+ * Open the `invoke_agent` root span for one turn. MAC Activity groups a run by
+ * this span; the `chat` and `execute_tool` spans raised inside `work` become
+ * its children through the active OTel context.
+ *
+ * Runs untraced when the runtime agent identity can't be resolved — same guard
+ * as `buildAgentDetails`, since a span the backend can't bind is dropped anyway.
+ */
+export async function runWithInvokeAgentScope<T>(
+  context: TurnContext,
+  options: AgentRunScopeOptions,
+  work: () => Promise<T>
+): Promise<T> {
+  const agentDetails = buildAgentDetails(context);
+  if (!agentDetails) {
+    console.warn(
+      '[observability] no runtime agent identity (recipient.agenticAppId) or tenant on this turn — running without an invoke_agent span.'
+    );
+    return work();
+  }
+
+  const request = buildRequest(context, { sessionId: options.sessionId });
+  const userDetails = await resolveCaller(context, options);
+  const callerDetails: CallerDetails | undefined = userDetails ? { userDetails } : undefined;
+
+  const scope = InvokeAgentScope.start(request, {}, agentDetails, callerDetails);
+  try {
+    return await scope.withActiveSpanAsync(async () => {
+      if (options.input) scope.recordInputMessages([options.input]);
+      try {
+        const result = await work();
+        if (typeof result === 'string') scope.recordOutputMessages([result]);
+        return result;
+      } catch (err) {
+        scope.recordError(err as Error);
+        throw err;
+      }
+    });
+  } finally {
+    scope.dispose();
+  }
+}
+
+/**
+ * Open an `execute_tool` span around a single tool call. Without this the
+ * `gen_ai.tool.*` attributes MAC needs for tool reporting are never emitted.
+ */
+export async function withToolScope<T>(
+  context: TurnContext,
+  details: ToolCallDetails,
+  options: AgentRunScopeOptions,
+  work: () => Promise<T>
+): Promise<T> {
+  const agentDetails = buildAgentDetails(context);
+  if (!agentDetails) return work();
+
+  const request = buildRequest(context, { sessionId: options.sessionId });
+  const userDetails = await resolveCaller(context, options);
+  const scope = ExecuteToolScope.start(
+    request,
+    { toolCallId: randomUUID(), ...details },
+    agentDetails,
+    userDetails
+  );
+  try {
+    return await scope.withActiveSpanAsync(async () => {
+      try {
+        const result = await work();
+        scope.recordResponse(typeof result === 'string' ? result : JSON.stringify(result ?? null));
+        return result;
+      } catch (err) {
+        scope.recordError(err as Error);
+        throw err;
+      }
+    });
+  } finally {
+    scope.dispose();
+  }
+}
+
+interface InvokableTool {
+  name?: string;
+  invoke?: unknown;
+}
+
+/**
+ * Return copies of the agent's function tools whose `invoke` is wrapped in an
+ * `execute_tool` span. Non-invokable entries pass through untouched.
+ */
+export function instrumentTools<T extends InvokableTool>(
+  tools: T[],
+  context: TurnContext,
+  options: AgentRunScopeOptions = {}
+): T[] {
+  return tools.map((toolDef) => {
+    const original = toolDef.invoke;
+    if (typeof original !== 'function') return toolDef;
+    const invoke = (runContext: unknown, input: string, details?: unknown) =>
+      withToolScope(
+        context,
+        { toolName: toolDef.name ?? 'tool', toolType: 'function', arguments: input },
+        options,
+        () => (original as Function).call(toolDef, runContext, input, details)
+      );
+    return { ...toolDef, invoke };
+  });
+}
+
+/**
+ * Patch `callTool` on each attached MCP server so WorkIQ tool calls emit
+ * `execute_tool` spans too. The SDK dispatches these internally, so there is no
+ * `invoke` to wrap — mutation in place is the only boundary available.
+ */
+export function instrumentMcpServers(
+  servers: unknown[],
+  context: TurnContext,
+  options: AgentRunScopeOptions = {}
+): void {
+  for (const server of servers as any[]) {
+    if (typeof server?.callTool !== 'function' || server.__a365ToolScope) continue;
+    const original = server.callTool.bind(server);
+    server.callTool = (toolName: string, args: Record<string, unknown> | null) =>
+      withToolScope(
+        context,
+        {
+          toolName,
+          toolType: 'mcp',
+          description: typeof server.name === 'string' ? server.name : undefined,
+          arguments: args ?? undefined,
+        },
+        options,
+        () => original(toolName, args)
+      );
+    server.__a365ToolScope = true;
+  }
+}
+
+function resolveCaller(
+  context: TurnContext,
+  options: AgentRunScopeOptions
+): Promise<UserDetails | undefined> {
+  if (options.humanInitiated === false) return Promise.resolve(undefined);
+  return buildUserDetails(context, options.peopleOpts);
 }

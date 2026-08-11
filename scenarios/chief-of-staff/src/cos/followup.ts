@@ -96,7 +96,7 @@ async function resolveDisplayName(token: string, aad: string): Promise<string | 
  *      FOLLOWUP_COOLDOWN_HOURS (default 4)
  *
  * IMPORTANT: cooldowns are per-owner. If the task was reassigned (e.g.
- * Alex clicked "On track" and then the leader reassigned to Adele),
+ * Mario clicked "On track" and then the leader reassigned to Peyton),
  * the NEW owner deserves a fresh check-in — the old cooldown doesn't
  * apply to them.
  *

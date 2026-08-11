@@ -83,14 +83,7 @@ export async function discoverQualifyingMeetings(
     );
 
     const res = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        // Force Graph to return start/end times as UTC. Without this header the
-        // response uses the mailbox owner's default TZ, which breaks the naive
-        // `Date.parse(ev.end.dateTime + 'Z')` parsing below (would silently
-        // compute the wrong endMs, wrong giveUpAfter, wrong "ended already").
-        Prefer: 'outlook.timezone="UTC"',
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     const events = (res.data?.value ?? []) as any[];
@@ -185,6 +178,7 @@ export async function discoverQualifyingMeetings(
         eventId: String(ev.id),
         meetingId,
         subject,
+        organizerAad: ev.organizer?.emailAddress?.address ? undefined : undefined, // resolved elsewhere if needed
         organizerUpn: organizerAddr,
         endTime: endMs,
         durationMinutes: isFinite(startMs)
