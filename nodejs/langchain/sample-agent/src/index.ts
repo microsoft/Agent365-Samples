@@ -20,6 +20,9 @@ useMicrosoftOpenTelemetry({
   enableConsoleExporters,
   a365: {
     enabled: true,
+    // Registers the Agent365Exporter. Without this (or ENABLE_A365_OBSERVABILITY_EXPORTER=true)
+    // spans are enriched but never sent, so MAC Activity stays empty.
+    enableObservabilityExporter: true,
     // When Use_Custom_Resolver is true the sample populates a local token cache;
     // otherwise agent.ts refreshes tokens into AgenticTokenCacheInstance.
     tokenResolver: process.env.Use_Custom_Resolver === 'true'

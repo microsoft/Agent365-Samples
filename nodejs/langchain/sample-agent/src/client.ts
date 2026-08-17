@@ -13,13 +13,13 @@ import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 import {
   InferenceScope,
   InferenceOperationType,
-  AgentDetails,
   InferenceDetails,
   A365Request,
 } from '@microsoft/opentelemetry';
+import { buildAgentDetails, resolveChannelName } from './observability';
 
 export interface Client {
-  invokeInferenceScope(prompt: string): Promise<string>;
+  invokeInferenceScope(prompt: string, channelName?: string): Promise<string>;
 }
 
 // Observability is initialized by the Microsoft OpenTelemetry distro in index.ts.
@@ -28,6 +28,13 @@ export interface Client {
 const toolService = new McpToolRegistrationService();
 
 const agentName = "LangChainA365Agent";
+
+/** Mirrors createChatModel()'s branch so the span provider matches the client actually used. */
+function getProviderName(): string {
+  return process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT
+    ? 'azure.ai.openai'
+    : 'openai';
+}
 
 /**
  * Creates the appropriate chat model based on available environment variables.
@@ -219,23 +226,28 @@ class LangChainClient implements Client {
     return { content, inputTokens, outputTokens, finishReason };
   }
 
-  async invokeInferenceScope(prompt: string) {
+  async invokeInferenceScope(prompt: string, channelName?: string) {
+    const agentDetails = buildAgentDetails(this.turnContext);
+
+    // Without a real agent identity the exporter cannot authenticate the span, so run
+    // untraced rather than emitting one under a synthetic id.
+    if (!agentDetails) {
+      const untraced = await this.invokeAgent(prompt);
+      return untraced.content;
+    }
+
     // Mirror createChatModel()'s defaults so the manual InferenceScope records
     // the same model identifier the underlying client actually uses.
     const modelName = process.env.AZURE_OPENAI_DEPLOYMENT || process.env.OPENAI_MODEL || 'gpt-4o';
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: modelName,
+      providerName: getProviderName(),
     };
 
     const request: A365Request = {
       conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
-    };
-
-    const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
-      agentName: agentName,
-      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
+      channel: { name: resolveChannelName(this.turnContext, channelName) },
     };
 
     let response = '';

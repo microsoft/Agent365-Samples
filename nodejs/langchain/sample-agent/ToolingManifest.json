@@ -5,7 +5,7 @@
       "mcpServerUniqueName": "mcp_MailTools",
       "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
       "scope": "McpServers.Mail.All",
-      "audience": "ea9ffc3e-8a23-4a7d-836d-234d7c7565c1"
+      "audience": "16b1878d-62c7-4009-aa25-68989d63bbad"
     }
   ]
 }

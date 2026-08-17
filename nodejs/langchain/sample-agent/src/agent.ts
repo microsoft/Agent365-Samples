@@ -8,10 +8,14 @@ import { Activity, ActivityTypes } from '@microsoft/agents-activity';
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 // Observability Imports
-import { BaggageBuilder, AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/opentelemetry';
+import { BaggageBuilder, AgenticTokenCacheInstance, BaggageBuilderUtils, InvokeAgentScope } from '@microsoft/opentelemetry';
+import type { A365Request, CallerDetails, InvokeAgentScopeDetails } from '@microsoft/opentelemetry';
 import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
+import { buildAgentDetails, resolveChannelName } from './observability';
 import { Client, getClient } from './client';
+
+const EMAIL_CHANNEL_NAME = 'outlook';
 
 export class A365Agent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -49,6 +53,8 @@ export class A365Agent extends AgentApplication<TurnState> {
 
     const from = turnContext.activity?.from;
     console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
+    // This is the id MAC/Defender reporting groups on — not the blueprint id stamped into .env.
+    console.log(`Runtime agent identity for this turn — agenticAppId: '${(turnContext.activity?.recipient as any)?.agenticAppId ?? "(none)"}'`);
     const displayName = from?.name ?? 'unknown';
 
     if (!userMessage) {
@@ -75,31 +81,94 @@ export class A365Agent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
+    try {
+      await this.runTraced(turnContext, userMessage, async (scope) => {
+        scope?.recordInputMessages([userMessage]);
+        const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, turnContext, displayName);
+        const response = await client.invokeInferenceScope(userMessage);
+        scope?.recordOutputMessages([response]);
+        await turnContext.sendActivity(response);
+      });
+    } catch (error) {
+      console.error('LLM query error:', error);
+      const err = error as any;
+      await turnContext.sendActivity(`Error: ${err.message || err}`);
+    } finally {
+      stopTypingLoop();
+    }
+  }
+
+  /**
+   * Runs `work` under the full A365 trace context: refreshed exporter token, turn baggage,
+   * and a root `invoke_agent` scope. Every path that calls the LLM must go through this,
+   * otherwise its spans have no identity group and are dropped before export.
+   */
+  private async runTraced<T>(
+    turnContext: TurnContext,
+    inputText: string,
+    work: (scope: InvokeAgentScope | null) => Promise<T>,
+    channelName?: string
+  ): Promise<T> {
+    await this.preloadObservabilityToken(turnContext);
+
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
       turnContext as any
     ).sessionDescription('Initial onboarding session')
+      .channelName(resolveChannelName(turnContext, channelName))
       .build();
 
-    // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
-
     try {
-      await baggageScope.run(async () => {
+      return await baggageScope.run(async () => {
+        const scope = this.startInvokeAgentScope(turnContext, inputText, channelName);
         try {
-          const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, turnContext, displayName);
-          const response = await client.invokeInferenceScope(userMessage);
-          await turnContext.sendActivity(response);
+          return scope ? await scope.withActiveSpanAsync(() => work(scope)) : await work(null);
         } catch (error) {
-          console.error('LLM query error:', error);
-          const err = error as any;
-          await turnContext.sendActivity(`Error: ${err.message || err}`);
+          scope?.recordError(error as Error);
+          throw error;
+        } finally {
+          scope?.dispose();
         }
       });
     } finally {
-      stopTypingLoop();
       baggageScope.dispose();
     }
+  }
+
+  /**
+   * Opens the root `invoke_agent` scope for the turn.
+   * Returns null when the turn carries no real agent identity — a synthetic id would
+   * produce spans the exporter cannot authenticate, so the turn runs untraced instead.
+   */
+  private startInvokeAgentScope(turnContext: TurnContext, userMessage: string, channelName?: string): InvokeAgentScope | null {
+    const agentDetails = buildAgentDetails(turnContext);
+    if (!agentDetails) {
+      return null;
+    }
+
+    const request: A365Request = {
+      content: userMessage,
+      conversationId: turnContext.activity?.conversation?.id,
+      channel: { name: resolveChannelName(turnContext, channelName) },
+    };
+
+    const from = turnContext.activity?.from;
+    const callerDetails: CallerDetails = {
+      userDetails: {
+        userId: from?.aadObjectId || from?.id || '',
+        userName: from?.name || '',
+        tenantId: agentDetails.tenantId,
+      },
+    };
+
+    const scopeDetails: InvokeAgentScopeDetails = {
+      endpoint: {
+        host: process.env.WEBSITE_HOSTNAME || 'localhost',
+        port: Number(process.env.PORT) || 3978,
+      },
+    };
+
+    return InvokeAgentScope.start(request, scopeDetails, agentDetails, callerDetails);
   }
 
     /**
@@ -145,22 +214,28 @@ export class A365Agent extends AgentApplication<TurnState> {
       return;
     }
 
+    const retrievePrompt =
+      `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
+      `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`;
+
     try {
-      const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, context);
+      await this.runTraced(context, retrievePrompt, async (scope) => {
+        scope?.recordInputMessages([retrievePrompt]);
+        const client: Client = await getClient(this.authorization, A365Agent.authHandlerName, context);
 
-      // First, retrieve the email content
-      const emailContent = await client.invokeInferenceScope(
-        `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
-        `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`
-      );
+        // First, retrieve the email content
+        const emailContent = await client.invokeInferenceScope(retrievePrompt, EMAIL_CHANNEL_NAME);
 
-      // Then process the email
-      const response = await client.invokeInferenceScope(
-        `You have received the following email. Please follow any instructions in it. ${emailContent}`
-      );
+        // Then process the email
+        const response = await client.invokeInferenceScope(
+          `You have received the following email. Please follow any instructions in it. ${emailContent}`,
+          EMAIL_CHANNEL_NAME
+        );
 
-      const emailResponseActivity = createEmailResponseActivity(response || 'I have processed your email but do not have a response at this time.');
-      await context.sendActivity(emailResponseActivity);
+        const finalResponse = response || 'I have processed your email but do not have a response at this time.';
+        scope?.recordOutputMessages([finalResponse]);
+        await context.sendActivity(createEmailResponseActivity(finalResponse));
+      }, EMAIL_CHANNEL_NAME);
     } catch (error) {
       console.error('Email notification error:', error);
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
