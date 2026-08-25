@@ -1,0 +1,47 @@
+[
+    {
+        "type": "story",
+        "summary": "As a user I can view the employee directory",
+        "description": "The directory is the landing page: a searchable, paginated grid of employees showing photo, name, title, department.",
+        "assigneeKey": "alice",
+        "storyPoints": 8,
+        "labels": ["frontend", "directory"],
+        "subtasks": [
+            {
+                "summary": "UI: employee list grid",
+                "assigneeKey": "bob",
+                "storyPoints": 3
+            },
+            {
+                "summary": "API: GET /employees with pagination",
+                "assigneeKey": "charlie",
+                "storyPoints": 3
+            },
+            {
+                "summary": "Accessibility pass on the grid",
+                "assigneeKey": "dana",
+                "storyPoints": 2
+            }
+        ]
+    },
+    {
+        "type": "story",
+        "summary": "As a user I can view an employee's profile",
+        "description": "Clicking a card in the directory opens a full profile view with contact info, reporting chain, and recent activity.",
+        "assigneeKey": "bob",
+        "storyPoints": 5,
+        "labels": ["frontend", "profile"],
+        "subtasks": [
+            {
+                "summary": "UI: profile page layout",
+                "assigneeKey": "bob",
+                "storyPoints": 3
+            },
+            {
+                "summary": "API: GET /employees/:id",
+                "assigneeKey": "charlie",
+                "storyPoints": 2
+            }
+        ]
+    }
+]
