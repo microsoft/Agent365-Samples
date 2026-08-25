@@ -13,13 +13,13 @@ import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 import {
   InferenceScope,
   InferenceOperationType,
-  AgentDetails,
   InferenceDetails,
   A365Request,
 } from '@microsoft/opentelemetry';
+import { buildAgentDetails, resolveChannelName } from './observability';
 
 export interface Client {
-  invokeInferenceScope(prompt: string): Promise<string>;
+  invokeInferenceScope(prompt: string, channelName?: string): Promise<string>;
 }
 
 // Observability is initialized by the Microsoft OpenTelemetry distro in index.ts.
@@ -29,6 +29,13 @@ const toolService = new McpToolRegistrationService();
 
 const agentName = "LangChainA365Agent";
 
+/** Mirrors createChatModel()'s branch so the span provider matches the client actually used. */
+function getProviderName(): string {
+  return process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT
+    ? 'azure.ai.openai'
+    : 'openai';
+}
+
 /**
  * Creates the appropriate chat model based on available environment variables.
  * Supports both Azure OpenAI and regular OpenAI.
@@ -36,8 +43,28 @@ const agentName = "LangChainA365Agent";
 function createChatModel(): BaseChatModel {
   // Check for Azure OpenAI configuration first
   if (process.env.AZURE_OPENAI_API_KEY && process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_DEPLOYMENT) {
+    let endpoint = process.env.AZURE_OPENAI_ENDPOINT;
+
+    // Azure AI Foundry endpoints use a /v1 path and are OpenAI-compatible.
+    // They do not accept the api-version query parameter, so use ChatOpenAI
+    // with a custom baseURL instead of AzureChatOpenAI.
+    if (endpoint.includes('/v1')) {
+      console.log('Using Azure AI Foundry OpenAI-compatible endpoint');
+      const baseURL = endpoint.substring(0, endpoint.indexOf('/v1') + 3);
+      return new ChatOpenAI({
+        openAIApiKey: process.env.AZURE_OPENAI_API_KEY,
+        modelName: process.env.AZURE_OPENAI_DEPLOYMENT,
+        temperature: 0,
+        configuration: {
+          baseURL,
+          apiKey: process.env.AZURE_OPENAI_API_KEY,
+          defaultHeaders: { 'api-key': process.env.AZURE_OPENAI_API_KEY },
+        },
+      });
+    }
+
     console.log('Using Azure OpenAI');
-    const endpoint = process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '');
+    endpoint = process.env.AZURE_OPENAI_ENDPOINT.replace(/\/$/, '');
     const deployment = process.env.AZURE_OPENAI_DEPLOYMENT;
     const apiVersion = process.env.AZURE_OPENAI_API_VERSION || "2025-03-01-preview";
     return new AzureChatOpenAI({
@@ -199,23 +226,28 @@ class LangChainClient implements Client {
     return { content, inputTokens, outputTokens, finishReason };
   }
 
-  async invokeInferenceScope(prompt: string) {
+  async invokeInferenceScope(prompt: string, channelName?: string) {
+    const agentDetails = buildAgentDetails(this.turnContext);
+
+    // Without a real agent identity the exporter cannot authenticate the span, so run
+    // untraced rather than emitting one under a synthetic id.
+    if (!agentDetails) {
+      const untraced = await this.invokeAgent(prompt);
+      return untraced.content;
+    }
+
     // Mirror createChatModel()'s defaults so the manual InferenceScope records
     // the same model identifier the underlying client actually uses.
     const modelName = process.env.AZURE_OPENAI_DEPLOYMENT || process.env.OPENAI_MODEL || 'gpt-4o';
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: modelName,
+      providerName: getProviderName(),
     };
 
     const request: A365Request = {
       conversationId: this.turnContext?.activity?.conversation?.id || `conv-${Date.now()}`,
-    };
-
-    const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
-      agentName: agentName,
-      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
+      channel: { name: resolveChannelName(this.turnContext, channelName) },
     };
 
     let response = '';
