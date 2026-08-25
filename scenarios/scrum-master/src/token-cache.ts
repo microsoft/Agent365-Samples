@@ -26,19 +26,16 @@ export const tokenResolver = (agentId: string, tenantId: string): string | null 
 };
 
 /**
- * Simple custom in-memory token cache with expiration handling
- * In production, use a more robust caching solution like Redis
+ * Simple in-memory token cache — no TTL, no eviction. The sample relies on the SDK
+ * calling `preloadObservabilityToken` on every turn to refresh entries; production
+ * deployments should replace this with a TTL-aware store (Redis, App Service secrets
+ * cache, etc.).
  */
 class TokenCache {
   private cache = new Map<string, string>();
 
-  /**
-   * Store a token with expiration
-   */
   set(key: string, token: string): void {
-
     this.cache.set(key, token);
-
     console.log(`🔐 Token cached for key: ${key}`);
   }
 

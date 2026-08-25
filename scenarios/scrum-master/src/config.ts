@@ -117,9 +117,11 @@ export interface WarnConfig {
 }
 
 export function getWarnConfig(): WarnConfig {
+    // Use numeric() so non-numeric env values fall back to defaults instead of silently
+    // producing NaN (which would make every risk comparison return false).
     return {
-        todoPct: Number(optional('WARN_TODO_PCT', '0.40')),
-        sprintProgressPct: Number(optional('WARN_SPRINT_PROGRESS_PCT', '0.50')),
+        todoPct: numeric('WARN_TODO_PCT', 0.40),
+        sprintProgressPct: numeric('WARN_SPRINT_PROGRESS_PCT', 0.50),
     };
 }
 

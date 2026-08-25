@@ -1,6 +1,6 @@
 # Scrum Master Assistant — Azure Functions
 
-Two timer-triggered functions that drive the SMA scheduled ceremonies. The agent process (in [`../openai/sample-agent`](../openai/sample-agent)) owns all state, tokens, and Adaptive Card logic — these functions only *nudge* it via HTTP.
+Two timer-triggered functions that drive the SMA scheduled ceremonies. The agent process (in [`..`](..) — the parent `scenarios/scrum-master/` folder) owns all state, tokens, and Adaptive Card logic — these functions only *nudge* it via HTTP.
 
 | Function | NCRONTAB | Local time | Calls |
 |---|---|---|---|
@@ -21,7 +21,7 @@ The agent runs Express on `:3978` behind a dev tunnel (dev) or App Service / Con
 - [Azure Functions Core Tools v4](https://aka.ms/azfunc-install) — `func --version` should print `4.x.x`.
 - Azure CLI — `az --version`.
 - An Azure subscription + resource group.
-- The agent already running somewhere reachable — either a dev tunnel URL, App Service, or Container Apps endpoint that exposes `/api/internal/*` from [`../openai/sample-agent`](../openai/sample-agent).
+- The agent already running somewhere reachable — either a dev tunnel URL, App Service, or Container Apps endpoint that exposes `/api/internal/*` from [`..`](..) (the parent `scenarios/scrum-master/` folder).
 
 ## Local dev
 

@@ -105,8 +105,9 @@ export async function findByTitle<T extends object>(
 ): Promise<ListItem<T> | null> {
     const siteId = await getSiteId();
     const graph = getGraphClient();
+    const filter = `fields/Title eq '${escapeODataString(title)}'`;
     const res = await graph
-        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=fields/Title eq '${escapeODataString(title)}'`)
+        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=${encodeURIComponent(filter)}`)
         .header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly')
         .get();
     const items = res.value ?? [];
@@ -121,8 +122,9 @@ export async function findByField<T extends object>(
 ): Promise<ListItem<T>[]> {
     const siteId = await getSiteId();
     const graph = getGraphClient();
+    const filter = `fields/${fieldName} eq '${escapeODataString(value)}'`;
     const res = await graph
-        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=fields/${fieldName} eq '${escapeODataString(value)}'`)
+        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=${encodeURIComponent(filter)}`)
         .header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly')
         .get();
     return (res.value ?? []).map((v: any) => ({ id: v.id, fields: v.fields }));
@@ -239,11 +241,11 @@ export const LIST_SCHEMAS: Record<ListKey, {
 
 // --- helpers ------------------------------------------------------------
 
+// OData string literal escaping only — double single-quotes for the '' == literal ' rule.
+// Callers must URL-encode the full $filter query value (not just this string) so URL
+// syntax chars like `#`, `?`, `&`, `+` inside the literal survive transport, while spaces
+// stay real spaces inside the OData literal (URL-encoding the value alone would send
+// `%20` and match nothing).
 function escapeODataString(s: string): string {
-    // Two-step: (1) escape single-quote for the OData string literal ('' == literal ')
-    // then (2) URL-encode the result so URL parsers don't treat `#`, `?`, `&`, `+`, etc.
-    // inside our filter value as URL syntax. Our IDs use `#` as a separator (e.g.
-    // `<sprintId>#<yyyy-mm-dd>`), which without encoding gets treated as a URL fragment
-    // and truncates the filter — silently returning zero rows.
-    return encodeURIComponent(s.replace(/'/g, "''"));
+    return s.replace(/'/g, "''");
 }

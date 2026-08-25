@@ -136,9 +136,10 @@ class OpenAIClient implements Client {
       console.error('OpenAI agent error:', error);
       const err = error as any;
       return `Error: ${err.message || err}`;
-    } finally {
-      await this.closeServers();
     }
+    // Intentionally NOT closing MCP servers here. Streamable-HTTP MCP sessions
+    // (see services/calendar.ts) return `-32001 Session not found` when reused
+    // across turns after close(); McpToolRegistrationService owns lifecycle.
   }
 
   async invokeAgentWithScope(prompt: string) {
@@ -184,14 +185,6 @@ class OpenAIClient implements Client {
     if (this.agent.mcpServers && this.agent.mcpServers.length > 0) {
       for (const server of this.agent.mcpServers) {
         await server.connect();
-      }
-    }
-  }
-
-  private async closeServers(): Promise<void> {
-    if (this.agent.mcpServers && this.agent.mcpServers.length > 0) {
-      for (const server of this.agent.mcpServers) {
-        await server.close();
       }
     }
   }
