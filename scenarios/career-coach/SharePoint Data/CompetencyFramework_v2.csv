@@ -1,0 +1,20 @@
+Title,RoleId,RoleTitle,RoleLevel,CompetencyId,CompetencyName,RequiredLevel,LevelDescription,Category
+AI Engineer - Programming,ai-eng,AI Engineer,IC3,programming,Programming & Software Development,3,Writes clean production code in Python and integrates AI systems,Technical
+AI Engineer - AI Engineering,ai-eng,AI Engineer,IC3,ai-engineering,AI Engineering Fundamentals,3,Builds and deploys end-to-end AI/ML pipelines and solutions,AI/ML
+AI Engineer - Generative AI,ai-eng,AI Engineer,IC3,generative-ai,Generative AI Foundations,3,Understands and applies generative AI concepts and LLMs,AI/ML
+AI Engineer - LLM Development,ai-eng,AI Engineer,IC3,llm-development,Large Language Model Development,2,Works with LLMs for practical application development,AI/ML
+AI Engineer - NLP,ai-eng,AI Engineer,IC3,nlp,Natural Language Processing,2,Applies NLP techniques for text and language tasks,AI/ML
+Gen AI Engineer - Generative AI,genai-eng,Generative AI Engineer,IC4,generative-ai,Generative AI Foundations,3,Deep expertise in generative AI models and architectures,AI/ML
+Gen AI Engineer - LLM Development,genai-eng,Generative AI Engineer,IC4,llm-development,Large Language Model Development,4,Advanced LLM fine-tuning integration and optimization,AI/ML
+Gen AI Engineer - Prompt Engineering,genai-eng,Generative AI Engineer,IC4,prompt-engineering,Prompt Engineering,3,Designs effective prompts and AI-driven development workflows,AI/ML
+Gen AI Engineer - Agentic AI,genai-eng,Generative AI Engineer,IC4,agentic-ai,Agentic AI Systems,3,Builds autonomous AI agents and multi-agent systems,AI/ML
+Gen AI Engineer - NLP,genai-eng,Generative AI Engineer,IC4,nlp,Natural Language Processing,3,Advanced NLP for speech text and language understanding,AI/ML
+Product Manager - Product Management,pm,Product Manager,IC3,product-management,Product Management Fundamentals,3,Manages product lifecycle roadmaps and delivery,Product
+Product Manager - Product Strategy,pm,Product Manager,IC3,product-strategy,Product Strategy,3,Defines product vision strategy and market positioning,Product
+Product Manager - Communication,pm,Product Manager,IC3,communication,Communication & Stakeholder Management,4,Communicates with stakeholders leadership and cross-functional teams,Soft Skills
+Product Manager - Customer Research,pm,Product Manager,IC3,customer-research,Customer & Market Research,3,Conducts user research and validates customer needs,Product
+Product Manager - AI for PM,pm,Product Manager,IC3,ai-for-pm,AI for Product Managers,2,Leverages generative AI in product strategy and workflows,AI/ML
+Data Analyst - Data Analysis,data-analyst,Data Analyst,IC2,data-analysis,Data Analysis,3,Analyzes datasets builds dashboards and derives insights,Data
+Data Analyst - Data Science,data-analyst,Data Analyst,IC2,data-science,Data Science Foundations,2,Applies statistical and data science fundamentals,Data
+Data Analyst - Data Tools,data-analyst,Data Analyst,IC2,data-tools,Data Tools & Platforms,2,Uses platforms like Databricks for data processing,Data
+Data Analyst - Communication,data-analyst,Data Analyst,IC2,communication,Communication & Data Storytelling,2,Presents findings and tells stories with data,Soft Skills

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "name": {
+    "short": "Career Coach Blueprint",
+    "full": "Career Coach Sample Blueprint"
+  },
+  "description": {
+    "short": "A private AI career coach that helps employees grow, learn, and advance.",
+    "full": "An AI-powered career coach that provides personalized guidance on skill development, career planning, learning recommendations, and growth paths, helping employees achieve their professional goals and prepare for career conversations."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#9ec9d9",
+  "version": "1.1.7",
+  "manifestVersion": "devPreview",
+  "developer": {
+    "name": "Microsoft Corporation",
+    "mpnId": "",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "agenticUserTemplates": [
+    {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}

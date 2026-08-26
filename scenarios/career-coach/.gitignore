@@ -1,0 +1,38 @@
+# dependencies + build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# TS compile artefacts inside src (only source .ts should be tracked)
+src/**/*.js
+src/**/*.d.ts
+src/**/*.js.map
+
+# env & secrets — never commit
+.env
+.env.local
+.env.*.local
+.mstoken-cache.json
+
+# generated at first `a365` run — contains tenant/agent IDs
+a365.config.json
+a365.generated.config.json
+
+# runtime state + backups
+.proactive-storage.json
+.proactive-refs.json
+.sp-subscription.json
+backups/
+
+# dev logs
+dev.log
+*.log
+
+# packaged Teams app
+manifest/manifest.zip
+
+# agent skills installed via `gh skill add microsoft/agent365-skills` — workspace-local
+.agents/
+.claude/
+.github/copilot-instructions.md
+.github/copilot-instructions.md.bak
