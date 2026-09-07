@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 365 | Third-party connections</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Agent 365</div>
+    <div class="context">Third-party observability</div>
+  </header>
+  <main>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">CONNECTION WORKSPACE</p>
+        <h1>Bring every external agent into view.</h1>
+        <p class="lede">Connect a provider, import its complete agent inventory, and start telemetry synchronization through one workflow.</p>
+      </div>
+      <div class="status-line"><span class="pulse"></span><span id="system-status">Ready for a connection</span></div>
+    </section>
+
+    <section class="workspace">
+      <form id="connect-form" class="connect-panel">
+        <div class="section-heading">
+          <span>01</span>
+          <div><h2>New connection</h2><p>The demo uses deterministic AWS data and the production-shaped runtime contract.</p></div>
+        </div>
+        <label for="provider">Provider</label>
+        <select id="provider" name="provider"><option value="aws">AWS Bedrock AgentCore</option></select>
+        <label for="name">Connection name</label>
+        <input id="name" name="name" value="Contoso AWS production" required maxlength="100">
+        <button type="submit" id="connect-button">Connect and import agents <span aria-hidden="true">→</span></button>
+      </form>
+
+      <div class="result-panel" aria-live="polite">
+        <div class="section-heading">
+          <span>02</span>
+          <div><h2>Import run</h2><p id="run-copy">No run has started.</p></div>
+        </div>
+        <div class="metrics">
+          <div><strong id="connections">0</strong><span>Connections</span></div>
+          <div><strong id="agents">0</strong><span>Registry agents</span></div>
+          <div><strong id="telemetry">0</strong><span>Telemetry records</span></div>
+        </div>
+        <ol id="stages" class="stages">
+          <li data-stage="connect"><i></i><span>Secure provider connection</span></li>
+          <li data-stage="discover"><i></i><span>Discover every provider agent</span></li>
+          <li data-stage="import"><i></i><span>Bulk import into A365 Registry</span></li>
+          <li data-stage="sync"><i></i><span>Sync telemetry to Maven</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="inventory">
+      <div class="section-heading">
+        <span>03</span>
+        <div><h2>Imported inventory</h2><p>Stable observability IDs make repeated imports idempotent.</p></div>
+      </div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Provider agent</th><th>Observability ID</th><th>State</th></tr></thead><tbody id="agent-rows"><tr><td colspan="3" class="empty">Connect AWS to populate the Registry inventory.</td></tr></tbody></table>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

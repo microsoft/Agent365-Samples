@@ -1,0 +1,25 @@
+[project]
+name = "agent365-third-party-connect-sample"
+version = "0.1.0"
+description = "Agent 365 third-party connection, agent import, and telemetry sync sample"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.27.0",
+    "microsoft-agents-a365-runtime>=0.1.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "pytest-asyncio>=0.24.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["third_party_connect_sample"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
