@@ -1,5 +1,42 @@
 # Claude Sample Agent - Python
 
+## OBS S2S authentication (separate from business authentication)
+
+To export to A365, set these dedicated settings in `.env` or deployment secrets.
+Console-only runs may leave `ENABLE_A365_OBSERVABILITY_EXPORTER=false`.
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+Use the actual **agent instance client ID**, never the blueprint, service-principal
+object ID or agent-user ID. The instance needs administrator-authorized OBS
+**application roles**; delegated consent is insufficient. No provisioning or permission
+changes are performed by this sample.
+
+The sample-local `observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint credentials + `fmi_path=agent instance client ID` request T1 for
+`api://AzureADTokenExchange/.default`, then the instance exchanges T1 as its client
+assertion for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both requests use
+`client_credentials`. MCP/Graph/OBO authentication and original caller/agent baggage
+are unchanged; OBS no longer exchanges a delegated turn token.
+
+Missing/placeholder configuration fails at initialization. Export tenant/agent and
+token identity must match the dedicated configuration; `scp` tokens are rejected.
+The OBS-only cache refreshes using real `expires_in`/`exp` with a 60-second margin.
+Token failures raise safe errors, with no stale, empty, delegated or legacy-route
+fallback. For 401/403, check IDs, blueprint credentials and OBS application role
+consent. Never rewrite incoming baggage to bypass an identity mismatch.
+
+Client secrets here are for **development**. Production should use the documented
+certificate/managed-identity blueprint assertion flow through an approved provider;
+that provider is not configured by this client-secret sample.
+
 This directory contains a sample agent implementation using Python and Anthropic's Claude Agent SDK with extended thinking capabilities. This sample demonstrates how to build an agent using the Agent365 framework with Python and Claude Agent SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications

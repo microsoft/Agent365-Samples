@@ -10,8 +10,6 @@ import { AgentNotificationActivity, NotificationType, createEmailResponseActivit
 
 // Observability Imports
 import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
-import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runtime';
 
 import { Client, getClient } from './client';
 
@@ -84,15 +82,23 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     startTypingLoop();
 
-    const baggageScope = BaggageBuilderUtils.fromTurnContext(
-      new BaggageBuilder(),
-      turnContext
-    ).sessionDescription('Copilot Studio integration session')
-      .correlationId(`corr-${Date.now()}`)
+    const baggageScope = new BaggageBuilder()
+      .sessionDescription('Copilot Studio integration session')
+      .correlationId(turnContext.activity.id || `corr-${Date.now()}`)
+      .agentId(turnContext.activity.recipient?.agenticAppId || process.env.AGENT365_OBS_AGENT_ID)
+      .agentName(turnContext.activity.recipient?.name)
+      .agentAuid(turnContext.activity.recipient?.aadObjectId)
+      .agentBlueprintId(turnContext.activity.recipient?.agenticAppBlueprintId)
+      .callerId(turnContext.activity.from?.aadObjectId || turnContext.activity.from?.id)
+      .callerName(turnContext.activity.from?.name)
+      .conversationId(turnContext.activity.conversation?.id)
+      .conversationItemLink(turnContext.activity.serviceUrl)
+      .sourceMetadataName(turnContext.activity.channelId)
+      .tenantId(turnContext.activity.recipient?.tenantId
+        || turnContext.activity.getAgenticTenantId()
+        || turnContext.activity.conversation?.tenantId
+        || process.env.AGENT365_OBS_TENANT_ID)
       .build();
-
-    // Preload/refresh exporter token
-    await this.preloadObservabilityToken(turnContext);
 
     try {
       await baggageScope.run(async () => {
@@ -110,22 +116,6 @@ export class MyAgent extends AgentApplication<TurnState> {
       stopTypingLoop();
       baggageScope.dispose();
     }
-  }
-
-  /**
-   * Preloads or refreshes the Observability token used by the Agent 365 Observability exporter.
-   */
-  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
-    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-    const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
-
-    await AgenticTokenCacheInstance.RefreshObservabilityToken(
-      agentId,
-      tenantId,
-      turnContext,
-      this.authorization,
-      getObservabilityAuthenticationScope()
-    );
   }
 
   /**
@@ -162,9 +152,6 @@ export class MyAgent extends AgentApplication<TurnState> {
       await context.sendActivity(errorResponse);
       return;
     }
-
-    // Preload observability token
-    await this.preloadObservabilityToken(context);
 
     try {
       const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, context);

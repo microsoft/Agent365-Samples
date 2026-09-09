@@ -1,5 +1,20 @@
 # Claude Sample Agent - Node.js
 
+## OBS-only application authentication
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. Use the actual agent
+instance **client ID**, never the blueprint or agent-user ID. Provision the
+instance and its OBS application-role consent separately.
+
+`src/observability-token-service.ts` performs blueprint→agent application-token
+acquisition with `client_credentials`/`fmi_path`, independently of MCP/Graph/OBO.
+It checks identity, audience, roles and expiry, refuses delegated `scp` tokens,
+and has no empty/stale/user-token fallback. OBS still uses `/observabilityService`
+on authentication failures. Keep development blueprint secrets in a secret store;
+review the repository's **Observability routing** section before live validation.
+
 This sample demonstrates how to build an agent using Claude in Node.js with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: Auto-instrumentation via `@microsoft/opentelemetry` distro with explicit `InferenceScope` for LLM call tracing
@@ -169,7 +184,10 @@ This sample uses the [`@microsoft/opentelemetry`](https://www.npmjs.com/package/
 
 ```typescript
 import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
-useMicrosoftOpenTelemetry();
+import { createObservabilityTokenResolver } from './observability-token-service';
+useMicrosoftOpenTelemetry({
+  a365: { enabled: true, useS2SEndpoint: true, tokenResolver: createObservabilityTokenResolver() },
+});
 ```
 
 This file is imported first in `src/index.ts` so instrumentation patches are applied before any HTTP modules load.

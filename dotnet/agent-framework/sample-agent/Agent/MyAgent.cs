@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using Agent365AgentFrameworkSampleAgent.Tools;
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
 using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
@@ -65,7 +64,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         private readonly IConfiguration? _configuration = null;
         private readonly ILogger<MyAgent>? _logger = null;
         private readonly IMcpToolRegistrationService? _toolService = null;
-        private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache = null;
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
@@ -102,13 +100,11 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         public MyAgent(AgentApplicationOptions options,
             IChatClient chatClient,
             IConfiguration configuration,
-            IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
             IMcpToolRegistrationService toolService,
             ILogger<MyAgent> logger) : base(options)
         {
             _chatClient = chatClient;
             _configuration = configuration;
-            _agentTokenCache = agentTokenCache;
             _logger = logger;
             _toolService = toolService;
 
@@ -231,7 +227,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             var resolvedTenantId = turnContext.Activity.Conversation?.TenantId
                                 ?? turnContext.Activity.Recipient?.TenantId;
 
-            // Only set baggage / register a token / open InvokeAgentScope when we have a real
+            // Only set baggage / open InvokeAgentScope when we have a real
             // (agent, tenant) tuple. Falling back to Guid.Empty creates a synthetic identity
             // group the exporter cannot authenticate and pollutes the trace with orphan spans.
             var hasObservabilityIdentity = !string.IsNullOrEmpty(resolvedAgentId)
@@ -244,26 +240,8 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                     .Build()
                 : null;
 
-            // Register an OBO token resolver for this (agent, tenant) tuple so the Agent365 exporter
-            // can authenticate when POSTing traces. Mirrors the demo's A365OtelWrapper.
-            if (hasObservabilityIdentity)
-            {
-                try
-                {
-                    _agentTokenCache?.RegisterObservability(
-                        resolvedAgentId!,
-                        resolvedTenantId!,
-                        new AgenticTokenStruct(
-                            userAuthorization: UserAuthorization,
-                            turnContext: turnContext,
-                            authHandlerName: ToolAuthHandlerName ?? string.Empty),
-                        EnvironmentUtils.GetObservabilityAuthenticationScope());
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning("Failed to register observability token: {Message}", ex.Message);
-                }
-            }
+            // The exporter uses its separate app-only provider; business OBO tokens and
+            // the original turn identity above are never substituted for OBS credentials.
 
             // Send an immediate acknowledgment — this arrives as a separate message before the LLM response.
             // Each SendActivityAsync call produces a discrete Teams message, enabling the multiple-messages pattern.

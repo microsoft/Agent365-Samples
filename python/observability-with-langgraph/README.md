@@ -63,14 +63,14 @@ The console output (or your OTLP backend) should contain a span tree rooted at `
 - `chat ChatOpenAI` — one per LLM call (twice for a tool-using turn); the LangChain instrumentor renames LLM runs to `chat <run_name>` when the underlying response carries a chat-completion id, matching the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/)
 - `execute_tool get_weather` — the tool runs (renamed by the same instrumentor; carries `gen_ai.operation.name=execute_tool` and `gen_ai.tool.name=get_weather`)
 
-The instrumentor also emits internal LangGraph spans (`LangGraph`, `agent`, `tools`, `call_model`, `should_continue`, `RunnableSequence`, `Prompt`) — those are normal and reflect the underlying graph execution. The Agent 365 backend receives the same spans (configured via the stub token resolver — replace with a real one for production).
+The instrumentor also emits internal LangGraph spans (`LangGraph`, `agent`, `tools`, `call_model`, `should_continue`, `RunnableSequence`, `Prompt`) — those are normal and reflect the underlying graph execution. The Agent 365 backend receives the same spans when the dedicated app-only OBS exporter below is enabled.
 
 ## Where the integration happens
 
 `main.py` is organized into the following sections (Step 2b is a sub-step that must run after Step 2):
 
 1. **Step 1 — OTel SDK setup.** Build a `TracerProvider`, attach a `BatchSpanProcessor` with the exporter, call `trace.set_tracer_provider(...)`. This is the part of the file you'd already have in your real app.
-2. **Step 2 — Agent 365 `configure()`.** Detects the TracerProvider set by Step 1 and adds its processors to it. Both your existing exporter and the Agent 365 exporter receive spans. Replace `_stub_token_resolver` with your production token resolver.
+2. **Step 2 — Agent 365 `configure()`.** Detects the TracerProvider set by Step 1 and adds its processors to it. Optional A365 S2S export uses the sample-local app-only resolver; your existing exporter remains unchanged.
 3. **Step 2b — `CustomLangChainInstrumentor`.** Must run after `configure()`; the constructor raises `RuntimeError` otherwise. Construction auto-calls `.instrument()`. After this, every LangChain LLM and tool callback flows through Agent 365's tracer.
 4. **Step 3 — Build the agent.** Standard `langgraph.prebuilt.create_react_agent(...)` with a `langchain-openai` model and a `@tool`-decorated `get_weather` function. No observability code needed (the instrumentor handles it).
 5. **Step 4 — Run + flush.** `InvokeAgentScope` wraps `agent.invoke(...)` so the run gets a top-level `invoke_agent <agent_name>` span; `force_flush()` is critical — without it, batched spans may not export before the process exits.
@@ -90,6 +90,37 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 - **No spans printed to stdout** — `BatchSpanProcessor` may not have flushed; the sample calls `force_flush()` on exit, so make sure the script ran to completion.
 - **`KeyError` or auth error from OpenAI** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. `langchain-openai` reads these directly.
 - **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. See [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration).
-- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step (most often a missing or unreachable token resolver in production; the sample uses a stub).
+- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step and the dedicated OBS prerequisites below.
 - **`RuntimeError: Tracing SDK is not configured`** — `CustomLangChainInstrumentor()` ran before `configure()`. Make sure Step 2 (`configure(...)`) executes successfully before Step 2b.
 - **`TypeError: wrap_function_wrapper() got an unexpected keyword argument 'module'`** — the LangChain extension uses `wrapt`'s legacy keyword-argument call style, which `wrapt 2.x` removed. `pyproject.toml` pins `wrapt<2` to keep the extension working; if you assemble dependencies manually, do the same until the SDK ships a fix.
+
+## Optional A365 S2S export
+
+Console/OTLP-only operation needs no OBS credentials. Enable A365 with:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+Use the actual instance **client ID**, never its blueprint or object/user IDs. The
+instance's OBS **application roles** must already be administrator-authorized.
+Delegated consent is insufficient; this sample does not provision or grant permissions.
+
+The sample-local resolver adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).
+Blueprint credentials with `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants use
+`client_credentials`. When enabled, the demo's `AgentDetails` uses the configured
+tenant/agent, rather than demonstration IDs. Existing caller baggage is not repurposed.
+
+Active export rejects missing/placeholder config, tenant/agent mismatches and delegated
+`scp` tokens. The dedicated cache uses real `expires_in`/`exp` with a 60-second margin.
+Safe errors replace stale, empty, delegated or legacy-route fallback. On 401/403
+check IDs, blueprint credentials and OBS application role consent; never rewrite
+incoming baggage to bypass identity mismatches. Client secrets are for **development**;
+production should implement the documented certificate/managed-identity assertion flow.

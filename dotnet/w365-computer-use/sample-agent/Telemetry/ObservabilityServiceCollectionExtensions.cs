@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Tracing.Exporters;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,14 +16,9 @@ public static class ObservabilityServiceCollectionExtensions
 {
     public static IServiceCollection AddW365ComputerUseOpenTelemetry(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AsyncAuthTokenResolver observabilityTokenResolver)
     {
-        var agenticTokenCache = new AgenticTokenCache();
-        var serviceTokenCache = new ServiceTokenCache();
-
-        services.AddSingleton<IExporterTokenCache<AgenticTokenStruct>>(agenticTokenCache);
-        services.AddSingleton(serviceTokenCache);
-
         services.AddOpenTelemetry()
             .ConfigureResource(resource => resource.AddService("W365ComputerUseSample"))
             .UseMicrosoftOpenTelemetry(options =>
@@ -36,7 +30,8 @@ public static class ObservabilityServiceCollectionExtensions
                 }
 
                 options.Agent365.ClusterCategory = "production";
-                options.Agent365.TokenResolver = serviceTokenCache.GetObservabilityToken;
+                options.Agent365.UseS2SEndpoint = true;
+                options.Agent365.TokenResolver = observabilityTokenResolver;
                 options.Instrumentation.EnableHttpClientInstrumentation = true;
                 options.Instrumentation.EnableAspNetCoreInstrumentation = true;
                 options.Instrumentation.EnableAgent365Instrumentation = true;
@@ -47,7 +42,8 @@ public static class ObservabilityServiceCollectionExtensions
         services.Configure<Agent365ExporterOptions>(options =>
         {
             options.ClusterCategory = "production";
-            options.TokenResolver = serviceTokenCache.GetObservabilityToken;
+            options.UseS2SEndpoint = true;
+            options.TokenResolver = observabilityTokenResolver;
         });
 
         return services;

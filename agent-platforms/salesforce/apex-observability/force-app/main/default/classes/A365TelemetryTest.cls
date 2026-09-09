@@ -33,6 +33,10 @@ private class A365TelemetryTest {
                 String tok = (tokenCalls == 1) ? 'FAKE_T1' : 'FAKE_OBS_TOKEN';
                 res.setBody('{"access_token":"' + tok + '","expires_in":3599}');
             } else {
+                System.assertEquals(
+                    'callout:A365_Obs_Ingest/observabilityService/tenants/' + TENANT
+                        + '/otlp/agents/' + AGENT + '/traces?api-version=1',
+                    req.getEndpoint(), 'OBS must never fall back to the legacy route');
                 ingestCalls++;
                 lastIngestBody = req.getBody();
                 lastAuthHeader = req.getHeader('Authorization');
@@ -63,6 +67,35 @@ private class A365TelemetryTest {
         Map<String, Object> resource = (Map<String, Object>) rs.get('resource');
         Map<String, Object> attrs = (Map<String, Object>) resource.get('attributes');
         return (String) attrs.get('service.name');
+    }
+
+    @IsTest
+    static void tracesPath_ignoresLegacyFlag() {
+        String expected = '/observabilityService/tenants/' + TENANT
+            + '/otlp/agents/' + AGENT + '/traces?api-version=1';
+        for (Boolean legacyValue : new List<Boolean>{ true, false, null }) {
+            A365ObsConfig.overrideRecord = cfg(true);
+            A365ObsConfig.overrideRecord.UseS2SEndpoint__c = legacyValue;
+            System.assertEquals(true, A365ObsConfig.useS2SEndpoint());
+            System.assertEquals(expected, A365ObsConfig.tracesPath());
+        }
+    }
+
+    @IsTest
+    static void emitToolSpan_legacyFalse_andUnauthorized_neverFallsBack() {
+        A365ObsConfig.overrideRecord = cfg(true);
+        A365ObsConfig.overrideRecord.UseS2SEndpoint__c = false;
+        A365ObsToken.clearCache();
+        MultiMock mock = new MultiMock();
+        mock.ingestStatus = 401;
+        Test.setMock(HttpCalloutMock.class, mock);
+
+        Test.startTest();
+        A365Telemetry.emitToolSpan(
+            TRACEPARENT, 'execute_tool A365ToolRest', 'SERVER', null, 1L, 2L, true);
+        Test.stopTest();
+
+        System.assertEquals(1, mock.ingestCalls, '401 must not retry on another route');
     }
 
     @IsTest

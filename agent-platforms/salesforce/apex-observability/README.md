@@ -177,7 +177,7 @@ script above). Secrets are **never** here — only in the External Credential en
 | `IngestBase__c` | `https://agent365.svc.cloud.microsoft` | Reference value only; live ingest routing is controlled by the `A365_Obs_Ingest` Named Credential URL. |
 | `ObsScope__c` | `api://9b975845-…/.default` | Observability API scope (public resource). |
 | `FmiScope__c` | `api://AzureADTokenExchange/.default` | FMI token-exchange scope. |
-| `UseS2SEndpoint__c` | `true` | Use the roles-enforced S2S ingest path. |
+| `UseS2SEndpoint__c` | `true` | Deprecated compatibility field; OBS always uses `/observabilityService`, even when this field is `false` or unset. |
 | `ServiceName__c` | `salesforce-apex` | `service.name` for boundary spans. |
 | `AgentforceServiceName__c` | `salesforce-agentforce` | `service.name` for originated (Agentforce) spans. |
 | `OriginateEnabled__c` | `false` | Enable the Agentforce origination path (see `agent/`). |

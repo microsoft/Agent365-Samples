@@ -50,14 +50,14 @@ In Azure Portal → your Application Insights resource → **Transaction search*
 - `chat` — one or more LLM call spans (display name e.g. `chat gpt-4.1`; the auto-instrumentation extension uses lowercase `chat` per the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/))
 - `execute_tool` — the `get_weather` tool span (display name `execute_tool get_weather`)
 
-If you see those three operation types, the integration is working. The Agent 365 backend receives the same spans (configured via the stub token resolver — replace with a real one for production).
+If you see those three operation types, the integration is working. The Agent 365 backend receives the same spans when the dedicated app-only OBS exporter below is enabled.
 
 ## Where the integration happens
 
 `main.py` is organized into the following sections (Step 2b is a sub-step that must run after Step 2):
 
 1. **Step 1 — Azure Monitor.** `configure_azure_monitor(...)` installs an OTel TracerProvider and the Azure Monitor exporter. This is the part of the file you'd already have in your real app.
-2. **Step 2 — Agent 365 `configure()`.** Detects the TracerProvider set by Step 1 and adds its processors to it. Both backends now receive spans. Replace `_stub_token_resolver` with your production token resolver.
+2. **Step 2 — Agent 365 `configure()`.** Detects the TracerProvider set by Step 1 and adds its processors to it. Optional A365 S2S export uses the sample-local app-only resolver; Azure Monitor authentication remains unchanged.
 3. **Step 2b — `OpenAIAgentsTraceInstrumentor`.** Must run after `configure()`; the instrumentor raises `RuntimeError` otherwise. After this call, OpenAI Agents SDK spans flow through Agent 365's scope classes automatically.
 4. **Step 3 — Build the agent.** Standard OpenAI Agents SDK code; no observability code needed (the instrumentor handles it).
 5. **Step 4 — Run + flush.** `force_flush()` is critical — without it, batched spans may not export before the process exits.
@@ -74,5 +74,36 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 - **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **`SystemExit: APPLICATIONINSIGHTS_CONNECTION_STRING is not set`** — set the env var via `.env`. The connection string is on your App Insights resource → **Overview** → **Connection String**.
 - **No spans visible in App Insights** — wait 1–2 minutes for ingestion; confirm the connection string targets the right resource. If the agent ran successfully but spans never appear, temporarily add a `ConsoleSpanExporter` (see [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration)) to prove the SDK is producing them.
-- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step (most often a missing or unreachable token resolver in production; the sample uses a stub).
+- **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step and the dedicated OBS prerequisites below.
 - **OpenAI auth errors** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The OpenAI Agents SDK reads these directly.
+
+## Optional A365 S2S export
+
+Azure Monitor/console-only operation needs no OBS credentials. Enable A365 with:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+The instance **client ID** must differ from its blueprint and object/user IDs. Its
+OBS **application roles** must already be authorized by an administrator; delegated
+consent is insufficient. No permissions or identities are created by this sample.
+
+The sample-local `observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).
+Blueprint credentials with `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance exchanges T1 as its client assertion
+for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`. The standalone demo adds the configured tenant/agent baggage
+around its invocation; it has no incoming user turn. Business auth is not reused.
+
+Active export rejects missing/placeholder settings, tenant/agent mismatches and
+delegated `scp` tokens. Its dedicated cache uses real `expires_in`/`exp` with a
+60-second margin. Safe errors replace stale, empty, delegated or legacy-route fallback.
+On 401/403 verify IDs, blueprint credentials and OBS application role consent; never
+rewrite incoming baggage to bypass a mismatch. Client secrets are for **development**;
+production should implement the documented certificate/managed-identity assertion flow.

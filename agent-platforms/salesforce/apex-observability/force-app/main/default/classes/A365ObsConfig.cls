@@ -128,15 +128,13 @@ public with sharing class A365ObsConfig {
     }
 
     public static Boolean useS2SEndpoint() {
-        A365_Observability_Config__mdt c = getInstance();
-        // Default to the S2S path (roles-enforced) when unspecified.
-        return c == null || c.UseS2SEndpoint__c == true;
+        // Compatibility accessor: the deprecated metadata flag no longer selects a route.
+        return true;
     }
 
-    // The ingest path for the OTLP traces POST, honoring UseS2SEndpoint__c.
+    // OBS always uses S2S, including records with the legacy flag set to false.
     public static String tracesPath() {
-        String svc = useS2SEndpoint() ? 'observabilityService' : 'observability';
-        return '/' + svc + '/tenants/' + tenantId()
+        return '/observabilityService/tenants/' + tenantId()
             + '/otlp/agents/' + agentId() + '/traces?api-version=1';
     }
 }

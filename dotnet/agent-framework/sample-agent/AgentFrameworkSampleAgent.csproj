@@ -22,7 +22,7 @@
 		<!-- Agent Framework Packages -->
 		<PackageReference Include="AdaptiveCards" Version="3.1.0" />
 		<PackageReference Include="Azure.AI.OpenAI" Version="2.7.0-beta.2" />
-		<PackageReference Include="Azure.Identity" Version="1.17.1" />
+		<PackageReference Include="Azure.Identity" Version="1.17.1" Aliases="global,ObservabilityIdentity" />
 		<PackageReference Include="Microsoft.Agents.AI" Version="1.1.0" />
 		<PackageReference Include="Microsoft.Agents.Authentication.Msal" Version="1.4.83" />
 		<PackageReference Include="Microsoft.Agents.Hosting.AspNetCore" Version="1.4.83" />
@@ -35,6 +35,10 @@
 
 	<ItemGroup>
 	  <Folder Include="msteams\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\..\shared\Observability\*.cs" Link="Observability\%(Filename)%(Extension)" />
 	</ItemGroup>
 
 </Project>

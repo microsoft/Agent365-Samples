@@ -161,7 +161,7 @@ const model = process.env.PROVIDER === 'anthropic'
     "@ai-sdk/anthropic": "^0.0.1",
     "zod": "^3.22.0",
     "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "^0.0.1",
+    "@microsoft/agents-a365-observability": "^0.1.0-preview.125",
     "express": "^4.18.0"
   }
 }

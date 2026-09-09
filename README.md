@@ -7,11 +7,119 @@ This repository contains sample agents and prompts for building with the Microso
 
 ## SDK Versions
 
+### Observability routing
+
+Agent 365 OBS export always uses `/observabilityService`, including autonomous,
+AI Teammate, and on-behalf-of (OBO) conversations. `/observability` is not a
+fallback for missing tokens, authentication failures, or failed exports.
+This changes telemetry transport only: preserve the agent identity, user baggage,
+and the existing MCP/Graph authentication flows.
+
+The samples explicitly select S2S using the API supported by their dependencies:
+
+| Sample SDK | Required configuration |
+|---|---|
+| Node.js `@microsoft/opentelemetry` (1.0.0, 1.0.1, or 1.4.0 in these samples) | `a365: { useS2SEndpoint: true }` (or the distro's `Agent365Exporter` with the same option) |
+| Legacy Node.js observability (compatible preview.115 or the sample's existing preview.125 API family) | `Agent365ExporterOptions.useS2SEndpoint = true` via `withExporterOptions`, plus the OBS-only app-token resolver |
+| Python `microsoft-opentelemetry` | `a365_use_s2s_endpoint=True` |
+| Python observability core 1.0.0 or later | `configure(exporter_options=Agent365ExporterOptions(use_s2s_endpoint=True, token_resolver=...))` |
+| .NET `Microsoft.OpenTelemetry` 1.0.1 | `o.Agent365.Exporter.UseS2SEndpoint = true` |
+| .NET `Microsoft.OpenTelemetry` 1.0.6 | `options.Agent365.UseS2SEndpoint = true` |
+| Salesforce/Apex | Fixed S2S path; deprecated `UseS2SEndpoint__c` values cannot select the legacy route |
+
+When supplying Python `exporter_options`, put the existing token resolver and any
+cluster override **inside those options**; `configure` does not populate them on
+an options object supplied by the caller.
+
+The samples retain their published, API-compatible SDK families rather than
+upgrading solely because a route lacks `/otlp`. Legacy Node.js SDKs use
+`/observabilityService/tenants/{tenant}/agents/{agent}/traces`; the distro, Python,
+.NET and Apex exporters use `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`.
+The inspected service implements both route shapes with the same
+`ExportTraceServiceRequest` body type. The legacy service route has distinct
+tenant-eligibility/service-principal authorization policies: do not infer general
+acceptance or caller-allowlist enforcement from the public OTLP role check.
+Live authorization remains unverified for the available incomplete configuration.
+
+Devin, Copilot Studio and Perplexity pin the coherent preview.115 SDK family to
+retain their verified scope APIs. OpenAI and Vercel retain their existing
+preview.125 dependency family. All five configure their legacy exporter once in
+`src/otel.ts` and reject `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT`: that mode
+would bypass the OBS-only resolver and read a context token. There is no need for
+an unpublished SDK or a suffix-only payload migration.
+
+LangChain's published distro 1.4.0 configuration disables `a365.durableDelivery`
+because that release can otherwise replay historical route choices. Existing
+spool data is not deleted. Do not re-enable replay until the installed release
+enforces S2S for both live and replayed exports. No sample falls back to `/observability`.
+
+**Authentication prerequisite (source-verified, not live-verified):** The inspected
+S2S service contract accepts only service-principal/application tokens.
+The public `/otlp/agents/` route requires `Agent365.Observability.OtelWrite` in
+`roles`, not `scp`. Configure application-role consent rather than assuming a
+tenant-specific permission exemption. Delegated AI Teammate/OBO tokens carrying
+`scp` are rejected.
+Selecting S2S does not convert a delegated token into an application token.
+The presence of `scp` makes a token a user principal even if it also has `roles`
+or an application-looking `idtyp`; additional permissions do not bypass this gate.
+
+The autonomous/Salesforce examples acquire application tokens with `roles`.
+Interactive samples now use a **separate OBS-only application-token provider**;
+they do not obtain exporter tokens from business MCP/Graph/OBO caches. The provider
+uses blueprint credentials plus `fmi_path` for the actual agent instance, then
+exchanges that parent assertion through a second `client_credentials` grant for
+the OBS audience. There is no `user_fic`, OBO assertion, or delegated-token fallback
+in this flow. Business authentication and user context remain independent.
+
+Node.js and Python interactive samples require `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` when OBS export is enabled. Their supplied
+credential flow is a development example; store secrets securely. .NET uses the
+equivalent dedicated `Agent365Observability` configuration and additionally
+supports managed-identity assertions. See each sample's template and README.
+Providers reject missing/placeholder configuration, blueprint-as-agent IDs,
+export identity mismatches, delegated tokens, wrong audiences and expired tokens.
+They cache only valid app tokens until their actual expiry and fail explicitly
+instead of returning empty or stale tokens. No provisioning or permissions are
+changed by the samples.
+
+Use the provisioned runtime Agent Identity, not the Agent Blueprint ID, for agent
+attribution and the agent-bound OBS token flow. Incomplete provisioning is not a
+valid AI Teammate test setup. A token-acquisition failure such as `AADSTS82001`
+must be resolved before ingestion can be tested; changing the exporter URL cannot
+repair a rejected token grant.
+Do not fix a 401/403 by switching routes. Console/OTLP-only examples do not become
+authenticated OBS examples merely by enabling the exporter; they also require
+the dedicated application credentials and permissions.
+
+**Validation:** Run the offline route/configuration regressions with
+`python -m pytest tests/observability` from an environment with pytest and
+`microsoft-agents-a365-observability-core>=1.0.0` installed (both are existing
+Python sample dependencies). These inspect configuration, mock both token-exchange
+requests, and mock HTTP exports for AI Teammate/OBO contexts, including failures,
+cache expiry and identity mismatches, without starting agents or contacting services.
+Node.js token-flow/route tests run with
+`node --test tests/observability/node-app-token.test.cjs` after installing the
+Node.js sample dependencies. .NET tests run with
+`dotnet test tests/e2e/Agent365.E2E.Tests.csproj --filter FullyQualifiedName~ObservabilityAppTokenTests`.
+Salesforce route/401 regressions extend `A365TelemetryTest` and require an
+authorized test org. Live AI Teammate and OBO validation must independently check
+the exported request's S2S path, audience, agent/tenant attribution, response,
+and unchanged tool authentication; offline checks alone do not establish live
+authorization success.
+The S2S service also sanitizes `user.id` and its aliases unless the host/agent has
+an authorized trusted-host or service exemption. Preserving user baggage in the
+client's exported payload therefore does **not** prove that downstream OBO caller
+attribution is retained. Validate attribution after ingestion using the approved
+service configuration; do not alter identities to bypass this restriction.
+
 The SDK versions used by each sample are displayed in the **E2E test workflow summaries**. Each E2E run installs the latest compatible packages and logs the resolved versions.
 
 📦 **View SDK Versions**: Click any E2E status badge above, then select a workflow run and view the **"Log SDK Versions"** step in the job summary.
 
-The samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to automatically pick up the latest compatible SDK releases during each test run.
+Most samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to pick up
+compatible SDK releases. Legacy Node.js samples pin their tested SDK family to
+preserve compatible tracing APIs and S2S exporter options.
 
 > #### Note:
 > Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).

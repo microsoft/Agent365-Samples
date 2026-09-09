@@ -3,6 +3,7 @@
 
 using Agent365SemanticKernelSampleAgent.Agents;
 using Agent365SemanticKernelSampleAgent.telemetry;
+using Agent365.Samples.Observability;
 using Microsoft.OpenTelemetry;
 using Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel.Services;
 using Microsoft.Agents.A365.Tooling.Services;
@@ -21,6 +22,12 @@ using System.Threading;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddUserSecrets<Program>();
+}
+using var observabilityTokens = ObservabilityAppTokenFactory.Create(builder.Configuration);
+
 // Configure OpenTelemetry distro — Console exporter only in Development to avoid PII leaks
 builder.UseMicrosoftOpenTelemetry(o =>
 {
@@ -28,17 +35,15 @@ builder.UseMicrosoftOpenTelemetry(o =>
         ? ExportTarget.Agent365 | ExportTarget.Console
         : ExportTarget.Agent365;
 
+    o.Agent365.Exporter.UseS2SEndpoint = true;
+    o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+
     // Agent365-only export suppresses infrastructure instrumentation by default.
     // Re-enable explicitly so HTTP calls (Azure OpenAI, auth, Teams) appear in traces.
     o.Instrumentation.EnableAspNetCoreInstrumentation = true;
     o.Instrumentation.EnableHttpClientInstrumentation = true;
     o.Instrumentation.EnableAzureSdkInstrumentation = true;
 });
-
-if (builder.Environment.IsDevelopment())
-{
-    builder.Configuration.AddUserSecrets<Program>();
-}
 
 builder.Services.AddHttpClient();
 

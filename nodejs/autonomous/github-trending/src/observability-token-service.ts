@@ -72,10 +72,12 @@ async function acquireAndRegisterToken(config: TokenServiceConfig): Promise<void
     throw new Error('Failed to acquire observability token: no access token returned');
   }
 
-  // Use the actual token expiry from MSAL when available, otherwise fall back to 55 minutes
   const expiresInMs = obsResult.expiresOn
     ? obsResult.expiresOn.getTime() - Date.now()
-    : 55 * 60 * 1000;
+    : NaN;
+  if (!Number.isFinite(expiresInMs) || expiresInMs <= 60_000) {
+    throw new Error('OBS token response lacks a valid future expiry; no token was cached.');
+  }
   cacheToken(config.agentId, config.tenantId, obsResult.accessToken, expiresInMs);
   console.log(`Observability token registered for agent ${config.agentId}.`);
 }
@@ -124,8 +126,7 @@ async function acquireT1ViaClientSecret(authority: string, blueprintClientId: st
   });
 
   if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`FMI T1 via client secret failed (${response.status}): ${errorBody}`);
+    throw new Error(`FMI T1 via client secret failed (HTTP ${response.status}); check OBS configuration.`);
   }
 
   const json = await response.json() as { access_token?: string };

@@ -57,7 +57,6 @@ from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
 # Observability imports (optional)
 try:
     from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-    from token_cache import get_cached_agentic_token, cache_agentic_token
     OBSERVABILITY_AVAILABLE = True
 except ImportError:
     OBSERVABILITY_AVAILABLE = False
@@ -341,44 +340,7 @@ class GenericAgentHost:
             await context.send_activity("❌ Sorry, the agent is not available.")
             return None
 
-        # Setup observability token if available
-        if tenant_id and agent_id:
-            await self._setup_observability_token(context, tenant_id, agent_id)
-
         return tenant_id, agent_id
-
-    async def _setup_observability_token(
-        self, context: TurnContext, tenant_id: str, agent_id: str
-    ):
-        """
-        Cache observability token for Agent365 exporter.
-        
-        Args:
-            context: Turn context
-            tenant_id: Tenant identifier
-            agent_id: Agent identifier
-        """
-        if not OBSERVABILITY_AVAILABLE:
-            return
-
-        try:
-            from microsoft_agents_a365.runtime.environment_utils import (
-                get_observability_authentication_scope,
-            )
-
-            exchange_kwargs = {}
-            if self.auth_handler_name:
-                exchange_kwargs["auth_handler_id"] = self.auth_handler_name
-
-            exaau_token = await self.agent_app.auth.exchange_token(
-                context,
-                scopes=get_observability_authentication_scope(),
-                **exchange_kwargs,
-            )
-            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-            logger.debug(f"✅ Cached observability token for {tenant_id}:{agent_id}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def initialize_agent(self):
         """Initialize the hosted agent instance"""

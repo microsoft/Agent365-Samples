@@ -20,6 +20,35 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Launch Profiles
 
+Before selecting either profile, configure the **separate OBS-only application credentials**
+in `Agent365Observability`: `TenantId` (agent home tenant GUID), `AgentId` (actual agent instance
+client ID, never the blueprint or service principal object ID), and `BlueprintClientId`.
+For Azure, set `UseManagedIdentity=true`; optional `ManagedIdentityClientId` selects a user-assigned
+identity, otherwise the system-assigned identity is used. The blueprint federation must already exist.
+For local development set `UseManagedIdentity=false` and supply `BlueprintClientSecret` through
+user secrets or the `Agent365Observability__BlueprintClientSecret` environment variable.
+The template is in `appsettings.json`; all keys support standard .NET double-underscore environment names.
+
+The shared provider obtains a blueprint T1 using `client_credentials`, `fmi_path=AgentId`, and
+`api://AzureADTokenExchange/.default`, then uses T1 as the agent's client assertion for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`.
+This is the [documented app-only protocol](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow),
+not OBO or `user_fic`. Existing business MCP/Graph tokens, auth handlers, and original turn baggage
+remain unchanged; a developer bearer token cannot authenticate S2S OBS.
+
+**Troubleshooting:** Missing/placeholder credentials fail startup. Export tenant/agent mismatches,
+delegated (`scp`) tokens, missing app roles, and invalid/expired responses are rejected rather
+than replaced with another identity or stale token. The configured identity must match the turn
+baggage and already possess OBS application authorization. No permissions are changed by the sample.
+Requests have a 30-second bound; the isolated cache refreshes two minutes before the earliest expiry.
+
+**Deployment:** Retain `dotnet/shared/Observability` when building from source. Its files are linked
+into this application's assembly, so `dotnet publish` output is standalone without sibling files
+at runtime. To copy only the source sample, copy both shared `.cs` files into `Observability/`,
+remove the project's external `Compile` item, and retain the `Azure.Identity` alias.
+Microsoft.OpenTelemetry 1.0.1 is explicitly configured with
+`o.Agent365.Exporter.UseS2SEndpoint = true` and the dedicated provider's `TokenResolver`.
+
 This sample includes two launch profiles in `Properties/launchSettings.json`:
 
 ### Sample Agent

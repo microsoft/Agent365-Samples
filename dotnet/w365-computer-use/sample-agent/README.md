@@ -153,6 +153,49 @@ Ensure the MCP Platform is running locally on port 52857, or update the `McpServ
 
 ### 6. Run the agent
 
+First configure the **independent OBS-only application credentials**. The MCP/Graph bearer
+tokens above remain business tokens and are never sent to the S2S observability service:
+
+```json
+{
+  "Agent365Observability": {
+    "TenantId": "<<AGENT_HOME_TENANT_ID>>",
+    "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
+    "BlueprintClientId": "<<BLUEPRINT_CLIENT_ID>>",
+    "UseManagedIdentity": true,
+    "ManagedIdentityClientId": ""
+  }
+}
+```
+
+`AgentId` must be the actual agent instance client ID, not the blueprint ID or service principal
+object ID. For Azure, the configured managed identity must already be federated with the blueprint;
+empty `ManagedIdentityClientId` selects the system-assigned identity, otherwise supply a user-assigned
+client ID. For local development use `UseManagedIdentity=false` and supply
+`Agent365Observability:BlueprintClientSecret` through user secrets, or
+`Agent365Observability__BlueprintClientSecret` through the environment. All keys support the .NET
+double-underscore environment format. Do not store a secret in checked-in configuration.
+
+The shared provider implements the [documented app-only token flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
+produces T1; agent `client_credentials` uses T1 as `client_assertion` for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. No user token, `user_fic`, or OBO is used for OBS.
+Both Microsoft.OpenTelemetry 1.0.6's `options.Agent365` and the
+`services.Configure<Agent365ExporterOptions>` registration explicitly set `UseS2SEndpoint=true`
+and use the same separate provider as `TokenResolver`.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail startup.
+Export identity mismatches, delegated (`scp`) tokens, absent app roles and invalid/expired
+responses fail closed. Original agent/user baggage is preserved: use the matching configured
+identity rather than overwriting turn context. The identity must already have OBS application
+authorization; this sample does not provision identities or modify permissions. Requests are
+bounded to 30 seconds; tokens refresh two minutes before expiry with no stale-token fallback.
+
+**Deployment:** Keep `dotnet/shared/Observability` in the source checkout used for builds.
+Its source is compiled into the sample assembly and `dotnet publish` output is standalone.
+When copying only the sample's source directory, also copy the two shared `.cs` files into
+`Observability/`, remove the external `Compile` item, and retain the `Azure.Identity` alias.
+
 ```powershell
 cd sample-agent
 $env:ASPNETCORE_ENVIRONMENT = "Development"

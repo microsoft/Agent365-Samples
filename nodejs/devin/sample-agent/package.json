@@ -14,15 +14,18 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@microsoft/agents-a365-notifications": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-observability": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-runtime": "^0.1.0-preview.30",
-    "@microsoft/agents-a365-tooling": "^0.1.0-preview.30",
+    "@microsoft/agents-a365-notifications": "0.1.0-preview.115",
+    "@microsoft/agents-a365-observability": "0.1.0-preview.115",
+    "@microsoft/agents-a365-runtime": "0.1.0-preview.115",
+    "@microsoft/agents-a365-tooling": "0.1.0-preview.115",
     "@microsoft/agents-hosting": "^1.0.15",
+    "@opentelemetry/core": "2.1.0",
+    "dotenv": "^17.2.3",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.20",
+    "@types/express": "^4.17.21",
     "typescript": "^5.9.2"
   }
 }

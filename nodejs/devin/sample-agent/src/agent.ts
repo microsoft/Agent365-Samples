@@ -8,10 +8,8 @@ import {
   InferenceOperationType,
   InferenceScope,
   InvokeAgentScope,
-  ObservabilityManager,
   TenantDetails,
 } from "@microsoft/agents-a365-observability";
-import { ClusterCategory } from "@microsoft/agents-a365-runtime";
 import { Activity, ActivityTypes } from "@microsoft/agents-activity";
 import {
   AgentApplication,
@@ -27,11 +25,9 @@ import {
   createEmailResponseActivity,
 } from "@microsoft/agents-a365-notifications";
 import { Stream } from "stream";
-import { v4 as uuidv4 } from "uuid";
 import { devinClient } from "./devin-client";
-import tokenCache from "./token-cache";
 import { ApplicationTurnState } from "./types/agent.types";
-import { getAgentDetails, getTenantDetails } from "./utils";
+import { getAgentDetails, getTenantDetails, getCallerDetails } from "./utils";
 
 export class A365Agent extends AgentApplication<ApplicationTurnState> {
   isApplicationInstalled: boolean = false;
@@ -41,42 +37,6 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     options?: Partial<AgentApplicationOptions<ApplicationTurnState>> | undefined
   ) {
     super(options);
-    const clusterCategory: ClusterCategory =
-      (process.env.CLUSTER_CATEGORY as ClusterCategory) || "dev";
-
-    // Initialize Observability SDK
-    const observabilitySDK = ObservabilityManager.configure((builder) =>
-      builder
-        .withService("devin-sample-agent", "1.0.0")
-        .withTokenResolver(async (agentId, tenantId) => {
-          // Token resolver for authentication with Agent 365 observability
-          console.log(
-            "🔑 Token resolver called for agent:",
-            agentId,
-            "tenant:",
-            tenantId
-          );
-
-          // Retrieve the cached agentic token
-          const cacheKey = this.createAgenticTokenCacheKey(agentId, tenantId);
-          const cachedToken = tokenCache.get(cacheKey);
-
-          if (cachedToken) {
-            console.log("🔑 Token retrieved from cache successfully");
-            return cachedToken;
-          }
-
-          console.log(
-            "⚠️ No cached token found - token should be cached during agent invocation"
-          );
-          return null;
-        })
-        .withClusterCategory(clusterCategory)
-    );
-
-    // Start the observability SDK
-    observabilitySDK.start();
-
     // Handle messages
     this.onActivity(
       ActivityTypes.Message,
@@ -88,39 +48,49 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         // Extract agent and tenant details from context
         const invokeAgentDetails = getAgentDetails(context);
         const tenantDetails = getTenantDetails(context);
+        const callerDetails = getCallerDetails(context);
 
         // Create BaggageBuilder scope
         const baggageScope = new BaggageBuilder()
           .tenantId(tenantDetails.tenantId)
           .agentId(invokeAgentDetails.agentId)
-          .correlationId(uuidv4())
+          .correlationId(context.activity.id || `corr-${Date.now()}`)
+          .callerId(callerDetails.callerId)
+          .callerName(callerDetails.callerName)
           .agentName(invokeAgentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();
 
-        await baggageScope.run(async () => {
-          const invokeAgentScope = InvokeAgentScope.start(
-            invokeAgentDetails,
-            tenantDetails
-          );
-
-          await invokeAgentScope.withActiveSpanAsync(async () => {
-            invokeAgentScope.recordInputMessages([
-              context.activity.text ?? "Unknown text",
-            ]);
-
-            await this.handleAgentMessageActivity(
-              context,
-              invokeAgentScope,
+        try {
+          await baggageScope.run(async () => {
+            const invokeAgentScope = InvokeAgentScope.start(
               invokeAgentDetails,
-              tenantDetails
+              tenantDetails,
+              undefined,
+              callerDetails
             );
+            try {
+              await invokeAgentScope.withActiveSpanAsync(async () => {
+                invokeAgentScope.recordInputMessages([
+                  context.activity.text ?? "Unknown text",
+                ]);
+                await this.handleAgentMessageActivity(
+                  context,
+                  invokeAgentScope,
+                  invokeAgentDetails,
+                  tenantDetails
+                );
+              });
+            } catch (error) {
+              invokeAgentScope.recordError(error instanceof Error ? error : new Error(String(error)));
+              throw error;
+            } finally {
+              invokeAgentScope.dispose();
+            }
           });
-
-          invokeAgentScope.dispose();
-        });
-
-        baggageScope.dispose();
+        } finally {
+          baggageScope.dispose();
+        }
       }
     );
 
@@ -211,7 +181,8 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
       const inferenceScope = InferenceScope.start(
         inferenceDetails,
         agentDetails,
-        tenantDetails
+        tenantDetails,
+        turnContext.activity.conversation?.id
       );
       inferenceScope.recordInputMessages([userMessage]);
 
@@ -233,7 +204,16 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
           inferenceScope.recordFinishReasons(["stop"]);
         });
 
-      await devinClient.invokeAgent(userMessage, responseStream);
+      try {
+        await inferenceScope.withActiveSpanAsync(async () => {
+          await devinClient.invokeAgent(userMessage, responseStream);
+        });
+      } catch (error) {
+        inferenceScope.recordError(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      } finally {
+        inferenceScope.dispose();
+      }
     } catch (error) {
       invokeAgentScope.recordOutputMessages([`LLM error: ${error}`]);
       await turnContext.sendActivity(
@@ -330,17 +310,6 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     }
   }
 
-  /**
-   * Create a cache key for the agentic token
-   */
-  private createAgenticTokenCacheKey(
-    agentId: string,
-    tenantId: string
-  ): string {
-    return tenantId
-      ? `agentic-token-${agentId}-${tenantId}`
-      : `agentic-token-${agentId}`;
-  }
 }
 
 export const agentApplication = new A365Agent({

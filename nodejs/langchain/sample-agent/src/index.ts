@@ -9,8 +9,8 @@ configDotenv();
 // Initialize Microsoft OpenTelemetry distro for observability.
 // Must be called before importing other modules so instrumentations can patch libraries.
 // See: https://github.com/microsoft/opentelemetry-distro-javascript
-import { useMicrosoftOpenTelemetry, AgenticTokenCacheInstance } from '@microsoft/opentelemetry';
-import { tokenResolver } from './token-cache';
+import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { createObservabilityTokenResolver } from './observability-token-service';
 
 // Console exporters are useful for local development but noisy and potentially
 // sensitive (gen-ai content) in production. Enable only outside production.
@@ -20,11 +20,10 @@ useMicrosoftOpenTelemetry({
   enableConsoleExporters,
   a365: {
     enabled: true,
-    // When Use_Custom_Resolver is true the sample populates a local token cache;
-    // otherwise agent.ts refreshes tokens into AgenticTokenCacheInstance.
-    tokenResolver: process.env.Use_Custom_Resolver === 'true'
-      ? (agentId: string, tenantId: string) => tokenResolver(agentId, tenantId) ?? ''
-      : (agentId: string, tenantId: string) => AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
+    useS2SEndpoint: true,
+    // Published 1.4.0 can replay stored legacy route choices; keep replay disabled.
+    durableDelivery: { enabled: false },
+    tokenResolver: createObservabilityTokenResolver(),
   },
   instrumentationOptions: {
     langchain: {},

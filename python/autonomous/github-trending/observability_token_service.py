@@ -17,6 +17,7 @@ Auth strategy is controlled by AGENT365_USE_MANAGED_IDENTITY:
 
 import asyncio
 import logging
+import math
 from datetime import timedelta
 
 import msal
@@ -94,10 +95,18 @@ async def _acquire_and_register_token(
     )
     obs_result = identity_app.acquire_token_for_client(scopes=OBSERVABILITY_SCOPES)
 
-    if "access_token" not in obs_result:
-        raise RuntimeError(f"Failed to acquire observability token: {obs_result.get('error_description', obs_result)}")
+    token = obs_result.get("access_token")
+    if not isinstance(token, str) or not token.strip():
+        raise RuntimeError("Failed to acquire OBS application token; check credentials and application permissions.")
+    try:
+        raw_expiry = obs_result.get("expires_in")
+        expiry = float(raw_expiry)
+        if isinstance(raw_expiry, bool) or not math.isfinite(expiry) or expiry <= 300:
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        raise RuntimeError("OBS token lacks a valid future expiry; no token was cached.") from None
 
-    token_cache.cache_token(agent_id, tenant_id, obs_result["access_token"], expires_in=timedelta(minutes=55))
+    token_cache.cache_token(agent_id, tenant_id, token, expires_in=timedelta(seconds=expiry))
     logger.info("Observability token registered for agent %s.", agent_id)
 
 

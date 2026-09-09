@@ -9,6 +9,7 @@
 
 	<ItemGroup>
 		<!-- A365 SDK Packages -->
+		<PackageReference Include="Azure.Identity" Version="1.17.1" Aliases="global,ObservabilityIdentity" />
 		<PackageReference Include="Microsoft.Agents.A365.Tooling.Extensions.AgentFramework" Version="0.1.72-beta" />
 
 		<!-- MCP Client (direct connection for local development) -->
@@ -27,6 +28,10 @@
 
 	<ItemGroup>
 		<None Update="ToolingManifest.json" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\..\shared\Observability\*.cs" Link="Observability\%(Filename)%(Extension)" />
 	</ItemGroup>
 
 </Project>

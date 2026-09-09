@@ -24,4 +24,13 @@
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\dotnet\shared\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityAppTokenProvider.cs" />
+    <None Include="..\..\dotnet\agent-framework\sample-agent\Program.cs" Link="ObservabilityFixtures\AgentFrameworkProgram.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\semantic-kernel\sample-agent\Program.cs" Link="ObservabilityFixtures\SemanticKernelProgram.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\w365-computer-use\sample-agent\Telemetry\ObservabilityServiceCollectionExtensions.cs" Link="ObservabilityFixtures\W365Observability.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\agent-framework\sample-agent\Agent\MyAgent.cs" Link="ObservabilityFixtures\AgentFrameworkAgent.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\w365-computer-use\sample-agent\Telemetry\A365OtelWrapper.cs" Link="ObservabilityFixtures\W365Wrapper.cs" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
