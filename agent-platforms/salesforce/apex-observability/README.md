@@ -11,6 +11,14 @@ Because MSAL is unavailable in Apex, the sample hand-rolls the **S2S OAuth FMI 3
 All emission is **fail-open**, **async**, and **config-gated**, so telemetry never affects the
 business response.
 
+The application-token flow does not require a client-side `roles` claim. The
+public S2S OTLP endpoint can authorize eligible Agent 365-registered instances
+without an OBS-specific role grant, subject to service policy. Register the exact
+runtime instance; an Entra identity alone is insufficient. For 401/403, check
+identity, audience, registration and service policy instead of switching to OBO
+or automatically adding OBS permissions. Apex runtime tests require an authorized
+Salesforce test org; an offline source audit is not live authorization validation.
+
 For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
@@ -73,8 +81,10 @@ Design rules (all enforced in code):
 | **Authentication** | App-based (S2S OAuth to Microsoft Entra, hand-rolled in Apex) |
 | **Identity** | Agent identity (token `azp` == agent id) |
 
-The Agent 365 ingest requires an **agent-bound** token (`{agentId}` in the URL == token `azp`, plus the
-app-role claim), minted via an **FMI 3-hop** (2 token POSTs) sponsored by the agent **blueprint** app —
+The Agent 365 ingest requires an app-only **agent-bound** token (`{agentId}` in the
+URL == token `azp`/`appid`), minted via an **FMI 3-hop** (2 token POSTs) sponsored by
+the agent **blueprint** app. OBS authorization depends on registration and service
+policy; an OBS role is not a universal prerequisite. The token exchange uses
 JWT-bearer client-credentials, not OBO. See [Token model](docs/design.md#token-model-fmi-3-hop-agent-bound)
 for the exact per-hop requests and Named Credentials.
 

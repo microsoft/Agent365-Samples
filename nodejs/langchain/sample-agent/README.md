@@ -11,8 +11,10 @@ When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
 `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
 `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the actual agent
 instance **client ID**, never the blueprint or agent-user ID. An incomplete
-generated configuration is not a valid identity; provision the instance and OBS
-application-role consent separately.
+generated configuration is not a valid identity; complete Agent 365 registration
+for the exact instance. Eligible registered instances can use roleless S2S OBS
+when service policy permits. The helper requires `idtyp=app` for absent or empty
+roles; the sample does not grant permissions.
 
 `src/observability-token-service.ts` performs blueprint→agent `client_credentials`
 with `fmi_path`, independently of MCP/Graph/OBO. `Use_Custom_Resolver` no longer

@@ -1,11 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+extern alias ObservabilityIdentity;
+
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using Agent365.Samples.Observability;
+using Azure.Core;
 using Xunit;
+using AuthenticationFailedException = ObservabilityIdentity::Azure.Identity.AuthenticationFailedException;
+using CredentialUnavailableException = ObservabilityIdentity::Azure.Identity.CredentialUnavailableException;
 
 namespace Agent365.E2E.Tests;
 
@@ -16,6 +21,7 @@ public sealed class ObservabilityAppTokenTests
     private const string Blueprint = "33333333-3333-4333-8333-333333333333";
     private const string Other = "44444444-4444-4444-8444-444444444444";
     private const string Secret = "offline-test-secret+&=";
+    private const string ValidRoles = "[\"Observability.ReadWrite.All\"]";
 
     [Fact]
     public async Task SecretFlowUsesConfiguredIdentitiesAndOnlyClientCredentials()
@@ -49,18 +55,22 @@ public sealed class ObservabilityAppTokenTests
     }
 
     [Fact]
-    public async Task ManagedIdentityAssertionReplacesOnlyBlueprintSecret()
+    public async Task ManagedIdentityAssertionUsesFactoryExchangeScopeAndReplacesOnlyBlueprintSecret()
     {
         var clock = new TestTime();
         var handler = new TokenHandler(TokenResponse("blueprint-T1"), TokenResponse(AppToken(clock)));
         var options = new ObservabilityAppTokenOptions(Tenant, Agent, Blueprint, null, true, Other);
         var calls = 0;
-        using var provider = new ObservabilityAppTokenProvider(options, new HttpClient(handler), clock, ct =>
+        var credential = new TestCredential((context, ct) =>
         {
             Assert.True(ct.CanBeCanceled);
+            Assert.Equal(new[] { ObservabilityAppTokenProvider.ExchangeScope }, context.Scopes);
+            Assert.Equal("api://AzureADTokenExchange", context.Scopes.Single()[..^"/.default".Length]);
             calls++;
-            return Task.FromResult("managed-identity-assertion");
+            return ValueTask.FromResult(new AccessToken("managed-identity-assertion", clock.GetUtcNow().AddHours(1)));
         });
+        using var provider = new ObservabilityAppTokenProvider(options, new HttpClient(handler), clock,
+            ct => ObservabilityAppTokenFactory.GetManagedIdentityAssertionAsync(credential, ct));
 
         await provider.ResolveAsync(Agent, Tenant);
         Assert.Equal(Other, options.ManagedIdentityClientId);
@@ -68,21 +78,138 @@ public sealed class ObservabilityAppTokenTests
         Assert.DoesNotContain("client_secret", handler.Requests[0].Form.Keys);
         Assert.Equal("managed-identity-assertion", handler.Requests[0].Form["client_assertion"]);
         Assert.Equal(ObservabilityAppTokenProvider.AssertionType, handler.Requests[0].Form["client_assertion_type"]);
+        Assert.Equal(ObservabilityAppTokenProvider.ExchangeScope, handler.Requests[0].Form["scope"]);
         Assert.Equal(Agent, handler.Requests[0].Form["fmi_path"]);
         Assert.Equal("blueprint-T1", handler.Requests[1].Form["client_assertion"]);
+        Assert.Equal(ObservabilityAppTokenProvider.ObservabilityScope, handler.Requests[1].Form["scope"]);
     }
 
-    [Fact]
-    public async Task ManagedIdentityFailureDoesNotFallBackToSecret()
+    [Theory]
+    [InlineData("authentication")]
+    [InlineData("unavailable")]
+    [InlineData("service")]
+    public async Task ManagedIdentityFailureIsSanitizedWithoutFallingBackToSecret(string failureKind)
     {
+        Exception failure = failureKind switch
+        {
+            "authentication" => new AuthenticationFailedException(Secret, new InvalidOperationException(Secret)),
+            "unavailable" => new CredentialUnavailableException(Secret),
+            _ => new Azure.RequestFailedException(401, Secret, "invalid_client", new IOException(Secret)),
+        };
+        var credential = new TestCredential((_, _) => throw failure);
         var handler = new TokenHandler();
         using var provider = new ObservabilityAppTokenProvider(
             new(Tenant, Agent, Blueprint, Secret, true),
             new HttpClient(handler),
-            managedIdentityAssertion: _ => throw new InvalidOperationException(Secret));
+            managedIdentityAssertion: ct => ObservabilityAppTokenFactory.GetManagedIdentityAssertionAsync(credential, ct));
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
-        Assert.DoesNotContain(Secret, error.ToString());
+        AssertSanitized(error);
         Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("invalid-operation")]
+    [InlineData("null-reference")]
+    [InlineData("argument-range")]
+    [InlineData("missing-key")]
+    [InlineData("overflow")]
+    public async Task UnexpectedCredentialFailuresPropagateAndReleaseRefreshLockWithoutReusingStaleToken(string failureKind)
+    {
+        Exception failure = failureKind switch
+        {
+            "invalid-operation" => new InvalidOperationException("Programming failure."),
+            "null-reference" => new NullReferenceException("Programming failure."),
+            "argument-range" => new ArgumentOutOfRangeException("programmingFailure"),
+            "missing-key" => new KeyNotFoundException("Programming failure."),
+            _ => new OverflowException("Programming failure."),
+        };
+        var clock = new TestTime();
+        var token = AppToken(clock, null);
+        var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(token, 600));
+        var calls = 0;
+        var credential = new TestCredential((_, _) =>
+        {
+            if (++calls == 2)
+            {
+                throw failure;
+            }
+            return ValueTask.FromResult(new AccessToken("managed-identity-assertion", clock.GetUtcNow().AddHours(1)));
+        });
+        using var provider = new ObservabilityAppTokenProvider(
+            new(Tenant, Agent, Blueprint, null, true), new HttpClient(handler), clock,
+            ct => ObservabilityAppTokenFactory.GetManagedIdentityAssertionAsync(credential, ct));
+
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+        clock.Advance(TimeSpan.FromSeconds(480));
+        Assert.Same(failure, await Record.ExceptionAsync(() => provider.ResolveAsync(Agent, Tenant)));
+        Assert.Equal(2, handler.Requests.Count);
+
+        var replacement = AppToken(clock, "[]");
+        handler.Responses.Enqueue(TokenResponse("replacement-T1"));
+        handler.Responses.Enqueue(TokenResponse(replacement));
+        Assert.Equal(replacement, await provider.ResolveAsync(Agent, Tenant));
+        Assert.Equal(3, calls);
+        Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ManagedIdentityCallerCancellationRemainsCancellationWithoutCredentialDiagnostics()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var credential = new TestCredential((_, ct) =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(Secret, new IOException(Secret), ct);
+        });
+        var handler = new TokenHandler();
+        using var provider = new ObservabilityAppTokenProvider(
+            new(Tenant, Agent, Blueprint, null, true), new HttpClient(handler),
+            managedIdentityAssertion: ct => ObservabilityAppTokenFactory.GetManagedIdentityAssertionAsync(credential, ct));
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => provider.GetTokenAsync(Agent, Tenant, cancellation.Token));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        Assert.Equal("Observability token acquisition canceled.", error.Message);
+        Assert.DoesNotContain(Secret, error.ToString());
+        Assert.Null(error.InnerException);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task HttpRequestFailuresAreSanitized()
+    {
+        var failure = new HttpRequestException(Secret, new IOException(Secret));
+        using var provider = new ObservabilityAppTokenProvider(
+            new(Tenant, Agent, Blueprint, Secret), new HttpClient(new FailingHandler(failure)));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        AssertSanitized(error);
+    }
+
+    [Theory]
+    [InlineData("cryptographic")]
+    [InlineData("io")]
+    [InlineData("unexpected-format")]
+    public async Task SecretBearingCredentialFailuresAreSanitized(string failureKind)
+    {
+        Exception failure = failureKind switch
+        {
+            "cryptographic" => new System.Security.Cryptography.CryptographicException(Secret),
+            "io" => new IOException(Secret, new IOException(Secret)),
+            _ => new FormatException(Secret, new InvalidDataException(Secret)),
+        };
+        using var provider = new ObservabilityAppTokenProvider(
+            new(Tenant, Agent, Blueprint, Secret), new HttpClient(new FailingHandler(failure)));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        AssertSanitized(error);
+    }
+
+    [Fact]
+    public async Task UnexpectedHttpFailuresAreNotReclassified()
+    {
+        var failure = new InvalidOperationException("Programming failure.");
+        using var provider = new ObservabilityAppTokenProvider(
+            new(Tenant, Agent, Blueprint, Secret), new HttpClient(new FailingHandler(failure)));
+        Assert.Same(failure, await Record.ExceptionAsync(() => provider.ResolveAsync(Agent, Tenant)));
     }
 
     [Fact]
@@ -158,59 +285,229 @@ public sealed class ObservabilityAppTokenTests
     }
 
     [Theory]
-    [InlineData("scp", "Observability.ReadWrite")]
-    [InlineData("scp", "")]
-    [InlineData("idtyp", "user")]
-    [InlineData("tid", Other)]
-    [InlineData("appid", Blueprint)]
-    [InlineData("azp", Other)]
-    [InlineData("aud", "https://graph.microsoft.com")]
-    public async Task DelegatedOrMismatchedResponseTokenIsRejected(string claim, string value)
+    [InlineData(null)]
+    [InlineData("[]")]
+    public async Task RolelessAppTokensAreAcceptedAndCachedOnlyForConfiguredIdentity(string? rolesJson)
     {
         var clock = new TestTime();
-        var claims = AppClaims(clock);
-        claims[claim] = value;
-        var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims)));
+        var token = AppToken(clock, rolesJson);
+        var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(token));
         using var provider = Provider(handler, clock);
+
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Other, Tenant));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Blueprint, Tenant));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Other));
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(ValidRoles)]
+    [InlineData("[\"Observability.ReadWrite.All\",\"Another.Role\"]")]
+    public async Task ValidApplicationRolesDoNotRequireIdentityType(string rolesJson)
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, rolesJson);
+        claims.Remove("idtyp");
+        var token = Jwt(claims);
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(token)), clock);
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[]")]
+    public async Task RolelessTokensWithoutExplicitAppIdentityFailClosed(string? rolesJson)
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, rolesJson);
+        claims.Remove("idtyp");
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
         await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("[]")]
+    public async Task RolelessTokensWithOidEqualsSubAreAcceptedWithoutIdtyp(string? rolesJson)
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, rolesJson);
+        claims.Remove("idtyp");
+        claims["oid"] = JsonSerializer.Deserialize<JsonElement>($"\"{Agent}\"");
+        claims["sub"] = JsonSerializer.Deserialize<JsonElement>($"\"{Agent}\"");
+        var token = Jwt(claims);
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(token)), clock);
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+    }
+
+    [Theory]
+    [InlineData("\"delegated-user-oid\"", "\"" + Agent + "\"")]
+    [InlineData("\"" + Agent + "\"", "\"delegated-user-oid\"")]
+    [InlineData("\"\"", "\"\"")]
+    [InlineData("null", "null")]
+    [InlineData("\"" + Agent + "\"", "null")]
+    [InlineData("null", "\"" + Agent + "\"")]
+    public async Task RolelessTokensWithoutMatchingOidSubFailClosed(string oidJson, string subJson)
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, null);
+        claims.Remove("idtyp");
+        claims["oid"] = JsonSerializer.Deserialize<JsonElement>(oidJson);
+        claims["sub"] = JsonSerializer.Deserialize<JsonElement>(subJson);
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+    }
+
+    [Fact]
+    public async Task DelegatedScpBlocksOidSubFallback()
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, null);
+        claims.Remove("idtyp");
+        claims["oid"] = JsonSerializer.Deserialize<JsonElement>($"\"{Agent}\"");
+        claims["sub"] = JsonSerializer.Deserialize<JsonElement>($"\"{Agent}\"");
+        claims["scp"] = JsonSerializer.Deserialize<JsonElement>("\"User.Read\"");
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+    }
+
+    [Theory]
+    [InlineData("\"user\"")]
+    [InlineData("\"\"")]
+    [InlineData("\"APP\"")]
+    [InlineData("\" app \"")]
+    [InlineData("null")]
+    [InlineData("true")]
+    [InlineData("42")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    public async Task ExplicitNonAppIdentityTypesFailClosed(string identityTypeJson)
+    {
+        var clock = new TestTime();
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            claims["idtyp"] = JsonSerializer.Deserialize<JsonElement>(identityTypeJson);
+            using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        }
+    }
+
+    [Theory]
+    [InlineData("scp", "Observability.ReadWrite")]
+    [InlineData("scp", "")]
+    [InlineData("scp", null)]
+    [InlineData("tid", Other)]
+    [InlineData("tid", null)]
+    [InlineData("appid", Blueprint)]
+    [InlineData("appid", null)]
+    [InlineData("azp", Other)]
+    [InlineData("azp", null)]
+    [InlineData("aud", "https://graph.microsoft.com")]
+    [InlineData("aud", null)]
+    public async Task DelegatedOrMismatchedResponseTokenIsRejected(string claim, string? value)
+    {
+        var clock = new TestTime();
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            claims["azp"] = Agent;
+            claims[claim] = JsonSerializer.SerializeToElement(value);
+            var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims)));
+            using var provider = Provider(handler, clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        }
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("0")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    public async Task AnyDelegatedScopePropertyFailsClosed(string scopeJson)
+    {
+        var clock = new TestTime();
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            claims["scp"] = JsonSerializer.Deserialize<JsonElement>(scopeJson);
+            using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        }
+    }
+
+    [Theory]
     [InlineData("exp")]
-    [InlineData("roles")]
     [InlineData("appid")]
     [InlineData("tid")]
     [InlineData("aud")]
     public async Task MissingRequiredTokenClaimsFailClosed(string claim)
     {
         var clock = new TestTime();
-        var claims = AppClaims(clock);
-        claims.Remove(claim);
-        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            claims.Remove(claim);
+            using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        }
     }
 
     [Theory]
-    [InlineData("[]")]
-    [InlineData("[\"\"]")]
-    [InlineData("[null]")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("42")]
+    [InlineData("true")]
     [InlineData("\"Observability.ReadWrite.All\"")]
-    public async Task EmptyOrMalformedApplicationRolesFailClosed(string rolesJson)
+    [InlineData("[\"\"]")]
+    [InlineData("[\" \\t\\r\\n\"]")]
+    [InlineData("[null]")]
+    [InlineData("[42]")]
+    [InlineData("[true]")]
+    [InlineData("[{}]")]
+    [InlineData("[[]]")]
+    [InlineData("[\"Observability.ReadWrite.All\",null]")]
+    [InlineData("[\"Observability.ReadWrite.All\",42]")]
+    [InlineData("[\"Observability.ReadWrite.All\",true]")]
+    [InlineData("[\"Observability.ReadWrite.All\",{}]")]
+    [InlineData("[\"Observability.ReadWrite.All\",[]]")]
+    [InlineData("[\"Observability.ReadWrite.All\",\"\"]")]
+    [InlineData("[\"Observability.ReadWrite.All\",\" \\t\"]")]
+    [InlineData("[null,\"Observability.ReadWrite.All\"]")]
+    public async Task MalformedApplicationRolesFailClosedWithOrWithoutIdentityType(string rolesJson)
     {
         var clock = new TestTime();
-        var claims = AppClaims(clock);
-        claims["roles"] = JsonSerializer.Deserialize<JsonElement>(rolesJson);
-        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        foreach (var includeIdentityType in new[] { true, false })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            if (!includeIdentityType)
+            {
+                claims.Remove("idtyp");
+            }
+            using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        }
     }
 
-    [Fact]
-    public async Task V2AzpAppTokenIsAccepted()
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("[]", false)]
+    [InlineData(ValidRoles, false)]
+    [InlineData(null, true)]
+    [InlineData("[]", true)]
+    [InlineData(ValidRoles, true)]
+    public async Task V2AzpAppTokenIsAcceptedWithMatchingOptionalAppId(string? rolesJson, bool includeAppId)
     {
         var clock = new TestTime();
-        var claims = AppClaims(clock);
-        claims.Remove("appid");
+        var claims = AppClaims(clock, rolesJson);
+        if (!includeAppId)
+        {
+            claims.Remove("appid");
+        }
         claims["azp"] = Agent;
+        claims["aud"] = "api://" + ObservabilityAppTokenProvider.ObservabilityResource;
         var token = Jwt(claims);
         using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(token)), clock);
         Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
@@ -236,7 +533,69 @@ public sealed class ObservabilityAppTokenTests
         var response = new Dictionary<string, object> { ["access_token"] = AppToken(clock), ["expires_in"] = 3600, ["token_type"] = "Bearer" };
         response.Remove(field);
         using var provider = Provider(new TokenHandler(TokenResponse("T1"), JsonResponse(response)), clock);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
+        AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant)));
+    }
+
+    [Theory]
+    [InlineData("access_token", "null")]
+    [InlineData("access_token", "42")]
+    [InlineData("access_token", "[]")]
+    [InlineData("token_type", "{}")]
+    [InlineData("token_type", "false")]
+    [InlineData("expires_in", "null")]
+    [InlineData("expires_in", "\"3600\"")]
+    [InlineData("expires_in", "[]")]
+    [InlineData("expires_in", "1.5")]
+    [InlineData("expires_in", "9223372036854775807")]
+    [InlineData("expires_in", "9223372036854775808")]
+    [InlineData("expires_in", "1e999")]
+    public async Task MalformedResponseTypesAndLifetimeOverflowAreSanitized(string field, string valueJson)
+    {
+        var clock = new TestTime();
+        var response = new Dictionary<string, object>
+        {
+            ["access_token"] = AppToken(clock, null),
+            ["token_type"] = "Bearer",
+            ["expires_in"] = 3600,
+            ["diagnostic"] = Secret,
+        };
+        response[field] = JsonSerializer.Deserialize<JsonElement>(valueJson);
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), JsonResponse(response)), clock);
+        AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant)));
+    }
+
+    [Theory]
+    [InlineData("appid", "42")]
+    [InlineData("azp", "[]")]
+    [InlineData("tid", "{}")]
+    [InlineData("aud", "false")]
+    public async Task MalformedIdentityClaimTypesAreSanitized(string claim, string valueJson)
+    {
+        var clock = new TestTime();
+        var claims = AppClaims(clock, null);
+        claims[claim] = JsonSerializer.Deserialize<JsonElement>(valueJson);
+        using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+        AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant)));
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("\"not-an-object\"")]
+    public async Task MalformedResponseAndTokenPayloadJsonFailClosed(string json)
+    {
+        var clock = new TestTime();
+        using var responseProvider = Provider(new TokenHandler(TokenResponse("T1"), new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        }), clock);
+        AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => responseProvider.ResolveAsync(Agent, Tenant)));
+
+        var parts = AppToken(clock).Split('.');
+        parts[1] = Convert.ToBase64String(Encoding.UTF8.GetBytes(json)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        using var tokenProvider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(string.Join(".", parts))), clock);
+        AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => tokenProvider.ResolveAsync(Agent, Tenant)));
     }
 
     [Fact]
@@ -261,19 +620,48 @@ public sealed class ObservabilityAppTokenTests
     public async Task ExpiredOrNearExpiryTokensFailClosed(int expiresIn)
     {
         var clock = new TestTime();
-        using var responseProvider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(AppToken(clock), expiresIn)), clock);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => responseProvider.ResolveAsync(Agent, Tenant));
-        var claims = AppClaims(clock);
-        claims["exp"] = clock.GetUtcNow().AddSeconds(expiresIn).ToUnixTimeSeconds();
-        using var jwtProvider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => jwtProvider.ResolveAsync(Agent, Tenant));
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            using var responseProvider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(AppToken(clock, rolesJson), expiresIn)), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => responseProvider.ResolveAsync(Agent, Tenant));
+            var claims = AppClaims(clock, rolesJson);
+            claims["exp"] = clock.GetUtcNow().AddSeconds(expiresIn).ToUnixTimeSeconds();
+            using var jwtProvider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => jwtProvider.ResolveAsync(Agent, Tenant));
+        }
     }
 
-    [Fact]
-    public async Task CacheRefreshHonorsEarliestExpiryAndNeverUsesStaleTokenAfterFailure()
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"3600\"")]
+    [InlineData("1.5")]
+    [InlineData("true")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("9223372036854775807")]
+    [InlineData("-9223372036854775808")]
+    [InlineData("9223372036854775808")]
+    [InlineData("1e999")]
+    public async Task MalformedExpiryClaimsFailClosed(string expiryJson)
     {
         var clock = new TestTime();
-        var token = AppToken(clock);
+        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        {
+            var claims = AppClaims(clock, rolesJson);
+            claims["exp"] = JsonSerializer.Deserialize<JsonElement>(expiryJson);
+            using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
+            AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant)));
+        }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[]")]
+    [InlineData(ValidRoles)]
+    public async Task CacheRefreshHonorsEarliestExpiryAndNeverUsesStaleTokenAfterFailure(string? rolesJson)
+    {
+        var clock = new TestTime();
+        var token = AppToken(clock, rolesJson);
         var handler = new TokenHandler(
             TokenResponse("T1"), TokenResponse(token, 600),
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(Secret) });
@@ -288,18 +676,21 @@ public sealed class ObservabilityAppTokenTests
         Assert.Null(error.InnerException);
         Assert.Equal(3, handler.Requests.Count);
 
-        var replacement = AppToken(clock);
+        var replacement = AppToken(clock, rolesJson);
         handler.Responses.Enqueue(TokenResponse("replacement-T1"));
         handler.Responses.Enqueue(TokenResponse(replacement));
         Assert.Equal(replacement, await provider.ResolveAsync(Agent, Tenant));
         Assert.Equal(5, handler.Requests.Count);
     }
 
-    [Fact]
-    public async Task JwtExpiryCanShortenResponseExpiry()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[]")]
+    [InlineData(ValidRoles)]
+    public async Task JwtExpiryCanShortenResponseExpiry(string? rolesJson)
     {
         var clock = new TestTime();
-        var claims = AppClaims(clock);
+        var claims = AppClaims(clock, rolesJson);
         claims["exp"] = clock.GetUtcNow().AddSeconds(300).ToUnixTimeSeconds();
         var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims)), new(HttpStatusCode.Unauthorized));
         using var provider = Provider(handler, clock);
@@ -307,6 +698,33 @@ public sealed class ObservabilityAppTokenTests
         clock.Advance(TimeSpan.FromSeconds(180));
         await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
         Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RolelessTokenCachesAreIsolatedAcrossProviders(bool differentTenant)
+    {
+        var clock = new TestTime();
+        var token = AppToken(clock, null);
+        var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(token));
+        using var provider = Provider(handler, clock);
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+
+        var claims = AppClaims(clock, "[]");
+        claims[differentTenant ? "tid" : "appid"] = Other;
+        var otherToken = Jwt(claims);
+        var otherHandler = new TokenHandler(TokenResponse("other-T1"), TokenResponse(otherToken));
+        var otherTenant = differentTenant ? Other : Tenant;
+        var otherAgent = differentTenant ? Agent : Other;
+        using var otherProvider = new ObservabilityAppTokenProvider(
+            new(otherTenant, otherAgent, Blueprint, Secret), new HttpClient(otherHandler), clock);
+
+        Assert.Equal(otherToken, await otherProvider.ResolveAsync(otherAgent, otherTenant));
+        Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
+        Assert.Equal(otherToken, await otherProvider.ResolveAsync(otherAgent, otherTenant));
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(2, otherHandler.Requests.Count);
     }
 
     [Fact]
@@ -327,11 +745,13 @@ public sealed class ObservabilityAppTokenTests
             new(Tenant, Agent, Blueprint, Secret), new HttpClient(new BlockingHandler()),
             requestTimeout: TimeSpan.FromMilliseconds(20));
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
-        Assert.Null(error.InnerException);
+        AssertSanitized(error);
 
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => provider.GetTokenAsync(Agent, Tenant, cancellation.Token));
+        var canceled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => provider.GetTokenAsync(Agent, Tenant, cancellation.Token));
+        Assert.Equal(cancellation.Token, canceled.CancellationToken);
+        Assert.Null(canceled.InnerException);
     }
 
     [Theory]
@@ -370,21 +790,77 @@ public sealed class ObservabilityAppTokenTests
         Assert.Contains("GetTurnTokenAsync", source);
     }
 
-    private static string Fixture(string file) =>
-        File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ObservabilityFixtures", file));
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("...")]
+    [InlineData(".. ")]
+    [InlineData("../AgentFrameworkProgram.cs")]
+    [InlineData(@"..\AgentFrameworkProgram.cs")]
+    [InlineData("child/../AgentFrameworkProgram.cs")]
+    [InlineData(@"child\..\AgentFrameworkProgram.cs")]
+    [InlineData("/AgentFrameworkProgram.cs")]
+    [InlineData(@"\AgentFrameworkProgram.cs")]
+    [InlineData(@"C:\AgentFrameworkProgram.cs")]
+    [InlineData("C:/AgentFrameworkProgram.cs")]
+    [InlineData("C:AgentFrameworkProgram.cs")]
+    [InlineData(@"\\server\share\AgentFrameworkProgram.cs")]
+    [InlineData(@"\\?\C:\AgentFrameworkProgram.cs")]
+    [InlineData(@"\\.\C:\AgentFrameworkProgram.cs")]
+    [InlineData("AgentFrameworkProgram.cs:stream")]
+    [InlineData("AgentFrameworkProgram.cs.")]
+    [InlineData("AgentFrameworkProgram.cs ")]
+    [InlineData(" AgentFrameworkProgram.cs")]
+    public void FixtureRejectsRootedTraversalAndNonBareFilenames(string? file)
+    {
+        var error = Assert.Throws<ArgumentException>(() => Fixture(file));
+        Assert.Equal("file", error.ParamName);
+        Assert.Contains("bare relative filename", error.Message);
+    }
+
+    private static string Fixture(string? file)
+    {
+        if (string.IsNullOrWhiteSpace(file)
+            || file != file.Trim()
+            || Path.IsPathRooted(file)
+            || file.IndexOfAny(['/', '\\', ':']) >= 0
+            || file.EndsWith('.')
+            || file.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            throw new ArgumentException("Fixture must be a bare relative filename without rooted paths or traversal.", nameof(file));
+        }
+        return File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ObservabilityFixtures", file));
+    }
+
+    private static void AssertSanitized(InvalidOperationException error)
+    {
+        Assert.Equal("Observability app token acquisition failed; check OBS configuration, credentials and application authorization.", error.Message);
+        Assert.DoesNotContain(Secret, error.ToString());
+        Assert.Null(error.InnerException);
+    }
 
     private static ObservabilityAppTokenProvider Provider(TokenHandler handler, TimeProvider clock) =>
         new(new(Tenant, Agent, Blueprint, Secret), new HttpClient(handler), clock);
 
-    private static Dictionary<string, object> AppClaims(TimeProvider clock) => new()
+    private static Dictionary<string, object> AppClaims(TimeProvider clock, string? rolesJson = ValidRoles)
     {
-        ["tid"] = Tenant, ["appid"] = Agent, ["idtyp"] = "app",
-        ["aud"] = ObservabilityAppTokenProvider.ObservabilityResource,
-        ["roles"] = new[] { "Observability.ReadWrite.All" },
-        ["exp"] = clock.GetUtcNow().AddHours(1).ToUnixTimeSeconds(),
-    };
+        var claims = new Dictionary<string, object>
+        {
+            ["tid"] = Tenant, ["appid"] = Agent, ["idtyp"] = "app",
+            ["aud"] = ObservabilityAppTokenProvider.ObservabilityResource,
+            ["exp"] = clock.GetUtcNow().AddHours(1).ToUnixTimeSeconds(),
+        };
+        if (rolesJson is not null)
+        {
+            claims["roles"] = JsonSerializer.Deserialize<JsonElement>(rolesJson);
+        }
+        return claims;
+    }
 
-    private static string AppToken(TimeProvider clock) => Jwt(AppClaims(clock));
+    private static string AppToken(TimeProvider clock, string? rolesJson = ValidRoles) => Jwt(AppClaims(clock, rolesJson));
 
     private static string Jwt(Dictionary<string, object> claims) =>
         "eyJhbGciOiJSUzI1NiJ9." + Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(claims)))
@@ -428,5 +904,20 @@ public sealed class ObservabilityAppTokenTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             throw new InvalidOperationException("Unreachable");
         }
+    }
+
+    private sealed class FailingHandler(Exception failure) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(failure);
+    }
+
+    private sealed class TestCredential(Func<TokenRequestContext, CancellationToken, ValueTask<AccessToken>> acquire) : TokenCredential
+    {
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Unexpected synchronous credential request.");
+
+        public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken) =>
+            acquire(requestContext, cancellationToken);
     }
 }

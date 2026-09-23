@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import subprocess
 import tomllib
 from types import SimpleNamespace
 from datetime import timedelta
@@ -154,26 +155,34 @@ def test_salesforce_metadata_cannot_select_legacy_route():
 
 
 def test_all_observability_initializers_are_covered():
+    # Audit repository samples, not untracked personal copies or generated dependencies.
+    tracked_paths = subprocess.check_output(
+        ["git", "ls-files", "-z", "--", "python", "nodejs"], cwd=ROOT,
+    ).decode("utf-8").split("\0")
     python_paths = set()
-    for path in (ROOT / "python").rglob("*.py"):
-        if any(part in {".venv", "venv", "node_modules", "__pycache__"} for part in path.parts):
+    for relative in tracked_paths:
+        if not relative.startswith("python/") or not relative.endswith(".py"):
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        if any(part in {".venv", "venv", "node_modules", "__pycache__"} for part in Path(relative).parts):
+            continue
+        tree = ast.parse(source(relative), filename=relative)
         if any(
             isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             and node.func.id in {"configure", "configure_observability", "use_microsoft_opentelemetry"}
             for node in ast.walk(tree)
         ):
-            python_paths.add(path.relative_to(ROOT).as_posix())
+            python_paths.add(relative)
     assert python_paths == set(PYTHON_CONFIGS)
 
     node_paths = set()
-    for path in (ROOT / "nodejs").rglob("*.ts"):
-        if any(part in {"node_modules", "dist", "build"} for part in path.parts):
+    for relative in tracked_paths:
+        if not relative.startswith("nodejs/") or not relative.endswith(".ts"):
+            continue
+        if any(part in {"node_modules", "dist", "build"} for part in Path(relative).parts):
             continue
         if re.search(r"(?:useMicrosoftOpenTelemetry|ObservabilityManager\.configure)\(",
-                     path.read_text(encoding="utf-8")):
-            node_paths.add(path.relative_to(ROOT).as_posix())
+                     source(relative)):
+            node_paths.add(relative)
     assert node_paths == set(NODE_CONFIGS)
 
 
@@ -247,7 +256,8 @@ def test_autonomous_python_rejects_missing_obs_token():
 
 
 @pytest.mark.parametrize("expiry", [None, True, 0, 300, "invalid", float("nan"), 3600])
-def test_autonomous_python_caches_only_reported_valid_expiry(expiry):
+@pytest.mark.parametrize("token", ["offline-app-token", None, "", " ", 1])
+def test_autonomous_python_caches_only_reported_valid_expiry(expiry, token):
     path = "python/autonomous/github-trending/observability_token_service.py"
     tree = ast.parse(source(path))
     function = next(
@@ -255,7 +265,7 @@ def test_autonomous_python_caches_only_reported_valid_expiry(expiry):
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "_acquire_and_register_token"
     )
     cached = []
-    result = {"access_token": "offline-app-token", "expires_in": expiry}
+    result = {"access_token": token, "expires_in": expiry}
     namespace = {
         "msal": SimpleNamespace(ConfidentialClientApplication=lambda **kwargs:
             SimpleNamespace(acquire_token_for_client=lambda **kwargs: result)),
@@ -266,7 +276,13 @@ def test_autonomous_python_caches_only_reported_valid_expiry(expiry):
     }
     exec(compile(ast.Module(body=[function], type_ignores=[]), path, "exec"), namespace)
     operation = namespace["_acquire_and_register_token"]("tenant", "agent", "blueprint", "secret", False)
-    if expiry == 3600:
+    if not isinstance(token, str) or not token.strip():
+        with pytest.raises(RuntimeError, match="instance registration") as error:
+            asyncio.run(operation)
+        assert "service policy" in str(error.value)
+        assert "application permissions" not in str(error.value)
+        assert cached == []
+    elif expiry == 3600:
         asyncio.run(operation)
         assert cached[0][1]["expires_in"] == timedelta(hours=1)
     else:

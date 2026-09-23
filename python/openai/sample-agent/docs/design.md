@@ -192,11 +192,14 @@ credentials and `fmi_path=actual agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance exchanges T1 as its client assertion
 for the OBS `.default` scope. Both requests use `client_credentials`.
 
-The OBS-only cache validates tenant/agent, audience and app-role claims, rejects
+The OBS-only cache validates tenant/agent, audience and app-only token claims, rejects
 delegated `scp`, and refreshes from `expires_in`/`exp`. Missing config and token
 failures raise safe errors without stale or empty fallback. The host no longer exchanges
 user tokens for OBS. Business MCP/Graph/OBO calls and original caller/agent baggage are
-unchanged. OBS application roles must be authorized before enabling export.
+unchanged, and workload permissions remain independent. Permissionless S2S export is
+conditional on eligible agent instance registration and OBS service policy, not merely
+Entra identity creation or selecting the S2S endpoint. Absent/empty `roles` require
+`idtyp=app`; valid nonempty roles remain supported on legacy app tokens without `idtyp`.
 
 ## Agent Instructions
 

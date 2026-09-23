@@ -12,8 +12,9 @@ bypasses the app-only resolver.
 When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
 `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
 `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the provisioned
-agent instance **client ID**, never its blueprint or agent-user ID, and arrange
-OBS application-role consent separately.
+agent instance **client ID**, never its blueprint or agent-user ID. The helper
+accepts absent or empty roles only with `idtyp=app`. Confirm instance registration
+and the selected route's service policy; the sample grants no permissions.
 
 The sample-local resolver uses blueprint→agent FMI `client_credentials` only for
 OBS; business authentication remains unchanged. It rejects delegated `scp`

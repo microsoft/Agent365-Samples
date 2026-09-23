@@ -36,10 +36,19 @@ This is the [documented app-only protocol](https://learn.microsoft.com/en-us/ent
 not OBO or `user_fic`. Existing business MCP/Graph tokens, auth handlers, and original turn baggage
 remain unchanged; a developer bearer token cannot authenticate S2S OBS.
 
+An app-only OBS token with `idtyp=app` may omit `roles` or have `roles: []`. Roleless service
+acceptance requires an **eligible registered Agent 365 agent instance** and authorization
+under service policy; selecting S2S or creating an Entra identity alone is insufficient.
+Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
+Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
+permissions and consent remain independent.
+
 **Troubleshooting:** Missing/placeholder credentials fail startup. Export tenant/agent mismatches,
-delegated (`scp`) tokens, missing app roles, and invalid/expired responses are rejected rather
-than replaced with another identity or stale token. The configured identity must match the turn
-baggage and already possess OBS application authorization. No permissions are changed by the sample.
+any delegated `scp` claim (even empty), explicit non-app/null `idtyp`, malformed `roles`, and
+invalid/expired responses are rejected rather than replaced with another identity or stale token.
+Tokens without `idtyp` remain compatible only with a valid nonempty array of nonblank string roles.
+The configured identity must match the turn baggage. For service authorization failures, verify
+instance registration, eligibility and service policy. No permissions are changed by the sample.
 Requests have a 30-second bound; the isolated cache refreshes two minutes before the earliest expiry.
 
 **Deployment:** Retain `dotnet/shared/Observability` when building from source. Its files are linked

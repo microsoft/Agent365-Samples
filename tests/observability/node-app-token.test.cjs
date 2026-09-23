@@ -34,7 +34,7 @@ const resource = '9b975845-388f-4429-889e-eab1ef63949c';
 function token(overrides = {}) {
   const claims = {
     tid: config.tenantId, appid: config.agentId, aud: resource, idtyp: 'app',
-    roles: ['Agent365.Observability.OtelWrite'], exp: clock / 1000 + 3600,
+    exp: clock / 1000 + 3600,
     ...overrides,
   };
   return `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.offline-signature`;
@@ -69,6 +69,31 @@ test('every standalone helper type-checks with the strictest sample settings', (
   assert.equal(diagnostics.length, 0, ts.formatDiagnosticsWithColorAndContext(diagnostics, {
     getCanonicalFileName: name => name, getCurrentDirectory: () => root, getNewLine: () => '\n',
   }));
+});
+
+test('OpenAI application and A365 extensions resolve the same Agents runtime', () => {
+  const appRequire = Module.createRequire(path.join(root, 'nodejs/openai/sample-agent/package.json'));
+  const agentsPath = appRequire.resolve('@openai/agents');
+  const corePath = Module.createRequire(agentsPath).resolve('@openai/agents-core');
+  for (const extension of [
+    '@microsoft/agents-a365-observability-extensions-openai',
+    '@microsoft/agents-a365-tooling-extensions-openai',
+  ]) {
+    const extensionRequire = Module.createRequire(appRequire.resolve(extension));
+    assert.equal(extensionRequire.resolve('@openai/agents'), agentsPath);
+    assert.equal(Module.createRequire(extensionRequire.resolve('@openai/agents')).resolve('@openai/agents-core'), corePath);
+  }
+});
+
+test('OpenAI instrumentation observes both agent invocation and inference', () => {
+  // Fixture loads @opentelemetry/api, sdk-trace-base and context-async-hooks
+  // as transitive dependencies of @microsoft/agents-a365-observability. If the
+  // observability SDK drops those, the fixture must move to a package with
+  // direct dependencies. Timeout is generous to tolerate cold-cache package
+  // resolution across seven sample node_modules trees.
+  execFileSync(process.execPath, [path.join(__dirname, 'fixtures/openai-tracing-smoke.cjs')], {
+    cwd: root, timeout: 120_000, stdio: 'pipe',
+  });
 });
 
 for (const sample of samples) {
@@ -116,6 +141,29 @@ for (const sample of samples) {
       assert.equal(calls[1].form.has('fmi_path'), false);
     });
   }
+  for (const roles of [undefined, []]) {
+    test(`${sample}: accepts explicit app identity with ${roles ? 'empty' : 'absent'} roles`, async () => {
+      const { service, accessToken, calls } = fixture(sample, { roles });
+      assert.equal(await service.resolve(config.agentId, config.tenantId), accessToken);
+      assert.equal(calls.length, 2);
+    });
+  }
+  for (const roles of [undefined, []]) {
+    test(`${sample}: accepts oid==sub roleless token without idtyp (${roles ? 'empty' : 'absent'} roles)`, async () => {
+      const { service, accessToken } = fixture(sample, {
+        roles, idtyp: undefined, oid: config.agentId, sub: config.agentId,
+      });
+      assert.equal(await service.resolve(config.agentId, config.tenantId), accessToken);
+    });
+  }
+  for (const idtyp of ['app', undefined]) {
+    test(`${sample}: accepts application roles with ${idtyp ?? 'legacy absent'} idtyp`, async () => {
+      const { service, accessToken } = fixture(sample, {
+        idtyp, roles: ['Agent365.Observability.OtelWrite'],
+      });
+      assert.equal(await service.resolve(config.agentId, config.tenantId), accessToken);
+    });
+  }
   test(`${sample}: concurrent requests deduplicate; refresh uses actual expiry`, async () => {
     const { service, calls, advance } = fixture(sample);
     const tokens = await Promise.all(Array.from({ length: 8 }, () => service.resolve(config.agentId, config.tenantId)));
@@ -131,8 +179,18 @@ for (const sample of samples) {
     assert.equal(calls.length, 6, 'failed refresh must not return cached/stale data');
   });
   for (const claims of [
-    { scp: 'Agent365.Observability.OtelWrite' }, { scp: '' }, { roles: [] },
-    { roles: [''] }, { roles: 'Agent365.Observability.OtelWrite' }, { idtyp: 'user' },
+    { scp: 'Agent365.Observability.OtelWrite' }, { scp: '' },
+    { roles: undefined, idtyp: undefined }, { roles: [], idtyp: undefined },
+    { roles: [''] }, { roles: [' \t'] }, { roles: ['valid-role', ''] },
+    { roles: [1] }, { roles: null }, { roles: 'Agent365.Observability.OtelWrite' },
+    { idtyp: 'user' }, { idtyp: null },
+    { idtyp: 'user', roles: ['Agent365.Observability.OtelWrite'] },
+    // oid==sub fallback must not accept delegated tokens even with matching identity.
+    { roles: undefined, idtyp: undefined, oid: config.agentId, sub: 'delegated-user-oid' },
+    { roles: undefined, idtyp: undefined, oid: config.agentId, sub: '' },
+    { roles: undefined, idtyp: undefined, oid: '', sub: '' },
+    { roles: undefined, idtyp: undefined, oid: config.agentId, sub: config.agentId, scp: 'User.Read' },
+    { roles: undefined, idtyp: 'user', oid: config.agentId, sub: config.agentId },
     { tid: config.agentId }, { appid: config.blueprintClientId },
     { azp: config.blueprintClientId }, { aud: 'https://graph.microsoft.com' },
     { exp: clock / 1000 }, { exp: true },
@@ -192,26 +250,116 @@ for (const sample of samples) {
   });
 }
 
-for (const sample of ['openai', 'claude', 'langchain', 'copilot-studio']) {
-  test(`${sample}: business tool/OBO authorization call arguments are unchanged`, () => {
-    const name = `nodejs/${sample}/sample-agent/src/client.ts`;
-    function calls(text) {
-      const tree = ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
-      const found = [];
-      const printer = ts.createPrinter({ removeComments: true });
-      function visit(node) {
-        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
-          && ['addToolServersToAgent', 'exchangeToken'].includes(node.expression.name.text)) {
-          found.push(node.arguments.map(arg => printer.printNode(ts.EmitHint.Unspecified, arg, tree)));
-        }
-        ts.forEachChild(node, visit);
+const businessAuthContracts = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures/business-auth-contracts.json'), 'utf8',
+));
+const businessAuthMethods = new Set(['addToolServersToAgent', 'exchangeToken']);
+const authPrinter = ts.createPrinter({ removeComments: true });
+function isBusinessAuthCall(node) {
+  return ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+    && businessAuthMethods.has(node.expression.name.text);
+}
+function normalizedExpression(node, tree) {
+  const result = ts.transform(node, [context => {
+    function visit(value) {
+      if (ts.isStringLiteral(value)) return ts.factory.createStringLiteral(value.text);
+      if (ts.isParenthesizedExpression(value)) return ts.visitNode(value.expression, visit);
+      const visited = ts.visitEachChild(value, visit, context);
+      if (ts.isObjectLiteralExpression(visited)) {
+        return ts.factory.createObjectLiteralExpression(visited.properties, false);
       }
-      visit(tree);
-      return found;
+      if (ts.isArrayLiteralExpression(visited)) {
+        return ts.factory.createArrayLiteralExpression(visited.elements, false);
+      }
+      return visited;
     }
-    const before = execFileSync('git', ['show', `HEAD:${name}`], { cwd: root, encoding: 'utf8' });
-    assert.deepEqual(calls(fs.readFileSync(path.join(root, name), 'utf8')), calls(before));
+    return value => ts.visitNode(value, visit);
+  }]);
+  try {
+    return authPrinter.printNode(ts.EmitHint.Expression, result.transformed[0], tree);
+  } finally {
+    result.dispose();
+  }
+}
+function businessAuthCalls(text) {
+  const tree = ts.createSourceFile('business-auth.ts', text, ts.ScriptTarget.Latest, true);
+  assert.equal(tree.parseDiagnostics.length, 0, 'business auth source must parse');
+  const found = [];
+  function visit(node) {
+    if (isBusinessAuthCall(node)) {
+      found.push({
+        target: normalizedExpression(node.expression, tree),
+        arguments: node.arguments.map(arg => normalizedExpression(arg, tree)),
+      });
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(tree);
+  return found;
+}
+function mutateBusinessAuthCall(text, argumentIndex, replacement) {
+  const tree = ts.createSourceFile('mutation.ts', text, ts.ScriptTarget.Latest, true);
+  const expression = replacement === undefined ? undefined : ts.createSourceFile(
+    'replacement.ts', `const value = ${replacement};`, ts.ScriptTarget.Latest, true,
+  ).statements[0].declarationList.declarations[0].initializer;
+  function synthesize(node) {
+    ts.setTextRange(node, { pos: -1, end: -1 });
+    ts.forEachChild(node, synthesize);
+  }
+  if (expression) synthesize(expression);
+  let mutations = 0;
+  const result = ts.transform(tree, [context => {
+    function visit(node) {
+      if (isBusinessAuthCall(node)) {
+        mutations++;
+        if (argumentIndex === undefined) return ts.factory.createVoidZero();
+        const args = [...node.arguments];
+        assert.ok(argumentIndex < args.length);
+        args[argumentIndex] = expression;
+        return ts.factory.updateCallExpression(node, node.expression, node.typeArguments, args);
+      }
+      return ts.visitEachChild(node, visit, context);
+    }
+    return value => ts.visitNode(value, visit);
+  }]);
+  try {
+    assert.equal(mutations, 1, 'each mutation must change the guarded business call');
+    const changed = authPrinter.printFile(result.transformed[0]);
+    assert.notDeepEqual(businessAuthCalls(changed), businessAuthCalls(text));
+    return changed;
+  } finally {
+    result.dispose();
+  }
+}
+
+for (const sample of ['openai', 'claude', 'langchain', 'copilot-studio']) {
+  const source = fs.readFileSync(path.join(root, `nodejs/${sample}/sample-agent/src/client.ts`), 'utf8');
+  // Reviewed fixtures are independent of HEAD, including in a clean CI checkout.
+  const expected = businessAuthCalls(businessAuthContracts[sample]);
+  assert.equal(expected.length, 1, `${sample}: fixture must specify the business auth call`);
+  const assertContract = text => assert.deepEqual(businessAuthCalls(text), expected);
+  test(`${sample}: business tool/OBO authorization matches its reviewed contract`, () => {
+    assertContract(source);
   });
+  test(`${sample}: business auth contract ignores formatting and string quote style`, () => {
+    const tree = ts.createSourceFile('formatted.ts', source, ts.ScriptTarget.Latest, true);
+    assertContract(`\n/* formatting-only change */\n${authPrinter.printFile(tree)}`);
+    assertContract(businessAuthContracts[sample].replace(/"/g, "'"));
+  });
+  const copilotStudio = sample === 'copilot-studio';
+  for (const mutation of [
+    { name: 'auth handler', index: copilotStudio ? 1 : 2, value: '"observability-only"' },
+    { name: 'turn context', index: copilotStudio ? 0 : 3, value: 'alternateTurnContext' },
+    copilotStudio
+      ? { name: 'workload scopes', index: 2, value: '{ scopes: ["api://9b975845-388f-4429-889e-eab1ef63949c/.default"] }' }
+      : { name: 'OBS credential substituted for workload token', index: 4, value: 'process.env.AGENT365_OBS_BLUEPRINT_CLIENT_SECRET || ""' },
+    { name: 'removed call' },
+  ]) {
+    test(`${sample}: business auth contract rejects ${mutation.name}`, () => {
+      const changed = mutateBusinessAuthCall(source, mutation.index, mutation.value);
+      assert.throws(() => assertContract(changed), assert.AssertionError);
+    });
+  }
 }
 
 for (const sample of legacySamples) {
@@ -386,7 +534,7 @@ for (const expiry of [undefined, null, new Date(NaN), new Date(clock), new Date(
         if (dependency === '@azure/msal-node') return {
           ConfidentialClientApplication: class {
             async acquireTokenByClientCredential() {
-              return { accessToken: 'offline-app', expiresOn: expiry };
+              return { accessToken: token(), expiresOn: expiry };
             }
           },
         };
@@ -402,6 +550,7 @@ for (const expiry of [undefined, null, new Date(NaN), new Date(clock), new Date(
     if (expiry?.getTime() === clock + 3_600_000) {
       await operation;
       assert.equal(cached.length, 1);
+      assert.deepEqual(cached[0].slice(0, 3), [config.agentId, config.tenantId, token()]);
       assert.equal(cached[0][3], 3_600_000);
     } else {
       await assert.rejects(operation, /expiry/);

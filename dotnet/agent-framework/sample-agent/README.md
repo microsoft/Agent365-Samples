@@ -150,13 +150,22 @@ produces T1; agent `client_credentials` uses T1 as `client_assertion` for
 protocol through MSAL. No `user_fic`, OBO, or developer bearer token is used for OBS.
 Business MCP/Graph authentication and original user/agent baggage are unchanged.
 
+An app-only OBS token with `idtyp=app` may omit `roles` or have `roles: []`. Roleless service
+acceptance requires an **eligible registered Agent 365 agent instance** and authorization
+under service policy; selecting S2S or creating an Entra identity alone is insufficient.
+Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
+Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
+permissions and consent remain independent.
+
 **Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail at startup.
-Tenant/agent export mismatches, delegated tokens (`scp`), missing application roles, malformed
-responses, or expired tokens fail closed without a fallback credential. Configure the actual
-identity represented in the original turn baggage; do not rewrite baggage to bypass a mismatch.
-The agent identity must already have OBS application authorization; the sample neither provisions
-identities nor changes permissions. Acquisition has a 30-second bound and expiry-aware caching
-with a two-minute refresh margin; a failed refresh never returns a stale token.
+Tenant/agent export mismatches, any delegated `scp` claim (even empty), explicit non-app/null
+`idtyp`, malformed `roles`, malformed responses, or expired tokens fail closed without a fallback
+credential. Tokens without `idtyp` remain compatible only with a valid nonempty array of
+nonblank string roles. Configure the actual identity represented in the original turn baggage;
+do not rewrite baggage to bypass a mismatch. For service authorization failures, verify instance
+registration, eligibility and service policy; the sample neither provisions identities nor changes
+permissions. Acquisition has a 30-second bound and expiry-aware caching with a two-minute refresh
+margin; a failed refresh never returns a stale token.
 
 **Build/deployment:** Build from the repository checkout, retaining `dotnet/shared/Observability`.
 The project links that source into its own application assembly; `dotnet publish` output is

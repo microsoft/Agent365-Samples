@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
 using Microsoft.Extensions.Configuration;
+using AuthenticationFailedException = ObservabilityIdentity::Azure.Identity.AuthenticationFailedException;
 using ManagedIdentityCredential = ObservabilityIdentity::Azure.Identity.ManagedIdentityCredential;
 using ManagedIdentityId = ObservabilityIdentity::Azure.Identity.ManagedIdentityId;
 
@@ -26,13 +27,7 @@ internal static class ObservabilityAppTokenFactory
                 ? ManagedIdentityId.SystemAssigned
                 : ManagedIdentityId.FromUserAssignedClientId(options.ManagedIdentityClientId);
             var credential = new ManagedIdentityCredential(identity);
-            assertionProvider = async cancellationToken =>
-            {
-                var assertion = await credential.GetTokenAsync(
-                    new TokenRequestContext(["api://AzureADTokenExchange"]),
-                    cancellationToken).ConfigureAwait(false);
-                return assertion.Token;
-            };
+            assertionProvider = cancellationToken => GetManagedIdentityAssertionAsync(credential, cancellationToken);
         }
 
         var httpClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
@@ -40,5 +35,24 @@ internal static class ObservabilityAppTokenFactory
             Timeout = TimeSpan.FromSeconds(30),
         };
         return new ObservabilityAppTokenProvider(options, httpClient, managedIdentityAssertion: assertionProvider);
+    }
+
+    internal static async Task<string> GetManagedIdentityAssertionAsync(TokenCredential credential, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var assertion = await credential.GetTokenAsync(
+                new TokenRequestContext([ObservabilityAppTokenProvider.ExchangeScope]),
+                cancellationToken).ConfigureAwait(false);
+            return assertion.Token;
+        }
+        catch (AuthenticationFailedException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+        catch (Azure.RequestFailedException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
     }
 }

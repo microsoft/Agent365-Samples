@@ -38,8 +38,8 @@ upgrading solely because a route lacks `/otlp`. Legacy Node.js SDKs use
 The inspected service implements both route shapes with the same
 `ExportTraceServiceRequest` body type. The legacy service route has distinct
 tenant-eligibility/service-principal authorization policies: do not infer general
-acceptance or caller-allowlist enforcement from the public OTLP role check.
-Live authorization remains unverified for the available incomplete configuration.
+acceptance or caller-allowlist enforcement from the public OTLP authorization
+policy. A successful public OTLP export does not validate legacy-route admission.
 
 Devin, Copilot Studio and Perplexity pin the coherent preview.115 SDK family to
 retain their verified scope APIs. OpenAI and Vercel retain their existing
@@ -53,17 +53,23 @@ because that release can otherwise replay historical route choices. Existing
 spool data is not deleted. Do not re-enable replay until the installed release
 enforces S2S for both live and replayed exports. No sample falls back to `/observability`.
 
-**Authentication prerequisite (source-verified, not live-verified):** The inspected
-S2S service contract accepts only service-principal/application tokens.
-The public `/otlp/agents/` route requires `Agent365.Observability.OtelWrite` in
-`roles`, not `scp`. Configure application-role consent rather than assuming a
-tenant-specific permission exemption. Delegated AI Teammate/OBO tokens carrying
-`scp` are rejected.
+**Authentication and registration:** S2S OBS requires a service-principal/application
+token. The public `/otlp/agents/` route can authorize an eligible registered agent
+instance without an OBS-specific `Agent365.Observability.OtelWrite` grant, subject
+to service policy. Creating an Entra identity alone is not sufficient: complete
+Agent 365 registration for the exact runtime instance. Legacy-route admission must
+be confirmed separately; selecting `/observabilityService` alone does not establish
+permissionless authorization.
+
+The standalone providers accept absent or empty `roles` only when `idtyp=app`.
+Valid nonempty application roles remain compatible with older tokens lacking
+`idtyp`. When present, `roles` must be an array of nonblank strings. Delegated
+AI Teammate/OBO tokens carrying any `scp` claim, including an empty one, are rejected.
 Selecting S2S does not convert a delegated token into an application token.
 The presence of `scp` makes a token a user principal even if it also has `roles`
 or an application-looking `idtyp`; additional permissions do not bypass this gate.
 
-The autonomous/Salesforce examples acquire application tokens with `roles`.
+The autonomous/Salesforce examples also acquire application tokens, not user tokens.
 Interactive samples now use a **separate OBS-only application-token provider**;
 they do not obtain exporter tokens from business MCP/Graph/OBO caches. The provider
 uses blueprint credentials plus `fmi_path` for the actual agent instance, then
@@ -88,9 +94,12 @@ attribution and the agent-bound OBS token flow. Incomplete provisioning is not a
 valid AI Teammate test setup. A token-acquisition failure such as `AADSTS82001`
 must be resolved before ingestion can be tested; changing the exporter URL cannot
 repair a rejected token grant.
-Do not fix a 401/403 by switching routes. Console/OTLP-only examples do not become
+For a 401/403, check token identity/audience, exact instance registration and the
+selected route's service policy. Do not automatically add an OBS grant or switch
+routes. Workload MCP/Graph/OBO permissions are separate and unchanged.
+Console/OTLP-only examples do not become
 authenticated OBS examples merely by enabling the exporter; they also require
-the dedicated application credentials and permissions.
+the dedicated application credentials and service-side authorization.
 
 **Validation:** Run the offline route/configuration regressions with
 `python -m pytest tests/observability` from an environment with pytest and
@@ -100,7 +109,12 @@ requests, and mock HTTP exports for AI Teammate/OBO contexts, including failures
 cache expiry and identity mismatches, without starting agents or contacting services.
 Node.js token-flow/route tests run with
 `node --test tests/observability/node-app-token.test.cjs` after installing the
-Node.js sample dependencies. .NET tests run with
+Node.js sample dependencies. This also runs the OpenAI agent with a mocked model
+response and an in-memory exporter, checking shared runtime identity and both
+invocation and inference spans without network access. Business MCP/OBO calls are
+checked against reviewed fixtures in `tests/observability/fixtures/business-auth-contracts.json`,
+not the commit under test. Mutation controls cover changed handlers, turn contexts,
+token sources, scopes and removed calls. .NET tests run with
 `dotnet test tests/e2e/Agent365.E2E.Tests.csproj --filter FullyQualifiedName~ObservabilityAppTokenTests`.
 Salesforce route/401 regressions extend `A365TelemetryTest` and require an
 authorized test org. Live AI Teammate and OBO validation must independently check

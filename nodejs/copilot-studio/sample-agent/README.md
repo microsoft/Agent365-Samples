@@ -25,26 +25,26 @@ it without declaring it; relying on incidental dependency hoisting can fail at s
 When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
 `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
 `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. Use the actual agent
-instance **client ID**, never its blueprint or agent-user ID, with pre-existing
-OBS application-role consent.
+instance **client ID**, never its blueprint or agent-user ID. Confirm instance
+registration and the selected route's service policy; the sample grants no permissions.
 
 The unchanged `src/observability-token-service.ts` uses blueprint credentials
 plus `fmi_path` to acquire T1, then the actual agent's `client_credentials` grant
-to the OBS resource scope. It rejects every token containing `scp`, missing
-application roles, incorrect client/tenant/audience, and missing or expired
+to the OBS resource scope. It accepts absent or empty roles only with `idtyp=app`.
+It rejects every token containing `scp`, invalid roles or app-only type,
+incorrect client/tenant/audience, and missing or expired
 lifetimes. No empty, stale, delegated-token, or route fallback is permitted.
 The Copilot Studio/Power Platform OBO token and business behavior remain unchanged.
 Attribution uses `recipient.agenticAppId` and the activity tenant, with explicit
 `AGENT365_OBS_*` fallbacks when metadata is absent, never the blueprint as agent.
 Actual caller ID/name metadata remains separate from the application credential.
 
-`OtelWrite` remains the recommended standard OBS application-role prerequisite,
-but public OTLP authorization does **not** establish access to this legacy
-route. The legacy service has distinct service-principal and tenant admission
-policies. A role such as `Core` satisfies the helper's nonempty-roles shape check,
-not proof of service acceptance. This contract is source-verified, not
-live-validated; no general legacy admission is claimed. Store blueprint
-credentials securely and confirm the existing service policy separately.
+Public OTLP can authorize eligible registered instances without an OBS-specific
+role grant, subject to service policy. That does **not** establish access to this
+legacy route, which has distinct service-principal and tenant admission policies.
+An app-only token, with or without roles, is not proof of service acceptance.
+No general legacy admission is claimed. Store blueprint credentials securely and
+confirm the selected route's service policy instead of automatically granting `OtelWrite`.
 
 This sample demonstrates how to integrate a **Microsoft Copilot Studio** agent with the **Microsoft Agent 365 SDK**. It enables enterprise developers to bridge low-code Copilot Studio agents into Agent 365 managed environments with full feature parity.
 

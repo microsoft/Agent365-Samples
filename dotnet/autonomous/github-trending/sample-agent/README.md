@@ -50,14 +50,15 @@ a365 setup all --agent-name <your-agent-name>
 This command:
 - Creates the **blueprint** app registration in Entra ID
 - Creates the **agent identity** service principal
-- Configures **inheritable permissions** for the Observability API (`Agent365.Observability.OtelWrite`) and Power Platform API
 - Writes all provisioned values into `appsettings.json`
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+3. Verify agent registration and service authorization. The OBS service may accept an app-only
+   token with `idtyp=app` and absent or empty `roles` only for an **eligible registered Agent 365
+   agent instance**, subject to service policy. Selecting S2S or creating an Entra identity alone
+   is insufficient. Do not add an `Agent365.Observability.OtelWrite` grant solely to populate
+   a `roles` claim. Existing role-based authorization requirements still apply where used.
+   Business API permissions and consent, including any OBO requirements in other workloads,
+   remain independent of OBS authorization.
 
 4. Configure Azure OpenAI — the CLI does not configure Azure OpenAI settings. Set these manually in `appsettings.json` or via environment variables:
 

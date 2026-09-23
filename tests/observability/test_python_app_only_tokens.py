@@ -101,6 +101,23 @@ def claims(service, **changes):
     return value
 
 
+@pytest.fixture(params=["roles", "roles-absent", "roles-empty", "legacy-roles", "oid-eq-sub"])
+def app_token_claims(service, request):
+    value = claims(service)
+    if request.param == "roles-absent":
+        del value["roles"]
+    elif request.param == "roles-empty":
+        value["roles"] = []
+    elif request.param == "legacy-roles":
+        del value["idtyp"]
+    elif request.param == "oid-eq-sub":
+        del value["idtyp"]
+        del value["roles"]
+        value["oid"] = AGENT
+        value["sub"] = AGENT
+    return value
+
+
 def jwt(value):
     def encode(obj):
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
@@ -148,8 +165,8 @@ def test_copies_stay_standalone_and_identical():
                    for name in imports)
 
 
-def test_concurrent_exports_share_only_one_acquisition(service, monkeypatch):
-    token = jwt(claims(service))
+def test_concurrent_exports_share_only_one_acquisition(service, monkeypatch, app_token_claims):
+    token = jwt(app_token_claims)
     sent = http_mock(monkeypatch, [response("t1"), response(token)])
     acquire = resolver(service)
     with ThreadPoolExecutor(max_workers=8) as executor:
@@ -158,8 +175,8 @@ def test_concurrent_exports_share_only_one_acquisition(service, monkeypatch):
     assert len(sent) == 2
 
 
-def test_exact_two_step_fmi_fields_and_cache(service, monkeypatch):
-    token = jwt(claims(service))
+def test_exact_two_step_fmi_fields_and_cache(service, monkeypatch, app_token_claims):
+    token = jwt(app_token_claims)
     sent = http_mock(monkeypatch, [response("offline-t1"), response(token)])
     acquire = resolver(service)
     assert acquire(AGENT, TENANT) == token
@@ -185,15 +202,15 @@ def test_exact_two_step_fmi_fields_and_cache(service, monkeypatch):
 
 
 @pytest.mark.parametrize("expiry_source", ["expires_in", "exp", "both"])
-def test_refresh_uses_real_expiry(service, monkeypatch, expiry_source):
-    first_claims = claims(service)
+def test_refresh_uses_real_expiry(service, monkeypatch, expiry_source, app_token_claims):
+    first_claims = app_token_claims.copy()
     first_response = {"expires_in": 3600}
     if expiry_source in ("expires_in", "both"):
         first_response["expires_in"] = 120
     if expiry_source in ("exp", "both"):
         first_claims["exp"] = NOW + 180
     first = jwt(first_claims)
-    second = jwt(claims(service, jti="refreshed"))
+    second = jwt({**app_token_claims, "jti": "refreshed"})
     sent = http_mock(monkeypatch, [
         response("t1"), response(first, **first_response),
         response("t1-refresh"), response(second),
@@ -210,8 +227,8 @@ def test_refresh_uses_real_expiry(service, monkeypatch, expiry_source):
 
 
 @pytest.mark.parametrize("source", ["exp", "expires_in"])
-def test_single_expiry_source_is_supported(service, monkeypatch, source):
-    token_claims = claims(service)
+def test_single_expiry_source_is_supported(service, monkeypatch, source, app_token_claims):
+    token_claims = app_token_claims.copy()
     result = response(jwt(token_claims))
     if source == "expires_in":
         del token_claims["exp"]
@@ -223,14 +240,101 @@ def test_single_expiry_source_is_supported(service, monkeypatch, source):
 
 
 @pytest.mark.parametrize("bad_claims", [
-    {"scp": "access_as_user"}, {"scp": ""}, {"roles": []}, {"roles": None},
-    {"roles": "Observability.Write"}, {"idtyp": "user"},
-    {"tid": OTHER}, {"azp": OTHER}, {"appid": OTHER}, {"azp": None},
-    {"aud": "https://graph.microsoft.com"}, {"exp": NOW - 1},
-    {"exp": NOW + 30}, {"exp": None}, {"exp": True},
+    {"scp": "access_as_user"}, {"scp": ""}, {"scp": None}, {"scp": []}, {"scp": False},
+    {"idtyp": "user"}, {"idtyp": None}, {"idtyp": ""}, {"idtyp": "App"},
+    {"idtyp": False}, {"idtyp": 1}, {"idtyp": []}, {"idtyp": {}},
+    {"tid": OTHER}, {"tid": None}, {"tid": ""}, {"azp": OTHER}, {"appid": OTHER},
+    {"azp": None}, {"appid": None}, {"azp": OTHER, "appid": AGENT},
+    {"azp": None, "appid": AGENT}, {"azp": "", "appid": AGENT},
+    {"aud": "https://graph.microsoft.com"}, {"aud": None},
+    {"aud": ["api://9b975845-388f-4429-889e-eab1ef63949c"]},
+    {"exp": NOW - 1}, {"exp": NOW + 30}, {"exp": NOW + 60}, {"exp": None},
+    {"exp": True}, {"exp": "bad"}, {"exp": float("inf")}, {"exp": float("nan")},
 ])
-def test_rejects_delegated_mismatched_and_expired_tokens(service, monkeypatch, bad_claims):
-    http_mock(monkeypatch, [response("t1"), response(jwt(claims(service, **bad_claims)))])
+def test_rejects_delegated_mismatched_and_expired_tokens(
+    service, monkeypatch, bad_claims, app_token_claims,
+):
+    value = {**app_token_claims, **bad_claims}
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
+    acquire = resolver(service)
+    with pytest.raises(service.ObservabilityTokenError):
+        acquire(AGENT, TENANT)
+    assert acquire._token is None
+
+
+@pytest.mark.parametrize("roles", [
+    None, "Observability.Write", {}, 1, False, [None], [1], [True], [[]], [{}],
+    [""], [" \t\n"], ["Observability.Write", " "],
+])
+@pytest.mark.parametrize("has_idtyp", [True, False])
+def test_rejects_malformed_application_roles(service, monkeypatch, roles, has_idtyp):
+    value = claims(service, roles=roles)
+    if not has_idtyp:
+        del value["idtyp"]
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
+    acquire = resolver(service)
+    with pytest.raises(service.ObservabilityTokenError):
+        acquire(AGENT, TENANT)
+    assert acquire._token is None
+
+
+@pytest.mark.parametrize("roles_present", [True, False])
+def test_roleless_tokens_without_app_signals_fail_closed(service, monkeypatch, roles_present):
+    # No idtyp, no roles, and no oid==sub — the token has no app-only signal.
+    value = claims(service, roles=[])
+    del value["idtyp"]
+    if not roles_present:
+        del value["roles"]
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
+    acquire = resolver(service)
+    with pytest.raises(service.ObservabilityTokenError):
+        acquire(AGENT, TENANT)
+    assert acquire._token is None
+
+
+@pytest.mark.parametrize("bad_oid_sub", [
+    {"oid": AGENT, "sub": "delegated-user-oid"},
+    {"oid": AGENT, "sub": ""},
+    {"oid": "", "sub": ""},
+    {"oid": None, "sub": None},
+    {"oid": AGENT},
+    {"sub": AGENT},
+])
+def test_roleless_oid_sub_fallback_requires_matching_nonempty_strings(
+    service, monkeypatch, bad_oid_sub,
+):
+    value = claims(service, roles=[])
+    del value["idtyp"]
+    del value["roles"]
+    value.update(bad_oid_sub)
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
+    acquire = resolver(service)
+    with pytest.raises(service.ObservabilityTokenError):
+        acquire(AGENT, TENANT)
+    assert acquire._token is None
+
+
+def test_roleless_oid_sub_fallback_rejects_delegated_scp(service, monkeypatch):
+    value = claims(service, roles=[])
+    del value["idtyp"]
+    del value["roles"]
+    value["oid"] = AGENT
+    value["sub"] = AGENT
+    value["scp"] = "User.Read"
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
+    acquire = resolver(service)
+    with pytest.raises(service.ObservabilityTokenError):
+        acquire(AGENT, TENANT)
+    assert acquire._token is None
+
+
+@pytest.mark.parametrize("missing_claim", ["tid", "azp", "aud"])
+def test_missing_token_identity_fails_closed(
+    service, monkeypatch, missing_claim, app_token_claims,
+):
+    value = app_token_claims.copy()
+    del value[missing_claim]
+    http_mock(monkeypatch, [response("t1"), response(jwt(value))])
     acquire = resolver(service)
     with pytest.raises(service.ObservabilityTokenError):
         acquire(AGENT, TENANT)
@@ -274,8 +378,10 @@ def test_bad_responses_never_return_empty_success(service, monkeypatch, first_st
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 429, 500])
-def test_http_failure_is_sanitized_and_no_stale_fallback(service, monkeypatch, status, caplog):
-    token = jwt(claims(service))
+def test_http_failure_is_sanitized_and_no_stale_fallback(
+    service, monkeypatch, status, caplog, app_token_claims,
+):
+    token = jwt(app_token_claims)
     error = HTTPError("offline", status, SECRET, {}, io.BytesIO(SECRET.encode()))
     sent = http_mock(monkeypatch, [
         response("t1"), response(token, expires_in=120),
@@ -288,6 +394,8 @@ def test_http_failure_is_sanitized_and_no_stale_fallback(service, monkeypatch, s
     with pytest.raises(service.ObservabilityTokenError, match=f"HTTP {status}") as caught:
         acquire(AGENT, TENANT)
     assert SECRET not in str(caught.value)
+    assert "instance registration" in str(caught.value)
+    assert "service policy" in str(caught.value)
     assert acquire._token is None
     with pytest.raises(service.ObservabilityTokenError) as caught:
         acquire(AGENT, TENANT)
@@ -346,9 +454,11 @@ def test_all_sdk_enablement_values_fail_clearly_without_config(service, monkeypa
         service.create_observability_token_resolver()
 
 
-def test_v1_appid_claim_is_supported(service, monkeypatch):
-    value = claims(service, appid=AGENT, aud=service.OBSERVABILITY_RESOURCE)
-    del value["azp"]
+@pytest.mark.parametrize("has_azp", [True, False])
+def test_v1_appid_claim_is_supported(service, monkeypatch, app_token_claims, has_azp):
+    value = {**app_token_claims, "appid": AGENT, "aud": service.OBSERVABILITY_RESOURCE}
+    if not has_azp:
+        del value["azp"]
     token = jwt(value)
     http_mock(monkeypatch, [response("t1"), response(token)])
     assert resolver(service)(AGENT, TENANT) == token
@@ -408,8 +518,10 @@ def test_actual_bootstrap_factory_assignment_rejects_missing_config(
 
 @pytest.mark.parametrize("scenario", ["ai-teammate", "obo"])
 @pytest.mark.parametrize("status", [202, 401, 403])
-def test_real_s2s_export_uses_app_token_preserves_user_baggage(service, monkeypatch, scenario, status):
-    token = jwt(claims(service))
+def test_real_s2s_export_uses_app_token_preserves_user_baggage(
+    service, monkeypatch, scenario, status, app_token_claims,
+):
+    token = jwt(app_token_claims)
     token_requests = http_mock(monkeypatch, [response("t1"), response(token)])
     uploads = []
 
@@ -457,14 +569,25 @@ def test_real_s2s_export_uses_app_token_preserves_user_baggage(service, monkeypa
         assert exported[key] == value
 
 
-@pytest.mark.parametrize("failure", ["token-endpoint", "delegated", "identity-mismatch"])
+@pytest.mark.parametrize("failure", [
+    "token-endpoint", "delegated", "empty-scp", "roleless-without-idtyp",
+    "invalid-idtyp", "malformed-roles", "identity-mismatch",
+])
 def test_export_failure_does_not_upload_or_fall_back(service, monkeypatch, failure):
     if failure == "token-endpoint":
         sent = http_mock(monkeypatch, [URLError(SECRET)])
     else:
-        sent = http_mock(monkeypatch, [
-            response("t1"), response(jwt(claims(service, scp="access_as_user"))),
-        ])
+        value = claims(service)
+        if failure in ("delegated", "empty-scp"):
+            value["scp"] = "access_as_user" if failure == "delegated" else ""
+        elif failure == "roleless-without-idtyp":
+            del value["roles"]
+            del value["idtyp"]
+        elif failure == "invalid-idtyp":
+            value["idtyp"] = None
+        elif failure == "malformed-roles":
+            value["roles"] = [" "]
+        sent = http_mock(monkeypatch, [response("t1"), response(jwt(value))])
     uploads = []
     monkeypatch.setattr(requests.Session, "request", lambda *args, **kwargs: uploads.append(args))
     exporter = _Agent365Exporter(
@@ -487,7 +610,7 @@ def test_export_failure_does_not_upload_or_fall_back(service, monkeypatch, failu
     finally:
         exporter.shutdown()
     assert not uploads
-    assert len(sent) == {"token-endpoint": 1, "delegated": 2, "identity-mismatch": 0}[failure]
+    assert len(sent) == {"token-endpoint": 1, "identity-mismatch": 0}.get(failure, 2)
 
 
 @pytest.mark.parametrize("sample", [

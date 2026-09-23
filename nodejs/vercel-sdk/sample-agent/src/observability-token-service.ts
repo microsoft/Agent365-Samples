@@ -93,7 +93,7 @@ export class ObservabilityTokenService {
       if (!response.ok) {
         throw new ObservabilityTokenError(
           `OBS ${step} token request failed (HTTP ${response.status}). `
-          + 'Check the agent instance, blueprint credential and OBS application role consent.',
+          + 'Check the agent instance, blueprint credential and dedicated OBS configuration.',
         );
       }
       result = await response.json();
@@ -148,12 +148,23 @@ export class ObservabilityTokenService {
     // Type/identity guards, not signature validation. The OBS service validates
     // the token obtained directly from Entra's fixed HTTPS endpoint.
     const roles = claims['roles'];
+    const validRoles = roles === undefined
+      || (Array.isArray(roles)
+        && roles.every(role => typeof role === 'string' && role.trim().length > 0));
+    // Delegated tokens always carry scp; app-only tokens never do.
+    // Prefer explicit signals: idtyp=app, then a valid nonempty roles claim, then oid==sub.
+    // Entra emits oid==sub only for application principals; delegated tokens have oid != sub.
+    const oid = typeof claims['oid'] === 'string' ? claims['oid'] : undefined;
+    const sub = typeof claims['sub'] === 'string' ? claims['sub'] : undefined;
+    const oidEqualsSub = oid !== undefined && sub !== undefined && oid.length > 0 && oid === sub;
+    const appOnly = claims['idtyp'] === 'app'
+      || (claims['idtyp'] === undefined && Array.isArray(roles) && roles.length > 0)
+      || (claims['idtyp'] === undefined && oidEqualsSub);
     if (Object.prototype.hasOwnProperty.call(claims, 'scp')
-      || !Array.isArray(roles) || !roles.length
-      || !roles.every(role => typeof role === 'string' && role.length > 0)
-      || (claims['idtyp'] !== undefined && claims['idtyp'] !== 'app')) {
+      || !validRoles || !appOnly) {
       throw new ObservabilityTokenError(
-        'OBS requires application roles and an app-only token without scp/user claims.',
+        'OBS requires an app-only token without scp/user claims; roleless tokens '
+        + 'must declare idtyp=app or oid==sub.',
       );
     }
     const clients = ['azp', 'appid'].filter(key => Object.prototype.hasOwnProperty.call(claims, key));

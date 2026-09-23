@@ -45,13 +45,18 @@ cd nodejs/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 
-This creates the blueprint, agent identity, configures observability permissions, and writes provisioned values. Copy the output values into your `.env` file (see below).
+Complete blueprint/identity provisioning and Agent 365 registration for the exact
+runtime instance, then copy the provisioned values into `.env` (see below).
+CLI versions may offer permission setup separately; an OBS grant is not a
+universal requirement. Eligible registered instances can use roleless app tokens
+on the public S2S OTLP route when service policy permits. Entra identity creation
+alone is not registration. Confirm the CLI permission choices rather than
+automatically granting `Agent365.Observability.OtelWrite`.
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+The MSAL application-token flow does not require a client-side `roles` check.
+Its token is cached by agent/tenant only while the returned expiry is valid.
+For 401/403, check instance registration, token identity/audience and service
+policy; never substitute an OBO token or switch the exporter route.
 
 ### Configuration
 

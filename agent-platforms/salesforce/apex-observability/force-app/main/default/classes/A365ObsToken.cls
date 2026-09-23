@@ -3,8 +3,9 @@
 
 // A365ObsToken — acquires an Agent 365 *agent-bound* Observability token from Apex.
 //
-// The ingest service enforces `{agentId}` in the URL == token `azp`/`appid` and requires
-// the app-role (`roles`) claim, so a plain dedicated-app token 403s. We mint an
+// The ingest service enforces `{agentId}` in the URL == token `azp`/`appid`.
+// Roleless authorization requires eligible instance registration and service policy.
+// A token for an unrelated dedicated app is not an agent-bound token. We mint an
 // agent-bound token via the FMI 3-hop (JWT-bearer client-credentials), sponsored by the
 // agent BLUEPRINT app (which the agent identity already federates):
 //

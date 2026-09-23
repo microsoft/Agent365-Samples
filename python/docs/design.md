@@ -255,10 +255,15 @@ Interactive samples adapt the autonomous sample's two-step FMI flow: blueprint
 client credentials with `fmi_path=actual agent instance client ID` request
 `api://AzureADTokenExchange/.default`; the instance uses T1 as a client assertion
 for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants use
-`client_credentials`. The instance must already have OBS application-role consent.
+`client_credentials`. Permissionless S2S export is conditional on eligible agent
+instance registration and OBS service policy; creating an Entra identity or selecting
+the S2S endpoint alone does not establish eligibility. The samples do not grant OBS
+permissions; workload MCP/Graph/OBO permissions remain independent.
 
 The sample-local resolver strictly checks the export tenant/agent and token identity,
-rejects delegated `scp` tokens, and refreshes an OBS-only cache based on real
+accepts absent/empty `roles` only with `idtyp=app`, and continues to support valid
+nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim,
+explicit non-app `idtyp`, and malformed roles, and refreshes an OBS-only cache based on real
 `expires_in`/`exp` with a 60-second margin. Failures never return stale or empty
 tokens and never fall back to user/OBO tokens or the legacy route. Business
 MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged.

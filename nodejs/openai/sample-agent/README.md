@@ -7,15 +7,23 @@ imports `src/otel.ts` first, before HTTP and OpenAI modules. The bootstrap
 configures one S2S exporter with the isolated app-token resolver and existing
 OpenAI instrumentation. The supported legacy service route is
 `/observabilityService/tenants/{tenant}/agents/{agent}/traces`, with distinct
-tenant-eligibility policies; do not infer its authorization from the public OTLP role.
+tenant-eligibility policies; do not infer its authorization from public OTLP acceptance.
 Per-request export is rejected because it bypasses the app-only resolver.
+
+The published A365 OpenAI extensions require OpenAI Agents `^0.7.0`. This sample
+uses that same Agents family and OpenAI `^6.27.0`, without overrides forcing older
+`agents-core` or OpenAI majors into newer extensions. A clean installation must
+resolve one shared Agents runtime for application and A365 instrumentation.
+Keep SDK packages on a coherent published family; local tarballs and development
+version stamps are not deployment prerequisites.
 
 When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, configure
 `AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`,
 `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`
 using the supplied template. The agent ID must be the actual instance **client ID**,
-not its blueprint, service-principal object ID, or agent-user ID. The instance needs
-pre-existing OBS application-role consent; this sample does not grant permissions.
+not its blueprint, service-principal object ID, or agent-user ID. Roleless tokens
+are accepted by the helper only with explicit `idtyp=app`. Confirm instance
+registration and the selected route's service policy; this sample grants no permissions.
 
 The sample-local `src/observability-token-service.ts` uses the autonomous FMI flow:
 blueprint `client_credentials` plus `fmi_path` → T1 → agent `client_credentials`
@@ -23,7 +31,8 @@ for the OBS audience. MCP/Graph/OBO authentication is unchanged. OBS no longer
 uses `Use_Custom_Resolver` or the delegated token cache. Missing configuration,
 identity mismatch, expired tokens, and rejected grants fail explicitly; no empty,
 stale, delegated-token, or legacy-route fallback is allowed. Check provisioning
-and application permissions on 401/403 or `AADSTS82001`.
+and credentials on `AADSTS82001`; check token identity, registration and service
+policy on 401/403 rather than automatically adding an OBS grant.
 
 This credential example is for development; keep blueprint secrets in a secret
 store and never log token bodies. See the repository's **Observability routing**

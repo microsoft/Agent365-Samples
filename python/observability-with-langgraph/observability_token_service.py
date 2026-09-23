@@ -118,8 +118,8 @@ class ObservabilityTokenResolver:
             error.close()
             raise ObservabilityTokenError(
                 f"OBS {step} token request failed (HTTP {status}). Check dedicated "
-                "OBS tenant/agent IDs, blueprint credentials and OBS application "
-                "role consent for the agent instance; delegated consent is insufficient."
+                "OBS tenant/agent IDs, blueprint credentials, eligible agent instance "
+                "registration and OBS service policy; delegated consent is insufficient."
             ) from None
         except Exception:
             # HTTP/JSON exceptions can contain secrets or response bodies.
@@ -130,7 +130,8 @@ class ObservabilityTokenResolver:
         if not isinstance(result, dict) or result.get("error"):
             raise ObservabilityTokenError(
                 f"OBS {step} token request was rejected. Check blueprint credentials "
-                "and OBS application role consent; response bodies are not logged."
+                "and eligible agent instance registration and OBS service policy; "
+                "response bodies are not logged."
             )
         token = result.get("access_token")
         if not isinstance(token, str) or not token.strip():
@@ -157,16 +158,30 @@ class ObservabilityTokenResolver:
         # These are routing/type guards, NOT signature verification. Entra's TLS
         # endpoint supplies the token; the receiving OBS service validates it.
         client_ids = [claims[key] for key in ("azp", "appid") if key in claims]
+        roles = claims.get("roles", [])
+        # Delegated tokens always carry scp; app-only tokens never do.
+        # Prefer explicit signals: idtyp=app, valid nonempty roles, or oid==sub.
+        # Entra emits oid==sub only for application principals; delegated tokens have oid != sub.
+        oid = claims.get("oid") if isinstance(claims.get("oid"), str) else None
+        sub = claims.get("sub") if isinstance(claims.get("sub"), str) else None
+        oid_equals_sub = bool(oid) and oid == sub
+        idtyp = claims.get("idtyp")
+        app_only = (
+            idtyp == "app"
+            or ("idtyp" not in claims and isinstance(roles, list) and len(roles) > 0)
+            or ("idtyp" not in claims and oid_equals_sub)
+        )
         if (
             "scp" in claims
-            or not isinstance(claims.get("roles"), list)
-            or not claims["roles"]
-            or not all(isinstance(role, str) and role for role in claims["roles"])
-            or claims.get("idtyp", "app") != "app"
+            or not isinstance(roles, list)
+            or not all(isinstance(role, str) and role.strip() for role in roles)
+            or ("idtyp" in claims and idtyp != "app")
+            or not app_only
         ):
             raise ObservabilityTokenError(
-                "OBS requires an app-only token with application roles, not scp/user "
-                "claims. Verify OBS application role consent for the agent instance."
+                "OBS requires an app-only token without scp; roles must be valid when "
+                "present, and roleless tokens must declare idtyp=app or oid==sub. "
+                "Verify eligible agent instance registration and OBS service policy."
             )
         try:
             identity_matches = (

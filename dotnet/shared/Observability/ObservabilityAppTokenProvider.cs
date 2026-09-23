@@ -83,6 +83,11 @@ internal sealed class ObservabilityAppTokenOptions
         || value.Equals("changeme", StringComparison.OrdinalIgnoreCase);
 }
 
+// Expected credential or token-data failures never retain secret-bearing diagnostics.
+internal sealed class ObservabilityTokenAcquisitionException : Exception
+{
+}
+
 /// <summary>
 /// A single configured agent's OBS-only app token cache. Never consumes user/OBO tokens.
 /// Implements the documented blueprint FMI -> agent client_credentials protocol.
@@ -163,7 +168,7 @@ internal sealed class ObservabilityAppTokenProvider : IDisposable
                 var assertion = await _managedIdentityAssertion!(linked.Token).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(assertion))
                 {
-                    throw new InvalidOperationException();
+                    throw new ObservabilityTokenAcquisitionException();
                 }
                 blueprintParameters["client_assertion_type"] = AssertionType;
                 blueprintParameters["client_assertion"] = assertion;
@@ -192,10 +197,39 @@ internal sealed class ObservabilityAppTokenProvider : IDisposable
         {
             throw new OperationCanceledException("Observability token acquisition canceled.", cancellationToken);
         }
-        catch (Exception)
+        catch (OperationCanceledException)
         {
-            // No exception bodies/inner exceptions: identity SDK and HTTP failures can contain credentials.
-            throw new InvalidOperationException("Observability app token acquisition failed; check OBS configuration, credentials and application authorization.");
+            throw AcquisitionFailure();
+        }
+        catch (HttpRequestException)
+        {
+            throw AcquisitionFailure();
+        }
+        catch (ObservabilityTokenAcquisitionException)
+        {
+            throw AcquisitionFailure();
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            // Certificate/assertion failures from the identity SDK can carry secrets.
+            throw AcquisitionFailure();
+        }
+        catch (System.IO.IOException)
+        {
+            // Network I/O errors can carry request URLs or credentials in messages.
+            throw AcquisitionFailure();
+        }
+        catch (Exception e) when (e is not InvalidOperationException
+            && e is not NullReferenceException
+            && e is not ArgumentException
+            && e is not KeyNotFoundException
+            && e is not OverflowException)
+        {
+            // Programming failures (InvalidOperation/NullReference/Argument/KeyNotFound/Overflow)
+            // propagate as-is so bugs are diagnosable. Any other exception type is treated as a
+            // credential-adjacent failure and sanitized to preserve the "never leak secrets"
+            // guarantee for outward diagnostics.
+            throw AcquisitionFailure();
         }
         finally
         {
@@ -218,23 +252,31 @@ internal sealed class ObservabilityAppTokenProvider : IDisposable
         using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
+        using var document = ParseResponseJson(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false));
         var root = document.RootElement;
-        var token = root.GetProperty("access_token").GetString();
+        var token = RequiredString(root, "access_token");
+        var expiresIn = RequiredInt64(root, "expires_in");
         if (string.IsNullOrWhiteSpace(token)
-            || !string.Equals(root.GetProperty("token_type").GetString(), "Bearer", StringComparison.OrdinalIgnoreCase)
-            || !root.GetProperty("expires_in").TryGetInt64(out var expiresIn)
+            || !string.Equals(RequiredString(root, "token_type"), "Bearer", StringComparison.OrdinalIgnoreCase)
             || expiresIn <= 0)
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
-        var expiresAt = requestedAt.AddSeconds(expiresIn);
+        DateTimeOffset expiresAt;
+        try
+        {
+            expiresAt = requestedAt.AddSeconds(expiresIn);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
         if (expiresAt <= _time.GetUtcNow() + RefreshSkew)
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
         return new(token, expiresAt);
     }
@@ -246,45 +288,135 @@ internal sealed class ObservabilityAppTokenProvider : IDisposable
         var parts = token.AccessToken.Split('.');
         if (parts.Length != 3 || parts.Any(string.IsNullOrWhiteSpace))
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
         var payload = parts[1].Replace('-', '+').Replace('_', '/');
         payload = payload.PadRight((payload.Length + 3) / 4 * 4, '=');
-        using var document = JsonDocument.Parse(Convert.FromBase64String(payload));
+        using var document = ParseTokenPayload(payload);
         var claims = document.RootElement;
+        if (claims.ValueKind != JsonValueKind.Object)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
         var hasClientId = false;
         foreach (var claimName in new[] { "appid", "azp" })
         {
             if (claims.TryGetProperty(claimName, out var clientId))
             {
                 hasClientId = true;
-                if (!string.Equals(clientId.GetString(), _options.AgentId, StringComparison.OrdinalIgnoreCase))
+                if (clientId.ValueKind != JsonValueKind.String
+                    || !string.Equals(clientId.GetString(), _options.AgentId, StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException();
+                    throw new ObservabilityTokenAcquisitionException();
                 }
             }
         }
-        var audience = claims.GetProperty("aud").GetString();
+        var audience = RequiredString(claims, "aud");
+        var hasIdentityType = claims.TryGetProperty("idtyp", out var identityType);
+        var hasRoles = claims.TryGetProperty("roles", out var roles);
+        // Delegated tokens always carry scp; app-only tokens never do. In addition to
+        // idtyp=app and valid nonempty roles, accept oid==sub because Entra emits
+        // matching oid/sub only for application principals; delegated tokens have oid != sub.
+        var oid = claims.TryGetProperty("oid", out var oidClaim) && oidClaim.ValueKind == JsonValueKind.String
+            ? oidClaim.GetString()
+            : null;
+        var sub = claims.TryGetProperty("sub", out var subClaim) && subClaim.ValueKind == JsonValueKind.String
+            ? subClaim.GetString()
+            : null;
+        var oidEqualsSub = !string.IsNullOrEmpty(oid) && string.Equals(oid, sub, StringComparison.Ordinal);
+        var hasAppOnlySignal = (hasIdentityType && identityType.ValueKind == JsonValueKind.String && identityType.GetString() == "app")
+            || (!hasIdentityType && hasRoles && roles.ValueKind == JsonValueKind.Array && roles.GetArrayLength() > 0)
+            || (!hasIdentityType && oidEqualsSub);
         if (!hasClientId
-            || !string.Equals(claims.GetProperty("tid").GetString(), _options.TenantId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(RequiredString(claims, "tid"), _options.TenantId, StringComparison.OrdinalIgnoreCase)
             || (audience != ObservabilityResource && audience != "api://" + ObservabilityResource)
             || claims.TryGetProperty("scp", out _)
-            || (claims.TryGetProperty("idtyp", out var identityType) && identityType.GetString() != "app")
-            || !claims.TryGetProperty("roles", out var roles)
-            || roles.ValueKind != JsonValueKind.Array
-            || !roles.EnumerateArray().Any(role => role.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(role.GetString())))
+            || (hasIdentityType && (identityType.ValueKind != JsonValueKind.String || identityType.GetString() != "app"))
+            || (hasRoles && (roles.ValueKind != JsonValueKind.Array
+                || roles.EnumerateArray().Any(role => role.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(role.GetString()))))
+            || !hasAppOnlySignal)
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
 
-        var jwtExpiry = DateTimeOffset.FromUnixTimeSeconds(claims.GetProperty("exp").GetInt64());
+        var expirySeconds = RequiredInt64(claims, "exp");
+        DateTimeOffset jwtExpiry;
+        try
+        {
+            jwtExpiry = DateTimeOffset.FromUnixTimeSeconds(expirySeconds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
         var expiresAt = jwtExpiry < token.ExpiresAt ? jwtExpiry : token.ExpiresAt;
         if (expiresAt <= _time.GetUtcNow() + RefreshSkew)
         {
-            throw new InvalidOperationException();
+            throw new ObservabilityTokenAcquisitionException();
         }
         return expiresAt;
     }
+
+    private static JsonDocument ParseResponseJson(string json)
+    {
+        try
+        {
+            return JsonDocument.Parse(json);
+        }
+        catch (JsonException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+    }
+
+    private static JsonDocument ParseTokenPayload(string payload)
+    {
+        try
+        {
+            return JsonDocument.Parse(Convert.FromBase64String(payload));
+        }
+        catch (FormatException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+        catch (JsonException)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+    }
+
+    private static JsonElement RequiredProperty(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(name, out var property))
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+        return property;
+    }
+
+    private static string? RequiredString(JsonElement value, string name)
+    {
+        var property = RequiredProperty(value, name);
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+        return property.GetString();
+    }
+
+    private static long RequiredInt64(JsonElement value, string name)
+    {
+        var property = RequiredProperty(value, name);
+        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var number))
+        {
+            throw new ObservabilityTokenAcquisitionException();
+        }
+        return number;
+    }
+
+    // Identity SDK and HTTP failures can contain credentials; never attach them as inner exceptions.
+    private static InvalidOperationException AcquisitionFailure() =>
+        new("Observability app token acquisition failed; check OBS configuration, credentials and application authorization.");
 
     public void Dispose()
     {

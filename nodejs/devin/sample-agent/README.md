@@ -24,26 +24,26 @@ it without declaring it; relying on incidental dependency hoisting can fail at s
 When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
 `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
 `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use a provisioned agent
-instance **client ID**, not its blueprint or agent-user ID. OBS application-role
-consent must already exist; this sample does not change permissions.
+instance **client ID**, not its blueprint or agent-user ID. Confirm instance
+registration and the selected route's service policy; this sample does not change permissions.
 
 The unchanged sample-local resolver uses blueprint credentials plus `fmi_path`
 to acquire T1, then the actual agent's `client_credentials` grant to the OBS
-resource scope. It rejects every token containing `scp`, missing application
-roles, incorrect client/tenant/audience, and missing or expired lifetimes.
+resource scope. It accepts absent or empty roles only with `idtyp=app`.
+It rejects every token containing `scp`, invalid roles or app-only type,
+incorrect client/tenant/audience, and missing or expired lifetimes.
 There is no empty, stale, delegated-token, or route fallback. Business
 MCP/Graph/OBO authentication and its caches are independent and unchanged.
 Attribution uses `recipient.agenticAppId` and the activity tenant, with explicit
 `AGENT365_OBS_*` fallbacks when metadata is absent, never the blueprint as agent.
 Actual caller ID/name metadata remains separate from the application credential.
 
-`OtelWrite` remains the recommended standard OBS application-role prerequisite,
-but public OTLP authorization does **not** establish access to this legacy
-route. The legacy service has distinct service-principal and tenant admission
-policies. A role such as `Core` satisfies the helper's nonempty-roles shape check,
-not proof of service acceptance. This contract is source-verified, not
-live-validated; no general legacy admission is claimed. Keep blueprint
-credentials in a secret store and confirm the existing service policy separately.
+Public OTLP can authorize eligible registered instances without an OBS-specific
+role grant, subject to service policy. That does **not** establish access to this
+legacy route, which has distinct service-principal and tenant admission policies.
+An app-only token, with or without roles, is not proof of service acceptance.
+No general legacy admission is claimed. Keep blueprint credentials in a secret
+store and confirm the selected route's service policy instead of automatically granting `OtelWrite`.
 
 This sample demonstrates how to build an agent using Devin in Node.js with the Microsoft Agent 365 SDK. It covers:
 

@@ -97,7 +97,10 @@ async def _acquire_and_register_token(
 
     token = obs_result.get("access_token")
     if not isinstance(token, str) or not token.strip():
-        raise RuntimeError("Failed to acquire OBS application token; check credentials and application permissions.")
+        raise RuntimeError(
+            "Failed to acquire OBS application token; check credentials, eligible "
+            "agent instance registration and OBS service policy."
+        )
     try:
         raw_expiry = obs_result.get("expires_in")
         expiry = float(raw_expiry)

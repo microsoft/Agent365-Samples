@@ -194,10 +194,14 @@ use_microsoft_opentelemetry(
 OBS uses `/observabilityService` for AI Teammate and OBO turns alike. The dedicated
 resolver validates the four `AGENT365_OBS_*` settings in the README and acquires an
 app-only token through the two-step FMI flow, using the actual agent instance client
-ID (not the blueprint). OBS application-role consent is required. It checks
-tenant/agent identity, rejects delegated `scp`, and refreshes from real token expiry.
+ID (not the blueprint). Permissionless S2S export is conditional on eligible agent
+instance registration and OBS service policy, not merely Entra identity creation or
+selecting the S2S endpoint. The resolver checks tenant/agent identity, accepts
+absent/empty `roles` only with `idtyp=app`, and also supports valid nonempty roles on
+legacy app tokens without `idtyp`. It rejects any `scp` claim and refreshes from real token expiry.
 Failures never return stale/empty tokens or fall back to `/observability`.
-MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged.
+MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged;
+workload permissions remain independent.
 
 **What it does**: Turns on detailed logging and monitoring so you can see what your agent is doing.
 

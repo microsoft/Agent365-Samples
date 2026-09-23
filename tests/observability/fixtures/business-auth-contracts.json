@@ -1,0 +1,6 @@
+{
+  "openai": "toolService.addToolServersToAgent(agent, authorization, authHandlerName, turnContext, process.env.BEARER_TOKEN || \"\");",
+  "claude": "toolService.addToolServersToAgent(requestConfig, authorization, authHandlerName, turnContext, process.env.BEARER_TOKEN || \"\");",
+  "langchain": "toolService.addToolServersToAgent(personalizedAgent, authorization, authHandlerName, turnContext, process.env.BEARER_TOKEN || \"\");",
+  "copilot-studio": "authorization.exchangeToken(turnContext, authHandlerName, { scopes: ['https://api.powerplatform.com/.default'] });"
+}

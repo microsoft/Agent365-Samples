@@ -14,9 +14,13 @@ AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 ```
 
 Use the actual **agent instance client ID**, never the blueprint, service-principal
-object ID or agent-user ID. The instance needs administrator-authorized OBS
-**application roles**; delegated consent is insufficient. No provisioning or permission
-changes are performed by this sample.
+object ID or agent-user ID. Permissionless S2S export is conditional on **eligible
+agent instance registration** and OBS service policy, not merely Entra identity
+creation or selecting the S2S endpoint. This sample does not provision identities or
+grant OBS permissions; workload MCP/Graph/OBO permissions remain independent.
+
+Absent or empty `roles` are accepted only with `idtyp=app`. Valid nonempty roles
+also support legacy app tokens without `idtyp`; any `scp` claim is rejected.
 
 The sample-local `observability_token_service.py` adapts the autonomous sample's
 [two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
@@ -30,8 +34,8 @@ Missing/placeholder configuration fails at initialization. Export tenant/agent a
 token identity must match the dedicated configuration; `scp` tokens are rejected.
 The OBS-only cache refreshes using real `expires_in`/`exp` with a 60-second margin.
 Token failures raise safe errors, with no stale, empty, delegated or legacy-route
-fallback. For 401/403, check IDs, blueprint credentials and OBS application role
-consent. Never rewrite incoming baggage to bypass an identity mismatch.
+fallback. For 401/403, check IDs, blueprint credentials, instance registration/eligibility
+and OBS service policy. Never rewrite incoming baggage to bypass an identity mismatch.
 
 Client secrets here are for **development**. Production should use the documented
 certificate/managed-identity blueprint assertion flow through an approved provider;
