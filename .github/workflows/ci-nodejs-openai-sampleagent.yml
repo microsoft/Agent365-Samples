@@ -35,3 +35,7 @@ jobs:
 
     - name: Build
       run: npm run build
+
+    - name: Verify business authentication contracts
+      working-directory: .
+      run: node --test --test-name-pattern="business (tool/OBO authorization|auth contract)" tests/observability/node-app-token.test.cjs
