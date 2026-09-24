@@ -1,5 +1,29 @@
 # Vercel AI SDK Sample Agent - Node.js
 
+## OBS-only application authentication
+
+The compatible Agent 365 preview.125 SDK family initializes once through
+`src/otel.ts`, using the isolated app-token resolver and the supported legacy
+`/observabilityService/tenants/{tenant}/agents/{agent}/traces` service route.
+Its tenant-eligibility policy differs from public OTLP; live acceptance is not
+established by the endpoint flag. Per-request export is rejected because it
+bypasses the app-only resolver.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the provisioned
+agent instance **client ID**, never its blueprint or agent-user ID. The helper
+accepts absent or empty roles only with `idtyp=app`, or with absent `idtyp` and `oid`
+equal to `sub`. Confirm instance registration
+and the selected route's service policy; the sample grants no permissions.
+
+The sample-local resolver uses blueprint→agent FMI `client_credentials` only for
+OBS; business authentication remains unchanged. It rejects delegated `scp`
+tokens, identity mismatches, expired tokens and invalid responses, with no
+empty/stale/token-type or legacy-route fallback. Secure development blueprint
+credentials in a secret store. See the repository's **Observability routing**
+section for offline tests and service-side attribution restrictions.
+
 This sample demonstrates how to build an agent using Vercel AI SDK in Node.js with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications

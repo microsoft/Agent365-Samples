@@ -1,14 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
 using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
 using Microsoft.Agents.Builder.State;
-using System.IdentityModel.Tokens.Jwt;
 using System.Text.RegularExpressions;
 using W365ComputerUseSample.Telemetry;
 
@@ -25,8 +23,6 @@ public static class A365OtelWrapper
         ITurnContext turnContext,
         ITurnState turnState,
         CancellationToken cancellationToken,
-        IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
-        ServiceTokenCache? serviceTokenCache,
         Agent365TelemetryOptions? telemetryOptions,
         UserAuthorization authSystem,
         string authHandlerName,
@@ -46,8 +42,6 @@ public static class A365OtelWrapper
             turnContext,
             turnState,
             cancellationToken,
-            agentTokenCache,
-            serviceTokenCache,
             telemetryOptions,
             authSystem,
             authHandlerName,
@@ -60,8 +54,6 @@ public static class A365OtelWrapper
         ITurnContext turnContext,
         ITurnState turnState,
         CancellationToken cancellationToken,
-        IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
-        ServiceTokenCache? serviceTokenCache,
         Agent365TelemetryOptions? telemetryOptions,
         UserAuthorization authSystem,
         string authHandlerName,
@@ -90,73 +82,6 @@ public static class A365OtelWrapper
 
                 try
                 {
-                    try
-                    {
-                        var observabilityScopes = EnvironmentUtils.GetObservabilityAuthenticationScope();
-                        var agenticToken = new AgenticTokenStruct(authSystem, turnContext, authHandlerName, null);
-                        agentTokenCache?.RegisterObservability(
-                            agentId,
-                            tenantId,
-                            agenticToken,
-                            observabilityScopes);
-
-                        if (agentTokenCache is not null && serviceTokenCache is not null)
-                        {
-                            var cachedObservabilityToken = await serviceTokenCache
-                                .GetObservabilityToken(agentId, tenantId)
-                                .ConfigureAwait(false);
-
-                            if (string.IsNullOrEmpty(cachedObservabilityToken))
-                            {
-                                if (agentTokenCache is AgenticTokenCache concreteAgentTokenCache)
-                                {
-                                    concreteAgentTokenCache.InvalidateToken(agentId, tenantId);
-                                    agentTokenCache.RegisterObservability(
-                                        agentId,
-                                        tenantId,
-                                        agenticToken,
-                                        observabilityScopes);
-                                }
-
-                                cancellationToken.ThrowIfCancellationRequested();
-                                var observabilityToken = await agentTokenCache
-                                    .GetObservabilityToken(agentId, tenantId)
-                                    .ConfigureAwait(false);
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                if (!string.IsNullOrEmpty(observabilityToken))
-                                {
-                                    TimeSpan? expiresIn = null;
-                                    try
-                                    {
-                                        var token = new JwtSecurityTokenHandler().ReadJwtToken(observabilityToken);
-                                        if (token.Payload.Expiration.HasValue)
-                                        {
-                                            expiresIn = token.ValidTo - DateTime.UtcNow;
-                                        }
-                                    }
-                                    catch (ArgumentException)
-                                    {
-                                    }
-
-                                    if (expiresIn is null || expiresIn > TimeSpan.Zero)
-                                    {
-                                        serviceTokenCache.RegisterObservability(
-                                            agentId,
-                                            tenantId,
-                                            observabilityToken,
-                                            observabilityScopes,
-                                            expiresIn);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        logger?.LogWarning("There was an error registering for observability.");
-                    }
-
                     var outputMessage = await func().ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(outputMessage))
                     {

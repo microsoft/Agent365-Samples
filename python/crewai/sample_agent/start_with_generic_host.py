@@ -37,24 +37,25 @@ def _configure_observability_early():
     if not enable_observability:
         print("ℹ️ Observability disabled (ENABLE_OBSERVABILITY=false)")
         return
-    
+
+    from observability_token_service import create_observability_token_resolver
+    token_resolver = create_observability_token_resolver()
     try:
         # Import and configure observability FIRST
         from microsoft_agents_a365.observability.core.config import configure as configure_observability
-        from token_cache import get_cached_agentic_token
+        from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
         
         service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", DEFAULT_SERVICE_NAME)
         service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", DEFAULT_SERVICE_NAMESPACE)
         
-        def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-            """Resolve authentication token for observability exporter"""
-            return get_cached_agentic_token(tenant_id, agent_id)
-        
         configure_observability(
             service_name=service_name,
             service_namespace=service_namespace,
-            token_resolver=token_resolver,
-            cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
+            exporter_options=Agent365ExporterOptions(
+                use_s2s_endpoint=True,
+                token_resolver=token_resolver,
+                cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
+            ),
         )
         print("✅ Observability configured (before CrewAI import)")
     except Exception as e:

@@ -4,6 +4,12 @@
 
 This document describes the design patterns and conventions for Node.js/TypeScript sample agents in the Agent365-Samples repository. All Node.js samples use TypeScript for type safety and follow Express.js patterns for HTTP handling.
 
+The code examples below show the OpenTelemetry-distro variant. Release-compatible
+legacy samples retain their own SDK types and `ObservabilityManager` bootstrap;
+see each sample's `src/otel.ts` rather than mixing classes from different SDK families.
+Both variants explicitly select S2S and use the isolated app-only OBS provider.
+Legacy service-route authorization is distinct from public OTLP authorization.
+
 ## Supported Orchestrators
 
 | Orchestrator | Description | Sample Location |
@@ -70,8 +76,7 @@ server.listen(port, host, async () => {
 ```typescript
 import { TurnState, AgentApplication, TurnContext, MemoryStorage } from '@microsoft/agents-hosting';
 import { ActivityTypes } from '@microsoft/agents-activity';
-import { BaggageBuilder } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance, BaggageBuilderUtils } from '@microsoft/agents-a365-observability-hosting';
+import { BaggageBuilder, BaggageBuilderUtils } from '@microsoft/opentelemetry';
 
 export class MyAgent extends AgentApplication<TurnState> {
   static authHandlerName: string = 'agentic';
@@ -104,11 +109,17 @@ export class MyAgent extends AgentApplication<TurnState> {
     // Set up observability baggage
     const baggageScope = BaggageBuilderUtils.fromTurnContext(
       new BaggageBuilder(),
-      turnContext
+      {
+        activity: {
+          ...turnContext.activity,
+          isAgenticRequest: () => turnContext.activity.isAgenticRequest(),
+          getAgenticInstanceId: () => turnContext.activity.getAgenticInstanceId(),
+          getAgenticTenantId: () => turnContext.activity.getAgenticTenantId() ?? '',
+          getAgenticUser: () => turnContext.activity.getAgenticUser() ?? '',
+        },
+        turnState: turnContext.turnState,
+      }
     ).build();
-
-    // Preload observability token
-    await this.preloadObservabilityToken(turnContext);
 
     try {
       await baggageScope.run(async () => {
@@ -121,18 +132,6 @@ export class MyAgent extends AgentApplication<TurnState> {
     }
   }
 
-  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
-    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-    const tenantId = turnContext?.activity?.recipient?.tenantId ?? '';
-
-    await AgenticTokenCacheInstance.RefreshObservabilityToken(
-      agentId,
-      tenantId,
-      turnContext,
-      this.authorization,
-      getObservabilityAuthenticationScope()
-    );
-  }
 }
 
 export const agentApplication = new MyAgent();
@@ -167,33 +166,14 @@ import { Agent, run } from '@openai/agents';
 import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
 import {
-  ObservabilityManager,
   InferenceScope,
-  Builder,
-} from '@microsoft/agents-a365-observability';
-import { OpenAIAgentsTraceInstrumentor } from '@microsoft/agents-a365-observability-extensions-openai';
+} from '@microsoft/opentelemetry';
 
 export interface Client {
   invokeAgentWithScope(prompt: string): Promise<string>;
 }
 
-// Configure observability
-export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  builder
-    .withService('Sample Agent', '1.0.0')
-    .withTokenResolver((agentId, tenantId) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
-});
-
-// Initialize instrumentation
-const openAIAgentsTraceInstrumentor = new OpenAIAgentsTraceInstrumentor({
-  enabled: true,
-  tracerName: 'openai-agent-auto-instrumentation',
-});
-
-a365Observability.start();
-openAIAgentsTraceInstrumentor.enable();
+// index.ts imports ./otel before this client or HTTP/agent SDK modules.
 
 const toolService = new McpToolRegistrationService();
 
@@ -227,7 +207,7 @@ class OpenAIClient implements Client {
   constructor(private agent: Agent) {}
 
   async invokeAgentWithScope(prompt: string): Promise<string> {
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails, userDetails);
     try {
       return await scope.withActiveSpanAsync(async () => {
         const result = await run(this.agent, prompt);
@@ -241,22 +221,19 @@ class OpenAIClient implements Client {
 }
 ```
 
-### 5. Token Caching (token-cache.ts)
+### 5. OBS-only Application Tokens (observability-token-service.ts)
 
 ```typescript
-const tokenCache = new Map<string, string>();
-
-export function createAgenticTokenCacheKey(agentId: string, tenantId: string): string {
-  return `${agentId}:${tenantId}`;
-}
-
-export function tokenResolver(agentId: string, tenantId: string): string | undefined {
-  const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
-  return tokenCache.get(cacheKey);
-}
-
-export default tokenCache;
+import { createObservabilityTokenResolver } from './observability-token-service';
+const resolveObsToken = createObservabilityTokenResolver();
+const appToken = await resolveObsToken(agentId, tenantId);
 ```
+
+The dedicated resolver uses blueprint `client_credentials` plus `fmi_path` for T1,
+then the agent instance's `client_credentials` grant for the OBS audience. It caches
+only app-only tokens with matching tenant/client IDs and real expiry, and rejects
+`scp`, malformed responses, and identity mismatches. It never reads the business
+MCP/Graph/OBO token cache. See each sample's `AGENT365_OBS_*` settings.
 
 ## Key NPM Packages
 
@@ -264,8 +241,7 @@ export default tokenCache;
 |---------|---------|
 | `@microsoft/agents-hosting` | Agent hosting framework |
 | `@microsoft/agents-activity` | Activity types and helpers |
-| `@microsoft/agents-a365-observability` | Agent 365 tracing |
-| `@microsoft/agents-a365-observability-hosting` | Hosting observability utilities |
+| `@microsoft/opentelemetry` | Public S2S OTLP exporter, tracing scopes, and hosting utilities |
 | `@microsoft/agents-a365-tooling-extensions-*` | MCP tool integration |
 | `@microsoft/agents-a365-notifications` | Notification handling |
 | `@openai/agents` | OpenAI Agents SDK |
@@ -329,7 +305,11 @@ TENANT_ID=...
 CLIENT_SECRET=...
 
 # Observability
-Use_Custom_Resolver=false
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 ```
 
 ## Notification Handling
@@ -371,31 +351,22 @@ private async handleEmailNotification(
 ## Observability Integration
 
 ```typescript
-// Configure observability manager
-const observability = ObservabilityManager.configure((builder: Builder) => {
-  const exporterOptions = new Agent365ExporterOptions();
-  exporterOptions.maxQueueSize = 10;
+// otel.ts is imported first by index.ts, before HTTP or agent SDK modules.
+import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { createObservabilityTokenResolver } from './observability-token-service';
 
-  builder
-    .withService('TypeScript Sample Agent', '1.0.0')
-    .withExporterOptions(exporterOptions)
-    .withTokenResolver((agentId, tenantId) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
+useMicrosoftOpenTelemetry({
+  a365: {
+    enabled: true,
+    useS2SEndpoint: true,
+    durableDelivery: { enabled: false },
+    tokenResolver: createObservabilityTokenResolver(),
+  },
+  instrumentationOptions: { openaiAgents: { enabled: true } },
 });
-
-// Enable framework instrumentation
-const instrumentor = new OpenAIAgentsTraceInstrumentor({
-  enabled: true,
-  tracerName: 'openai-agent-instrumentation',
-  tracerVersion: '1.0.0'
-});
-
-observability.start();
-instrumentor.enable();
 
 // Use inference scope for tracing
-const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+const scope = InferenceScope.start(request, inferenceDetails, agentDetails, userDetails);
 try {
   await scope.withActiveSpanAsync(async () => {
     // LLM invocation

@@ -22,7 +22,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Azure.Identity" Version="1.17.1" />
+		<PackageReference Include="Azure.Identity" Version="1.17.1" Aliases="global,ObservabilityIdentity" />
 		<PackageReference Include="AdaptiveCards" Version="3.1.0" />
 		<PackageReference Include="Microsoft.SemanticKernel.Agents.AzureAI" Version="1.71.0-preview" />
 		<PackageReference Include="Microsoft.SemanticKernel.Agents.Core" Version="1.71.0" />
@@ -34,6 +34,10 @@
 
 		<!-- Telemetry Packages -->
 		<PackageReference Include="Microsoft.OpenTelemetry" Version="1.0.1" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\..\shared\Observability\*.cs" Link="Observability\%(Filename)%(Extension)" />
 	</ItemGroup>
 
 </Project>

@@ -153,6 +153,59 @@ Ensure the MCP Platform is running locally on port 52857, or update the `McpServ
 
 ### 6. Run the agent
 
+First configure the **independent OBS-only application credentials**. The MCP/Graph bearer
+tokens above remain business tokens and are never sent to the S2S observability service:
+
+```json
+{
+  "Agent365Observability": {
+    "TenantId": "<<AGENT_HOME_TENANT_ID>>",
+    "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
+    "BlueprintClientId": "<<BLUEPRINT_CLIENT_ID>>",
+    "UseManagedIdentity": true,
+    "ManagedIdentityClientId": ""
+  }
+}
+```
+
+`AgentId` must be the actual agent instance client ID, not the blueprint ID or service principal
+object ID. For Azure, the configured managed identity must already be federated with the blueprint;
+empty `ManagedIdentityClientId` selects the system-assigned identity, otherwise supply a user-assigned
+client ID. For local development use `UseManagedIdentity=false` and supply
+`Agent365Observability:BlueprintClientSecret` through user secrets, or
+`Agent365Observability__BlueprintClientSecret` through the environment. All keys support the .NET
+double-underscore environment format. Do not store a secret in checked-in configuration.
+
+The shared provider implements the [documented app-only token flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
+produces T1; agent `client_credentials` uses T1 as `client_assertion` for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. No user token, `user_fic`, or OBO is used for OBS.
+Both Microsoft.OpenTelemetry 1.0.6's `options.Agent365` and the
+`services.Configure<Agent365ExporterOptions>` registration explicitly set `UseS2SEndpoint=true`
+and use the same separate provider as `TokenResolver`.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **eligible registered
+Agent 365 agent instance** and authorization under service policy; selecting S2S or creating an
+Entra identity alone is insufficient.
+Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
+Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
+permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail startup.
+Export identity mismatches, any delegated `scp` claim (even empty), explicit non-app/null `idtyp`,
+malformed `roles`, and invalid/expired responses fail closed. Tokens without `idtyp` need either
+`oid` equal to `sub` or a valid nonempty array of nonblank string roles. Original agent/user baggage
+is preserved: use the matching configured identity rather than overwriting turn context. For service
+authorization failures, verify instance registration, eligibility and service policy; this sample
+does not provision identities or modify permissions. Requests are bounded to 30 seconds; tokens
+refresh two minutes before expiry with no stale-token fallback.
+
+**Deployment:** Keep `dotnet/shared/Observability` in the source checkout used for builds.
+Its source is compiled into the sample assembly and `dotnet publish` output is standalone.
+When copying only the sample's source directory, also copy the two shared `.cs` files into
+`Observability/`, remove the external `Compile` item, and retain the `Azure.Identity` alias.
+
 ```powershell
 cd sample-agent
 $env:ASPNETCORE_ENVIRONMENT = "Development"

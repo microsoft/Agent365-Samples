@@ -7,16 +7,13 @@ import { Authorization, TurnContext } from '@microsoft/agents-hosting';
 
 // Observability Imports
 import {
-  ObservabilityManager,
   InferenceScope,
-  Builder,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   InferenceDetails,
-  Agent365ExporterOptions,
+  BaggageBuilder,
+  TenantDetails,
 } from '@microsoft/agents-a365-observability';
-import { AgenticTokenCacheInstance } from '@microsoft/agents-a365-observability-hosting';
 
 /**
  * Client interface for interacting with Copilot Studio agents.
@@ -38,27 +35,6 @@ export interface Client {
 }
 
 /**
- * Configure Agent 365 Observability for telemetry export.
- */
-export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  const exporterOptions = new Agent365ExporterOptions();
-  exporterOptions.maxQueueSize = 10;
-
-  builder
-    .withService('Copilot Studio Sample Agent', '1.0.0')
-    .withExporterOptions(exporterOptions);
-
-  // Configure the token resolver for observability.
-  // If a custom resolver is needed in the future, it can be wired in here.
-  builder.withTokenResolver((agentId: string, tenantId: string) =>
-    AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-  );
-});
-
-// Start observability collection
-a365Observability.start();
-
-/**
  * Microsoft Copilot Studio (MCS) client wrapper for {@link CopilotStudioClient} that adds observability spans.
  *
  * The "Mcs" prefix stands for "Microsoft Copilot Studio" and indicates that this client is specific
@@ -68,7 +44,7 @@ class McsClient implements Client {
   private client: CopilotStudioClient;
   private conversationId: string = '';
 
-  constructor(client: CopilotStudioClient) {
+  constructor(client: CopilotStudioClient, private readonly turnContext: TurnContext) {
     this.client = client;
   }
 
@@ -124,39 +100,67 @@ class McsClient implements Client {
    * @returns The agent's response text.
    */
   async invokeInferenceScope(prompt: string): Promise<string> {
+    const activity = this.turnContext.activity;
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: 'copilot-studio-agent',
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'copilot-studio-sample-agent',
+      agentId: activity.recipient?.agenticAppId
+        || process.env.AGENT365_OBS_AGENT_ID || '',
       agentName: 'Copilot Studio Sample Agent',
-      conversationId: this.conversationId || `conv-${Date.now()}`,
+      conversationId: activity.conversation?.id || this.conversationId,
+      agentBlueprintId: activity.recipient?.agenticAppBlueprintId,
+      agentAUID: activity.recipient?.aadObjectId,
+    };
+    const tenantDetails: TenantDetails = {
+      tenantId: activity.recipient?.tenantId
+        || activity.getAgenticTenantId()
+        || activity.conversation?.tenantId
+        || process.env.AGENT365_OBS_TENANT_ID || '',
     };
 
-    const tenantDetails: TenantDetails = {
-      tenantId: process.env.tenantId || 'unknown-tenant',
-    };
+    const baggageScope = new BaggageBuilder()
+      .agentId(agentDetails.agentId)
+      .agentName(agentDetails.agentName)
+      .agentAuid(agentDetails.agentAUID)
+      .agentBlueprintId(agentDetails.agentBlueprintId)
+      .tenantId(tenantDetails.tenantId)
+      .correlationId(activity.id || `corr-${Date.now()}`)
+      .callerId(activity.from?.aadObjectId || activity.from?.id)
+      .callerName(activity.from?.name)
+      .conversationId(activity.conversation?.id)
+      .conversationItemLink(activity.serviceUrl)
+      .sourceMetadataName(activity.channelId)
+      .build();
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
-
     try {
-      await scope.withActiveSpanAsync(async () => {
-        response = await this.invokeAgent(prompt);
-
-        // Record the inference telemetry
-        scope.recordInputMessages([prompt]);
-        scope.recordOutputMessages([response]);
-        scope.recordResponseId(`resp-${Date.now()}`);
-        scope.recordFinishReasons(['stop']);
+      await baggageScope.run(async () => {
+        const scope = InferenceScope.start(
+          inferenceDetails,
+          agentDetails,
+          tenantDetails,
+          agentDetails.conversationId,
+        );
+        try {
+          await scope.withActiveSpanAsync(async () => {
+            response = await this.invokeAgent(prompt);
+            scope.recordInputMessages([prompt]);
+            scope.recordOutputMessages([response]);
+            scope.recordResponseId(`resp-${Date.now()}`);
+            scope.recordFinishReasons(['stop']);
+          });
+        } catch (error) {
+          scope.recordError(error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        } finally {
+          scope.dispose();
+        }
       });
-    } catch (error) {
-      scope.recordError(error as Error);
-      throw error;
     } finally {
-      scope.dispose();
+      baggageScope.dispose();
     }
 
     return response;
@@ -198,5 +202,5 @@ export async function getClient(
   // Create the Copilot Studio client with the token
   const copilotClient = new CopilotStudioClient(settings, tokenResult.token);
 
-  return new McsClient(copilotClient);
+  return new McsClient(copilotClient, turnContext);
 }

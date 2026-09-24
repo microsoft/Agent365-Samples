@@ -1,5 +1,47 @@
 # CrewAI Agent Sample - Python
 
+## OBS S2S authentication (both bootstraps)
+
+`host_agent_server.py` and `start_with_generic_host.py` use the same sample-local,
+OBS-only resolver. Set the following in `.env` or deployment secrets when enabling
+A365 export; console-only runs can leave the exporter disabled.
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+The agent must be the **actual instance client ID**, not a blueprint, service-principal
+object ID or agent-user ID. Permissionless S2S export is conditional on **eligible
+agent instance registration** and OBS service policy, not merely Entra identity
+creation or selecting the S2S endpoint. This sample does not provision identities or
+grant OBS permissions; workload MCP/Graph/OBO permissions remain independent.
+
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
+
+`observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).
+Blueprint credentials with `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`. The instance then uses T1 as its client assertion
+for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`; no OBO, `user_fic` or Graph token is used for OBS.
+Business MCP/Graph/OBO calls and caller/agent baggage remain unchanged.
+
+Configuration is validated before either bootstrap's best-effort instrumentation
+block. The dedicated cache verifies tenant/agent and token identity, rejects `scp`,
+and refreshes using `expires_in`/`exp` with a 60-second margin. Errors are safe and
+actionable: there is no stale, empty, delegated or legacy-route fallback. Check IDs,
+blueprint credentials, instance registration/eligibility and OBS service policy on
+401/403. Do not rewrite incoming baggage to bypass identity mismatch errors.
+
+The included secret flow is for **development**; production requires the documented
+certificate/managed-identity blueprint assertion flow via your approved provider.
+
 This sample demonstrates how to build a multi-agent system using CrewAI while integrating with the Microsoft Agent 365 SDK. It mirrors the structure and hosting patterns of the AgentFramework/OpenAI Agent 365 samples, while preserving native CrewAI logic in `src/crew_agent/`.
 
 ## Demonstrates

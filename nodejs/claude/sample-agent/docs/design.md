@@ -51,7 +51,10 @@ Initialises the `@microsoft/opentelemetry` distro. Must be imported first in `in
 ```typescript
 import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
 
-useMicrosoftOpenTelemetry();
+import { createObservabilityTokenResolver } from './observability-token-service';
+useMicrosoftOpenTelemetry({
+  a365: { enabled: true, useS2SEndpoint: true, tokenResolver: createObservabilityTokenResolver() },
+});
 ```
 
 ### src/index.ts

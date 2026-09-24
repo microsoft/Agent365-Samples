@@ -78,7 +78,7 @@ Generic hosting infrastructure:
 - HTTP endpoint at `/api/messages`
 - Health endpoint at `/api/health`
 
-### token_cache.py
+### observability_token_service.py
 Token caching utilities for observability authentication.
 
 ### local_authentication_options.py
@@ -166,39 +166,41 @@ SKIP_TOOLING_ON_ERRORS=true
 ### Setup Pattern
 ```python
 def _setup_observability(self):
+    from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+    from observability_token_service import create_observability_token_resolver
+    self.token_resolver = create_observability_token_resolver()
     # Step 1: Configure Agent 365 Observability
     status = configure(
         service_name=os.getenv("OBSERVABILITY_SERVICE_NAME"),
         service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE"),
-        token_resolver=self.token_resolver,
+        exporter_options=Agent365ExporterOptions(
+            use_s2s_endpoint=True,
+            token_resolver=self.token_resolver,
+        ),
     )
 
     # Step 2: Enable OpenAI Agents instrumentation
     OpenAIAgentsTraceInstrumentor().instrument()
 
-def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-    """Token resolver for observability exporter"""
-    return get_cached_agentic_token(tenant_id, agent_id)
 ```
 
 ## Authentication Flow
 
-```python
-class GenericAgentHost:
-    def __init__(self, agent_class, ...):
-        # Auth handler from environment
-        self.auth_handler_name = os.getenv("AUTH_HANDLER_NAME") or None
+OBS authentication is separate from business authentication. The sample-local resolver
+validates the four `AGENT365_OBS_*` settings documented in the README. Blueprint
+credentials and `fmi_path=actual agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance exchanges T1 as its client assertion
+for the OBS `.default` scope. Both requests use `client_credentials`.
 
-    async def on_message(self, context, _):
-        # Exchange token for observability
-        if self.auth_handler_name:
-            token = await self.agent_app.auth.exchange_token(
-                context,
-                scopes=get_observability_authentication_scope(),
-                auth_handler_id=self.auth_handler_name,
-            )
-            cache_agentic_token(tenant_id, agent_id, token.token)
-```
+The OBS-only cache validates tenant/agent, audience and app-only token claims, rejects
+delegated `scp`, and refreshes from `expires_in`/`exp`. Missing config and token
+failures raise safe errors without stale or empty fallback. The host no longer exchanges
+user tokens for OBS. Business MCP/Graph/OBO calls and original caller/agent baggage are
+unchanged, and workload permissions remain independent. Permissionless S2S export is
+conditional on eligible agent instance registration and OBS service policy, not merely
+Entra identity creation or selecting the S2S endpoint. Absent/empty `roles` require
+`idtyp=app`, or absent `idtyp` with `oid` equal to `sub`; valid nonempty roles remain
+supported on legacy app tokens without `idtyp`.
 
 ## Agent Instructions
 

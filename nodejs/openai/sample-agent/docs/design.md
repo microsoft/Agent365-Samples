@@ -38,11 +38,11 @@ This sample demonstrates an agent built using the official OpenAI Agents SDK for
 ┌─────────────────────────────────────────────────────────────────┐
 │                       client.ts                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │              ObservabilityManager                            ││
-│  │  configure() → withService() → withTokenResolver()           ││
+│  │              Compatible Agent 365 SDK                        ││
+│  │  otel.ts → S2S service exporter + OBS-only app tokens         ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │           OpenAIAgentsTraceInstrumentor                      ││
+│  │           OpenAI Agents instrumentation                      ││
 │  │  Auto-instrumentation for OpenAI Agents SDK                  ││
 │  └─────────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────────┐│
@@ -70,8 +70,8 @@ Agent application class:
 
 ### src/client.ts
 LLM client and observability:
-- `ObservabilityManager` configuration
-- `OpenAIAgentsTraceInstrumentor` setup
+- Compatible SDK S2S exporter configured once in `src/otel.ts`
+- Existing OpenAI Agents instrumentation retained
 - `getClient()` factory function
 - `OpenAIClient` implementation with scopes
 
@@ -90,10 +90,10 @@ Token caching utilities for observability.
 4. MyAgent.handleAgentMessageActivity()
    │
 5. BaggageBuilder context setup
-   │  └── fromTurnContext() → sessionDescription() → correlationId()
+   │  └── typed activity adapter → fromTurnContext() → sessionDescription()
    │
-6. preloadObservabilityToken()
-   │  └── AgenticTokenCacheInstance.RefreshObservabilityToken()
+6. OBS exporter resolves its dedicated application token lazily
+   │  └── Blueprint FMI → agent client_credentials (not business OBO)
    │
 7. baggageScope.run(async () => {
    │   ├── getClient() - Create agent with MCP tools
@@ -109,34 +109,36 @@ Token caching utilities for observability.
 
 ## Observability Integration
 
-### Manager Configuration
+### Compatible S2S SDK Configuration (`otel.ts`)
 ```typescript
-export const a365Observability = ObservabilityManager.configure((builder: Builder) => {
-  const exporterOptions = new Agent365ExporterOptions();
-  exporterOptions.maxQueueSize = 10;
+import { ObservabilityManager, Agent365ExporterOptions } from '@microsoft/agents-a365-observability';
+import { createObservabilityTokenResolver } from './observability-token-service';
 
-  builder
-    .withService('TypeScript OpenAI Sample Agent', '1.0.0')
-    .withExporterOptions(exporterOptions)
-    .withTokenResolver((agentId, tenantId) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId)
-    );
+const observability = ObservabilityManager.configure(builder => {
+  const options = new Agent365ExporterOptions();
+  options.useS2SEndpoint = true;
+  options.maxQueueSize = 10;
+  builder.withService('OpenAI Sample Agent', '1.0.0')
+    .withExporterOptions(options)
+    .withTokenResolver(createObservabilityTokenResolver());
 });
-
-// Enable instrumentation
-const instrumentor = new OpenAIAgentsTraceInstrumentor({
-  enabled: true,
-  tracerName: 'openai-agent-auto-instrumentation',
-});
-
-a365Observability.start();
-instrumentor.enable();
+observability.start();
 ```
+
+The real bootstrap rejects `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` before
+configuration because that mode bypasses the app-only resolver. This SDK uses
+the legacy S2S service route without `/otlp`; its authorization policy must not be
+inferred from the public OTLP registered-agent authorization policy. The app-token
+helper accepts absent or empty roles only with explicit `idtyp=app`, or with absent
+`idtyp` and `oid` equal to `sub`, and never
+substitutes a delegated token. Complete instance registration and confirm the
+selected route's service policy instead of treating an OBS role grant as a
+universal prerequisite.
 
 ### InferenceScope Usage
 ```typescript
 async invokeAgentWithScope(prompt: string): Promise<string> {
-  const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+  const scope = InferenceScope.start(request, inferenceDetails, agentDetails, userDetails);
   try {
     await scope.withActiveSpanAsync(async () => {
       response = await this.invokeAgent(prompt);
@@ -203,7 +205,11 @@ TENANT_ID=...
 CLIENT_SECRET=...
 
 # Observability
-Use_Custom_Resolver=false
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 ```
 
 ## MCP Tool Integration
@@ -240,8 +246,8 @@ export async function getClient(authorization, authHandlerName, turnContext) {
   "dependencies": {
     "@microsoft/agents-hosting": "^0.0.1",
     "@microsoft/agents-activity": "^0.0.1",
-    "@microsoft/agents-a365-observability": "^0.0.1",
-    "@microsoft/agents-a365-observability-hosting": "^0.0.1",
+    "@microsoft/agents-a365-observability": "^0.1.0-preview.125",
+    "@microsoft/agents-a365-observability-hosting": "^0.1.0-preview.125",
     "@microsoft/agents-a365-tooling-extensions-openai": "^0.0.1",
     "@microsoft/agents-a365-notifications": "^0.0.1",
     "@openai/agents": "^0.0.1",

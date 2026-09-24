@@ -1,5 +1,30 @@
 # LangChain Sample Agent - Node.js
 
+## OBS-only application authentication
+
+The published distro minimum is 1.4.0. OBS uses the public
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces` route, with disk
+replay disabled so historical route choices cannot override it. Existing spool
+files are not deleted.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the actual agent
+instance **client ID**, never the blueprint or agent-user ID. An incomplete
+generated configuration is not a valid identity; complete Agent 365 registration
+for the exact instance. Eligible registered instances can use roleless S2S OBS
+when service policy permits. For absent or empty roles, the helper
+requires `idtyp=app`, or absent `idtyp` with `oid` equal to `sub`; the sample does not
+grant permissions.
+
+`src/observability-token-service.ts` performs blueprint→agent `client_credentials`
+with `fmi_path`, independently of MCP/Graph/OBO. `Use_Custom_Resolver` no longer
+selects a delegated OBS cache. Missing configuration, identity mismatch, expired
+tokens and rejected grants fail explicitly—no empty/stale/delegated token or
+`/observability` fallback. Keep development blueprint credentials in a secret store.
+See the repository's **Observability routing** section for attribution restrictions
+and offline tests.
+
 This sample demonstrates how to build an agent using LangChain in Node.js with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications

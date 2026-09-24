@@ -6,6 +6,7 @@ using W365ComputerUseSample.Agent;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
+using Agent365.Samples.Observability;
 using Microsoft.Agents.A365.Observability.Hosting.Middleware;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.A365.Tooling.Services;
@@ -23,7 +24,8 @@ using System.Threading.RateLimiting;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
-builder.Services.AddW365ComputerUseOpenTelemetry(builder.Configuration);
+using var observabilityTokens = ObservabilityAppTokenFactory.Create(builder.Configuration);
+builder.Services.AddW365ComputerUseOpenTelemetry(builder.Configuration, observabilityTokens.ResolveAsync);
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
 builder.Services.AddHttpContextAccessor();

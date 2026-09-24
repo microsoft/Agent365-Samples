@@ -177,39 +177,31 @@ def _create_agent(self):
 
 ## Step 5: Observability Configuration
 
+The host initializes the Microsoft OpenTelemetry distro before creating the agent:
+
 ```python
-def _setup_observability(self):
-    """Configure Microsoft Agent 365 observability"""
-    try:
-        # Step 1: Configure with service information
-        status = configure(
-            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "agentframework-agent"),
-            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-            token_resolver=self.token_resolver,
-        )
+from microsoft.opentelemetry import use_microsoft_opentelemetry
+from observability_token_service import create_observability_token_resolver
 
-        if not status:
-            logger.warning("⚠️ Configuration failed")
-            return
-
-        logger.info("✅ Configured successfully")
-
-        # Note: AgentFramework instrumentation would be added here when available
-        # This would be similar to: InstrumentorAgentFramework().instrument()
-
-    except Exception as e:
-        logger.error(f"❌ Error setting up observability: {e}")
-
-def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-    """Token resolver function for exporter"""
-    try:
-        logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-        # Token resolution logic would go here
-        return None
-    except Exception as e:
-        logger.error(f"Error resolving token: {e}")
-        return None
+use_microsoft_opentelemetry(
+    enable_a365=True,
+    enable_azure_monitor=False,
+    a365_use_s2s_endpoint=True,
+    a365_token_resolver=create_observability_token_resolver(enabled=True),
+)
 ```
+
+OBS uses `/observabilityService` for AI Teammate and OBO turns alike. The dedicated
+resolver validates the four `AGENT365_OBS_*` settings in the README and acquires an
+app-only token through the two-step FMI flow, using the actual agent instance client
+ID (not the blueprint). Permissionless S2S export is conditional on eligible agent
+instance registration and OBS service policy, not merely Entra identity creation or
+selecting the S2S endpoint. The resolver checks tenant/agent identity, accepts
+absent/empty `roles` only with `idtyp=app` or with absent `idtyp` and `oid` equal to `sub`,
+and also supports valid nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim and refreshes from real token expiry.
+Failures never return stale/empty tokens or fall back to `/observability`.
+MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged;
+workload permissions remain independent.
 
 **What it does**: Turns on detailed logging and monitoring so you can see what your agent is doing.
 

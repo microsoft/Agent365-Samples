@@ -8,7 +8,6 @@ using System.Text;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
-using Microsoft.Agents.A365.Observability.Hosting.Caching;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.A365.Tooling.Extensions.AgentFramework.Services;
 using Microsoft.Agents.Builder;
@@ -29,8 +28,6 @@ public class MyAgent : AgentApplication
     private const string AgentHireMessage = "Thank you for hiring me! I can control a Windows desktop to accomplish tasks for you.";
     private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
 
-    private readonly IExporterTokenCache<AgenticTokenStruct>? _agentTokenCache;
-    private readonly ServiceTokenCache _serviceTokenCache;
     private readonly Agent365TelemetryOptions _telemetryOptions;
     private readonly ILogger<MyAgent> _logger;
     private readonly IMcpToolRegistrationService _toolService;
@@ -113,8 +110,6 @@ public class MyAgent : AgentApplication
     public MyAgent(
         AgentApplicationOptions options,
         IConfiguration configuration,
-        IExporterTokenCache<AgenticTokenStruct> agentTokenCache,
-        ServiceTokenCache serviceTokenCache,
         IMcpToolRegistrationService toolService,
         ComputerUseOrchestrator orchestrator,
         IOptions<ScreenShareOptions> screenShareOptions,
@@ -122,8 +117,6 @@ public class MyAgent : AgentApplication
         HandoffStore handoffStore,
         ILogger<MyAgent> logger) : base(options)
     {
-        _agentTokenCache = agentTokenCache;
-        _serviceTokenCache = serviceTokenCache;
         _logger = logger;
         _toolService = toolService;
         _orchestrator = orchestrator;
@@ -186,8 +179,6 @@ public class MyAgent : AgentApplication
             turnContext,
             turnState,
             cancellationToken,
-            _agentTokenCache,
-            _serviceTokenCache,
             _telemetryOptions,
             UserAuthorization,
             observabilityAuthHandlerName ?? string.Empty,
@@ -215,8 +206,6 @@ public class MyAgent : AgentApplication
             turnContext,
             turnState,
             cancellationToken,
-            _agentTokenCache,
-            _serviceTokenCache,
             _telemetryOptions,
             UserAuthorization,
             observabilityAuthHandlerName ?? string.Empty,
@@ -268,8 +257,6 @@ public class MyAgent : AgentApplication
             turnContext,
             turnState,
             cancellationToken,
-            _agentTokenCache,
-            _serviceTokenCache,
             _telemetryOptions,
             UserAuthorization,
             ObservabilityAuthHandlerName ?? string.Empty,

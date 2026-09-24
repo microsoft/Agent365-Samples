@@ -20,6 +20,45 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Launch Profiles
 
+Before selecting either profile, configure the **separate OBS-only application credentials**
+in `Agent365Observability`: `TenantId` (agent home tenant GUID), `AgentId` (actual agent instance
+client ID, never the blueprint or service principal object ID), and `BlueprintClientId`.
+For Azure, set `UseManagedIdentity=true`; optional `ManagedIdentityClientId` selects a user-assigned
+identity, otherwise the system-assigned identity is used. The blueprint federation must already exist.
+For local development set `UseManagedIdentity=false` and supply `BlueprintClientSecret` through
+user secrets or the `Agent365Observability__BlueprintClientSecret` environment variable.
+The template is in `appsettings.json`; all keys support standard .NET double-underscore environment names.
+
+The shared provider obtains a blueprint T1 using `client_credentials`, `fmi_path=AgentId`, and
+`api://AzureADTokenExchange/.default`, then uses T1 as the agent's client assertion for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`.
+This is the [documented app-only protocol](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow),
+not OBO or `user_fic`. Existing business MCP/Graph tokens, auth handlers, and original turn baggage
+remain unchanged; a developer bearer token cannot authenticate S2S OBS.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **eligible registered
+Agent 365 agent instance** and authorization under service policy; selecting S2S or creating an
+Entra identity alone is insufficient.
+Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
+Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
+permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder credentials fail startup. Export tenant/agent mismatches,
+any delegated `scp` claim (even empty), explicit non-app/null `idtyp`, malformed `roles`, and
+invalid/expired responses are rejected rather than replaced with another identity or stale token.
+Tokens without `idtyp` need either `oid` equal to `sub` or a valid nonempty array of nonblank string roles.
+The configured identity must match the turn baggage. For service authorization failures, verify
+instance registration, eligibility and service policy. No permissions are changed by the sample.
+Requests have a 30-second bound; the isolated cache refreshes two minutes before the earliest expiry.
+
+**Deployment:** Retain `dotnet/shared/Observability` when building from source. Its files are linked
+into this application's assembly, so `dotnet publish` output is standalone without sibling files
+at runtime. To copy only the source sample, copy both shared `.cs` files into `Observability/`,
+remove the project's external `Compile` item, and retain the `Azure.Identity` alias.
+Microsoft.OpenTelemetry 1.0.1 is explicitly configured with
+`o.Agent365.Exporter.UseS2SEndpoint = true` and the dedicated provider's `TokenResolver`.
+
 This sample includes two launch profiles in `Properties/launchSettings.json`:
 
 ### Sample Agent

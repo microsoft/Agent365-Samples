@@ -13,7 +13,8 @@ import logging
 import os
 
 from microsoft_agents_a365.observability.core.config import configure
-from token_cache import get_cached_agentic_token
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+from observability_token_service import create_observability_token_resolver
 
 logger = logging.getLogger(__name__)
 
@@ -29,27 +30,15 @@ def _initialize_observability_once() -> bool:
         logger.debug("Observability already configured, skipping")
         return True
 
-    def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-        """Token resolver for Agent 365 Observability exporter"""
-        try:
-            logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-            cached_token = get_cached_agentic_token(tenant_id, agent_id)
-            if cached_token:
-                logger.info("Using cached agentic token from agent authentication")
-                return cached_token
-            logger.warning(
-                f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}"
-            )
-            return None
-        except Exception as e:
-            logger.error(f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}")
-            return None
-
+    token_resolver = create_observability_token_resolver()
     try:
         status = configure(
             service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "claude-sample-agent"),
             service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-            token_resolver=token_resolver,
+            exporter_options=Agent365ExporterOptions(
+                use_s2s_endpoint=True,
+                token_resolver=token_resolver,
+            ),
         )
 
         if not status:

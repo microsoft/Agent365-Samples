@@ -1,5 +1,43 @@
 # Observability — Agent 365 SDK with manual OTel + manual instrumentation
 
+## Optional A365 S2S export
+
+Console/OTLP-only operation needs no OBS credentials. To enable A365 export, set:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+Use the actual instance **client ID**, not its blueprint or an object/user ID.
+Permissionless S2S export is conditional on **eligible agent instance registration**
+and OBS service policy, not merely Entra identity creation or selecting the S2S
+endpoint. This sample does not provision identities or grant OBS permissions;
+workload permissions remain independent.
+
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
+
+The standalone `observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint client credentials with `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`. When enabled, demo `AgentDetails` uses these explicit IDs.
+Existing business auth and caller baggage are not repurposed for export.
+
+Active export rejects missing/placeholder config, mismatched tenant/agent identities,
+and delegated `scp` tokens. The dedicated cache refreshes using real `expires_in`/`exp`
+with a 60-second margin. Safe errors replace stale, empty or legacy-route fallback.
+On 401/403 check IDs, blueprint credentials, instance registration/eligibility and
+OBS service policy; do not rewrite incoming baggage. Client secrets are for
+**development**; production should implement the documented certificate/managed-identity
+blueprint assertion flow.
+
 This sample shows two patterns at once:
 
 1. Adding the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).

@@ -1,5 +1,52 @@
 # Copilot Studio Sample Agent - Node.js
 
+## Legacy S2S export with separate OBS-only application authentication
+
+`src/index.ts` imports `src/otel.ts` first. This sample-local bootstrap loads
+dotenv and configures one legacy `ObservabilityManager` before agent and HTTP
+imports. `Agent365ExporterOptions.useS2SEndpoint = true` selects
+`/observabilityService/tenants/{tenantId}/agents/{agentId}/traces?api-version=1`,
+not the public `/otlp` route. The manager uses
+`.withTokenResolver(createObservabilityTokenResolver())`; agents and clients do
+not create additional managers.
+Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false. Startup
+rejects that legacy mode because it bypasses the app-only resolver for a
+context-supplied token.
+
+**SDK module note:** `@microsoft/agents-a365-observability` and the legacy
+`@microsoft/agents-a365-observability-hosting` package are pinned to the published
+`0.1.0-preview.115` version, without carets, alongside the other Agent 365 packages.
+Scopes and `TenantDetails` come from the legacy observability module, not the
+`@microsoft/opentelemetry` distribution. The hosting package's delegated-token
+cache and `RefreshObservabilityToken` are not used for OBS.
+`@opentelemetry/core@2.1.0` is explicit because the preview.115 exporter imports
+it without declaring it; relying on incidental dependency hoisting can fail at startup.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. Use the actual agent
+instance **client ID**, never its blueprint or agent-user ID. Confirm instance
+registration and the selected route's service policy; the sample grants no permissions.
+
+The unchanged `src/observability-token-service.ts` uses blueprint credentials
+plus `fmi_path` to acquire T1, then the actual agent's `client_credentials` grant
+to the OBS resource scope. It accepts absent or empty roles only with `idtyp=app`,
+or with absent `idtyp` and `oid` equal to `sub`.
+It rejects every token containing `scp`, invalid roles or app-only type,
+incorrect client/tenant/audience, and missing or expired
+lifetimes. No empty, stale, delegated-token, or route fallback is permitted.
+The Copilot Studio/Power Platform OBO token and business behavior remain unchanged.
+Attribution uses `recipient.agenticAppId` and the activity tenant, with explicit
+`AGENT365_OBS_*` fallbacks when metadata is absent, never the blueprint as agent.
+Actual caller ID/name metadata remains separate from the application credential.
+
+Public OTLP can authorize eligible registered instances without an OBS-specific
+role grant, subject to service policy. That does **not** establish access to this
+legacy route, which has distinct service-principal and tenant admission policies.
+An app-only token, with or without roles, is not proof of service acceptance.
+No general legacy admission is claimed. Store blueprint credentials securely and
+confirm the selected route's service policy instead of automatically granting `OtelWrite`.
+
 This sample demonstrates how to integrate a **Microsoft Copilot Studio** agent with the **Microsoft Agent 365 SDK**. It enables enterprise developers to bridge low-code Copilot Studio agents into Agent 365 managed environments with full feature parity.
 
 ## Why use this integration?
@@ -24,7 +71,7 @@ This sample uses the [@microsoft/agents-copilotstudio-client](https://github.com
 
 ## Prerequisites
 
-- Node.js 18.x or higher
+- Node.js 22.x or higher
 - Microsoft Agent 365 SDK
 - Access to **Microsoft Copilot Studio** (Frontier preview program)
 - A published Copilot Studio agent with Web channel enabled

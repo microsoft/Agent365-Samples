@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+import "./otel";
 import { ObservabilityManager } from "@microsoft/agents-a365-observability";
 import {
   AuthConfiguration,

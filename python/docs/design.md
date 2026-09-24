@@ -23,7 +23,7 @@ sample-agent/
 ├── host_agent_server.py      # Generic hosting server
 ├── start_with_generic_host.py # Entry point
 ├── local_authentication_options.py # Auth configuration
-├── token_cache.py            # Token caching utilities
+├── observability_token_service.py # Dedicated OBS app-token acquisition/cache
 ├── pyproject.toml           # Project configuration
 ├── ToolingManifest.json     # MCP tool manifest
 ├── .env                     # Environment variables
@@ -180,21 +180,29 @@ class GenericAgentHost:
 ```python
 def _setup_observability(self):
     """Configure Microsoft Agent 365 observability"""
+    from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+    from observability_token_service import create_observability_token_resolver
+    self.token_resolver = create_observability_token_resolver()
     # Step 1: Configure with service information
     status = configure(
         service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "sample-agent"),
         service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365"),
-        token_resolver=self.token_resolver,
+        exporter_options=Agent365ExporterOptions(
+            use_s2s_endpoint=True,
+            token_resolver=self.token_resolver,
+        ),
     )
 
     # Step 2: Enable framework-specific instrumentation
     OpenAIAgentsTraceInstrumentor().instrument()
 
-def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-    """Token resolver for Agent 365 Observability exporter"""
-    cached_token = get_cached_agentic_token(tenant_id, agent_id)
-    return cached_token
 ```
+
+When the A365 exporter is enabled, the sample-local resolver validates dedicated
+`AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`
+and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` settings. The agent ID must be the actual
+instance client ID, never its blueprint. Agent Framework's distro enables export
+explicitly and calls the factory with `enabled=True`.
 
 ### 6. MCP Server Setup
 
@@ -241,22 +249,26 @@ class LocalAuthenticationOptions:
         )
 ```
 
-### 8. Token Caching
+### 8. OBS-Only Token Acquisition and Caching
 
-```python
-# Global token cache
-_agentic_token_cache: dict[str, str] = {}
+Interactive samples adapt the autonomous sample's two-step FMI flow: blueprint
+client credentials with `fmi_path=actual agent instance client ID` request
+`api://AzureADTokenExchange/.default`; the instance uses T1 as a client assertion
+for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants use
+`client_credentials`. Permissionless S2S export is conditional on eligible agent
+instance registration and OBS service policy; creating an Entra identity or selecting
+the S2S endpoint alone does not establish eligibility. The samples do not grant OBS
+permissions; workload MCP/Graph/OBO permissions remain independent.
 
-def cache_agentic_token(tenant_id: str, agent_id: str, token: str) -> None:
-    """Cache an agentic token for later use"""
-    cache_key = f"{tenant_id}:{agent_id}"
-    _agentic_token_cache[cache_key] = token
-
-def get_cached_agentic_token(tenant_id: str, agent_id: str) -> str | None:
-    """Retrieve a cached agentic token"""
-    cache_key = f"{tenant_id}:{agent_id}"
-    return _agentic_token_cache.get(cache_key)
-```
+The sample-local resolver strictly checks the export tenant/agent and token identity,
+accepts absent/empty `roles` only with `idtyp=app` or with absent `idtyp` and `oid` equal
+to `sub`, and continues to support valid nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim,
+explicit non-app `idtyp`, and malformed roles, and refreshes an OBS-only cache based on real
+`expires_in`/`exp` with a 60-second margin. Failures never return stale or empty
+tokens and never fall back to user/OBO tokens or the legacy route. Business
+MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged.
+The provided client-secret flow is for development; production needs an approved
+certificate/managed-identity blueprint assertion provider.
 
 ## Key Python Packages
 

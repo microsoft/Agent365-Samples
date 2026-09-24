@@ -1,5 +1,48 @@
 # OpenAI Sample Agent - Python
 
+## OBS S2S authentication (separate from business authentication)
+
+For A365 export, set these **dedicated** settings in your local `.env` or deployment
+secret configuration. Console-only runs may leave export disabled.
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+The agent ID is the **actual instance client ID**, not its blueprint, service-principal
+object ID, or agent-user ID. Permissionless S2S export is conditional on **eligible
+agent instance registration** and OBS service policy, not merely Entra identity
+creation or selecting the S2S endpoint. This sample does not provision identities or
+grant OBS permissions; workload MCP/Graph/OBO permissions remain independent.
+
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
+
+`observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint client credentials + `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance exchanges T1 as its client assertion
+for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`. Only OBS uses this token; MCP, Graph, OBO and original
+caller/agent baggage remain unchanged.
+
+The sample-local resolver validates config at startup, checks the export tenant/agent
+and returned token identity, rejects delegated `scp` tokens, and refreshes its dedicated
+cache using `expires_in`/`exp` with a 60-second margin. Failures raise safe configuration
+or token errors: no stale, empty, user-token or legacy-route fallback. On 401/403,
+check the configured IDs, blueprint credential, instance registration/eligibility
+and OBS service policy.
+An identity mismatch is an error, not permission to rewrite incoming baggage.
+
+The included client-secret flow is for **development**. For production, implement the
+documented certificate/managed-identity blueprint assertion flow using your approved
+credential provider; do not substitute a delegated token or repurpose business auth.
+
 This sample demonstrates how to build an agent using OpenAI in Python with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications

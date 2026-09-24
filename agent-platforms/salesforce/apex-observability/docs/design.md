@@ -58,16 +58,20 @@ Dependency direction (no cycles):
 > The steps below show only what the Apex sample sends on the wire.
 
 MSAL is unavailable in Apex, so each hop is a raw `application/x-www-form-urlencoded` POST. The ingest
-enforces `{agentId}`-in-URL == token `azp`/`appid` plus the app-role claim, so a plain dedicated-app
-token is rejected (403). The sample therefore mints an **agent-bound** token:
+enforces `{agentId}`-in-URL == token `azp`/`appid` and app-only identity, so a token
+for an unrelated dedicated app is not sufficient. Eligible registered agent
+instances can use roleless tokens on this public S2S route when service policy
+permits. An Entra identity alone does not establish Agent 365 registration.
+The sample therefore mints an **agent-bound** token:
 
 1. **Hop 1/2** — as the blueprint app: `client_credentials` + `scope=api://AzureADTokenExchange/.default` +
    `fmi_path=<agentId>`, client auth = `Basic` (from the External Credential). Yields a T1 FMI
    assertion. (`A365_Obs_Token` Named Credential.)
 2. **Hop 3** — as the agent id: `client_credentials` + `client_id=<agentId>` +
    `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` +
-   `client_assertion=T1` + `scope=<obs>/.default`. Yields the agent-bound token (`azp=agentId`,
-   `roles=[Agent365.Observability.OtelWrite]`). (`A365_Obs_TokenJwt` Named Credential.)
+   `client_assertion=T1` + `scope=<obs>/.default`. Yields an app-only agent-bound
+   token (`azp`/`appid=agentId`), which may have no `roles` claim.
+   (`A365_Obs_TokenJwt` Named Credential.)
 3. **Ingest** — `POST {ingestBase}/observabilityService/tenants/{tenantId}/otlp/agents/{agentId}/traces?api-version=1`
    with `Authorization: Bearer <token>`. (`A365_Obs_Ingest` Named Credential.)
 

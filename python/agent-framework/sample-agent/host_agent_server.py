@@ -43,10 +43,7 @@ from microsoft.opentelemetry import use_microsoft_opentelemetry
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import (
     BaggageBuilder,
 )
-from microsoft_agents_a365.runtime.environment_utils import (
-    get_observability_authentication_scope,
-)
-from token_cache import cache_agentic_token, get_cached_agentic_token
+from observability_token_service import create_observability_token_resolver
 
 # --- Configuration ---
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -76,13 +73,12 @@ def create_and_run_host(
     # Replaces the legacy configure() call with a single entrypoint that sets up
     # tracing, metrics, and logging pipelines including A365 telemetry export.
     # See: https://github.com/microsoft/opentelemetry-distro-python
+    token_resolver = create_observability_token_resolver(enabled=True)
     use_microsoft_opentelemetry(
         enable_a365=True,
+        a365_use_s2s_endpoint=True,
         enable_azure_monitor=False,
-        a365_token_resolver=lambda agent_id, tenant_id: get_cached_agentic_token(
-            tenant_id, agent_id
-        )
-        or "",
+        a365_token_resolver=token_resolver,
     )
 
     host = GenericAgentHost(agent_class, *agent_args, **agent_kwargs)
@@ -131,32 +127,6 @@ class GenericAgentHost:
         logger.info("✅ Notification handlers registered successfully")
 
     # --- Observability ---
-    async def _setup_observability_token(
-        self, context: TurnContext, tenant_id: str, agent_id: str
-    ):
-        # Only attempt token exchange when auth handler is configured
-        if not self.auth_handler_name:
-            logger.debug("Skipping observability token exchange (no auth handler)")
-            return
-            
-        try:
-            logger.info(
-                f"🔐 Attempting token exchange for observability... "
-                f"(tenant_id={tenant_id}, agent_id={agent_id})"
-            )
-            exaau_token = await self.agent_app.auth.exchange_token(
-                context,
-                scopes=get_observability_authentication_scope(),
-                auth_handler_id=self.auth_handler_name,
-            )
-            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-            logger.info(
-                f"✅ Token exchange successful "
-                f"(tenant_id={tenant_id}, agent_id={agent_id})"
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to cache observability token: {e}")
-
     async def _validate_agent_and_setup_context(self, context: TurnContext):
         logger.info("🔍 Validating agent and setting up context...")
         tenant_id = context.activity.recipient.tenant_id
@@ -168,7 +138,6 @@ class GenericAgentHost:
             await context.send_activity("❌ Sorry, the agent is not available.")
             return None
 
-        await self._setup_observability_token(context, tenant_id, agent_id)
         return tenant_id, agent_id
 
     # --- Handlers (Messages & Notifications) ---

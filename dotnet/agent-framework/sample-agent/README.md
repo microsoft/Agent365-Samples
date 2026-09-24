@@ -118,6 +118,63 @@ finally
 
 ## Observability
 
+### Required OBS-only application credentials
+
+Configure the separate `Agent365Observability` credentials before starting the app:
+
+```json
+{
+  "Agent365Observability": {
+    "TenantId": "<<AGENT_HOME_TENANT_ID>>",
+    "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
+    "BlueprintClientId": "<<BLUEPRINT_CLIENT_ID>>",
+    "UseManagedIdentity": true,
+    "ManagedIdentityClientId": ""
+  }
+}
+```
+
+`AgentId` is the actual agent instance **application/client ID**, not its service principal
+object ID or the blueprint ID. Empty `ManagedIdentityClientId` selects the system-assigned
+identity; set it to a user-assigned managed identity client ID otherwise. This identity must
+already be configured as a federated credential on the blueprint. For local development,
+set `UseManagedIdentity` to `false` and supply `Agent365Observability:BlueprintClientSecret`
+through user secrets, or `Agent365Observability__BlueprintClientSecret` through the environment.
+All settings support the standard .NET double-underscore environment syntax. Never commit secrets.
+
+The [shared OBS provider](../../shared/Observability/ObservabilityAppTokenProvider.cs) uses the
+[documented app-only flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
+produces T1; agent `client_credentials` uses T1 as `client_assertion` for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. The existing autonomous sample uses the same
+protocol through MSAL. No `user_fic`, OBO, or developer bearer token is used for OBS.
+Business MCP/Graph authentication and original user/agent baggage are unchanged.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **eligible registered
+Agent 365 agent instance** and authorization under service policy; selecting S2S or creating an
+Entra identity alone is insufficient.
+Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
+Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
+permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail at startup.
+Tenant/agent export mismatches, any delegated `scp` claim (even empty), explicit non-app/null
+`idtyp`, malformed `roles`, malformed responses, or expired tokens fail closed without a fallback
+credential. Tokens without `idtyp` need either `oid` equal to `sub` or a valid nonempty array of
+nonblank string roles. Configure the actual identity represented in the original turn baggage;
+do not rewrite baggage to bypass a mismatch. For service authorization failures, verify instance
+registration, eligibility and service policy; the sample neither provisions identities nor changes
+permissions. Acquisition has a 30-second bound and expiry-aware caching with a two-minute refresh
+margin; a failed refresh never returns a stale token.
+
+**Build/deployment:** Build from the repository checkout, retaining `dotnet/shared/Observability`.
+The project links that source into its own application assembly; `dotnet publish` output is
+standalone and needs no sibling source directory at runtime. If copying only `sample-agent` as
+source, also copy the two shared `.cs` files into `Observability/`, remove the external `Compile`
+item, and retain the `Azure.Identity` package alias in the project. Do not deploy a source-only
+sample directory without its linked helper.
+
 This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro, configured in `Program.cs` with a single call:
 
 ```csharp
@@ -126,6 +183,9 @@ builder.UseMicrosoftOpenTelemetry(o =>
     o.Exporters = builder.Environment.IsDevelopment()
         ? ExportTarget.Agent365 | ExportTarget.Console
         : ExportTarget.Agent365;
+
+    o.Agent365.Exporter.UseS2SEndpoint = true;
+    o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
 
     o.Instrumentation.EnableAspNetCoreInstrumentation = true;
     o.Instrumentation.EnableHttpClientInstrumentation = true;

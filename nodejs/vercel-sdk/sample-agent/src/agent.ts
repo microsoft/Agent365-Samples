@@ -78,7 +78,7 @@ export class A365Agent extends AgentApplication<TurnState> {
     startTypingLoop();
 
     try {
-      const client: Client = await getClient(displayName);
+      const client: Client = await getClient(displayName, turnContext);
       const response = await client.invokeAgentWithScope(userMessage);
       await turnContext.sendActivity(response);
     } catch (error) {
@@ -110,7 +110,7 @@ export class A365Agent extends AgentApplication<TurnState> {
     }
 
     try {
-      const client: Client = await getClient();
+      const client: Client = await getClient(undefined, context);
 
       // First, retrieve the email content
       const emailContent = await client.invokeAgentWithScope(

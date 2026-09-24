@@ -44,13 +44,15 @@ cd python/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 
-This creates the blueprint, agent identity, configures observability permissions, and writes provisioned values. Copy the output values into your `.env` file (see below).
+Copy the provisioned blueprint and actual agent instance values from the setup output
+into your `.env` file (see below).
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+3. Verify **eligible agent instance registration** and OBS service policy for
+   permissionless S2S export. Creating an Entra identity or selecting the S2S endpoint
+   alone is insufficient; `Agent365.Observability.OtelWrite` is not a universal
+   prerequisite. Workload permissions remain independent. On 401/403, check IDs,
+   blueprint credentials, instance registration/eligibility and service policy rather
+   than blindly adding OBS grants.
 
 ### Configuration
 

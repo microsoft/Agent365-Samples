@@ -24,10 +24,10 @@
     "@microsoft/agents-a365-tooling-extensions-openai": "^0.1.0-preview.125",
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
-    "@openai/agents": "^0.1.11",
+    "@openai/agents": "^0.7.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
-    "openai": "^4.77.0"
+    "openai": "^6.27.0"
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.18",
@@ -37,10 +37,5 @@
     "rimraf": "^5.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
-  },
-  "overrides": {
-    "@openai/agents-core": "$@openai/agents",
-    "@openai/agents-openai": "$@openai/agents",
-    "openai": "$openai"
   }
 }
