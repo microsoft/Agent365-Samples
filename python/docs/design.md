@@ -261,8 +261,8 @@ the S2S endpoint alone does not establish eligibility. The samples do not grant 
 permissions; workload MCP/Graph/OBO permissions remain independent.
 
 The sample-local resolver strictly checks the export tenant/agent and token identity,
-accepts absent/empty `roles` only with `idtyp=app`, and continues to support valid
-nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim,
+accepts absent/empty `roles` only with `idtyp=app` or with absent `idtyp` and `oid` equal
+to `sub`, and continues to support valid nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim,
 explicit non-app `idtyp`, and malformed roles, and refreshes an OBS-only cache based on real
 `expires_in`/`exp` with a 60-second margin. Failures never return stale or empty
 tokens and never fall back to user/OBO tokens or the legacy route. Business

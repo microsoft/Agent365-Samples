@@ -53,7 +53,7 @@ This command:
 - Writes all provisioned values into `appsettings.json`
 
 3. Verify agent registration and service authorization. The OBS service may accept an app-only
-   token with `idtyp=app` and absent or empty `roles` only for an **eligible registered Agent 365
+   token (no `scp` claim) with absent or empty `roles` only for an **eligible registered Agent 365
    agent instance**, subject to service policy. Selecting S2S or creating an Entra identity alone
    is insufficient. Do not add an `Agent365.Observability.OtelWrite` grant solely to populate
    a `roles` claim. Existing role-based authorization requirements still apply where used.

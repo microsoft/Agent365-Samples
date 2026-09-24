@@ -61,9 +61,11 @@ Agent 365 registration for the exact runtime instance. Legacy-route admission mu
 be confirmed separately; selecting `/observabilityService` alone does not establish
 permissionless authorization.
 
-The standalone providers accept absent or empty `roles` only when `idtyp=app`.
-Valid nonempty application roles remain compatible with older tokens lacking
-`idtyp`. When present, `roles` must be an array of nonblank strings. Delegated
+The standalone providers accept absent or empty `roles` only when `idtyp=app`, or
+when `idtyp` is absent and a nonempty `oid` equals `sub` (Entra issues matching
+`oid`/`sub` values only to application principals). Valid nonempty application
+roles remain compatible with older tokens lacking `idtyp`. When present, `roles`
+must be an array of nonblank strings. Delegated
 AI Teammate/OBO tokens carrying any `scp` claim, including an empty one, are rejected.
 Selecting S2S does not convert a delegated token into an application token.
 The presence of `scp` makes a token a user principal even if it also has `roles`

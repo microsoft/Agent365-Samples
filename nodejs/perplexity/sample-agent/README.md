@@ -29,7 +29,8 @@ Confirm instance registration and the selected route's service policy; the sampl
 
 The unchanged `src/observability-token-service.ts` uses blueprint credentials
 plus `fmi_path` to acquire T1, then the actual agent's `client_credentials` grant
-to the OBS resource scope. It accepts absent or empty roles only with `idtyp=app`.
+to the OBS resource scope. It accepts absent or empty roles only with `idtyp=app`,
+or with absent `idtyp` and `oid` equal to `sub`.
 It rejects every token containing `scp`, invalid roles or app-only type,
 incorrect client/tenant/audience, and missing or expired
 lifetimes. No empty, stale, delegated-token, or route fallback is permitted.

@@ -112,8 +112,9 @@ and OBS service policy, not merely Entra identity creation or selecting the S2S
 endpoint. This sample does not provision identities or grant OBS permissions;
 workload permissions remain independent.
 
-Absent or empty `roles` are accepted only with `idtyp=app`. Valid nonempty roles
-also support legacy app tokens without `idtyp`; any `scp` claim is rejected.
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
 
 The sample-local resolver adapts the autonomous sample's
 [two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).

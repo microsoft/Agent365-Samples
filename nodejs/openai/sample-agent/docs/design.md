@@ -129,7 +129,8 @@ The real bootstrap rejects `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` before
 configuration because that mode bypasses the app-only resolver. This SDK uses
 the legacy S2S service route without `/otlp`; its authorization policy must not be
 inferred from the public OTLP registered-agent authorization policy. The app-token
-helper accepts absent or empty roles only with explicit `idtyp=app`, and never
+helper accepts absent or empty roles only with explicit `idtyp=app`, or with absent
+`idtyp` and `oid` equal to `sub`, and never
 substitutes a delegated token. Complete instance registration and confirm the
 selected route's service policy instead of treating an OBS role grant as a
 universal prerequisite.

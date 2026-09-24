@@ -184,17 +184,18 @@ Both Microsoft.OpenTelemetry 1.0.6's `options.Agent365` and the
 `services.Configure<Agent365ExporterOptions>` registration explicitly set `UseS2SEndpoint=true`
 and use the same separate provider as `TokenResolver`.
 
-An app-only OBS token with `idtyp=app` may omit `roles` or have `roles: []`. Roleless service
-acceptance requires an **eligible registered Agent 365 agent instance** and authorization
-under service policy; selecting S2S or creating an Entra identity alone is insufficient.
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **eligible registered
+Agent 365 agent instance** and authorization under service policy; selecting S2S or creating an
+Entra identity alone is insufficient.
 Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
 Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
 permissions and consent remain independent.
 
 **Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail startup.
 Export identity mismatches, any delegated `scp` claim (even empty), explicit non-app/null `idtyp`,
-malformed `roles`, and invalid/expired responses fail closed. Tokens without `idtyp` remain
-compatible only with a valid nonempty array of nonblank string roles. Original agent/user baggage
+malformed `roles`, and invalid/expired responses fail closed. Tokens without `idtyp` need either
+`oid` equal to `sub` or a valid nonempty array of nonblank string roles. Original agent/user baggage
 is preserved: use the matching configured identity rather than overwriting turn context. For service
 authorization failures, verify instance registration, eligibility and service policy; this sample
 does not provision identities or modify permissions. Requests are bounded to 30 seconds; tokens

@@ -264,8 +264,10 @@ tenant/agent tuple and response identity/audience/app-token claims, refuses any 
 minutes before the earliest expiry, and fails closed on invalid configuration, timeouts or acquisition
 errors.
 
-The app-token claim contract allows absent `roles` or an empty array only with explicit `idtyp=app`.
-A valid nonempty array of nonblank string roles remains compatible with absent `idtyp`. Any `scp`
+The app-token claim contract allows absent `roles` or an empty array only with explicit `idtyp=app`
+or, when `idtyp` is absent, a nonempty `oid` equal to `sub` (Entra issues matching `oid`/`sub`
+values only to application principals). A valid nonempty array of nonblank string roles remains
+compatible with absent `idtyp`. Any `scp`
 property (even empty or null), explicit non-app/null `idtyp`, or malformed `roles` (null, non-array,
 or any non-string/blank entry, even mixed with valid roles) is rejected. Tenant, every present
 `appid`/`azp`, audience and expiry checks still apply to roleless tokens.

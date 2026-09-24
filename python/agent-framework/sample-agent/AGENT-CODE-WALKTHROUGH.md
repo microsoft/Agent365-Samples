@@ -197,8 +197,8 @@ app-only token through the two-step FMI flow, using the actual agent instance cl
 ID (not the blueprint). Permissionless S2S export is conditional on eligible agent
 instance registration and OBS service policy, not merely Entra identity creation or
 selecting the S2S endpoint. The resolver checks tenant/agent identity, accepts
-absent/empty `roles` only with `idtyp=app`, and also supports valid nonempty roles on
-legacy app tokens without `idtyp`. It rejects any `scp` claim and refreshes from real token expiry.
+absent/empty `roles` only with `idtyp=app` or with absent `idtyp` and `oid` equal to `sub`,
+and also supports valid nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim and refreshes from real token expiry.
 Failures never return stale/empty tokens or fall back to `/observability`.
 MCP/Graph/OBO authentication and original caller/agent baggage remain unchanged;
 workload permissions remain independent.

@@ -12,7 +12,8 @@ S2S OBS when service policy permits; the sample does not grant permissions.
 `src/observability-token-service.ts` performs blueprint→agent application-token
 acquisition with `client_credentials`/`fmi_path`, independently of MCP/Graph/OBO.
 It checks identity, audience, app-only type and expiry, and refuses delegated `scp` tokens.
-Absent or empty roles require `idtyp=app`; present roles must be nonblank strings.
+Absent or empty roles require `idtyp=app`, or absent `idtyp` with `oid` equal to `sub`;
+present roles must be nonblank strings.
 It has no empty/stale/user-token fallback.
 OBS still uses `/observabilityService`
 on authentication failures. Keep development blueprint secrets in a secret store;

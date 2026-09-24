@@ -22,7 +22,8 @@ When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, configure
 `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`
 using the supplied template. The agent ID must be the actual instance **client ID**,
 not its blueprint, service-principal object ID, or agent-user ID. Roleless tokens
-are accepted by the helper only with explicit `idtyp=app`. Confirm instance
+are accepted by the helper only with explicit `idtyp=app`, or with absent `idtyp` and
+`oid` equal to `sub`. Confirm instance
 registration and the selected route's service policy; this sample grants no permissions.
 
 The sample-local `src/observability-token-service.ts` uses the autonomous FMI flow:

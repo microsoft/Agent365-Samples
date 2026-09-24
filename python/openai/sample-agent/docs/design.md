@@ -199,7 +199,8 @@ user tokens for OBS. Business MCP/Graph/OBO calls and original caller/agent bagg
 unchanged, and workload permissions remain independent. Permissionless S2S export is
 conditional on eligible agent instance registration and OBS service policy, not merely
 Entra identity creation or selecting the S2S endpoint. Absent/empty `roles` require
-`idtyp=app`; valid nonempty roles remain supported on legacy app tokens without `idtyp`.
+`idtyp=app`, or absent `idtyp` with `oid` equal to `sub`; valid nonempty roles remain
+supported on legacy app tokens without `idtyp`.
 
 ## Agent Instructions
 

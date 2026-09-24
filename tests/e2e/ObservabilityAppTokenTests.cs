@@ -386,9 +386,8 @@ public sealed class ObservabilityAppTokenTests
     public async Task ExplicitNonAppIdentityTypesFailClosed(string identityTypeJson)
     {
         var clock = new TestTime();
-        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        foreach (var claims in new[] { null, "[]", ValidRoles }.Select(rolesJson => AppClaims(clock, rolesJson)))
         {
-            var claims = AppClaims(clock, rolesJson);
             claims["idtyp"] = JsonSerializer.Deserialize<JsonElement>(identityTypeJson);
             using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
             await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
@@ -410,9 +409,8 @@ public sealed class ObservabilityAppTokenTests
     public async Task DelegatedOrMismatchedResponseTokenIsRejected(string claim, string? value)
     {
         var clock = new TestTime();
-        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        foreach (var claims in new[] { null, "[]", ValidRoles }.Select(rolesJson => AppClaims(clock, rolesJson)))
         {
-            var claims = AppClaims(clock, rolesJson);
             claims["azp"] = Agent;
             claims[claim] = JsonSerializer.SerializeToElement(value);
             var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims)));
@@ -429,9 +427,8 @@ public sealed class ObservabilityAppTokenTests
     public async Task AnyDelegatedScopePropertyFailsClosed(string scopeJson)
     {
         var clock = new TestTime();
-        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        foreach (var claims in new[] { null, "[]", ValidRoles }.Select(rolesJson => AppClaims(clock, rolesJson)))
         {
-            var claims = AppClaims(clock, rolesJson);
             claims["scp"] = JsonSerializer.Deserialize<JsonElement>(scopeJson);
             using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
             await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
@@ -446,9 +443,8 @@ public sealed class ObservabilityAppTokenTests
     public async Task MissingRequiredTokenClaimsFailClosed(string claim)
     {
         var clock = new TestTime();
-        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        foreach (var claims in new[] { null, "[]", ValidRoles }.Select(rolesJson => AppClaims(clock, rolesJson)))
         {
-            var claims = AppClaims(clock, rolesJson);
             claims.Remove(claim);
             using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
             await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
@@ -645,9 +641,8 @@ public sealed class ObservabilityAppTokenTests
     public async Task MalformedExpiryClaimsFailClosed(string expiryJson)
     {
         var clock = new TestTime();
-        foreach (var rolesJson in new[] { null, "[]", ValidRoles })
+        foreach (var claims in new[] { null, "[]", ValidRoles }.Select(rolesJson => AppClaims(clock, rolesJson)))
         {
-            var claims = AppClaims(clock, rolesJson);
             claims["exp"] = JsonSerializer.Deserialize<JsonElement>(expiryJson);
             using var provider = Provider(new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims))), clock);
             AssertSanitized(await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant)));
@@ -832,7 +827,7 @@ public sealed class ObservabilityAppTokenTests
         {
             throw new ArgumentException("Fixture must be a bare relative filename without rooted paths or traversal.", nameof(file));
         }
-        return File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "ObservabilityFixtures", file));
+        return File.ReadAllText(Path.Join(AppContext.BaseDirectory, "ObservabilityFixtures", file));
     }
 
     private static void AssertSanitized(InvalidOperationException error)
