@@ -1,28 +1,5 @@
 # Vercel AI SDK Sample Agent - Node.js
 
-## OBS-only application authentication
-
-The compatible Agent 365 preview.125 SDK family initializes once through
-`src/otel.ts`, using the isolated app-token resolver and the supported legacy
-`/observabilityService/tenants/{tenant}/agents/{agent}/traces` service route.
-Its tenant-eligibility policy differs from public OTLP; live acceptance is not
-established by the endpoint flag. Per-request export is rejected because it
-bypasses the app-only resolver.
-
-When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
-`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
-`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the provisioned
-agent instance **client ID**, never its blueprint or agent-user ID. The helper
-accepts absent or empty roles only with `idtyp=app`, or with absent `idtyp` and `oid`
-equal to `sub`. Confirm instance registration
-and the selected route's service policy; the sample grants no permissions.
-
-The sample-local resolver uses blueprint→agent FMI `client_credentials` only for
-OBS; business authentication remains unchanged. It rejects delegated `scp`
-tokens, identity mismatches, expired tokens and invalid responses, with no
-empty/stale/token-type or legacy-route fallback. Secure development blueprint
-credentials in a secret store. See the repository's **Observability routing**
-section for offline tests and service-side attribution restrictions.
 
 This sample demonstrates how to build an agent using Vercel AI SDK in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -41,6 +18,39 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Microsoft Agent 365 SDK
 - Vercel AI SDK (ai) 5.0.72 or higher
 - Azure/OpenAI API credentials
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports `src/otel.ts` first. This sample uses
+`@microsoft/agents-a365-observability@1.0.0`; with
+`Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
+1.0.0 per-request mode still reads `runWithExportToken`, not the configured
+app-only resolver.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. `AGENT365_OBS_AGENT_ID`
+must be the actual agent instance client ID. The sample-local resolver uses
+blueprint credentials plus `fmi_path` to acquire T1, then the agent identity's
+`client_credentials` grant for OBS. It fails closed on delegated `scp` tokens,
+identity, tenant, audience, role, expiry, or response-shape mismatches. Business
+MCP, Graph, Power Platform, and OBO calls remain separate.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 

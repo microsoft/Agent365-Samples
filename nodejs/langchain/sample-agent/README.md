@@ -1,29 +1,5 @@
 # LangChain Sample Agent - Node.js
 
-## OBS-only application authentication
-
-The published distro minimum is 1.4.0. OBS uses the public
-`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces` route, with disk
-replay disabled so historical route choices cannot override it. Existing spool
-files are not deleted.
-
-When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
-`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
-`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from `.env.example`. Use the actual agent
-instance **client ID**, never the blueprint or agent-user ID. An incomplete
-generated configuration is not a valid identity; complete Agent 365 registration
-for the exact instance. Eligible registered instances can use roleless S2S OBS
-when service policy permits. For absent or empty roles, the helper
-requires `idtyp=app`, or absent `idtyp` with `oid` equal to `sub`; the sample does not
-grant permissions.
-
-`src/observability-token-service.ts` performs blueprint→agent `client_credentials`
-with `fmi_path`, independently of MCP/Graph/OBO. `Use_Custom_Resolver` no longer
-selects a delegated OBS cache. Missing configuration, identity mismatch, expired
-tokens and rejected grants fail explicitly—no empty/stale/delegated token or
-`/observability` fallback. Keep development blueprint credentials in a secret store.
-See the repository's **Observability routing** section for attribution restrictions
-and offline tests.
 
 This sample demonstrates how to build an agent using LangChain in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -48,6 +24,30 @@ For comprehensive documentation and guidance on building agents with the Microso
 > - Microsoft Agent 365 SDK
 > - LangChain 1.0.1 or higher
 > - A365 CLI: Required for agent deployment and management.
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports the observability bootstrap first. With
+`useS2SEndpoint: true` and the app-only `tokenResolver`, OBS posts to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+The resolver uses `AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`,
+`AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`;
+`AGENT365_OBS_AGENT_ID` must be the actual agent instance client ID. Business MCP,
+Graph, and OBO calls remain separate from OBS authentication.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Running the Agent in Microsoft 365 Agents Playground
 

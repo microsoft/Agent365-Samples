@@ -79,7 +79,6 @@ export class A365Agent extends AgentApplication<TurnState> {
     ).sessionDescription('Initial onboarding session')
       .build();
 
-    // Preload/refresh exporter token
     try {
       await baggageScope.run(async () => {
         try {

@@ -39,20 +39,17 @@ This sample demonstrates an agent built using Perplexity AI as the orchestrator.
 ## Key Components
 
 ### src/otel.ts
-Imported first by `src/index.ts`, this bootstrap loads dotenv and initializes the
-legacy `ObservabilityManager` from
-`@microsoft/agents-a365-observability@0.1.0-preview.115` exactly once, using
+Imported first by `src/index.ts`, this bootstrap loads dotenv and initializes one
+`ObservabilityManager` from `@microsoft/agents-a365-observability@1.0.0`, using
 `.withTokenResolver(createObservabilityTokenResolver())`. Explicit
-`exporterOptions.useS2SEndpoint = true` selects the legacy service route
-`/observabilityService/tenants/{tenantId}/agents/{agentId}/traces?api-version=1`.
-Business Graph/presence/OBO authentication is independent and unchanged.
-The OBS resolver obtains an app-only token for the actual agent, rejecting all
-`scp` claims. `OtelWrite` is the recommended standard prerequisite, not proof
-of admission through the separate legacy service-principal and tenant gates.
-The route contract is source-verified, not live-validated; see the sample README.
+`exporterOptions.useS2SEndpoint = true` selects the S2S OTLP service route
+`/observabilityService/tenants/{tenantId}/otlp/agents/{agentId}/traces?api-version=1`.
+Business MCP/Graph/OBO authentication is independent and unchanged. The OBS resolver
+obtains an app-only token for the actual agent and rejects delegated `scp` tokens.
 
-SDK imports use the legacy `TenantDetails`, `InvokeAgentDetails`, `ExecutionType`,
-and scope signatures; the public OpenTelemetry distribution is not used.
+SDK imports use the 1.0.0 scope signatures (`Request`, `AgentDetails`,
+`InvokeAgentScopeDetails`, and `UserDetails`). The public OpenTelemetry distribution
+is not used in this sample.
 
 ### src/client.ts
 Perplexity-specific client:
@@ -136,7 +133,7 @@ AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 {
   "dependencies": {
     "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "0.1.0-preview.115",
+    "@microsoft/agents-a365-observability": "1.0.0",
     "express": "^4.18.0"
   }
 }

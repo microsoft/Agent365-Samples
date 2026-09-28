@@ -1,23 +1,5 @@
 # Claude Sample Agent - Node.js
 
-## OBS-only application authentication
-
-When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
-`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
-`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. Use the actual agent
-instance **client ID**, never the blueprint or agent-user ID. Complete Agent 365
-registration for that instance. An eligible registered instance can use roleless
-S2S OBS when service policy permits; the sample does not grant permissions.
-
-`src/observability-token-service.ts` performs blueprint→agent application-token
-acquisition with `client_credentials`/`fmi_path`, independently of MCP/Graph/OBO.
-It checks identity, audience, app-only type and expiry, and refuses delegated `scp` tokens.
-Absent or empty roles require `idtyp=app`, or absent `idtyp` with `oid` equal to `sub`;
-present roles must be nonblank strings.
-It has no empty/stale/user-token fallback.
-OBS still uses `/observabilityService`
-on authentication failures. Keep development blueprint secrets in a secret store;
-review the repository's **Observability routing** section before live validation.
 
 This sample demonstrates how to build an agent using Claude in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -42,6 +24,30 @@ For comprehensive documentation and guidance on building agents with the Microso
 > - Microsoft Agent 365 SDK
 > - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
 > - A365 CLI: Required for agent deployment and management.
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports the observability bootstrap first. With
+`useS2SEndpoint: true` and the app-only `tokenResolver`, OBS posts to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+The resolver uses `AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`,
+`AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`;
+`AGENT365_OBS_AGENT_ID` must be the actual agent instance client ID. Business MCP,
+Graph, and OBO calls remain separate from OBS authentication.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 

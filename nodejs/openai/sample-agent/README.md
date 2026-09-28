@@ -1,43 +1,5 @@
 # OpenAI Sample Agent - Node.js
 
-## OBS-only application authentication
-
-This sample retains its compatible Agent 365 preview.125 SDK family. `index.ts`
-imports `src/otel.ts` first, before HTTP and OpenAI modules. The bootstrap
-configures one S2S exporter with the isolated app-token resolver and existing
-OpenAI instrumentation. The supported legacy service route is
-`/observabilityService/tenants/{tenant}/agents/{agent}/traces`, with distinct
-tenant-eligibility policies; do not infer its authorization from public OTLP acceptance.
-Per-request export is rejected because it bypasses the app-only resolver.
-
-The published A365 OpenAI extensions require OpenAI Agents `^0.7.0`. This sample
-uses that same Agents family and OpenAI `^6.27.0`, without overrides forcing older
-`agents-core` or OpenAI majors into newer extensions. A clean installation must
-resolve one shared Agents runtime for application and A365 instrumentation.
-Keep SDK packages on a coherent published family; local tarballs and development
-version stamps are not deployment prerequisites.
-
-When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, configure
-`AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`,
-`AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`
-using the supplied template. The agent ID must be the actual instance **client ID**,
-not its blueprint, service-principal object ID, or agent-user ID. Roleless tokens
-are accepted by the helper only with explicit `idtyp=app`, or with absent `idtyp` and
-`oid` equal to `sub`. Confirm instance
-registration and the selected route's service policy; this sample grants no permissions.
-
-The sample-local `src/observability-token-service.ts` uses the autonomous FMI flow:
-blueprint `client_credentials` plus `fmi_path` → T1 → agent `client_credentials`
-for the OBS audience. MCP/Graph/OBO authentication is unchanged. OBS no longer
-uses `Use_Custom_Resolver` or the delegated token cache. Missing configuration,
-identity mismatch, expired tokens, and rejected grants fail explicitly; no empty,
-stale, delegated-token, or legacy-route fallback is allowed. Check provisioning
-and credentials on `AADSTS82001`; check token identity, registration and service
-policy on 401/403 rather than automatically adding an OBS grant.
-
-This credential example is for development; keep blueprint secrets in a secret
-store and never log token bodies. See the repository's **Observability routing**
-section for service-side caller-attribution restrictions and offline test commands.
 
 This sample demonstrates how to build an agent using OpenAI in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -56,6 +18,39 @@ For comprehensive documentation and guidance on building agents with the Microso
 - Microsoft Agent 365 SDK
 - OpenAI Agents SDK
 - Azure/OpenAI API credentials
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports `src/otel.ts` first. This sample uses
+`@microsoft/agents-a365-observability@1.0.0`; with
+`Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
+1.0.0 per-request mode still reads `runWithExportToken`, not the configured
+app-only resolver.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. `AGENT365_OBS_AGENT_ID`
+must be the actual agent instance client ID. The sample-local resolver uses
+blueprint credentials plus `fmi_path` to acquire T1, then the agent identity's
+`client_credentials` grant for OBS. It fails closed on delegated `scp` tokens,
+identity, tenant, audience, role, expiry, or response-shape mismatches. Business
+MCP, Graph, Power Platform, and OBO calls remain separate.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 

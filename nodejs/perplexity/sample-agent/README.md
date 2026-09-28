@@ -1,50 +1,5 @@
 # Perplexity Sample Agent - Node.js
 
-## Legacy S2S export with separate OBS-only application authentication
-
-`src/index.ts` imports `src/otel.ts` first. This sample-local bootstrap loads
-dotenv and configures one legacy `ObservabilityManager` before agent and HTTP
-imports. `Agent365ExporterOptions.useS2SEndpoint = true` selects
-`/observabilityService/tenants/{tenantId}/agents/{agentId}/traces?api-version=1`,
-not the public `/otlp` route. The manager uses
-`.withTokenResolver(createObservabilityTokenResolver())`; agents and clients do
-not create additional managers.
-Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false. Startup
-rejects that legacy mode because it bypasses the app-only resolver for a
-context-supplied token.
-
-**SDK module note:** Agent 365 packages are pinned to the published
-`0.1.0-preview.115` version, without a caret. Imports use
-`@microsoft/agents-a365-observability`, including its legacy `TenantDetails`,
-`InvokeAgentDetails`, `ExecutionType`, and scope signatures. These APIs are not
-interchangeable with the `@microsoft/opentelemetry` distribution.
-`@opentelemetry/core@2.1.0` is explicit because the preview.115 exporter imports
-it without declaring it; relying on incidental dependency hoisting can fail at startup.
-
-When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
-`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
-`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. The agent value must be
-the actual provisioned instance **client ID**, not its blueprint or agent-user ID.
-Confirm instance registration and the selected route's service policy; the sample grants no permissions.
-
-The unchanged `src/observability-token-service.ts` uses blueprint credentials
-plus `fmi_path` to acquire T1, then the actual agent's `client_credentials` grant
-to the OBS resource scope. It accepts absent or empty roles only with `idtyp=app`,
-or with absent `idtyp` and `oid` equal to `sub`.
-It rejects every token containing `scp`, invalid roles or app-only type,
-incorrect client/tenant/audience, and missing or expired
-lifetimes. No empty, stale, delegated-token, or route fallback is permitted.
-Business Graph/presence/OBO flows and their caches are unchanged.
-Attribution uses `recipient.agenticAppId` and the activity tenant, with explicit
-`AGENT365_OBS_*` fallbacks when metadata is absent, never the blueprint as agent.
-Actual caller ID/name metadata remains separate from the application credential.
-
-Public OTLP can authorize eligible registered instances without an OBS-specific
-role grant, subject to service policy. That does **not** establish access to this
-legacy route, which has distinct service-principal and tenant admission policies.
-An app-only token, with or without roles, is not proof of service acceptance.
-No general legacy admission is claimed. Keep blueprint credentials in a secret
-store and confirm the selected route's service policy instead of automatically granting `OtelWrite`.
 
 This sample demonstrates how to build an agent using Perplexity in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -59,9 +14,42 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Prerequisites
 
-- Node.js 22.x or higher
+- Node.js 18.x or higher
 - Microsoft Agent 365 SDK
 - Perplexity API credentials
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports `src/otel.ts` first. This sample uses
+`@microsoft/agents-a365-observability@1.0.0`; with
+`Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
+1.0.0 per-request mode still reads `runWithExportToken`, not the configured
+app-only resolver.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. `AGENT365_OBS_AGENT_ID`
+must be the actual agent instance client ID. The sample-local resolver uses
+blueprint credentials plus `fmi_path` to acquire T1, then the agent identity's
+`client_credentials` grant for OBS. It fails closed on delegated `scp` tokens,
+identity, tenant, audience, role, expiry, or response-shape mismatches. Business
+MCP, Graph, Power Platform, and OBO calls remain separate.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 

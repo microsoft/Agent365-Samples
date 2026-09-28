@@ -30,7 +30,7 @@ sample-agent/
 │   ├── index.ts             # Application entry point
 │   ├── agent.ts             # Agent application class
 │   ├── client.ts            # LLM client wrapper
-│   └── token-cache.ts       # Token caching utilities
+│   └── observability-token-service.ts # App-only OBS token provider
 ├── dist/                     # Compiled JavaScript output
 ├── package.json             # NPM configuration
 ├── tsconfig.json            # TypeScript configuration

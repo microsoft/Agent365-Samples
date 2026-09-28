@@ -52,6 +52,9 @@ universal requirement. Eligible registered instances can use roleless app tokens
 on the public S2S OTLP route when service policy permits. Entra identity creation
 alone is not registration. Confirm the CLI permission choices rather than
 automatically granting `Agent365.Observability.OtelWrite`.
+For AI Teammates, complete the `Agent365.Observability.OtelWrite`
+application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S
+without it has not been validated.
 
 The MSAL application-token flow does not require a client-side `roles` check.
 Its token is cached by agent/tenant only while the returned expiry is valid.
