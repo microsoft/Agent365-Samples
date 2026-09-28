@@ -14,9 +14,11 @@ AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 
 Use the actual instance **client ID**, not its blueprint or an object/user ID.
 Permissionless S2S export is conditional on **eligible agent instance registration**
-and OBS service policy, not merely Entra identity creation or selecting the S2S
+and authorization, not merely Entra identity creation or selecting the S2S
 endpoint. This sample does not provision identities or grant OBS permissions;
 workload permissions remain independent.
+
+This sample provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
 
 Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
 `oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
@@ -33,8 +35,8 @@ Existing business auth and caller baggage are not repurposed for export.
 Active export rejects missing/placeholder config, mismatched tenant/agent identities,
 and delegated `scp` tokens. The dedicated cache refreshes using real `expires_in`/`exp`
 with a 60-second margin. Safe errors replace stale, empty or legacy-route fallback.
-On 401/403 check IDs, blueprint credentials, instance registration/eligibility and
-OBS service policy; do not rewrite incoming baggage. Client secrets are for
+On 401/403 check IDs, blueprint credentials, registration and authorization
+for the exact agent instance; do not rewrite incoming baggage. Client secrets are for
 **development**; production should implement the documented certificate/managed-identity
 blueprint assertion flow.
 

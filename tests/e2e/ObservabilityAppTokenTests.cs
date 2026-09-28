@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using Agent365.Samples.Observability;
 using Azure.Core;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 using AuthenticationFailedException = ObservabilityIdentity::Azure.Identity.AuthenticationFailedException;
 using CredentialUnavailableException = ObservabilityIdentity::Azure.Identity.CredentialUnavailableException;
@@ -140,7 +141,7 @@ public sealed class ObservabilityAppTokenTests
             ct => ObservabilityAppTokenFactory.GetManagedIdentityAssertionAsync(credential, ct));
 
         Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
-        clock.Advance(TimeSpan.FromSeconds(480));
+        clock.Advance(TimeSpan.FromSeconds(540));
         Assert.Same(failure, await Record.ExceptionAsync(() => provider.ResolveAsync(Agent, Tenant)));
         Assert.Equal(2, handler.Requests.Count);
 
@@ -268,6 +269,48 @@ public sealed class ObservabilityAppTokenTests
         Assert.Equal(Blueprint, options.BlueprintClientId);
         values["Agent365Observability:UseManagedIdentity"] = "not-a-boolean";
         Assert.Throws<InvalidOperationException>(() => ObservabilityAppTokenOptions.FromConfiguration(key => values.GetValueOrDefault(key)));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("false", null)]
+    [InlineData("0", null)]
+    [InlineData("no", null)]
+    [InlineData("off", null)]
+    [InlineData("true", "false")]
+    public void DisabledExporterSkipsPlaceholderValidation(string? enableAgent365Exporter, string? environmentFlag)
+    {
+        using var provider = ObservabilityAppTokenFactory.CreateIfEnabled(Configuration(
+            enableAgent365Exporter,
+            environmentFlag,
+            placeholders: true));
+
+        Assert.Null(provider);
+    }
+
+    [Theory]
+    [InlineData("true", null)]
+    [InlineData("1", null)]
+    [InlineData("yes", null)]
+    [InlineData("on", null)]
+    [InlineData("false", "true")]
+    public void EnabledExporterValidatesPlaceholderConfiguration(string? enableAgent365Exporter, string? environmentFlag)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => ObservabilityAppTokenFactory.CreateIfEnabled(
+            Configuration(enableAgent365Exporter, environmentFlag, placeholders: true)));
+
+        Assert.Contains("Agent365Observability:", error.Message);
+    }
+
+    [Theory]
+    [InlineData("maybe", null)]
+    [InlineData(null, "maybe")]
+    public void InvalidExporterFlagFailsClosed(string? enableAgent365Exporter, string? environmentFlag)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => ObservabilityAppTokenFactory.CreateIfEnabled(
+            Configuration(enableAgent365Exporter, environmentFlag, placeholders: false)));
+
+        Assert.Contains("must be true or false", error.Message);
     }
 
     [Theory]
@@ -612,7 +655,7 @@ public sealed class ObservabilityAppTokenTests
     [Theory]
     [InlineData(-1)]
     [InlineData(0)]
-    [InlineData(120)]
+    [InlineData(60)]
     public async Task ExpiredOrNearExpiryTokensFailClosed(int expiresIn)
     {
         var clock = new TestTime();
@@ -662,7 +705,7 @@ public sealed class ObservabilityAppTokenTests
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(Secret) });
         using var provider = Provider(handler, clock);
         Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
-        clock.Advance(TimeSpan.FromSeconds(479));
+        clock.Advance(TimeSpan.FromSeconds(539));
         Assert.Equal(token, await provider.ResolveAsync(Agent, Tenant));
         Assert.Equal(2, handler.Requests.Count);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -690,7 +733,7 @@ public sealed class ObservabilityAppTokenTests
         var handler = new TokenHandler(TokenResponse("T1"), TokenResponse(Jwt(claims)), new(HttpStatusCode.Unauthorized));
         using var provider = Provider(handler, clock);
         await provider.ResolveAsync(Agent, Tenant);
-        clock.Advance(TimeSpan.FromSeconds(180));
+        clock.Advance(TimeSpan.FromSeconds(240));
         await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ResolveAsync(Agent, Tenant));
         Assert.Equal(3, handler.Requests.Count);
     }
@@ -757,7 +800,8 @@ public sealed class ObservabilityAppTokenTests
         var source = Fixture(file);
         Assert.Contains("o.Agent365.Exporter.UseS2SEndpoint = true;", source);
         Assert.Contains("o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;", source);
-        Assert.Contains("ObservabilityAppTokenFactory.Create(builder.Configuration)", source);
+        Assert.Contains("ObservabilityAppTokenFactory.CreateIfEnabled(builder.Configuration)", source);
+        Assert.Contains("if (observabilityTokens is not null)", source);
         Assert.Contains("AddAgentAspNetAuthentication(builder.Configuration)", source);
     }
 
@@ -766,11 +810,23 @@ public sealed class ObservabilityAppTokenTests
     {
         var source = Fixture("W365Observability.cs");
         Assert.Contains("options.Agent365.UseS2SEndpoint = true;", source);
-        Assert.Contains("options.Agent365.TokenResolver = observabilityTokenResolver;", source);
+        Assert.Contains("options.Agent365.TokenResolver = observabilityTokenResolver", source);
         Assert.Contains("services.Configure<Agent365ExporterOptions>", source);
         Assert.Contains("options.UseS2SEndpoint = true;", source);
-        Assert.Contains("options.TokenResolver = observabilityTokenResolver;", source);
+        Assert.Contains("options.TokenResolver = observabilityTokenResolver", source);
+        Assert.Contains("ObservabilityAppTokenFactory.IsAgent365ExporterEnabled(configuration)", source);
         Assert.DoesNotContain("ServiceTokenCache", source);
+    }
+
+    [Fact]
+    public void DotNetSamplesKeepObservabilityProviderCopiesIdentical()
+    {
+        foreach (var file in new[] { "ObservabilityAppTokenFactory.cs", "ObservabilityAppTokenProvider.cs" })
+        {
+            var agentFramework = Fixture("AgentFramework" + file);
+            Assert.Equal(agentFramework, Fixture("SemanticKernel" + file));
+            Assert.Equal(agentFramework, Fixture("W365" + file));
+        }
     }
 
     [Theory]
@@ -839,6 +895,27 @@ public sealed class ObservabilityAppTokenTests
 
     private static ObservabilityAppTokenProvider Provider(TokenHandler handler, TimeProvider clock) =>
         new(new(Tenant, Agent, Blueprint, Secret), new HttpClient(handler), clock);
+
+    private static IConfiguration Configuration(string? enableAgent365Exporter, string? environmentFlag, bool placeholders)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["Agent365Observability:TenantId"] = placeholders ? "{{BOT_TENANT_ID}}" : Tenant,
+            ["Agent365Observability:AgentId"] = placeholders ? "<<AGENT_INSTANCE_CLIENT_ID>>" : Agent,
+            ["Agent365Observability:BlueprintClientId"] = placeholders ? "{{BLUEPRINT_ID}}" : Blueprint,
+            ["Agent365Observability:BlueprintClientSecret"] = placeholders ? "<<SECRET>>" : Secret,
+            ["Agent365Observability:UseManagedIdentity"] = "false",
+        };
+        if (enableAgent365Exporter is not null)
+        {
+            values["EnableAgent365Exporter"] = enableAgent365Exporter;
+        }
+        if (environmentFlag is not null)
+        {
+            values["ENABLE_A365_OBSERVABILITY_EXPORTER"] = environmentFlag;
+        }
+        return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+    }
 
     private static Dictionary<string, object> AppClaims(TimeProvider clock, string? rolesJson = ValidRoles)
     {

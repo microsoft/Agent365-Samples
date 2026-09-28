@@ -37,8 +37,4 @@
 	  <Folder Include="msteams\" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<Compile Include="..\..\shared\Observability\*.cs" Link="Observability\%(Filename)%(Extension)" />
-	</ItemGroup>
-
 </Project>

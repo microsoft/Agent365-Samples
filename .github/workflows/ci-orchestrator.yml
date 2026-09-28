@@ -56,6 +56,10 @@ jobs:
     name: Python Claude
     uses: ./.github/workflows/python-claude-sample.yml
 
+  observability:
+    name: Observability Offline Tests
+    uses: ./.github/workflows/ci-observability.yml
+
   # Final status check - ALWAYS runs and reports success
   # This is the ONLY check you need to mark as "Required" in branch protection
   ci-status:
@@ -72,6 +76,7 @@ jobs:
       - python-googleadk
       - python-openai
       - python-claude
+      - observability
     if: always()
     steps:
       - name: Check CI Status
@@ -79,7 +84,7 @@ jobs:
           echo "Checking CI job results..."
           
           # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }} ${{ needs.observability.result }}"
           
           echo "Job results: $results"
           

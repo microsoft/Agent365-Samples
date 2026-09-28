@@ -201,8 +201,9 @@ def _setup_observability(self):
 When the A365 exporter is enabled, the sample-local resolver validates dedicated
 `AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`
 and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` settings. The agent ID must be the actual
-instance client ID, never its blueprint. Agent Framework's distro enables export
-explicitly and calls the factory with `enabled=True`.
+instance client ID, never its blueprint. Agent Framework's distro receives the resolver
+returned by `create_observability_token_resolver()`, so placeholder OBS credentials are
+validated only when `ENABLE_A365_OBSERVABILITY_EXPORTER` enables A365 HTTP export.
 
 ### 6. MCP Server Setup
 
@@ -255,8 +256,8 @@ Interactive samples adapt the autonomous sample's two-step FMI flow: blueprint
 client credentials with `fmi_path=actual agent instance client ID` request
 `api://AzureADTokenExchange/.default`; the instance uses T1 as a client assertion
 for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants use
-`client_credentials`. Permissionless S2S export is conditional on eligible agent
-instance registration and OBS service policy; creating an Entra identity or selecting
+`client_credentials`. Permissionless S2S export is conditional on registration for the exact agent
+instance; creating an Entra identity or selecting
 the S2S endpoint alone does not establish eligibility. The samples do not grant OBS
 permissions; workload MCP/Graph/OBO permissions remain independent.
 

@@ -11,7 +11,7 @@ This sample demonstrates an agent built using the official OpenAI Agents SDK for
 - Abstract interface pattern for pluggable agents
 - MCP server tool registration
 - Microsoft Agent 365 observability configuration
-- Token caching for observability authentication
+- App-only token resolving for observability authentication
 - Graceful degradation to bare LLM mode
 
 ## Architecture
@@ -79,7 +79,7 @@ Generic hosting infrastructure:
 - Health endpoint at `/api/health`
 
 ### observability_token_service.py
-Token caching utilities for observability authentication.
+Sample-local OBS-only app-token resolver for observability authentication.
 
 ### local_authentication_options.py
 Configuration for bearer token and auth handler settings.
@@ -94,8 +94,8 @@ Configuration for bearer token and auth handler settings.
 3. BaggageBuilder context setup
    │  └── tenant_id, agent_id
    │
-4. Token exchange for observability (if auth handler configured)
-   │  └── cache_agentic_token()
+4. OBS app-token resolver (only when A365 export is enabled)
+   │  └── create_observability_token_resolver()
    │
 5. OpenAIAgentWithMCP.process_user_message()
    │
@@ -197,7 +197,7 @@ delegated `scp`, and refreshes from `expires_in`/`exp`. Missing config and token
 failures raise safe errors without stale or empty fallback. The host no longer exchanges
 user tokens for OBS. Business MCP/Graph/OBO calls and original caller/agent baggage are
 unchanged, and workload permissions remain independent. Permissionless S2S export is
-conditional on eligible agent instance registration and OBS service policy, not merely
+conditional on registration for the exact agent instance, not merely
 Entra identity creation or selecting the S2S endpoint. Absent/empty `roles` require
 `idtyp=app`, or absent `idtyp` with `oid` equal to `sub`; valid nonempty roles remain
 supported on legacy app tokens without `idtyp`.

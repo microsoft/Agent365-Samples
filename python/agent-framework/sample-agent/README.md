@@ -1,47 +1,5 @@
 # Agent Framework Sample Agent - Python
 
-## Required OBS S2S app authentication
-
-This host sets distro `enable_a365=True`, so the following dedicated settings are
-**required at startup**, even if `ENABLE_A365_OBSERVABILITY_EXPORTER=false` is present
-for the legacy SDK. Set them in `.env` or deployment secret configuration.
-
-```dotenv
-AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
-AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
-AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
-AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
-```
-
-The agent ID must be the **actual instance client ID**, distinct from its blueprint,
-service-principal object ID and agent-user ID. Permissionless S2S export is conditional
-on **eligible agent instance registration** and OBS service policy, not merely Entra
-identity creation or selecting the S2S endpoint. This sample does not provision identities
-or grant OBS permissions; workload MCP/Graph/OBO permissions remain independent.
-
-Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
-`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
-`idtyp`; any `scp` claim is rejected.
-
-The sample-local `observability_token_service.py` adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
-blueprint client credentials + `fmi_path=agent instance client ID` acquire T1 for
-`api://AzureADTokenExchange/.default`, then the instance exchanges T1 as its client
-assertion for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both requests are
-`client_credentials`. The distro receives this dedicated resolver with
-`a365_use_s2s_endpoint=True`; MCP/Graph/OBO authentication and original caller/agent
-baggage are unchanged.
-
-Missing/placeholder config fails before distro setup. The resolver checks the export
-tenant/agent and returned token identity, rejects delegated `scp` tokens, and refreshes
-using real `expires_in`/`exp` with a 60-second margin. Safe configuration/token errors
-replace stale, empty or delegated fallback. On 401/403, check IDs, blueprint credentials,
-instance registration/eligibility and OBS service policy; never fall back to the
-legacy route or rewrite baggage to bypass an identity mismatch.
-
-Client secrets in this sample are for **development**. Production should implement the
-documented certificate/managed-identity blueprint assertion flow via an approved provider.
-
 This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
@@ -77,6 +35,24 @@ Set up the Python virtual environment manually before running the agent or deplo
 3. Activate the virtual environment:
 	- Windows PowerShell: `.venv\Scripts\Activate.ps1`
 	- macOS/Linux: `source .venv/bin/activate`
+
+## Observability S2S export
+
+A365 export is disabled by default. To send traces to Agent 365, set the dedicated OBS credentials and enable the exporter:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+`AGENT365_OBS_AGENT_ID` is the actual runtime agent instance client ID, not the blueprint ID, service-principal object ID, or agent-user ID. `ENABLE_A365_OBSERVABILITY_EXPORTER=false` disables A365 HTTP export; samples using the Microsoft OpenTelemetry distro can still enrich spans for other exporters.
+
+The sample-local provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
+
+Accepted OBS tokens are app-only tokens with `idtyp=app`, valid nonempty `roles`, or absent `idtyp` with nonempty `oid == sub`; any `scp` claim is rejected. See [Agent 365 observability S2S export](../../../docs/observability-s2s.md) for route details and validation commands.
 
 ## Working with User Identity
 

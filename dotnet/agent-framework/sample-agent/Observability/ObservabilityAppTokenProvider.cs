@@ -98,7 +98,7 @@ internal sealed class ObservabilityAppTokenProvider : IDisposable
     public const string ObservabilityScope = "api://" + ObservabilityResource + "/.default";
     public const string ExchangeScope = "api://AzureADTokenExchange/.default";
     public const string AssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
-    private static readonly TimeSpan RefreshSkew = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan RefreshSkew = TimeSpan.FromSeconds(60);
     private readonly ObservabilityAppTokenOptions _options;
     private readonly HttpClient _httpClient;
     private readonly TimeProvider _time;

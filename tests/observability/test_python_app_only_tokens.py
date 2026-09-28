@@ -472,7 +472,7 @@ def test_redirects_cannot_forward_blueprint_credentials(service):
 
 @pytest.mark.parametrize("path,configure_name", BOOTSTRAPS)
 def test_bootstrap_uses_factory_and_preserves_s2s_options(path, configure_name):
-    tree = ast.parse((ROOT / "python" / path).read_text())
+    tree = ast.parse((ROOT / "python" / path).read_text(encoding="utf-8"))
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
              and isinstance(node.func, ast.Name)]
     factory = next(node for node in calls if node.func.id == "create_observability_token_resolver")
@@ -484,7 +484,7 @@ def test_bootstrap_uses_factory_and_preserves_s2s_options(path, configure_name):
     if configure_name == "use_microsoft_opentelemetry":
         keywords = {item.arg: item.value for item in configure.keywords}
         assert ast.literal_eval(keywords["a365_use_s2s_endpoint"]) is True
-        assert ast.literal_eval(factory.keywords[0].value) is True
+        assert factory.keywords == []
         assert isinstance(keywords["a365_token_resolver"], ast.Name)
     else:
         options = next(item.value for item in configure.keywords if item.arg == "exporter_options")
@@ -502,7 +502,7 @@ def test_actual_bootstrap_factory_assignment_rejects_missing_config(
     service, monkeypatch, path, configure_name,
 ):
     monkeypatch.setenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "true")
-    tree = ast.parse((ROOT / "python" / path).read_text())
+    tree = ast.parse((ROOT / "python" / path).read_text(encoding="utf-8"))
     assignment = next(
         node for node in ast.walk(tree) if isinstance(node, ast.Assign)
         and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
@@ -617,7 +617,7 @@ def test_export_failure_does_not_upload_or_fall_back(service, monkeypatch, failu
     "observability-with-otlp", "observability-with-azure-monitor", "observability-with-langgraph",
 ])
 def test_standalone_demo_core_imports_support_required_sdk(sample):
-    tree = ast.parse((ROOT / "python" / sample / "main.py").read_text())
+    tree = ast.parse((ROOT / "python" / sample / "main.py").read_text(encoding="utf-8"))
     imports = [node for node in tree.body if isinstance(node, ast.ImportFrom)
                and node.module.startswith("microsoft_agents_a365.observability.core")]
     namespace = {}
@@ -628,7 +628,7 @@ def test_standalone_demo_core_imports_support_required_sdk(sample):
 @pytest.mark.parametrize("sample", SAMPLES)
 def test_template_and_readme_document_all_dedicated_settings(sample):
     for name in (".env.template", "README.md"):
-        text = (ROOT / "python" / sample / name).read_text()
+        text = (ROOT / "python" / sample / name).read_text(encoding="utf-8")
         for setting in ENV:
             assert setting in text
 
@@ -636,10 +636,10 @@ def test_template_and_readme_document_all_dedicated_settings(sample):
 def test_host_paths_no_longer_exchange_obs_user_tokens():
     for sample in ("openai/sample-agent", "claude/sample-agent", "crewai/sample_agent",
                    "agent-framework/sample-agent"):
-        source = (ROOT / "python" / sample / "host_agent_server.py").read_text()
+        source = (ROOT / "python" / sample / "host_agent_server.py").read_text(encoding="utf-8")
         assert "get_observability_authentication_scope" not in source
         assert "cache_agentic_token" not in source
         assert "BaggageBuilder" in source
     for sample in ("claude/sample-agent", "crewai/sample_agent", "google-adk/sample-agent"):
-        source = (ROOT / "python" / sample / "mcp_tool_registration_service.py").read_text()
+        source = (ROOT / "python" / sample / "mcp_tool_registration_service.py").read_text(encoding="utf-8")
         assert "auth.exchange_token(" in source

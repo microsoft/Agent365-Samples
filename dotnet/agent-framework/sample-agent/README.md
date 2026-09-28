@@ -120,10 +120,11 @@ finally
 
 ### Required OBS-only application credentials
 
-Configure the separate `Agent365Observability` credentials before starting the app:
+A365 export is disabled by default. To send traces to Agent 365, set `EnableAgent365Exporter=true` and configure the separate `Agent365Observability` credentials:
 
 ```json
 {
+  "EnableAgent365Exporter": true,
   "Agent365Observability": {
     "TenantId": "<<AGENT_HOME_TENANT_ID>>",
     "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
@@ -142,7 +143,7 @@ set `UseManagedIdentity` to `false` and supply `Agent365Observability:BlueprintC
 through user secrets, or `Agent365Observability__BlueprintClientSecret` through the environment.
 All settings support the standard .NET double-underscore environment syntax. Never commit secrets.
 
-The [shared OBS provider](../../shared/Observability/ObservabilityAppTokenProvider.cs) uses the
+The [sample-local OBS provider](Observability/ObservabilityAppTokenProvider.cs) uses the
 [documented app-only flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
 produces T1; agent `client_credentials` uses T1 as `client_assertion` for
@@ -150,42 +151,45 @@ produces T1; agent `client_credentials` uses T1 as `client_assertion` for
 protocol through MSAL. No `user_fic`, OBO, or developer bearer token is used for OBS.
 Business MCP/Graph authentication and original user/agent baggage are unchanged.
 
-An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
-omit `roles` or have `roles: []`. Roleless service acceptance requires an **eligible registered
-Agent 365 agent instance** and authorization under service policy; selecting S2S or creating an
-Entra identity alone is insufficient.
-Do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim.
-Existing role-based authorization requirements still apply where used. Business OBO/MCP/Graph
-permissions and consent remain independent.
+This sample provider is single-instance: one configured tenant and agent instance. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential. The provider requests tokens from `login.microsoftonline.com`; sovereign clouds need provider changes.
 
-**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail at startup.
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **the **exact registered
+Agent 365 agent instance** and authorization; selecting S2S or creating an
+Entra identity alone is insufficient.
+For registered blueprint agents, do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim. For AI Teammates, complete the OtelWrite application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S without that step has not been validated. Business OBO/MCP/Graph permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail when export is enabled; with export disabled, placeholders do not block local/Playground startup.
 Tenant/agent export mismatches, any delegated `scp` claim (even empty), explicit non-app/null
 `idtyp`, malformed `roles`, malformed responses, or expired tokens fail closed without a fallback
 credential. Tokens without `idtyp` need either `oid` equal to `sub` or a valid nonempty array of
 nonblank string roles. Configure the actual identity represented in the original turn baggage;
 do not rewrite baggage to bypass a mismatch. For service authorization failures, verify instance
-registration, eligibility and service policy; the sample neither provisions identities nor changes
-permissions. Acquisition has a 30-second bound and expiry-aware caching with a two-minute refresh
+registration and authorization; the sample neither provisions identities nor changes
+permissions. Acquisition has a 30-second bound and expiry-aware caching with a 60-second refresh
 margin; a failed refresh never returns a stale token.
 
-**Build/deployment:** Build from the repository checkout, retaining `dotnet/shared/Observability`.
-The project links that source into its own application assembly; `dotnet publish` output is
-standalone and needs no sibling source directory at runtime. If copying only `sample-agent` as
-source, also copy the two shared `.cs` files into `Observability/`, remove the external `Compile`
-item, and retain the `Azure.Identity` package alias in the project. Do not deploy a source-only
-sample directory without its linked helper.
+**Build/deployment:** The OBS helper files live in this sample's `Observability/` folder and are compiled with the project, so copying or publishing the sample is self-contained. Retain the `Azure.Identity` package alias in the project file.
 
-This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro, configured in `Program.cs` with a single call:
+This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro. `Program.cs` creates the provider and enables Agent 365 export only when configured:
 
 ```csharp
+using var observabilityTokens = ObservabilityAppTokenFactory.CreateIfEnabled(builder.Configuration);
+var agent365ExporterEnabled = observabilityTokens is not null;
+
 builder.UseMicrosoftOpenTelemetry(o =>
 {
-    o.Exporters = builder.Environment.IsDevelopment()
-        ? ExportTarget.Agent365 | ExportTarget.Console
-        : ExportTarget.Agent365;
+    o.Exporters = agent365ExporterEnabled ? ExportTarget.Agent365 : (ExportTarget)0;
+    if (builder.Environment.IsDevelopment())
+    {
+        o.Exporters |= ExportTarget.Console;
+    }
 
-    o.Agent365.Exporter.UseS2SEndpoint = true;
-    o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+    if (observabilityTokens is not null)
+    {
+        o.Agent365.Exporter.UseS2SEndpoint = true;
+        o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+    }
 
     o.Instrumentation.EnableAspNetCoreInstrumentation = true;
     o.Instrumentation.EnableHttpClientInstrumentation = true;

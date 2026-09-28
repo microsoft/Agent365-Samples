@@ -26,17 +26,23 @@ if (builder.Environment.IsDevelopment())
 {
     builder.Configuration.AddUserSecrets<Program>();
 }
-using var observabilityTokens = ObservabilityAppTokenFactory.Create(builder.Configuration);
+using var observabilityTokens = ObservabilityAppTokenFactory.CreateIfEnabled(builder.Configuration);
+var agent365ExporterEnabled = observabilityTokens is not null;
 
 // Configure OpenTelemetry distro — Console exporter only in Development to avoid PII leaks
 builder.UseMicrosoftOpenTelemetry(o =>
 {
-    o.Exporters = builder.Environment.IsDevelopment()
-        ? ExportTarget.Agent365 | ExportTarget.Console
-        : ExportTarget.Agent365;
+    o.Exporters = agent365ExporterEnabled ? ExportTarget.Agent365 : (ExportTarget)0;
+    if (builder.Environment.IsDevelopment())
+    {
+        o.Exporters |= ExportTarget.Console;
+    }
 
-    o.Agent365.Exporter.UseS2SEndpoint = true;
-    o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+    if (observabilityTokens is not null)
+    {
+        o.Agent365.Exporter.UseS2SEndpoint = true;
+        o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+    }
 
     // Agent365-only export suppresses infrastructure instrumentation by default.
     // Re-enable explicitly so HTTP calls (Azure OpenAI, auth, Teams) appear in traces.

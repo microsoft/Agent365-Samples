@@ -24,8 +24,10 @@ using System.Threading.RateLimiting;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly());
-using var observabilityTokens = ObservabilityAppTokenFactory.Create(builder.Configuration);
-builder.Services.AddW365ComputerUseOpenTelemetry(builder.Configuration, observabilityTokens.ResolveAsync);
+using var observabilityTokens = ObservabilityAppTokenFactory.CreateIfEnabled(builder.Configuration);
+builder.Services.AddW365ComputerUseOpenTelemetry(
+    builder.Configuration,
+    observabilityTokens is null ? null : observabilityTokens.ResolveAsync);
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
 builder.Services.AddHttpContextAccessor();

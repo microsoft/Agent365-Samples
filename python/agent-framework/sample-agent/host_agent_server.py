@@ -73,7 +73,7 @@ def create_and_run_host(
     # Replaces the legacy configure() call with a single entrypoint that sets up
     # tracing, metrics, and logging pipelines including A365 telemetry export.
     # See: https://github.com/microsoft/opentelemetry-distro-python
-    token_resolver = create_observability_token_resolver(enabled=True)
+    token_resolver = create_observability_token_resolver()
     use_microsoft_opentelemetry(
         enable_a365=True,
         a365_use_s2s_endpoint=True,
@@ -379,6 +379,3 @@ class GenericAgentHost:
                 await self.agent_instance.cleanup()
             except Exception as e:
                 logger.error(f"Cleanup error: {e}")
-
-
-

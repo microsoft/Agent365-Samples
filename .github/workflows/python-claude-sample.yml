@@ -39,7 +39,6 @@ jobs:
         python -m py_compile start_with_generic_host.py
         python -m py_compile agent_interface.py
         python -m py_compile local_authentication_options.py
-        python -m py_compile token_cache.py
         python -m py_compile observability_config.py
         python -m py_compile turn_context_utils.py
         python -m py_compile mcp_tool_registration_service.py
@@ -71,7 +70,6 @@ jobs:
         try:
             import agent_interface
             import local_authentication_options
-            import token_cache
             import observability_config
             import turn_context_utils
             import mcp_tool_registration_service

@@ -26,8 +26,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\dotnet\shared\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityAppTokenProvider.cs" />
-    <Compile Include="..\..\dotnet\shared\Observability\ObservabilityAppTokenFactory.cs" Link="ObservabilityAppTokenFactory.cs" />
+    <Compile Include="..\..\dotnet\agent-framework\sample-agent\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityAppTokenProvider.cs" />
+    <Compile Include="..\..\dotnet\agent-framework\sample-agent\Observability\ObservabilityAppTokenFactory.cs" Link="ObservabilityAppTokenFactory.cs" />
+    <None Include="..\..\dotnet\agent-framework\sample-agent\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityFixtures\AgentFrameworkObservabilityAppTokenProvider.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\agent-framework\sample-agent\Observability\ObservabilityAppTokenFactory.cs" Link="ObservabilityFixtures\AgentFrameworkObservabilityAppTokenFactory.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\semantic-kernel\sample-agent\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityFixtures\SemanticKernelObservabilityAppTokenProvider.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\semantic-kernel\sample-agent\Observability\ObservabilityAppTokenFactory.cs" Link="ObservabilityFixtures\SemanticKernelObservabilityAppTokenFactory.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\w365-computer-use\sample-agent\Observability\ObservabilityAppTokenProvider.cs" Link="ObservabilityFixtures\W365ObservabilityAppTokenProvider.cs" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\dotnet\w365-computer-use\sample-agent\Observability\ObservabilityAppTokenFactory.cs" Link="ObservabilityFixtures\W365ObservabilityAppTokenFactory.cs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\dotnet\agent-framework\sample-agent\Program.cs" Link="ObservabilityFixtures\AgentFrameworkProgram.cs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\dotnet\semantic-kernel\sample-agent\Program.cs" Link="ObservabilityFixtures\SemanticKernelProgram.cs" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\dotnet\w365-computer-use\sample-agent\Telemetry\ObservabilityServiceCollectionExtensions.cs" Link="ObservabilityFixtures\W365Observability.cs" CopyToOutputDirectory="PreserveNewest" />

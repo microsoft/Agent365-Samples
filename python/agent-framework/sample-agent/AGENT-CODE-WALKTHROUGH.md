@@ -187,7 +187,7 @@ use_microsoft_opentelemetry(
     enable_a365=True,
     enable_azure_monitor=False,
     a365_use_s2s_endpoint=True,
-    a365_token_resolver=create_observability_token_resolver(enabled=True),
+    a365_token_resolver=create_observability_token_resolver(),
 )
 ```
 
@@ -195,7 +195,7 @@ OBS uses `/observabilityService` for AI Teammate and OBO turns alike. The dedica
 resolver validates the four `AGENT365_OBS_*` settings in the README and acquires an
 app-only token through the two-step FMI flow, using the actual agent instance client
 ID (not the blueprint). Permissionless S2S export is conditional on eligible agent
-instance registration and OBS service policy, not merely Entra identity creation or
+registration for the exact agent instance, not merely Entra identity creation or
 selecting the S2S endpoint. The resolver checks tenant/agent identity, accepts
 absent/empty `roles` only with `idtyp=app` or with absent `idtyp` and `oid` equal to `sub`,
 and also supports valid nonempty roles on legacy app tokens without `idtyp`. It rejects any `scp` claim and refreshes from real token expiry.

@@ -47,11 +47,11 @@ a365 setup all --agent-name <your-agent-name>
 Copy the provisioned blueprint and actual agent instance values from the setup output
 into your `.env` file (see below).
 
-3. Verify **eligible agent instance registration** and OBS service policy for
+3. Verify **eligible agent instance registration** and authorization for
    permissionless S2S export. Creating an Entra identity or selecting the S2S endpoint
    alone is insufficient; `Agent365.Observability.OtelWrite` is not a universal
    prerequisite. Workload permissions remain independent. On 401/403, check IDs,
-   blueprint credentials, instance registration/eligibility and service policy rather
+   blueprint credentials, instance registration and authorization rather
    than blindly adding OBS grants.
 
 ### Configuration
