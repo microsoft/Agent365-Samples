@@ -12,7 +12,8 @@ import {
   AgentDetails,
   InferenceDetails,
   BaggageBuilder,
-  TenantDetails,
+  Request,
+  UserDetails,
 } from '@microsoft/agents-a365-observability';
 
 /**
@@ -109,16 +110,24 @@ class McsClient implements Client {
     const agentDetails: AgentDetails = {
       agentId: activity.recipient?.agenticAppId
         || process.env.AGENT365_OBS_AGENT_ID || '',
-      agentName: 'Copilot Studio Sample Agent',
-      conversationId: activity.conversation?.id || this.conversationId,
-      agentBlueprintId: activity.recipient?.agenticAppBlueprintId,
-      agentAUID: activity.recipient?.aadObjectId,
-    };
-    const tenantDetails: TenantDetails = {
       tenantId: activity.recipient?.tenantId
         || activity.getAgenticTenantId()
         || activity.conversation?.tenantId
         || process.env.AGENT365_OBS_TENANT_ID || '',
+      agentName: 'Copilot Studio Sample Agent',
+      agentBlueprintId: activity.recipient?.agenticAppBlueprintId,
+      agentAUID: activity.recipient?.aadObjectId,
+    };
+    const request: Request = {
+      content: prompt,
+      conversationId: activity.conversation?.id || this.conversationId,
+      sessionId: activity.conversation?.id || this.conversationId,
+      channel: { name: activity.channelId },
+    };
+    const userDetails: UserDetails = {
+      userId: activity.from?.aadObjectId || activity.from?.id,
+      userName: activity.from?.name,
+      tenantId: activity.from?.tenantId || agentDetails.tenantId,
     };
 
     const baggageScope = new BaggageBuilder()
@@ -126,30 +135,28 @@ class McsClient implements Client {
       .agentName(agentDetails.agentName)
       .agentAuid(agentDetails.agentAUID)
       .agentBlueprintId(agentDetails.agentBlueprintId)
-      .tenantId(tenantDetails.tenantId)
-      .correlationId(activity.id || `corr-${Date.now()}`)
-      .callerId(activity.from?.aadObjectId || activity.from?.id)
-      .callerName(activity.from?.name)
+      .tenantId(agentDetails.tenantId)
+      .userId(userDetails.userId)
+      .userName(userDetails.userName)
       .conversationId(activity.conversation?.id)
       .conversationItemLink(activity.serviceUrl)
-      .sourceMetadataName(activity.channelId)
+      .channelName(activity.channelId)
       .build();
 
     let response = '';
     try {
       await baggageScope.run(async () => {
         const scope = InferenceScope.start(
+          request,
           inferenceDetails,
           agentDetails,
-          tenantDetails,
-          agentDetails.conversationId,
+          userDetails,
         );
         try {
           await scope.withActiveSpanAsync(async () => {
             response = await this.invokeAgent(prompt);
             scope.recordInputMessages([prompt]);
             scope.recordOutputMessages([response]);
-            scope.recordResponseId(`resp-${Date.now()}`);
             scope.recordFinishReasons(['stop']);
           });
         } catch (error) {

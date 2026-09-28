@@ -199,7 +199,7 @@ export class ObservabilityTokenService {
 export function createObservabilityTokenResolver(
   environment: NodeJS.ProcessEnv = process.env,
 ): (agentId: string, tenantId: string) => Promise<string> {
-  if (!['true', '1', 'yes'].includes(
+  if (!['true', '1', 'yes', 'on'].includes(
     (environment['ENABLE_A365_OBSERVABILITY_EXPORTER'] ?? '').toLowerCase(),
   )) {
     return async () => {

@@ -12,7 +12,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '../..');
 const ts = require(path.join(root, 'nodejs/openai/sample-agent/node_modules/typescript'));
 const samples = ['openai', 'claude', 'langchain', 'copilot-studio', 'devin', 'perplexity', 'vercel-sdk'];
-const legacySamples = new Set(['openai', 'copilot-studio', 'devin', 'perplexity', 'vercel-sdk']);
+const managerSamples = new Set(['openai', 'copilot-studio', 'devin', 'perplexity', 'vercel-sdk']);
 const file = sample => path.join(root, `nodejs/${sample}/sample-agent/src/observability-token-service.ts`);
 const canonical = fs.readFileSync(file('openai'), 'utf8');
 function load(sample) {
@@ -97,6 +97,19 @@ test('OpenAI instrumentation observes both agent invocation and inference', () =
 });
 
 for (const sample of samples) {
+  test(`${sample}: package family supports the S2S /otlp route`, () => {
+    if (!managerSamples.has(sample)) return;
+    const packageJson = JSON.parse(fs.readFileSync(
+      path.join(root, `nodejs/${sample}/sample-agent/package.json`),
+      'utf8',
+    ));
+    assert.equal(packageJson.dependencies['@microsoft/agents-a365-observability'], '1.0.0');
+    for (const [name, version] of Object.entries(packageJson.dependencies)) {
+      if (name.startsWith('@microsoft/agents-a365-')) {
+        assert.equal(version, '1.0.0', `${sample}: ${name} must stay on the same 1.0.0 family`);
+      }
+    }
+  });
   test(`${sample}: standalone helper copies stay identical`, () => {
     assert.equal(fs.readFileSync(file(sample), 'utf8'), canonical);
   });
@@ -362,7 +375,7 @@ for (const sample of ['openai', 'claude', 'langchain', 'copilot-studio']) {
   }
 }
 
-for (const sample of legacySamples) {
+for (const sample of managerSamples) {
   test(`${sample}: per-request mode cannot bypass the app-only resolver`, () => {
     const directory = path.join(root, `nodejs/${sample}/sample-agent`);
     const text = fs.readFileSync(path.join(directory, 'src/otel.ts'), 'utf8');
@@ -394,7 +407,7 @@ for (const sample of legacySamples) {
 for (const sample of [...samples, 'autonomous/github-trending']) {
   test(`${sample}: its supported published exporter targets S2S with app-only auth`, async () => {
     const autonomous = sample.startsWith('autonomous/');
-    const legacy = legacySamples.has(sample);
+    const manager = managerSamples.has(sample);
     const directory = autonomous ? `nodejs/${sample}` : `nodejs/${sample}/sample-agent`;
     const entry = autonomous || sample === 'langchain' ? 'index' : 'otel';
     const name = path.join(root, directory, `src/${entry}.ts`);
@@ -406,7 +419,7 @@ for (const sample of [...samples, 'autonomous/github-trending']) {
         && node.expression.getText(tree) === 'useMicrosoftOpenTelemetry') {
         expression = node.arguments[0].getText(tree);
       }
-      if (legacy && ts.isCallExpression(node)
+      if (manager && ts.isCallExpression(node)
         && node.expression.getText(tree) === 'ObservabilityManager.configure') {
         expression = node.arguments[0].getText(tree);
       }
@@ -430,7 +443,7 @@ for (const sample of [...samples, 'autonomous/github-trending']) {
     let options;
     let Agent365Exporter;
     let tenantAttribute = 'microsoft.tenant.id';
-    if (legacy) {
+    if (manager) {
       const packageRoot = path.join(root, directory, 'node_modules/@microsoft/agents-a365-observability');
       context.Agent365ExporterOptions = require(packageRoot).Agent365ExporterOptions;
       context.ClusterCategory = require(path.join(root, directory, 'node_modules/@microsoft/agents-a365-runtime')).ClusterCategory;
@@ -451,7 +464,7 @@ for (const sample of [...samples, 'autonomous/github-trending']) {
       Agent365Exporter = require(path.join(root, directory, 'node_modules/@microsoft/opentelemetry')).Agent365Exporter;
     }
     assert.equal(options.useS2SEndpoint, true);
-    if (!autonomous && !legacy) assert.equal(options.enabled, true);
+    if (!autonomous && !manager) assert.equal(options.enabled, true);
     if (sample === 'langchain') {
       assert.equal(options.durableDelivery.enabled, false, 'old stored route choices must not replay');
     }
@@ -486,7 +499,7 @@ for (const sample of [...samples, 'autonomous/github-trending']) {
       assert.notEqual(result.code, 0);
       assert.equal(sent.length, 1);
       assert.equal(sent[0].url,
-        `https://agent365.svc.cloud.microsoft/observabilityService/tenants/${config.tenantId}/${legacy ? '' : 'otlp/'}agents/${config.agentId}/traces?api-version=1`);
+        `https://agent365.svc.cloud.microsoft/observabilityService/tenants/${config.tenantId}/otlp/agents/${config.agentId}/traces?api-version=1`);
       assert.equal(new Headers(sent[0].request.headers).get('authorization'), `Bearer ${token()}`);
       assert.ok(JSON.stringify(JSON.parse(sent[0].request.body)).includes('preserved-caller'));
     } finally {

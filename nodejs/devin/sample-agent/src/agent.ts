@@ -8,7 +8,9 @@ import {
   InferenceOperationType,
   InferenceScope,
   InvokeAgentScope,
-  TenantDetails,
+  InvokeAgentScopeDetails,
+  Request,
+  UserDetails,
 } from "@microsoft/agents-a365-observability";
 import { Activity, ActivityTypes } from "@microsoft/agents-activity";
 import {
@@ -27,7 +29,7 @@ import {
 import { Stream } from "stream";
 import { devinClient } from "./devin-client";
 import { ApplicationTurnState } from "./types/agent.types";
-import { getAgentDetails, getTenantDetails, getCallerDetails } from "./utils";
+import { getAgentDetails, getInvokeAgentScopeDetails, getRequest, getUserDetails } from "./utils";
 
 export class A365Agent extends AgentApplication<ApplicationTurnState> {
   isApplicationInstalled: boolean = false;
@@ -46,28 +48,28 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         state.conversation.count = ++count;
 
         // Extract agent and tenant details from context
-        const invokeAgentDetails = getAgentDetails(context);
-        const tenantDetails = getTenantDetails(context);
-        const callerDetails = getCallerDetails(context);
+        const agentDetails = getAgentDetails(context);
+        const request = getRequest(context);
+        const invokeScopeDetails = getInvokeAgentScopeDetails(context);
+        const userDetails = getUserDetails(context);
 
         // Create BaggageBuilder scope
         const baggageScope = new BaggageBuilder()
-          .tenantId(tenantDetails.tenantId)
-          .agentId(invokeAgentDetails.agentId)
-          .correlationId(context.activity.id || `corr-${Date.now()}`)
-          .callerId(callerDetails.callerId)
-          .callerName(callerDetails.callerName)
-          .agentName(invokeAgentDetails.agentName)
+          .tenantId(agentDetails.tenantId)
+          .agentId(agentDetails.agentId)
+          .userId(userDetails.userId)
+          .userName(userDetails.userName)
+          .agentName(agentDetails.agentName)
           .conversationId(context.activity.conversation?.id)
           .build();
 
         try {
           await baggageScope.run(async () => {
             const invokeAgentScope = InvokeAgentScope.start(
-              invokeAgentDetails,
-              tenantDetails,
-              undefined,
-              callerDetails
+              request,
+              invokeScopeDetails,
+              agentDetails,
+              { userDetails }
             );
             try {
               await invokeAgentScope.withActiveSpanAsync(async () => {
@@ -77,8 +79,9 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
                 await this.handleAgentMessageActivity(
                   context,
                   invokeAgentScope,
-                  invokeAgentDetails,
-                  tenantDetails
+                  agentDetails,
+                  request,
+                  userDetails
                 );
               });
             } catch (error) {
@@ -126,7 +129,8 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
     turnContext: TurnContext,
     invokeAgentScope: InvokeAgentScope,
     agentDetails: AgentDetails,
-    tenantDetails: TenantDetails
+    request: Request,
+    userDetails: UserDetails
   ): Promise<void> {
     if (!this.isApplicationInstalled) {
       await turnContext.sendActivity(
@@ -173,16 +177,15 @@ export class A365Agent extends AgentApplication<ApplicationTurnState> {
         model: "claude-3-7-sonnet-20250219",
         providerName: "cognition-ai",
         inputTokens: Math.ceil(userMessage.length / 4), // Rough estimate
-        responseId: `resp-${Date.now()}`,
         outputTokens: 0, // Will be updated after response
         finishReasons: undefined,
       };
 
       const inferenceScope = InferenceScope.start(
+        { ...request, content: userMessage },
         inferenceDetails,
         agentDetails,
-        tenantDetails,
-        turnContext.activity.conversation?.id
+        userDetails
       );
       inferenceScope.recordInputMessages([userMessage]);
 

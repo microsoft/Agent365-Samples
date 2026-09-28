@@ -84,16 +84,15 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     const baggageScope = new BaggageBuilder()
       .sessionDescription('Copilot Studio integration session')
-      .correlationId(turnContext.activity.id || `corr-${Date.now()}`)
       .agentId(turnContext.activity.recipient?.agenticAppId || process.env.AGENT365_OBS_AGENT_ID)
       .agentName(turnContext.activity.recipient?.name)
       .agentAuid(turnContext.activity.recipient?.aadObjectId)
       .agentBlueprintId(turnContext.activity.recipient?.agenticAppBlueprintId)
-      .callerId(turnContext.activity.from?.aadObjectId || turnContext.activity.from?.id)
-      .callerName(turnContext.activity.from?.name)
+      .userId(turnContext.activity.from?.aadObjectId || turnContext.activity.from?.id)
+      .userName(turnContext.activity.from?.name)
       .conversationId(turnContext.activity.conversation?.id)
       .conversationItemLink(turnContext.activity.serviceUrl)
-      .sourceMetadataName(turnContext.activity.channelId)
+      .channelName(turnContext.activity.channelId)
       .tenantId(turnContext.activity.recipient?.tenantId
         || turnContext.activity.getAgenticTenantId()
         || turnContext.activity.conversation?.tenantId

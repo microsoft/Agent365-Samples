@@ -20,7 +20,6 @@ if (RuntimeConfiguration.parseEnvBoolean(
 
 const observability = ObservabilityManager.configure((builder) => {
   const exporterOptions = new Agent365ExporterOptions();
-  // preview.115 selects the legacy service route, without an /otlp segment.
   exporterOptions.useS2SEndpoint = true;
 
   builder

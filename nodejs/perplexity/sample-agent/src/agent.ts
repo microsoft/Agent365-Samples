@@ -10,12 +10,12 @@ import {
   InvokeAgentScope,
   InferenceScope,
   BaggageBuilder,
-  ExecutionType,
   InferenceOperationType,
   AgentDetails,
-  TenantDetails,
   CallerDetails,
-  InvokeAgentDetails,
+  InvokeAgentScopeDetails,
+  Request,
+  UserDetails,
 } from "@microsoft/agents-a365-observability";
 import { PerplexityClient } from "./perplexityClient";
 
@@ -39,7 +39,8 @@ const SYSTEM_PROMPT_TEMPLATE = `You are a helpful assistant. Keep answers concis
 async function queryModel(
   userInput: string,
   agentDetails: AgentDetails,
-  tenantDetails: TenantDetails,
+  request: Request,
+  userDetails: UserDetails,
   client: PerplexityClient,
   systemPrompt: string,
 ) {
@@ -50,14 +51,13 @@ async function queryModel(
     inputTokens: Math.ceil(userInput.length / 4), // Rough estimate
     outputTokens: 0, // Will be updated after response
     finishReasons: [],
-    responseId: `inference-${Date.now()}`,
   };
 
   const inferenceScope = InferenceScope.start(
+    { ...request, content: [systemPrompt, userInput] },
     inferenceDetails,
     agentDetails,
-    tenantDetails,
-    agentDetails.conversationId,
+    userDetails,
   );
 
   try {
@@ -167,13 +167,12 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const baggageScope = new BaggageBuilder()
     .tenantId(tenantId)
     .agentId(agentId)
-    .correlationId(activity.id || `corr-${Date.now()}`)
     .agentName(agentName)
     .agentDescription(
       "AI answer engine for research, writing, and task assistance using live web search and citations",
     )
-    .callerId(userAadObjectId || userId)
-    .callerName(userName)
+    .userId(userAadObjectId || userId)
+    .userName(userName)
     .sessionId(sessionId)
     .conversationId(conversationId)
     .operationSource("sdk")
@@ -182,7 +181,6 @@ app.onActivity(ActivityTypes.Message, async (context) => {
   const agentDetails: AgentDetails = {
     agentId: agentId,
     tenantId: tenantId,
-    conversationId,
     agentName: agentName,
     agentDescription:
       "AI answer engine for research, writing, and task assistance using live web search and citations",
@@ -191,25 +189,22 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     ...(agenticAppBlueprintId ? { agentBlueprintId: agenticAppBlueprintId } : {}),
   };
 
-  const tenantDetails: TenantDetails = { tenantId };
-  const callerDetails: CallerDetails = {
-    callerId: userAadObjectId || userId,
-    callerUserId: userId,
-    callerName: userName,
+  const userDetails: UserDetails = {
+    userId: userAadObjectId || userId,
+    userName: userName,
     tenantId: activity.from?.tenantId || tenantId,
   };
-  const invokeDetails: InvokeAgentDetails = {
-    ...agentDetails,
+  const callerDetails: CallerDetails = { userDetails };
+  const request: Request = {
+    content: userMessage,
     sessionId,
-    request: {
-      content: userMessage,
-      executionType: ExecutionType.HumanToAgent,
-      sessionId,
-      sourceMetadata: {
-        id: channelId || "teams-integration",
-        name: channelSource || "Microsoft Teams",
-      },
+    conversationId,
+    channel: {
+      id: channelId || "teams-integration",
+      name: channelSource || "Microsoft Teams",
     },
+  };
+  const invokeDetails: InvokeAgentScopeDetails = {
     endpoint: {
       host: serviceUrl ? new URL(serviceUrl).hostname : "localhost",
       port: serviceUrl ? parseInt(new URL(serviceUrl).port) || 443 : 3978,
@@ -224,9 +219,9 @@ app.onActivity(ActivityTypes.Message, async (context) => {
     await baggageScope.run(async () => {
       // Start agent invocation scope
       const agentScope = InvokeAgentScope.start(
+        request,
         invokeDetails,
-        tenantDetails,
-        undefined,
+        agentDetails,
         callerDetails,
       );
 
@@ -245,7 +240,8 @@ app.onActivity(ActivityTypes.Message, async (context) => {
           queryModel(
             userMessage,
             agentDetails,
-            tenantDetails,
+            request,
+            userDetails,
             perplexityClient,
             systemPrompt,
           ),

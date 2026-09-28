@@ -2,15 +2,15 @@
 // Licensed under the MIT License.
 
 import {
-  CallerDetails,
-  ExecutionType,
-  InvokeAgentDetails,
-  TenantDetails,
+  AgentDetails,
+  InvokeAgentScopeDetails,
+  Request,
+  UserDetails,
 } from "@microsoft/agents-a365-observability";
 import { TurnContext } from "@microsoft/agents-hosting";
 
 // Helper functions to extract agent and tenant details from context
-export function getAgentDetails(context: TurnContext): InvokeAgentDetails {
+export function getAgentDetails(context: TurnContext): AgentDetails {
   // Extract agent ID from activity recipient - use agenticAppId (camelCase, not underscore)
   const agentId =
     context.activity.recipient?.agenticAppId ||
@@ -34,13 +34,6 @@ export function getAgentDetails(context: TurnContext): InvokeAgentDetails {
       "Devin Agent Sample",
     agentBlueprintId: context.activity.recipient?.agenticAppBlueprintId,
     agentAUID: context.activity.recipient?.aadObjectId,
-    conversationId: context.activity.conversation?.id,
-    request: {
-      content: context.activity.text || "Unknown text",
-      executionType: ExecutionType.HumanToAgent,
-      sessionId: context.activity.conversation?.id,
-      sourceMetadata: { name: context.activity.channelId },
-    },
   };
 }
 
@@ -64,15 +57,34 @@ function getTenantId(context: TurnContext): string {
   return tenantId;
 }
 
-export function getTenantDetails(context: TurnContext): TenantDetails {
-  return { tenantId: getTenantId(context) };
+export function getRequest(context: TurnContext): Request {
+  return {
+    content: context.activity.text || "Unknown text",
+    conversationId: context.activity.conversation?.id,
+    sessionId: context.activity.conversation?.id,
+    channel: { name: context.activity.channelId },
+  };
 }
 
-export function getCallerDetails(context: TurnContext): CallerDetails {
+export function getInvokeAgentScopeDetails(context: TurnContext): InvokeAgentScopeDetails {
+  const serviceUrl = context.activity.serviceUrl;
+  if (!serviceUrl) {
+    return {};
+  }
+  const endpoint = new URL(serviceUrl);
   return {
-    callerId: context.activity.from?.aadObjectId || context.activity.from?.id,
-    callerUserId: context.activity.from?.id,
-    callerName: context.activity.from?.name,
+    endpoint: {
+      host: endpoint.hostname,
+      port: Number(endpoint.port) || 443,
+      protocol: endpoint.protocol.replace(":", ""),
+    },
+  };
+}
+
+export function getUserDetails(context: TurnContext): UserDetails {
+  return {
+    userId: context.activity.from?.aadObjectId || context.activity.from?.id,
+    userName: context.activity.from?.name,
     tenantId: context.activity.from?.tenantId || getTenantId(context),
   };
 }

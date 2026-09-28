@@ -35,11 +35,11 @@ NODE_CONFIGS = {
     "nodejs/claude/sample-agent/src/otel.ts": "distro",
     "nodejs/langchain/sample-agent/src/index.ts": "distro",
     "nodejs/autonomous/github-trending/src/index.ts": "exporter",
-    "nodejs/openai/sample-agent/src/otel.ts": "legacy",
-    "nodejs/copilot-studio/sample-agent/src/otel.ts": "legacy",
-    "nodejs/devin/sample-agent/src/otel.ts": "legacy",
-    "nodejs/perplexity/sample-agent/src/otel.ts": "legacy",
-    "nodejs/vercel-sdk/sample-agent/src/otel.ts": "legacy",
+    "nodejs/openai/sample-agent/src/otel.ts": "manager",
+    "nodejs/copilot-studio/sample-agent/src/otel.ts": "manager",
+    "nodejs/devin/sample-agent/src/otel.ts": "manager",
+    "nodejs/perplexity/sample-agent/src/otel.ts": "manager",
+    "nodejs/vercel-sdk/sample-agent/src/otel.ts": "manager",
 }
 DOTNET_CONFIGS = {
     "dotnet/agent-framework/sample-agent/Program.cs": ["o.Agent365.Exporter"],
@@ -119,8 +119,8 @@ def test_python_s2s_is_literal_and_preserves_resolver(path, kind):
 def test_node_s2s_is_explicit_in_exporter_configuration(path, kind):
     text = source(path)
     code = re.sub(r"(?m)^\s*//.*$", "", text)
-    assert kind in {"distro", "exporter", "legacy"}
-    if kind == "legacy":
+    assert kind in {"distro", "exporter", "manager"}
+    if kind == "manager":
         match = re.search(r"(\w+)\.useS2SEndpoint\s*=\s*true;", code)
         assert match
         assert f".withExporterOptions({match.group(1)})" in code
@@ -186,13 +186,16 @@ def test_all_observability_initializers_are_covered():
     assert node_paths == set(NODE_CONFIGS)
 
 
-@pytest.mark.parametrize("name", ["devin", "perplexity", "copilot-studio"])
-def test_legacy_node_release_is_pinned_to_compatible_s2s_api(name):
+@pytest.mark.parametrize("name", ["openai", "copilot-studio", "devin", "perplexity", "vercel-sdk"])
+def test_node_manager_samples_use_sdk_with_otlp_route(name):
     package = json.loads(source(f"nodejs/{name}/sample-agent/package.json"))
-    assert package["dependencies"]["@microsoft/agents-a365-observability"] == "0.1.0-preview.115"
+    assert package["dependencies"]["@microsoft/agents-a365-observability"] == "1.0.0"
     assert "@microsoft/opentelemetry" not in package["dependencies"]
-    if name == "copilot-studio":
-        assert package["dependencies"]["@microsoft/agents-a365-observability-hosting"] == "0.1.0-preview.115"
+    for dependency, version in package["dependencies"].items():
+        if dependency.startswith("@microsoft/agents-a365-"):
+            assert version == "1.0.0"
+    if name in {"copilot-studio", "vercel-sdk"}:
+        assert "@microsoft/agents-a365-observability-hosting" not in package["dependencies"]
 
 
 def test_published_distro_does_not_replay_legacy_route_choices():
