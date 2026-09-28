@@ -46,7 +46,7 @@ jobs:
         dotnet-version: '8.0.x'
 
     - name: Restore test dependencies
-      run: dotnet restore tests/e2e/Agent365.E2E.Tests.csproj --source https://packagefeedproxy.microsoft.io/nuget/v3/index.json
+      run: dotnet restore tests/e2e/Agent365.E2E.Tests.csproj
 
     - name: Run ObservabilityAppTokenTests
       run: dotnet test tests/e2e/Agent365.E2E.Tests.csproj --no-restore --filter FullyQualifiedName~ObservabilityAppTokenTests

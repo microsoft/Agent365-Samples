@@ -11,7 +11,7 @@ This repository contains sample agents and prompts for building with the Microso
 
 Agent 365 OBS export uses the S2S `/observabilityService/.../otlp/...` route with an app-only token for the agent instance. This changes telemetry transport only: preserve business MCP/Graph/OBO authentication, development bearer-token flows, and original user/agent baggage.
 
-A live validation on September 28, 2026 showed that a registered agent instance using a roleless app-only token (`idtyp=app`, `roles=[]`, no `scp`) received `200` from `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`. The legacy non-`/otlp` S2S route (`/observabilityService/tenants/{tenant}/agents/{agent}/traces`) returned `401` with `S2S17001 ... AuthenticationSchemeNotSupported`, because that route accepts first-party PFAT tokens only. Every sample must use an SDK/exporter configuration that posts to `/otlp`.
+A live validation on September 28, 2026 showed that a registered agent instance using a roleless app-only token (`idtyp=app`, `roles=[]`, no `scp`) received `200` from `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`. The legacy non-`/otlp` S2S route (`/observabilityService/tenants/{tenant}/agents/{agent}/traces`) rejected the same token with `401` (`AuthenticationSchemeNotSupported`). Every sample must use an SDK/exporter configuration that posts to `/otlp`.
 
 Enable export explicitly and configure the dedicated OBS app-token provider for the runtime agent instance, not the blueprint ID, service-principal object ID, or agent-user ID. The provider accepts app-only tokens with `idtyp=app`, or valid nonempty `roles`, or absent `idtyp` with nonempty `oid == sub`; any `scp` claim is rejected.
 

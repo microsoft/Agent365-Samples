@@ -4,7 +4,7 @@ The samples export Agent 365 observability data through the S2S `/observabilityS
 
 ## Route and token contract
 
-Live validation on September 28, 2026 showed that a registered agent instance using a roleless app-only token (`idtyp=app`, `roles=[]`, no `scp`) received `200` from `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`. The legacy non-`/otlp` S2S route (`/observabilityService/tenants/{tenant}/agents/{agent}/traces`) returned `401` with `S2S17001 ... AuthenticationSchemeNotSupported`, because that route accepts first-party PFAT tokens only. Every sample must use an SDK/exporter configuration that posts to the `/otlp` route.
+Live validation on September 28, 2026 showed that a registered agent instance using a roleless app-only token (`idtyp=app`, `roles=[]`, no `scp`) received `200` from `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`. The legacy non-`/otlp` S2S route (`/observabilityService/tenants/{tenant}/agents/{agent}/traces`) rejected the same token with `401` (`AuthenticationSchemeNotSupported`). Every sample must use an SDK/exporter configuration that posts to the `/otlp` route.
 
 The sample providers accept app-only tokens that meet one of these contracts:
 

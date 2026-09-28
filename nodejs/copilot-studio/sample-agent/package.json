@@ -4,9 +4,6 @@
   "description": "Sample agent integrating Microsoft Copilot Studio with Microsoft 365 Agents SDK and Microsoft Agent 365 SDK",
   "main": "src/index.ts",
   "type": "commonjs",
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon --watch src --exec ts-node src/index.ts",

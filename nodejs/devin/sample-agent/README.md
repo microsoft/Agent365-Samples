@@ -30,6 +30,9 @@ Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
 1.0.0 per-request mode still reads `runWithExportToken`, not the configured
 app-only resolver.
 
+`@opentelemetry/core` is an explicit dependency because the 1.0.0 exporter imports it
+without declaring it; relying on incidental dependency hoisting can fail at startup.
+
 When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
 `AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
 `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. `AGENT365_OBS_AGENT_ID`

@@ -2,9 +2,6 @@
   "name": "perplexity-agent-sample",
   "version": "1.0.0",
   "description": "Perplexity AI Agent with Microsoft Agent 365 SDK",
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "scripts": {
     "start": "node dist/index.js",
     "dev": "nodemon --watch src --exec ts-node src/index.ts",
