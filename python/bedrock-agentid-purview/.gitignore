@@ -1,0 +1,8 @@
+# never commit tenant secrets or local state
+.env
+*.env
+!.env.example
+__pycache__/
+*.pyc
+share-copy/
+*.zip

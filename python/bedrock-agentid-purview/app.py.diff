@@ -1,0 +1,513 @@
+--- poc/3P-Agent-ID-Demo-2/sidecar/llm-agent-aws/app.py	2026-09-10 20:36:42.172942697 +0000
++++ deliver/sidecar/llm-agent-aws/app.py	2026-09-11 00:37:43.658525069 +0000
+@@ -10,6 +10,9 @@
+ import time
+ from flask import Flask, request, jsonify, render_template_string
+ from flask_cors import CORS
++import re
++import uuid
++import purview_rest as pv   # Microsoft Purview via plain Graph REST (no SDK)
+ 
+ # Rate limiting
+ last_bedrock_call_time = 0
+@@ -44,6 +47,26 @@
+ AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+ BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0')
+ 
++# --- Microsoft Purview (DLP + sensitivity labels) — see purview_rest.py -----------------
++PURVIEW_ENABLED = os.environ.get('PURVIEW_ENABLED', 'true').lower() == 'true'
++PURVIEW_APP_NAME = os.environ.get('PURVIEW_APP_NAME', 'Agent ID Weather Agent (Bedrock)')
++# Entra app ID the DLP policy is scoped to (Purview 'Application' location). Default: the Agent Identity.
++PURVIEW_LOCATION_APP_ID = os.environ.get('PURVIEW_LOCATION_APP_ID', '') or AGENT_APP_ID
++# Call processContent even when protectionScopes says nothing is in scope (keeps the demo visible).
++PURVIEW_ALWAYS_EVALUATE = os.environ.get('PURVIEW_ALWAYS_EVALUATE', 'true').lower() == 'true'
++# If a Purview call fails (e.g. 403 = consent missing), block the request instead of continuing.
++PURVIEW_FAIL_CLOSED = os.environ.get('PURVIEW_FAIL_CLOSED', 'true').lower() == 'true'
++# Sensitivity label GUIDs the agent must never send to the LLM (e.g. 'Highly Confidential').
++PURVIEW_BLOCKED_LABEL_IDS = {x.strip().lower() for x in os.environ.get('PURVIEW_BLOCKED_LABEL_IDS', '').split(',') if x.strip()}
++# SharePoint site whose default document library holds the demo files, e.g. https://contoso.sharepoint.com/sites/PurviewDemo
++# Leave empty to read from the signed-in user's OneDrive instead.
++PURVIEW_SITE_URL = os.environ.get('PURVIEW_SITE_URL', '').strip().rstrip('/')
++PURVIEW_BLOCKED_PROMPT_MSG = ("\u26d4 Your request was blocked by a Microsoft Purview DLP policy. "
++                              "The prompt contains sensitive information (for example a credit card or SSN). "
++                              "Nothing was sent to the model.")
++PURVIEW_BLOCKED_RESPONSE_MSG = ("\u26d4 The response was blocked by a Microsoft Purview DLP policy because it "
++                                "contained sensitive information that cannot be disclosed.")
++
+ # Store debug info (global for simplicity)
+ debug_logs = []
+ 
+@@ -283,6 +306,10 @@
+ # ============================================
+ # Global holder for user_token when OBO mode is active (set per-request)
+ _current_user_token = None
++# Delegated Agent Identity token (TR) fetched once per OBO request; tools + Purview reuse it
++_current_tr_token = None
++# Per-request Purview context (labels seen, resources read, DLP scope/etag)
++_purview_ctx = None
+ # Store last TR (result token) claims for display
+ _last_tr_claims = None
+ 
+@@ -299,7 +326,7 @@
+     
+     # Step 1: Get Agent Identity token from sidecar
+     if is_obo:
+-        token = get_agent_token_obo(user_token=user_token)
++        token = _current_tr_token or get_agent_token_obo(user_token=user_token)
+     else:
+         token = get_agent_token()
+     
+@@ -328,6 +355,255 @@
+     return result
+ 
+ 
++
++# ============================================
++# Purview: sensitivity-label-aware document tool
++# ============================================
++def _label_catalog():
++    """Label id -> name/color/priority for the tenant (fetched once per request)."""
++    if _purview_ctx is not None and _purview_ctx.get("catalog") is None:
++        _purview_ctx["catalog"] = pv.list_labels(_current_tr_token)
++    return (_purview_ctx or {}).get("catalog") or {}
++
++
++def _document_drive_base() -> str:
++    """Graph path prefix for the document library: a SharePoint site (PURVIEW_SITE_URL) or the user's OneDrive."""
++    if not PURVIEW_SITE_URL:
++        log_debug("2. DOCUMENT SOURCE", "Signed-in user's OneDrive (/me/drive)")
++        return "/me/drive"
++    if _purview_ctx.get("site") is None:
++        site = pv.resolve_site_drive(_current_tr_token, PURVIEW_SITE_URL)
++        _purview_ctx["site"] = site
++        log_debug("2. DOCUMENT SOURCE", f"SharePoint site resolved: {site.get('site_name')} (default document library)", {
++            "api": f"GET /v1.0/sites/{{hostname}}:/{PURVIEW_SITE_URL.split('/', 3)[-1]}",
++            "token": "TR (delegated) \u2014 resolves only if the signed-in user can access the site",
++            "site_id": site.get("site_id"), "web_url": site.get("web_url"), "drive": site.get("drive_base"),
++        })
++    return _purview_ctx["site"]["drive_base"]
++
++
++def read_document(path: str) -> str:
++    """Read a .docx from the SharePoint site (or OneDrive) — honouring its sensitivity label.
++
++    1. resolve the document library  -> SharePoint site default library, or /me/drive
++    2. extractSensitivityLabels      -> which label(s) the file carries
++    3. label gate                    -> refuse files whose label is in PURVIEW_BLOCKED_LABEL_IDS
++    4. download + parse              -> text handed to the LLM (encrypted files cannot be read)
++    Labels of every file read are remembered so the response can inherit the highest one.
++    """
++    if not _current_tr_token:
++        return ("Error: reading documents requires the OBO (signed-in user) flow — the agent reads the "
++                "file with the user's own permissions. Switch Token Flow to OBO and sign in.")
++    path = path.strip().strip("'\"")
++    log_debug("1. TOOL CALLED", f"Document function called for: {path} (flow: OBO)")
++    try:
++        drive_base = _document_drive_base()
++        item = pv.get_drive_item(_current_tr_token, path, drive_base)
++        info = pv.extract_file_label_info(_current_tr_token, path, drive_base)
++        label_ids = info["ids"]
++        catalog = _label_catalog()
++        names = [catalog.get(l, {}).get("name") or info["names"].get(l) or l for l in label_ids]
++        log_debug("PURVIEW LABEL 2.A FILE LABEL", f"{item.get('name')} \u2192 {', '.join(names) if names else 'no sensitivity label'}", {
++            "api": f"POST /v1.0{drive_base}/root:/{{path}}:/extractSensitivityLabels  (fallback: GET .../listItem?$expand=fields)",
++            "label_source": info["source"],
++            "token": "TR (delegated) \u2014 the agent only sees files the signed-in user can open",
++            "file": item.get("name"), "web_url": item.get("webUrl"),
++            "label_ids": label_ids, "label_names": names,
++        })
++        _purview_ctx["sources"].append({"file": item.get("name"), "labels": names, "url": item.get("webUrl")})
++        _purview_ctx["resources"].append({
++            "identifier": item.get("id"), "name": item.get("name"), "url": item.get("webUrl"),
++            "labelId": label_ids[0] if label_ids else None, "accessType": "read", "status": "success",
++            "isCrossPromptInjectionDetected": False,
++        })
++        blocked = PURVIEW_BLOCKED_LABEL_IDS & set(label_ids)
++        if blocked:
++            _purview_ctx["label_blocked"].append(item.get("name"))
++            log_debug("PURVIEW LABEL 2.B LABEL GATE \u2192 BLOCKED", f"{item.get('name')} is labelled {', '.join(names)} \u2014 not sent to Bedrock", {
++                "rule": "PURVIEW_BLOCKED_LABEL_IDS contains this label", "blocked_label_ids": sorted(blocked),
++                "enforced_by": "the agent, using Purview label metadata (Purview supplies the label; the agent honours it)",
++            })
++            return (f"ACCESS DENIED BY SENSITIVITY LABEL: '{item.get('name')}' is labelled {', '.join(names)}. "
++                    "This agent is not permitted to process content with that classification. Tell the user the "
++                    "document is restricted by its sensitivity label and do NOT guess or invent its contents.")
++        _purview_ctx["labels_seen"].extend(label_ids)
++        log_debug("PURVIEW LABEL 2.B LABEL GATE \u2192 ALLOWED", f"{item.get('name')} may be processed; content handed to the model", {
++            "labels": names or ["(none)"], "blocked_label_ids_configured": sorted(PURVIEW_BLOCKED_LABEL_IDS) or "(none)",
++        })
++        try:
++            text = pv.docx_text(item.get("@microsoft.graph.downloadUrl"))
++        except ValueError as e:
++            log_debug("PURVIEW LABEL 2.B ENCRYPTED", f"{item.get('name')}: {e}", {
++                "explanation": "The label applies encryption; without Purview rights the content is unreadable \u2014 protection is working."})
++            return (f"The document '{item.get('name')}' is encrypted by its sensitivity label ({', '.join(names)}) "
++                    "and its content cannot be read by this agent. Tell the user this.")
++        log_debug("4. TOOL RESULT", f"Document text retrieved ({len(text)} chars)", {"preview": text[:300]})
++        return f"Document '{item.get('name')}' (sensitivity label: {', '.join(names) if names else 'none'}):\n\n{text}"
++    except pv.PurviewError as e:
++        if e.status in (403, 404):
++            log_debug("3. ACCESS DENIED / NOT FOUND", f"HTTP {e.status} for '{path}' \u2014 the agent has exactly the signed-in user's permissions, no more", {
++                "client_request_id": e.request_id, "detail": e.body,
++                "explanation": "403 = the user has no access to the site/file; 404 = wrong path or the user cannot see it",
++            })
++            return (f"Access denied or not found: '{path}' (HTTP {e.status}). The agent can only open documents the "
++                    "signed-in user is permitted to open. Tell the user this; do not guess the contents.")
++        log_debug("PURVIEW ERROR", f"Document read failed: {e}", {"client_request_id": e.request_id, "http_status": e.status})
++        return f"Error reading '{path}': HTTP {e.status}. {e.body}"
++
++
++def _extract_doc_path(user_query: str):
++    # OneDrive path without spaces, e.g. PurviewDemo/Weather-Ops-Playbook.docx
++    m = re.search(r"([\w\-./]+\.docx)", user_query, re.IGNORECASE)
++    return m.group(1).strip() if m else None
++
++
++# ============================================
++# Purview: DLP gates around the whole request
++# ============================================
++def _new_purview_ctx():
++    return {"conversation_id": str(uuid.uuid4()), "etag": None, "activities": set(),
++            "labels_seen": [], "resources": [], "sources": [], "label_blocked": [], "catalog": None, "site": None}
++
++
++def _purview_agent_info():
++    if not AGENT_APP_ID:
++        return None
++    info = {"identifier": AGENT_APP_ID, "name": PURVIEW_APP_NAME, "version": "1.0"}
++    if BLUEPRINT_APP_ID:
++        info["blueprintId"] = BLUEPRINT_APP_ID
++    return info
++
++
++def _process_content_safe(text, activity, sequence, accessed_resources=None):
++    """processContent with one retry without optional metadata if the beta API rejects it (400)."""
++    kwargs = dict(location_app_id=PURVIEW_LOCATION_APP_ID, app_name=PURVIEW_APP_NAME,
++                  conversation_id=_purview_ctx["conversation_id"], sequence=sequence,
++                  etag=_purview_ctx["etag"], ip=request.remote_addr)
++    try:
++        return pv.process_content(_current_tr_token, text, activity, agent=_purview_agent_info(),
++                                  accessed_resources=accessed_resources, **kwargs)
++    except pv.PurviewError as e:
++        if e.status == 400 and (accessed_resources or _purview_agent_info()):
++            log_debug("PURVIEW NOTE", "Optional agent/resource metadata rejected by the beta API \u2014 retrying with the minimal payload",
++                      {"client_request_id": e.request_id, "detail": e.body})
++            return pv.process_content(_current_tr_token, text, activity, **kwargs)
++        raise
++
++
++def _purview_blocked_result(message, reason, meta):
++    meta["blocked_reason"] = reason
++    return {"response": message, "debug": debug_logs, "success": True, "agent_type": "purview-blocked", "token_flow": "obo"}
++
++
++def _purview_failure(stage, e, meta):
++    log_debug("PURVIEW ERROR", f"Purview {stage} evaluation failed: HTTP {e.status}", {
++        "client_request_id": e.request_id, "detail": e.body,
++        "hint_403": "Consent missing \u2014 the Agent Identity needs ProtectionScopes.Compute.User + Content.Process.User (check scp in the TR token)",
++        "hint_404_400": "Check PURVIEW_LOCATION_APP_ID and that the Purview API is available in this tenant/cloud",
++        "fail_closed": PURVIEW_FAIL_CLOSED,
++    })
++    if PURVIEW_FAIL_CLOSED:
++        return (f"\u26d4 Request stopped: Microsoft Purview could not evaluate the {stage} (HTTP {e.status}). "
++                f"This agent fails closed. Client-Request-Id: {e.request_id}")
++    return None
++
++
++def purview_prompt_gate(user_message, meta):
++    """Gate 1 \u2014 DLP on the user's prompt. Returns a result dict if the request must stop, else None."""
++    if not PURVIEW_ENABLED:
++        return None
++    if not _current_tr_token:
++        log_debug("PURVIEW SKIPPED", "Purview DLP is evaluated per signed-in user \u2014 switch Token Flow to OBO to see it", {
++            "why": "protectionScopes/compute and processContent run under /me with a delegated token (TR, idtyp=user)",
++            "autonomous_mode": "app-only token has no user context; DLP for autonomous agents is out of scope for this POC",
++        })
++        return None
++    try:
++        scopes = pv.compute_scopes(_current_tr_token, PURVIEW_LOCATION_APP_ID, PURVIEW_APP_NAME)
++        _purview_ctx["etag"], _purview_ctx["activities"] = scopes["etag"], scopes["activities"]
++        log_debug("PURVIEW 1.A PROTECTION SCOPES", f"Activities Purview wants evaluated for this user + app: {sorted(scopes['activities']) or 'none'}", {
++            "api": "POST /v1.0/me/dataSecurityAndGovernance/protectionScopes/compute",
++            "token": "TR (delegated Agent Identity token) \u2014 policies are evaluated for THIS user",
++            "policy_location": PURVIEW_LOCATION_APP_ID, "etag": scopes["etag"], "scopes": scopes["raw"],
++            "client_request_id": scopes["request_id"],
++            "note": None if scopes["activities"] else "No DLP policy targets this app + user yet (policy Application location / user scope / sync delay up to ~1h). PURVIEW_ALWAYS_EVALUATE keeps calling processContent anyway.",
++        })
++        if "uploadText" in scopes["activities"] or PURVIEW_ALWAYS_EVALUATE:
++            r = _process_content_safe(user_message, "uploadText", 0)
++            verdict = "BLOCKED" if r["blocked"] else "ALLOWED"
++            meta["prompt_verdict"] = verdict
++            log_debug(f"PURVIEW 1.B PROMPT DLP \u2192 {verdict}", "User prompt evaluated by Purview DLP before it reaches Bedrock", {
++                "api": "POST /beta/me/dataSecurityAndGovernance/processContent", "activity": "uploadText",
++                "http_status": r["status"], "policy_actions": r["actions"],
++                "protection_scope_state": "modified" if r["scope_changed"] else "notModified",
++                "agent_attribution": _purview_agent_info(), "client_request_id": r["request_id"],
++            })
++            if r["blocked"]:
++                log_debug("5. COMPLETE", "Stopped by Purview DLP \u2014 nothing was sent to AWS Bedrock")
++                return _purview_blocked_result(PURVIEW_BLOCKED_PROMPT_MSG, "PURVIEW_DLP_PROMPT", meta)
++        else:
++            meta["prompt_verdict"] = "NOT_IN_SCOPE"
++            log_debug("PURVIEW 1.B PROMPT DLP \u2192 SKIPPED", "uploadText is not in the protection scope; no inline evaluation required")
++    except pv.PurviewError as e:
++        msg = _purview_failure("prompt", e, meta)
++        meta["prompt_verdict"] = "ERROR"
++        if msg:
++            return _purview_blocked_result(msg, "PURVIEW_ERROR", meta)
++    return None
++
++
++def purview_response_gate(result, meta):
++    """Gate 3 \u2014 label inheritance for the answer, then DLP on the answer text."""
++    if not PURVIEW_ENABLED or not _current_tr_token:
++        return
++    # Keep the panel tidy: Purview steps go before the final COMPLETE entry
++    complete_idx = next((i for i in range(len(debug_logs) - 1, -1, -1) if str(debug_logs[i].get("step", "")).startswith("5. COMPLETE")), None)
++    complete_entry = debug_logs.pop(complete_idx) if complete_idx is not None else None
++
++    meta["sources"] = _purview_ctx["sources"]
++    if _purview_ctx["label_blocked"]:
++        meta["blocked_reason"] = "SENSITIVITY_LABEL"
++    if _purview_ctx["labels_seen"]:
++        try:
++            lbl = pv.compute_inheritance(_current_tr_token, list(dict.fromkeys(_purview_ctx["labels_seen"])))
++            meta["output_label"] = {"id": lbl.get("id"), "name": lbl.get("name"), "color": lbl.get("color")}
++            log_debug("PURVIEW LABEL 2.C INHERITANCE", f"The answer inherits the sensitivity label: {lbl.get('name')}", {
++                "api": "GET /v1.0/security/dataSecurityAndGovernance/sensitivityLabels/computeInheritance(labelIds=[...])",
++                "input_label_ids": list(dict.fromkeys(_purview_ctx["labels_seen"])), "inherited_label": lbl,
++                "meaning": "Purview computed the most sensitive label among the documents used; the response carries it",
++            })
++        except pv.PurviewError as e:
++            log_debug("PURVIEW ERROR", f"computeInheritance failed: HTTP {e.status}", {"client_request_id": e.request_id, "detail": e.body})
++
++    text = result.get("response") or ""
++    if "downloadText" in _purview_ctx["activities"] or PURVIEW_ALWAYS_EVALUATE:
++        try:
++            r = _process_content_safe(text, "downloadText", 1, accessed_resources=_purview_ctx["resources"] or None)
++            verdict = "BLOCKED" if r["blocked"] else "ALLOWED"
++            meta["response_verdict"] = verdict
++            log_debug(f"PURVIEW 3.A RESPONSE DLP \u2192 {verdict}", "Model/tool response evaluated by Purview DLP before it reaches the user", {
++                "api": "POST /beta/me/dataSecurityAndGovernance/processContent", "activity": "downloadText",
++                "http_status": r["status"], "policy_actions": r["actions"],
++                "accessed_resources_reported": [x.get("name") for x in _purview_ctx["resources"]],
++                "client_request_id": r["request_id"],
++            })
++            if r["blocked"]:
++                result["response"] = PURVIEW_BLOCKED_RESPONSE_MSG
++                meta["blocked_reason"] = "PURVIEW_DLP_RESPONSE"
++        except pv.PurviewError as e:
++            msg = _purview_failure("response", e, meta)
++            meta["response_verdict"] = "ERROR"
++            if msg:
++                result["response"] = msg
++                meta["blocked_reason"] = "PURVIEW_ERROR"
++    else:
++        meta["response_verdict"] = "NOT_IN_SCOPE"
++        log_debug("PURVIEW 3.A RESPONSE DLP \u2192 SKIPPED", "downloadText is not in the protection scope")
++
++    if complete_entry is not None:
++        debug_logs.append(complete_entry)
++
++
+ # Create LangChain tool wrappers if available
+ if LANGCHAIN_AVAILABLE and tool is not None:
+     @tool
+@@ -349,6 +625,18 @@
+         result = get_weather_data(city, user_token=_current_user_token)
+         return result
+ 
++    @tool
++    def read_onedrive_document(path: str) -> str:
++        """
++        Read a Word document (.docx) from the team's SharePoint document library (or the user's
++        OneDrive) and return its text. Use this whenever the user asks to read, open, summarize,
++        or answer questions about a document, file, playbook, contract, report or memo. The path
++        is the file name (with optional folder) inside the library, e.g. "Weather-Ops-Playbook.docx"
++        or "Contracts/Vendor-Contract.docx". If the tool reports the document is restricted by a
++        sensitivity label, encrypted, or access denied, tell the user exactly that and stop.
++        """
++        return read_document(path)
++
+ 
+ # ============================================
+ # LangChain Agent Setup with AWS Bedrock
+@@ -373,7 +661,7 @@
+     print(f"[AWS] ✓ ChatBedrock instance created successfully")
+     
+     # Define tools
+-    tools = [get_weather]
++    tools = [get_weather, read_onedrive_document]
+     
+     # Don't force tool usage - let Claude decide naturally
+     # tool_choice="any" was causing loops
+@@ -416,7 +704,12 @@
+         
+         # Add system message to encourage ONE tool call
+         from langchain_core.messages import SystemMessage
+-        system_msg = SystemMessage(content="You have access to a get_weather tool. When users ask about weather, call the get_weather tool ONCE with the city name, then provide a natural response using the data returned. Do NOT call the tool multiple times.")
++        system_msg = SystemMessage(content=(
++            "You have two tools. (1) get_weather: when users ask about weather, call it ONCE with the city name. "
++            "(2) read_onedrive_document: when users ask to read, summarize or answer questions about a document, "
++            "call it ONCE with the file name/path they gave (e.g. Weather-Ops-Playbook.docx). "
++            "Answer only from the returned data. If a tool says a document is restricted by a sensitivity label "
++            "or encrypted, say so plainly and do not guess its contents. Do NOT call tools multiple times."))
+         
+         # Limit recursion to prevent infinite loops
+         result = agent.invoke(
+@@ -438,7 +731,7 @@
+                     # Tool execution already logged everything, don't duplicate
+         
+         # Fallback: If LLM didn't call tool but query is about weather, manually call it
+-        if not tool_called and any(keyword in user_query.lower() for keyword in ['weather', 'temperature', 'forecast', 'condition']):
++        if not tool_called and not _extract_doc_path(user_query) and any(keyword in user_query.lower() for keyword in ['weather', 'temperature', 'forecast', 'condition']):
+             log_debug("1. FALLBACK", "LLM didn't call tool - manually extracting city and calling weather tool")
+             
+             # Extract city from query
+@@ -536,6 +829,18 @@
+             "docs": "https://learn.microsoft.com/en-us/entra/msidweb/agent-id-sdk/endpoints"
+         })
+     
++    doc_path = _extract_doc_path(user_query)
++    if doc_path:
++        flow_badge = "\U0001f504 OBO" if is_obo else "\u26a1 Autonomous"
++        log_debug("1. DIRECT CALL", f"Reading OneDrive document directly: {doc_path} (flow: {flow_label})")
++        doc_result = read_document(doc_path)
++        log_debug("5. COMPLETE", f"Query processed (Direct + {flow_label})")
++        return {
++            "response": f"Here's what I found:\n\n{doc_result[:1500]}\n\n\u2705 *Securely retrieved using Agent Identity ({flow_badge})*",
++            "debug": debug_logs, "success": True, "agent_type": "direct",
++            "token_flow": "obo" if is_obo else "autonomous",
++        }
++
+     city = _extract_city(user_query)
+     
+     log_debug("1. DIRECT CALL", f"Calling weather function directly for: {city} (flow: {flow_label})")
+@@ -628,15 +933,31 @@
+                 }
+             })
+     
++    global _current_tr_token, _purview_ctx
++    _current_tr_token = None
++    _purview_ctx = _new_purview_ctx()
++    purview_meta = {"enabled": PURVIEW_ENABLED, "mode": token_flow, "prompt_verdict": None,
++                    "response_verdict": None, "output_label": None, "sources": [], "blocked_reason": None}
+     try:
+-        if llm_mode == 'bedrock' and LANGCHAIN_AVAILABLE and check_bedrock_available():
++        if token_flow == 'obo':
++            # One OBO exchange per request: Purview gates and tools all reuse this delegated TR
++            _current_tr_token = get_agent_token_obo(user_token=user_token)
++        gate = purview_prompt_gate(user_message, purview_meta)          # Gate 1: prompt DLP
++        if gate is not None:
++            result = gate
++        elif llm_mode == 'bedrock' and LANGCHAIN_AVAILABLE and check_bedrock_available():
+             result = process_with_langchain(user_message)
+             # Override agent_type to reflect both dimensions
+             result['token_flow'] = token_flow
+         else:
+             result = process_without_llm(user_message, user_token=_current_user_token)
++        if gate is None:
++            purview_response_gate(result, purview_meta)                   # Gate 3: labels + response DLP
++        result['purview'] = purview_meta
+     finally:
+         _current_user_token = None  # Always clear after request
++        _current_tr_token = None
++        _purview_ctx = None
+     
+     # Attach token claims for display (both OBO and Autonomous)
+     # Note: full JWT claims are now embedded directly in debug log entries
+@@ -685,7 +1006,11 @@
+         "aws_region": AWS_REGION,
+         "bedrock_model": BEDROCK_MODEL_ID,
+         "sidecar_url": SIDECAR_URL,
+-        "agent_app_id": AGENT_APP_ID[:8] + "..." if AGENT_APP_ID else "not set"
++        "agent_app_id": AGENT_APP_ID[:8] + "..." if AGENT_APP_ID else "not set",
++        "purview_enabled": PURVIEW_ENABLED,
++        "purview_location_app_id": PURVIEW_LOCATION_APP_ID,
++        "purview_blocked_label_ids": sorted(PURVIEW_BLOCKED_LABEL_IDS),
++        "purview_site_url": PURVIEW_SITE_URL or "(OneDrive)",
+     })
+ 
+ 
+@@ -834,6 +1159,12 @@
+         .debug-entry.error .debug-step { color: #f5576c; }
+         .debug-entry.success .debug-step { color: #2ecc71; }
+         .debug-entry.obo .debug-step { color: #667eea; }
++        .debug-entry.purview { border-left-color: #8661c5; }
++        .debug-entry.purview .debug-step { color: #b39ddb; }
++        .debug-entry.error.purview { border-left-color: #f5576c; }
++        .debug-entry.error.purview .debug-step { color: #f5576c; }
++        .pv-badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:0.75rem; font-weight:600; color:#fff; }
++        .pv-green { background:#2ecc71; } .pv-red { background:#f5576c; } .pv-grey { background:rgba(255,255,255,0.25); }
+         .debug-message { color: rgba(255,255,255,0.9); margin-bottom: 6px; }
+         .debug-data {
+             background: rgba(0,0,0,0.4);
+@@ -1074,7 +1405,7 @@
+                 </div>
+             </div>
+             <div class="input-area">
+-                <input type="text" id="userInput" placeholder="Ask about the weather in any city..." />
++                <input type="text" id="userInput" placeholder="Ask about the weather, or: summarize Weather-Ops-Playbook.docx" />
+                 <button id="sendBtn" onclick="sendMessage()">Send</button>
+             </div>
+         </div>
+@@ -1279,10 +1610,14 @@
+                 if (entry.step.includes('ERROR')) entryClass += ' error';
+                 if (entry.step.includes('COMPLETE') || entry.step.includes('RECEIVED')) entryClass += ' success';
+                 if (entry.step.startsWith('OBO') || entry.step.includes('OBO')) entryClass += ' obo';
++                if (entry.step.includes('PURVIEW')) entryClass += ' purview';
++                if (entry.step.includes('BLOCKED')) entryClass += ' error';
+                 div.className = entryClass;
+ 
+                 let icon = '&#x2705;';
+                 if (entry.step.includes('ERROR')) icon = '&#x274C;';
++                else if (entry.step.includes('BLOCKED')) icon = '&#x26D4;';
++                else if (entry.step.includes('PURVIEW')) icon = '&#x1F6E1;&#xFE0F;';
+                 else if (entry.step.includes('OBO')) icon = '&#x1F504;';
+ 
+                 let html = '<div class="debug-step">' + icon + ' ' + entry.step + '</div>';
+@@ -1301,6 +1636,8 @@
+                         + '<a href="https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference" target="_blank" style="color:#667eea; text-decoration:none;">ID token claims</a>'
+                         + ' | '
+                         + '<a href="https://learn.microsoft.com/en-us/entra/agent-id/identity-platform/agent-on-behalf-of-oauth-flow" target="_blank" style="color:#667eea; text-decoration:none;">Agent OBO flow</a>'
++                        + ' | '
++                        + '<a href="https://learn.microsoft.com/en-us/purview/developer/use-the-api" target="_blank" style="color:#b39ddb; text-decoration:none;">Purview APIs</a>'
+                         + '</div>';
+                 } else if (entry.data) {
+                     html += '<div class="debug-data">' + JSON.stringify(entry.data, null, 2) + '</div>';
+@@ -1312,6 +1649,26 @@
+         }
+ 
+         // ==============================
++        // Purview badges (DLP verdicts + inherited sensitivity label)
++        // ==============================
++        function purviewBadges(p) {
++            if (!p || !p.enabled) return '';
++            if (p.mode !== 'obo') return '<br><small>&#x1F6E1;&#xFE0F; <em>Purview: not evaluated (switch to OBO to see DLP under the signed-in user)</em></small>';
++            const v = (x) => x === 'BLOCKED' ? '<span class="pv-badge pv-red">&#x26D4; BLOCKED</span>'
++                            : x === 'ALLOWED' ? '<span class="pv-badge pv-green">&#x2705; ALLOWED</span>'
++                            : '<span class="pv-badge pv-grey">' + (x || 'n/a') + '</span>';
++            let html = '<br><small>&#x1F6E1;&#xFE0F; <strong>Purview DLP</strong> &nbsp;prompt: ' + v(p.prompt_verdict) + ' &nbsp;response: ' + v(p.response_verdict) + '</small>';
++            if (p.output_label) {
++                html += '<br><small>&#x1F3F7;&#xFE0F; <strong>Sensitivity label (inherited):</strong> <span class="pv-badge" style="background:' + (p.output_label.color || '#8661c5') + '">' + p.output_label.name + '</span></small>';
++            }
++            if (p.sources && p.sources.length) {
++                html += '<br><small>&#x1F4C4; Sources: ' + p.sources.map(s => s.file + ' [' + ((s.labels && s.labels.length) ? s.labels.join(', ') : 'no label') + ']').join('; ') + '</small>';
++            }
++            if (p.blocked_reason === 'SENSITIVITY_LABEL') html += '<br><small><span class="pv-badge pv-red">&#x26D4; a document was withheld by its sensitivity label</span></small>';
++            return html;
++        }
++
++        // ==============================
+         // Send message
+         // ==============================
+         async function sendMessage() {
+@@ -1369,7 +1726,7 @@
+                     const llmBadge = data.agent_type === 'bedrock'
+                         ? ' &#x2601;&#xFE0F; Bedrock'
+                         : ' &#x26A1; Direct';
+-                    addMessage(data.response + flowBadge + '<small><em>' + llmBadge + '</em></small>', false);
++                    addMessage(data.response + flowBadge + '<small><em>' + llmBadge + '</em></small>' + purviewBadges(data.purview), false);
+ 
+                     if (data.debug) {
+                         updateDebug(data.debug);
