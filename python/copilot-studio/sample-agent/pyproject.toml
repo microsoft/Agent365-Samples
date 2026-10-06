@@ -1,0 +1,54 @@
+[project]
+name = "copilot-studio-sample-agent"
+version = "0.1.0"
+description = "Sample agent integrating Microsoft Copilot Studio with the Microsoft Agent 365 SDK (Python)"
+authors = [
+    { name = "Microsoft", email = "support@microsoft.com" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    # Microsoft Agents SDK — hosting and integration
+    "microsoft-agents-hosting-aiohttp",
+    "microsoft-agents-hosting-core",
+    "microsoft-agents-authentication-msal",
+    "microsoft-agents-activity",
+
+    # Copilot Studio client
+    "microsoft-agents-copilotstudio-client",
+
+    # Microsoft Agent 365 SDK packages
+    "microsoft-agents-a365-notifications",
+    "microsoft-agents-a365-runtime >= 0.1.0",
+
+    # Microsoft OpenTelemetry Distro — provides observability, BaggageBuilder, InferenceScope
+    "microsoft-opentelemetry >= 0.1.0a3",
+
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+[tool.uv]
+prerelease = "allow"
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["agent.py", "client.py", "main.py"]
