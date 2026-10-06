@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://aka.ms/m365-agents-toolkits/v1.11/yaml.schema.json
+version: v1.11
+
+environmentFolderPath: ./env
+
+provision:
+  - uses: agentsplayground/create
+    with:
+      messagingEndpoint: ${{AGENTS_PLAYGROUND_ENDPOINT}}/api/messages
+
+deploy:
+  - uses: devTool/install
+    with:
+      devCommand:
+        id: npm/command
+        args: run dev
+    writeToEnvironmentFile:
+      sslCertFile: SSL_CRT_FILE
+      sslKeyFile: SSL_KEY_FILE
