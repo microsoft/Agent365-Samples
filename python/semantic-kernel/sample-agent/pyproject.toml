@@ -1,0 +1,50 @@
+[project]
+name = "sample-semantic-kernel-agent"
+version = "0.1.0"
+description = "Sample Semantic Kernel Agent using Microsoft Agent 365 SDK"
+dependencies = [
+    # Semantic Kernel SDK
+    "semantic-kernel>=1.15.0",
+
+    # Microsoft Agents SDK - Official packages for hosting and integration
+    "microsoft-agents-hosting-aiohttp>=0.7.0",
+    "microsoft-agents-hosting-core>=0.7.0",
+    "microsoft-agents-authentication-msal>=0.7.0",
+    "microsoft-agents-activity>=0.7.0",
+
+    # Agent 365 packages (using stable versions from PyPI)
+    "microsoft-agents-a365-observability-core>=0.1.0",
+    "microsoft-agents-a365-observability-hosting>=0.1.0",
+    "microsoft-agents-a365-notifications>=0.1.0",
+    "microsoft-agents-a365-tooling>=0.1.0",
+    "microsoft-agents-a365-runtime>=0.1.0",
+
+    # Core dependencies
+    "python-dotenv",
+    "aiohttp",
+    "httpx>=0.24.1,<0.28",
+
+    # Additional utilities
+    "typing-extensions>=4.0.0",
+    "wrapt>=1.15.0",
+]
+requires-python = ">=3.11"
+
+# Package index configuration
+# PyPI is the default/primary source, local packages are fallback
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+# Allow pre-release versions for Microsoft Agent 365 SDK packages
+# This ensures we always get the latest features and fixes
+[tool.uv]
+prerelease = "allow"
