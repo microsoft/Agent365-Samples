@@ -1,0 +1,5 @@
+.env*
+!.env.example
+.copilot-local/
+.copilot-traces/
+telemetry*.json

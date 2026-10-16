@@ -1,0 +1,32 @@
+{
+  "name": "agent365-copilot-sdk-sample",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Copilot SDK agent with application-side Agent 365 telemetry",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "smoke": "npm run build && node dist/src/index.js --smoke",
+    "runtime:check": "npm run build && node --env-file-if-exists=.env dist/src/index.js --runtime-check",
+    "start": "node --env-file-if-exists=.env dist/src/index.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.0.0",
+    "@github/copilot-sdk": "1.0.14",
+    "@microsoft/opentelemetry": "1.4.0",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/core": "2.10.0",
+    "@opentelemetry/resources": "2.10.0",
+    "@opentelemetry/sdk-trace-base": "2.10.0",
+    "@opentelemetry/sdk-trace-node": "2.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.5",
+    "typescript": "5.9.3"
+  }
+}
