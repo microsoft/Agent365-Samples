@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI - Build Chief of Staff Scenario
+
+on:
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  scenario-chief-of-staff:
+    name: Chief of Staff Scenario
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./scenarios/chief-of-staff
+
+    strategy:
+      matrix:
+        node-version: ['20', '22']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    # --legacy-peer-deps: @openai/agents declares an older zod peer than the
+    # zod version this sample uses.
+    - name: Install dependencies
+      run: npm install --legacy-peer-deps
+
+    - name: Build
+      run: npm run build
