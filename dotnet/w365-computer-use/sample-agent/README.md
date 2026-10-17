@@ -1,3 +1,15 @@
+<!--
+---
+name: "W365 Computer Use Sample"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Control a Windows 365 Cloud PC from a .NET agent using the OpenAI Responses API and W365 Computer Use MCP tools."
+---
+-->
+
 # W365 Computer Use Sample
 
 ## Overview

@@ -1,3 +1,15 @@
+<!--
+---
+name: "Semantic Kernel Sample Agent - C#/.NET"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Build a Semantic Kernel agent in .NET with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Semantic Kernel Sample Agent - C#/.NET
 
 This sample demonstrates how to build an agent using Semantic Kernel in C#/.NET with the Microsoft Agent 365 SDK. It covers:

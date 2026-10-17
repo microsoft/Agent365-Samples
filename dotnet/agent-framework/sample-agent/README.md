@@ -1,3 +1,15 @@
+<!--
+---
+name: "Agent Framework (Simple) Sample"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Build a .NET agent with Agent Framework and Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Agent Framework (Simple) Sample
 
 ## Overview

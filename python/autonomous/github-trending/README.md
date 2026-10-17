@@ -1,3 +1,15 @@
+<!--
+---
+name: "Autonomous Agent — Python Sample"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Run an autonomous Python agent that summarizes trending GitHub repositories with Azure OpenAI and Agent 365 tracing."
+---
+-->
+
 # Autonomous Agent — Python Sample
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for Python. It has **no chat functionality** — it runs entirely as a background service.

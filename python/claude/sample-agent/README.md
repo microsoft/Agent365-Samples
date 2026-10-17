@@ -1,3 +1,15 @@
+<!--
+---
+name: "Claude Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a Python agent using the Claude Agent SDK with extended thinking, built-in tools, and Agent 365 integration."
+---
+-->
+
 # Claude Sample Agent - Python
 
 This directory contains a sample agent implementation using Python and Anthropic's Claude Agent SDK with extended thinking capabilities. This sample demonstrates how to build an agent using the Agent365 framework with Python and Claude Agent SDK. It covers:

@@ -1,3 +1,15 @@
+<!--
+---
+name: "Autonomous Agent — Node.js Sample"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Run an autonomous TypeScript agent that summarizes trending GitHub repositories with Azure OpenAI and Agent 365 tracing."
+---
+-->
+
 # Autonomous Agent — Node.js Sample
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for Node.js/TypeScript. It has **no chat functionality** — it runs entirely as a background service.

@@ -1,3 +1,15 @@
+<!--
+---
+name: "Vercel AI SDK Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build a Vercel AI SDK agent in TypeScript with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Vercel AI SDK Sample Agent - Node.js
 
 

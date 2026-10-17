@@ -1,3 +1,15 @@
+<!--
+---
+name: "Observability — Agent 365 SDK with manual OTel + manual instrumentation"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Instrument a Python agent manually with OpenTelemetry and Agent 365 tracing, with optional Agent 365 S2S export."
+---
+-->
+
 # Observability — Agent 365 SDK with manual OTel + manual instrumentation
 
 ## Optional A365 S2S export

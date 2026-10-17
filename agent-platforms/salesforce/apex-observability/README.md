@@ -1,3 +1,15 @@
+<!--
+---
+name: "Salesforce Apex — Native Agent 365 Observability"
+page_type: sample
+languages:
+- apex
+products:
+- agent-365
+description: "Emit native Agent 365 telemetry from Salesforce Apex with correlated OTLP spans and agent-bound authentication."
+---
+-->
+
 # Salesforce Apex — Native Agent 365 Observability
 
 This sample shows how **Salesforce Apex** can participate in [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)

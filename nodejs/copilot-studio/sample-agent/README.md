@@ -1,3 +1,15 @@
+<!--
+---
+name: "Copilot Studio Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Bridge a Microsoft Copilot Studio agent to Agent 365 with TypeScript hosting, notifications, and observability."
+---
+-->
+
 # Copilot Studio Sample Agent - Node.js
 
 

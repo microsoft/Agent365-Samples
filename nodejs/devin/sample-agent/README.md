@@ -1,3 +1,15 @@
+<!--
+---
+name: "Devin Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Integrate Devin with a TypeScript agent using Agent 365 observability and notifications."
+---
+-->
+
 # Devin Sample Agent - Node.js
 
 
@@ -5,7 +17,6 @@ This sample demonstrates how to build an agent using Devin in Node.js with the M
 
 - **Observability**: End-to-end tracing, caching, and monitoring for agent applications
 - **Notifications**: Services and models for managing user notifications
-- **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
 This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).

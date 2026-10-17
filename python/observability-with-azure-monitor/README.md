@@ -1,3 +1,15 @@
+<!--
+---
+name: "Observability — Agent 365 SDK alongside Azure Monitor"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Add Agent 365 observability to a Python app that already exports OpenTelemetry spans to Azure Monitor."
+---
+-->
+
 # Observability — Agent 365 SDK alongside Azure Monitor
 
 This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app that **already** uses [Azure Monitor / Application Insights OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-overview). After running this, both Azure Monitor and the Agent 365 backend receive your agent's spans.

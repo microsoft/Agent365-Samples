@@ -1,3 +1,15 @@
+<!--
+---
+name: "Google ADK Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a Google ADK agent in Python with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Google ADK Sample Agent - Python
 
 This sample demonstrates how to build an agent using Google ADK in Python with the Microsoft Agent 365 SDK. It covers:

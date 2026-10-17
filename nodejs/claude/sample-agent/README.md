@@ -1,3 +1,15 @@
+<!--
+---
+name: "Claude Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build a Claude agent in TypeScript with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Claude Sample Agent - Node.js
 
 

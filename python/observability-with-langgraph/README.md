@@ -1,3 +1,15 @@
+<!--
+---
+name: "Observability — Agent 365 SDK with LangGraph"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Add Agent 365 observability to a Python LangGraph agent while preserving its existing OpenTelemetry exporter."
+---
+-->
+
 # Observability — Agent 365 SDK with LangGraph
 
 This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to a [LangGraph](https://langchain-ai.github.io/langgraph/) agent that **already** uses OpenTelemetry. After running this, both your existing exporter and the Agent 365 backend receive every span produced by the agent.

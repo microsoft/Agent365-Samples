@@ -1,3 +1,15 @@
+<!--
+---
+name: "CrewAI Agent Sample - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a CrewAI multi-agent weather and driving safety workflow with Agent 365 tracing, notifications, and MCP tools."
+---
+-->
+
 # CrewAI Agent Sample - Python
 
 This sample demonstrates how to build a multi-agent system using CrewAI while integrating with the Microsoft Agent 365 SDK. It mirrors the structure and hosting patterns of the AgentFramework/OpenAI Agent 365 samples, while preserving native CrewAI logic in `src/crew_agent/`.
