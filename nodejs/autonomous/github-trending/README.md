@@ -23,7 +23,7 @@ Every 60 seconds, the agent:
 
 All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
 
@@ -41,7 +41,7 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 
 - [Node.js 18](https://nodejs.org/) or higher
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
+- [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 
@@ -203,14 +203,14 @@ Production (MSI):
 
 The token is refreshed every 50 minutes and cached in `token-cache.ts`.
 
-For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 
 ## Contributing
@@ -225,8 +225,8 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 - [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability)
 
 ## Trademarks
 
