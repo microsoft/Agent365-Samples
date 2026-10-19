@@ -1,15 +1,3 @@
-<!--
----
-name: "n8n Sample Agent"
-page_type: sample
-languages:
-- javascript
-products:
-- agent-365
-description: "Create an n8n workflow agent using its Microsoft Agent 365 node for observability, notifications, and MCP tools."
----
--->
-
 # n8n Sample Agent
 
 This sample demonstrates how to build an agent using n8n with its Microsoft Agent 365 node. The new Microsoft Agent 365 node in n8n has built-in:
