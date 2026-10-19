@@ -624,6 +624,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
 - [Google ADK API documentation](https://google.github.io/adk-docs/)
 - [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-messaging-endpoint)

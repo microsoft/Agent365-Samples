@@ -176,6 +176,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - .NET repository](https://github.com/microsoft/Agent365-dotnet)
 - [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
 - [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
 

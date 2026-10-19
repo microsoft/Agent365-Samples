@@ -263,6 +263,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - .NET repository](https://github.com/microsoft/Agent365-dotnet)
 - [Microsoft 365 Agents SDK - .NET repository](https://github.com/Microsoft/Agents-for-net)
 - [Semantic Kernel documentation](https://learn.microsoft.com/semantic-kernel/)
 - [.NET API documentation](https://learn.microsoft.com/dotnet/api/?view=m365-agents-sdk&preserve-view=true)

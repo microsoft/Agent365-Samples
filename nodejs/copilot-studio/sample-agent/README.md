@@ -348,6 +348,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
 - [@microsoft/agents-copilotstudio-client package](https://github.com/microsoft/Agents-for-js/tree/main/packages/agents-copilotstudio-client)
 - [Copilot Studio documentation](https://learn.microsoft.com/en-us/microsoft-copilot-studio/)
