@@ -23,7 +23,7 @@ It covers:
 
 This sample uses the [Microsoft Agent 365 SDK for .NET](https://github.com/microsoft/Agent365-dotnet).
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -156,7 +156,7 @@ through user secrets, or `Agent365Observability__BlueprintClientSecret` through 
 All settings support the standard .NET double-underscore environment syntax. Never commit secrets.
 
 The [sample-local OBS provider](Observability/ObservabilityAppTokenProvider.cs) uses the
-[documented app-only flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+[documented app-only flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
 produces T1; agent `client_credentials` uses T1 as `client_assertion` for
 `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. The existing autonomous sample uses the same
@@ -234,7 +234,7 @@ Set this in your local launch profile, deployment environment, or container conf
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
@@ -243,7 +243,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-dotnet/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

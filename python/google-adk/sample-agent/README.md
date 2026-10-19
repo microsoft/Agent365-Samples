@@ -21,7 +21,7 @@ This sample demonstrates how to build an agent using Google ADK in Python with t
 
 This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Observability S2S export
 
@@ -54,7 +54,7 @@ Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` w
 `idtyp`; any `scp` claim is rejected.
 
 `observability_token_service.py` adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint credentials + `fmi_path=agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion
 to request `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
@@ -129,7 +129,7 @@ The fastest way is the **AI-guided setup** — attach the instruction file to Gi
 Follow the steps in #file:a365-setup-instructions.md
 ```
 
-> See [AI-guided setup for Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/ai-guided-setup) for full instructions and to download `a365-setup-instructions.md`.
+> See [AI-guided setup for Agent 365](https://learn.microsoft.com/microsoft-agent-365/developer/ai-guided-setup) for full instructions and to download `a365-setup-instructions.md`.
 
 Alternatively, run the CLI manually:
 
@@ -240,7 +240,7 @@ agentsplayground -e "http://localhost:3978/api/messages" -c "emulator" \
 
 Run `agentsplayground --help` for all options.
 
-> For full setup documentation see [Test your agent locally in Agents Playground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project).
+> For full setup documentation see [Test your agent locally in Agents Playground](https://learn.microsoft.com/microsoft-365/agents-sdk/test-with-toolkit-project).
 
 ### Testing checklist
 
@@ -283,7 +283,7 @@ a365 publish
 
 ### Running on Azure App Service
 
-See [Deploy agent to Azure](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet) for full instructions.
+See [Deploy agent to Azure](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet) for full instructions.
 
 Set `messagingEndpoint` in `a365.config.json` to your Azure Web App URL and `"needDeployment": true` (see [configuration reference above](#3-initialize-a365-configuration)).
 
@@ -323,7 +323,7 @@ All values below come from `a365.config.json` and `a365.generated.config.json` (
 
 ### Running on GCP (Cloud Run)
 
-See [Deploy agent to GCP](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-gcp) for full instructions.
+See [Deploy agent to GCP](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-gcp) for full instructions.
 
 ```bash
 # Deploy to Cloud Run
@@ -349,7 +349,7 @@ a365 setup blueprint --endpoint-only
 
 ### Messaging endpoint reference
 
-See [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-messaging-endpoint) for all hosting options.
+See [Configure messaging endpoint](https://learn.microsoft.com/microsoft-agent-365/developer/agent-messaging-endpoint) for all hosting options.
 
 | Hosting | `messagingEndpoint` format | `needDeployment` |
 |---------|--------------------------|-----------------|
@@ -381,7 +381,7 @@ After `a365 deploy` and `a365 publish` complete, the following steps require bro
 4. Set **Bot ID** to your `agentBlueprintId`
 5. Click **Save**
 
-> See [Configure agent in Teams Developer Portal](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) and [Publish agent](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish) for full instructions.
+> See [Configure agent in Teams Developer Portal](https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) and [Publish agent](https://learn.microsoft.com/microsoft-agent-365/developer/publish) for full instructions.
 
 ### Step 2: Upload manifest to M365 Admin Center
 
@@ -603,7 +603,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
@@ -619,13 +619,13 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 - [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
 - [Google ADK API documentation](https://google.github.io/adk-docs/)
-- [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-messaging-endpoint)
-- [Deploy agent to Azure](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet)
-- [Deploy agent to GCP](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-gcp)
-- [Publish agent](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish)
-- [Configure agent in Teams Developer Portal](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal)
-- [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python)
-- [Test your agent locally in Agents Playground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project)
+- [Configure messaging endpoint](https://learn.microsoft.com/microsoft-agent-365/developer/agent-messaging-endpoint)
+- [Deploy agent to Azure](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet)
+- [Deploy agent to GCP](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-gcp)
+- [Publish agent](https://learn.microsoft.com/microsoft-agent-365/developer/publish)
+- [Configure agent in Teams Developer Portal](https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal)
+- [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=python)
+- [Test your agent locally in Agents Playground](https://learn.microsoft.com/microsoft-365/agents-sdk/test-with-toolkit-project)
 
 ## Trademarks
 
