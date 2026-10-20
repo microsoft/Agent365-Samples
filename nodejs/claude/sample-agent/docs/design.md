@@ -178,9 +178,9 @@ connections__service_connection__settings__tenantId=
 {
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.1",
-    "@microsoft/agents-a365-notifications": "1.0.0",
-    "@microsoft/agents-a365-tooling": "1.0.0",
-    "@microsoft/agents-a365-tooling-extensions-claude": "1.0.0",
+    "@microsoft/agents-a365-notifications": "2.0.0",
+    "@microsoft/agents-a365-tooling": "2.0.0",
+    "@microsoft/agents-a365-tooling-extensions-claude": "2.0.0",
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
     "@microsoft/opentelemetry": "1.0.1",
