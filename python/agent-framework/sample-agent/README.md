@@ -21,7 +21,7 @@ This sample demonstrates how to build an agent using Agent Framework in Python w
 
 This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -156,7 +156,7 @@ Each `send_activity` call produces a separate Teams message. You can call it as 
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
 
@@ -165,7 +165,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
