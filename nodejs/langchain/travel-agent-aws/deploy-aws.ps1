@@ -305,19 +305,27 @@ try {
         Write-Step "Checking Azure OpenAI deployment $aoaiDeployment"
         $apiVersion = if ($settings.Contains('AZURE_OPENAI_API_VERSION')) { $settings['AZURE_OPENAI_API_VERSION'] } else { '2024-12-01-preview' }
         $uri = "$($settings['AZURE_OPENAI_ENDPOINT'].TrimEnd('/'))/openai/deployments/$([uri]::EscapeDataString($aoaiDeployment))/chat/completions?api-version=$apiVersion"
-        $body = @{ messages = @(@{ role = 'user'; content = 'Reply with the single word OK.' }); max_completion_tokens = 256 } | ConvertTo-Json -Depth 5
+        $body = @{ messages = @(@{ role = 'user'; content = 'Reply with the single word OK.' }) } | ConvertTo-Json -Depth 5
         try {
             Invoke-RestMethod -Method Post -Uri $uri -Headers @{ 'api-key' = $secretSettings['AZURE_OPENAI_API_KEY'] } -ContentType 'application/json' -Body $body -TimeoutSec 60 | Out-Null
         } catch {
             $status = $null
             if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            # Azure's error text names the problem (unsupported model/API, bad parameter) and never echoes the key.
+            $detail = ''
+            if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+                try { $detail = (($_.ErrorDetails.Message | ConvertFrom-Json).error.message) } catch { $detail = $_.ErrorDetails.Message }
+                if ($detail.Length -gt 400) { $detail = $detail.Substring(0, 400) }
+                $detail = "$detail".TrimEnd('.', ' ')
+            }
             $hint = switch ($status) {
                 401 { 'The API key was rejected. Copy Key 1 from the resource''s Keys and Endpoint page into AZURE_OPENAI_API_KEY.' }
                 404 { "No deployment named '$aoaiDeployment' at that endpoint, or the API version is too old. Check the deployment name in Foundry > Deployments." }
+                { $_ -in 400, 422 } { "The deployment rejected an Azure OpenAI chat-completions request. Use a GPT chat model deployment (for example gpt-4.1-mini, gpt-4o-mini or gpt-5-mini); non-OpenAI Foundry models may not support this API." }
                 429 { 'The deployment is rate-limited. Raise its tokens-per-minute in Foundry > Deployments, or wait and re-run.' }
                 default { 'Check AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT, and that the resource allows public network access.' }
             }
-            throw "Azure OpenAI call to deployment '$aoaiDeployment' failed$(if ($status) { " (HTTP $status)" }).`n$hint Re-run with -SkipModelCheck to deploy anyway."
+            throw "Azure OpenAI call to deployment '$aoaiDeployment' failed$(if ($status) { " (HTTP $status)" })$(if ($detail) { ": $detail" }).`n$hint Re-run with -SkipModelCheck to deploy anyway."
         }
         Write-Host "    Model responded." -ForegroundColor Green
     }
