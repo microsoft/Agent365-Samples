@@ -1,0 +1,23 @@
+{
+  "profiles": {
+    "Sample Agent": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "SKIP_TOOLING_ON_ERRORS": "true"
+      },
+      "applicationUrl": "http://localhost:3978"
+    },
+    "Sample Agent (Playground)": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Playground",
+        "BEARER_TOKEN": "<your-bearer-token-from-a365-playground>",
+        "SKIP_TOOLING_ON_ERRORS": "true"
+      },
+      "applicationUrl": "http://localhost:3978"
+    }
+  }
+}
