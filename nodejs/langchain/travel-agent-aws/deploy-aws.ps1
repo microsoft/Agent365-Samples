@@ -259,6 +259,8 @@ try {
             throw "-LlmProvider AzureOpenAI needs $($missing -join ', ') in $EnvFile (from your Azure AI Foundry / Azure OpenAI resource: Keys and Endpoint, and the model deployment name)."
         }
         # The app derives the resource name from this host, so it must be the Azure OpenAI endpoint.
+        # Foundry often shows the v1 API URL (…/openai/v1); keep only the resource host.
+        $settings['AZURE_OPENAI_ENDPOINT'] = $settings['AZURE_OPENAI_ENDPOINT'] -replace '^(https://[^/]+).*$', '$1/'
         if ($settings['AZURE_OPENAI_ENDPOINT'] -notmatch '^https://[A-Za-z0-9-]+\.(openai\.azure\.com|cognitiveservices\.azure\.com)/?$') {
             throw "AZURE_OPENAI_ENDPOINT must look like https://<resource>.openai.azure.com/ (in Foundry: your resource > Overview > Azure OpenAI endpoint)."
         }

@@ -167,12 +167,8 @@ function createChatModel(): BaseChatModel {
   ) {
     return new AzureChatOpenAI({
       azureOpenAIApiKey: process.env.AZURE_OPENAI_API_KEY,
-      azureOpenAIApiInstanceName: process.env.AZURE_OPENAI_ENDPOINT!
-        .replace('https://', '')
-        .replace('.openai.azure.com/', '')
-        .replace('.openai.azure.com', '')
-        .replace('.cognitiveservices.azure.com/', '')
-        .replace('.cognitiveservices.azure.com', ''),
+      // Resource name = first label of the endpoint host; tolerates paths such as /openai/v1.
+      azureOpenAIApiInstanceName: new URL(process.env.AZURE_OPENAI_ENDPOINT!).hostname.split('.')[0],
       azureOpenAIApiDeploymentName: process.env.AZURE_OPENAI_DEPLOYMENT,
       azureOpenAIApiVersion: process.env.AZURE_OPENAI_API_VERSION ?? '2024-12-01-preview',
       // gpt-5.4-mini is a reasoning model — it only supports the default temperature,
