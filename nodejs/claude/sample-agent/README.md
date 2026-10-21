@@ -29,7 +29,7 @@ This sample uses the following Microsoft Agents and Agent 365 packages:
 - [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
 - [@microsoft/opentelemetry - npm](https://www.npmjs.com/package/@microsoft/opentelemetry)
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -243,7 +243,7 @@ OTEL_SERVICE_NAME=Claude Sample Agent
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
 ## Troubleshooting
 
@@ -313,7 +313,7 @@ AADSTS7000216: 'client_assertion', 'client_secret' or 'request' is required
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

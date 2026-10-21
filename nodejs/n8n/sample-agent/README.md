@@ -46,7 +46,7 @@ This guide will walk you through creating an Agent 365 using n8n's Microsoft Age
 #### Step 1: Create Agent Blueprint
 
 Create your agent identity in the Microsoft Teams Developer Portal:
-- Follow the [Agent Identity Blueprint guide](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#agent-identity-blueprint)
+- Follow the [Agent Identity Blueprint guide](https://learn.microsoft.com/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#agent-identity-blueprint)
 
 
 #### Step 2: Publish to Microsoft Admin Center
@@ -62,12 +62,12 @@ Publish your agent for administrative management:
 
 Configure authentication credentials:
 - Navigate to your app registration in the Azure Portal
-- Follow the [credentials guide](https://learn.microsoft.com/en-us/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
+- Follow the [credentials guide](https://learn.microsoft.com/entra/identity-platform/how-to-add-credentials?tabs=client-secret) to add a client secret
 - Copy the **Client Secret** value (you'll only see this once)
 
 OR
 
-Follow the [documentation](https://learn.microsoft.com/en-us/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add and see the client secret. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
+Follow the [documentation](https://learn.microsoft.com/graph/api/agentidentityblueprint-addpassword?view=graph-rest-beta) to add and see the client secret. You can also run the following powershell script, replacing your TenantID with your tenant's id and the applicationID with your blueprint id.
 
 ```powershell
 Connect-MgGraph -Scopes "AgentIdentityBlueprint.AddRemoveCreds.All" -TenantId <TenantID>
@@ -92,7 +92,7 @@ Write-Host "Secret Text: $($response.secretText)"
 
 #### Step 4: Grant Permissions for Agent
 
-Grant your Agent Blueprint access to Microsoft 365 by following the [agent access guide](https://learn.microsoft.com/en-us/entra/agent-id/identity-professional/grant-agent-access-microsoft-365). You must also [enable inheritable permissions](https://learn.microsoft.com/en-us/entra/agent-id/identity-professional/configure-inheritable-permissions-blueprints) to allow the agent to act on behalf of users.
+Grant your Agent Blueprint access to Microsoft 365 by following the [agent access guide](https://learn.microsoft.com/entra/agent-id/identity-professional/grant-agent-access-microsoft-365). You must also [enable inheritable permissions](https://learn.microsoft.com/entra/agent-id/identity-professional/configure-inheritable-permissions-blueprints) to allow the agent to act on behalf of users.
 
 Consent for the required scopes can be given as shown below, just replace your tenant id, and blueprint id in the specified places:
 
@@ -159,13 +159,13 @@ For n8n workflow creation guidance, see the [n8n documentation](https://docs.n8n
 #### Step 6: Configure Backend URL
 
 Connect your agent blueprint to the n8n workflow:
-- Return to the [Microsoft Teams Developer Portal](https://learn.microsoft.com/en-us/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#configure-the-agent-identity-blueprint)
+- Return to the [Microsoft Teams Developer Portal](https://learn.microsoft.com/microsoftteams/platform/concepts/build-and-test/manage-your-apps-in-developer-portal#configure-the-agent-identity-blueprint)
 - Navigate to your Agent Blueprint → **Configuration**
 - Select **API Based** as the configuration type
 - Set the **Backend URL** to your n8n workflow's webhook URL from Step 5
 
 #### Step 7: Hire an agent as a digital worker
-- Follow the [documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/onboard) to hire an agent as a digital worker
+- Follow the [documentation](https://learn.microsoft.com/microsoft-agent-365/onboard) to hire an agent as a digital worker
 
 Your agent is now ready to handle conversations through Microsoft 365!
 
@@ -175,7 +175,7 @@ Your agent is now ready to handle conversations through Microsoft 365!
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../SECURITY.md)
 
 ## Contributing
@@ -188,7 +188,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
-- [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/)
+- [Microsoft Agent 365](https://learn.microsoft.com/microsoft-agent-365/)
 - [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
 - [n8n documentation](https://docs.n8n.io/)

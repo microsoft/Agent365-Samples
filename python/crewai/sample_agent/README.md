@@ -35,7 +35,7 @@ This sample uses the following Microsoft Agents and Agent 365 packages:
 - [microsoft-agents-a365-runtime · PyPI](https://pypi.org/project/microsoft-agents-a365-runtime/)
 - [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -310,7 +310,7 @@ For issues, questions, or feedback:
 
 - **CrewAI Documentation**: https://docs.crewai.com
 - **CrewAI GitHub**: https://github.com/joaomdmoura/crewai
-- **Microsoft Agent 365 Documentation**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/
+- **Microsoft Agent 365 Documentation**: https://learn.microsoft.com/microsoft-agent-365/developer/
 - **Discord**: https://discord.com/invite/X4JWnZnxPb
 
 ## Contributing
