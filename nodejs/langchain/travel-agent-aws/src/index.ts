@@ -19,7 +19,7 @@ useMicrosoftOpenTelemetry({
   }),
   a365: {
     enabled: true,
-    enableObservabilityExporter: true,
+    enableObservabilityExporter: process.env.ENABLE_A365_OBSERVABILITY_EXPORTER === 'true',
     tokenResolver: (agentId, tenantId) =>
       AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
   },

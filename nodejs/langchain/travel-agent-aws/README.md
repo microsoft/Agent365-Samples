@@ -43,7 +43,9 @@ see the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.co
 > To run this agent you will need:
 >
 > - [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 24 or higher, and npm
-> - PowerShell (the deployment scripts support Windows PowerShell 5.1 or PowerShell 7)
+> - PowerShell 7 (`pwsh`); the Agent 365 CLI requires it for Microsoft Graph sign-in. The deployment
+>   scripts also run in Windows PowerShell 5.1
+> - [.NET 8 SDK](https://dotnet.microsoft.com/download) or later, used to install the Agent 365 CLI
 > - An AWS account with access to **Amazon Bedrock** in the deployment Region
 > - [Microsoft 365 Agents Toolkit](https://aka.ms/teams-toolkit) (for Agents Playground) or the
 >   `agentsplayground` CLI
@@ -51,7 +53,8 @@ see the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.co
 >   subscription or Azure OpenAI deployment is needed for the AWS path
 > - [AWS CLI v2](https://aws.amazon.com/cli/) 2.38+ with the `lambda-web` commands
 > - [Agent 365 CLI](https://github.com/microsoft/Agent365-devTools) (`a365`) — for registration,
->   WorkIQ tools, and publishing the agent manifest
+>   WorkIQ tools, and publishing the agent manifest. Install it with
+>   `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`
 > - An Agent 365-enabled Microsoft 365 tenant, with permission to register a blueprint and
 >   an administrator available for required consent and agent approval
 >
@@ -283,18 +286,18 @@ navigation pane. Web Functions aren't listed under **Functions**.
 
 ```powershell
 # Logs
-aws logs tail /aws/lambda/web/travelagentdw --follow --region us-east-1
+aws logs tail /aws/lambda/web/travelagentdw --follow --region us-east-2
 
 # What's live: the revision behind the endpoint and its settings (omit --query and the
 # output includes the blueprint client secret)
-$rev = aws lambda-web get-web-function-endpoint --function-name travelagentdw --endpoint-name prod --region us-east-1 --query "revisionWeights[0].revisionId" --output text
-aws lambda-web get-web-function-revision --function-name travelagentdw --revision-id $rev --region us-east-1 --query "{revision:revisionId, model:serviceConfig.environmentVariables.BEDROCK_MODEL_ID, timeoutSeconds:serviceConfig.timeoutSeconds, role:serviceConfig.executionRoleArn}" --output table
+$rev = aws lambda-web get-web-function-endpoint --function-name travelagentdw --endpoint-name prod --region us-east-2 --query "revisionWeights[0].revisionId" --output text
+aws lambda-web get-web-function-revision --function-name travelagentdw --revision-id $rev --region us-east-2 --query "{revision:revisionId, model:serviceConfig.environmentVariables.BEDROCK_MODEL_ID, timeoutSeconds:serviceConfig.timeoutSeconds, role:serviceConfig.executionRoleArn}" --output table
 
 # Change settings or the model without rebuilding (e.g. Claude, once the Anthropic form is in)
 ./deploy-aws.ps1 -SettingsOnly -ModelId us.anthropic.claude-sonnet-4-6
 
 # Remove the AWS resources
-aws lambda-web delete-web-function --function-name travelagentdw --region us-east-1
+aws lambda-web delete-web-function --function-name travelagentdw --region us-east-2
 aws iam delete-role-policy --role-name travelagentdw-exec --policy-name bedrock-invoke
 aws iam detach-role-policy --role-name travelagentdw-exec --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 aws iam delete-role --role-name travelagentdw-exec
