@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  TravelAgentDW (Agent 365 AI teammate) messaging endpoint on AWS Lambda Web Functions, answering
-  with Amazon Bedrock. Creates the Web Function and its HTTPS endpoint, an IAM execution role, and a
-  private S3 bucket that holds this account's copy of the code package. Publish with
-  aws/publish-launch-stack.ps1, which sets the PackageUrl default.
+  Travel Agent AWS (Agent 365 AI teammate) messaging endpoint on AWS Lambda Web Functions, answering
+  with Amazon Bedrock. Creates the Web Function and its HTTPS endpoint, an IAM execution role, a
+  Secrets Manager secret for the blueprint client secret, and a private S3 bucket that holds this
+  account's copy of the code package. Publish with aws/publish-launch-stack.ps1, which sets the
+  PackageUrl and PackageSha256 defaults.
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -13,10 +14,10 @@ Metadata:
         Parameters: [BlueprintId, BlueprintClientSecret, TenantId]
       - Label:
           default: Optional
-        Parameters: [AgentName, ModelId, MaxEnvironments]
+        Parameters: [AgentName, AgentDescription, ModelId, MaxEnvironments]
       - Label:
           default: Advanced (leave as is)
-        Parameters: [FunctionName, PackageUrl]
+        Parameters: [FunctionName, PackageUrl, PackageSha256]
     ParameterLabels:
       BlueprintId:
         default: Agent blueprint ID
@@ -26,6 +27,8 @@ Metadata:
         default: Microsoft 365 tenant ID
       AgentName:
         default: Agent name
+      AgentDescription:
+        default: Agent description
       ModelId:
         default: Bedrock model ID
       MaxEnvironments:
@@ -34,6 +37,8 @@ Metadata:
         default: Function name
       PackageUrl:
         default: Code package URL
+      PackageSha256:
+        default: Code package SHA-256
 
 Parameters:
   BlueprintId:
@@ -45,7 +50,12 @@ Parameters:
     Type: String
     NoEcho: true
     MinLength: 1
-    Description: The blueprint client secret (connections__service_connection__settings__clientSecret in .env).
+    # Embedded in the Secrets Manager secret's JSON, so quotes and backslashes aren't allowed.
+    AllowedPattern: '^[^"\\]+$'
+    ConstraintDescription: can't contain double quotes or backslashes.
+    Description: >-
+      The blueprint client secret (connections__service_connection__settings__clientSecret in .env).
+      Stored in AWS Secrets Manager, not in the function's settings.
   TenantId:
     Type: String
     Description: The Microsoft 365 (Microsoft Entra) tenant ID.
@@ -53,9 +63,14 @@ Parameters:
     ConstraintDescription: must be a GUID.
   AgentName:
     Type: String
-    Default: Travel Agent
+    Default: Travel Agent AWS
     MinLength: 1
     Description: Agent name shown in Agent 365 observability.
+  AgentDescription:
+    Type: String
+    Default: Travel planning teammate on AWS Lambda Web Functions with Amazon Bedrock
+    MinLength: 1
+    Description: Agent description shown in Agent 365 observability.
   ModelId:
     Type: String
     Default: ''
@@ -78,9 +93,17 @@ Parameters:
   PackageUrl:
     Type: String
     Default: ''  # set by aws/publish-launch-stack.ps1
-    AllowedPattern: '^(https://.+)?$'
-    ConstraintDescription: must be the https:// URL of the code package (.zip).
+    AllowedPattern: '^(https://[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.s3\.[a-z0-9-]+\.amazonaws\.com/[A-Za-z0-9._/-]+\.zip)?$'
+    ConstraintDescription: must be an S3 virtual-hosted https URL of a .zip.
     Description: URL of the prebuilt code package (.zip). Set by the publisher; leave as is.
+  PackageSha256:
+    Type: String
+    Default: ''  # SHA-256, set by aws/publish-launch-stack.ps1
+    AllowedPattern: '^([0-9a-f]{64})?$'
+    ConstraintDescription: must be a lowercase hex SHA-256.
+    Description: >-
+      SHA-256 of the code package. The deployment refuses a package with a different hash. Set by
+      the publisher; leave as is.
 
 Rules:
   PackageUrlSet:
@@ -91,6 +114,14 @@ Rules:
         AssertDescription: >-
           PackageUrl is empty. Deploy from a Launch Stack link made by aws/publish-launch-stack.ps1,
           or set PackageUrl to the URL of the code package.
+  PackageSha256Set:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals: [!Ref PackageSha256, '']
+        AssertDescription: >-
+          PackageSha256 is empty. Deploy from a Launch Stack link made by aws/publish-launch-stack.ps1,
+          or set PackageSha256 to the SHA-256 of the code package.
   SupportedRegion:
     Assertions:
       - Assert:
@@ -195,7 +226,8 @@ Resources:
               - Effect: Allow
                 Action: ['s3:ListBucket', 's3:ListBucketVersions']
                 Resource: !GetAtt CodeBucket.Arn
-              # Read the published package when PackageUrl is an S3 URL (bucket = first label of the host).
+              # Read the published package (bucket = first label of the host). PackageUrl's
+              # AllowedPattern only accepts S3 virtual-hosted URLs, so this is a real bucket name.
               - Effect: Allow
                 Action: ['s3:GetObject', 's3:GetObjectVersion']
                 Resource: !Sub
@@ -205,7 +237,7 @@ Resources:
   PackageCopier:
     Type: AWS::Lambda::Function
     Properties:
-      Description: Copies the TravelAgentDW code package into this stack's bucket (CloudFormation custom resource).
+      Description: Copies and verifies the Travel Agent AWS code package in this stack's bucket (CloudFormation custom resource).
       Runtime: python3.13
       Handler: index.handler
       Role: !GetAtt PackageCopierRole.Arn
@@ -218,11 +250,11 @@ Resources:
           # Copyright (c) Microsoft Corporation.
           # Licensed under the MIT License.
 
-          import json, re, urllib.parse, urllib.request
+          import hashlib, hmac, json, re, urllib.request
           import boto3
 
           s3 = boto3.client('s3')
-          S3_URL = re.compile(r'^https://([^/]+?)\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com/(.+)$')
+          S3_URL = re.compile(r'^https://([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\.s3\.[a-z0-9-]+\.amazonaws\.com/([A-Za-z0-9._/-]+\.zip)$')
 
 
           def respond(event, context, status, data=None, reason=''):
@@ -252,31 +284,40 @@ Resources:
                       raise
 
 
+          def sha256(bucket, key, version):
+              digest = hashlib.sha256()
+              body = s3.get_object(Bucket=bucket, Key=key, VersionId=version)['Body']
+              for chunk in iter(lambda: body.read(1 << 20), b''):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+
           def handler(event, context):
               props = event['ResourceProperties']
               bucket, key, url = props['Bucket'], props['Key'], props['Url']
               try:
-                  if event['RequestType'] == 'Delete':
-                      empty_bucket(bucket)  # lets CloudFormation delete the bucket
-                      respond(event, context, 'SUCCESS')
-                      return
-                  match = S3_URL.match(url)
-                  if match:
+                      if event['RequestType'] == 'Delete':
+                          empty_bucket(bucket)  # lets CloudFormation delete the bucket
+                          respond(event, context, 'SUCCESS')
+                          return
+                      match = S3_URL.match(url)
+                      if not match:
+                          raise ValueError('PackageUrl must be an S3 virtual-hosted https URL of a .zip')
                       # Server-side copy with this function's role: works for private,
                       # organization-shared, and public packages.
-                      source = {'Bucket': match.group(1), 'Key': urllib.parse.unquote(match.group(2))}
-                      s3.copy(source, bucket, key)
-                  else:
-                      with urllib.request.urlopen(url, timeout=300) as response:
-                          s3.upload_fileobj(response, bucket, key)
-                  version = s3.head_object(Bucket=bucket, Key=key)['VersionId']
-                  print(f'Copied {url} to s3://{bucket}/{key} (version {version})')
-                  respond(event, context, 'SUCCESS', {'VersionId': version})
+                      s3.copy({'Bucket': match.group(1), 'Key': match.group(2)}, bucket, key)
+                      version = s3.head_object(Bucket=bucket, Key=key)['VersionId']
+                      if not hmac.compare_digest(sha256(bucket, key, version), props.get('Sha256', '').lower()):
+                          s3.delete_object(Bucket=bucket, Key=key, VersionId=version)
+                          raise ValueError('package SHA-256 mismatch')
+                      print(f'Copied and verified {url} as s3://{bucket}/{key} (version {version})')
+                      respond(event, context, 'SUCCESS', {'VersionId': version})
               except Exception as error:
                   print(f'Failed: {error!r}')
                   respond(event, context, 'FAILED', reason=f'{type(error).__name__}: {error}')
 
   PackageCopy:
+    # Type name kept from earlier releases: changing a resource's type fails stack updates.
     Type: Custom::TravelAgentDWPackage
     DependsOn: CodeBucketPolicy
     Properties:
@@ -284,12 +325,22 @@ Resources:
       Bucket: !Ref CodeBucket
       Key: package.zip
       Url: !Ref PackageUrl
+      Sha256: !Ref PackageSha256
+
+  # --- Agent 365 secrets: read by the app at cold start (A365_SECRETS_ARN), so the blueprint
+  # client secret isn't in the function's settings. Name left unset: an auto-generated name can't
+  # collide with deploy-aws.ps1's <FunctionName>/agent365 or a secret pending deletion.
+  AgentSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: !Sub 'Agent 365 settings for ${FunctionName}'
+      SecretString: !Sub '{"connections__service_connection__settings__clientSecret":"${BlueprintClientSecret}"}'
 
   # --- The agent's messaging endpoint ---------------------------------------------------------
   ExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: !Sub 'Execution role for the ${FunctionName} Lambda Web Function (TravelAgentDW)'
+      Description: !Sub 'Execution role for the ${FunctionName} Lambda Web Function (Travel Agent AWS)'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -304,19 +355,61 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Cross-Region inference profiles also need the foundation-model ARNs of every
-              # destination Region, including the Region-less ARN that global profiles use.
-              - Sid: InvokeBedrockModels
+              # Only the selected model. A cross-Region inference profile routes to foundation
+              # models in several Regions, including the Region-less ARN global profiles use; the
+              # condition allows those only through the selected profile. InvokeSelectedModel
+              # covers a plain foundation-model ID and is harmless for a profile ID.
+              - Sid: InvokeSelectedProfile
+                Effect: Allow
+                Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream']
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${Model}'
+                  - Model: !If
+                      - UseDefaultModel
+                      - !Sub
+                        - '${Geo}.amazon.nova-2-lite-v1:0'
+                        - Geo: !FindInMap [RegionGeo, !Ref AWS::Region, Prefix]
+                      - !Ref ModelId
+              - Sid: InvokeModelsThroughProfile
                 Effect: Allow
                 Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream']
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
                   - !Sub 'arn:${AWS::Partition}:bedrock:::foundation-model/*'
-                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*'
-                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:application-inference-profile/*'
+                Condition:
+                  StringEquals:
+                    bedrock:InferenceProfileArn: !Sub
+                      - 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${Model}'
+                      - Model: !If
+                          - UseDefaultModel
+                          - !Sub
+                            - '${Geo}.amazon.nova-2-lite-v1:0'
+                            - Geo: !FindInMap [RegionGeo, !Ref AWS::Region, Prefix]
+                          - !Ref ModelId
+              - Sid: InvokeSelectedModel
+                Effect: Allow
+                Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream']
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${Model}'
+                  - Model: !If
+                      - UseDefaultModel
+                      - !Sub
+                        - '${Geo}.amazon.nova-2-lite-v1:0'
+                        - Geo: !FindInMap [RegionGeo, !Ref AWS::Region, Prefix]
+                      - !Ref ModelId
+        - PolicyName: secrets-read
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadAgent365Secrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref AgentSecret
 
   # Lambda creates these on first use with no expiry; creating them here keeps logs for 30 days
-  # and removes them with the stack.
+  # and removes them with the stack. Log groups with these names left by an earlier
+  # deploy-aws.ps1 deployment block stack creation ("already exists"): delete them first, or
+  # choose another FunctionName.
   AppLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -339,7 +432,7 @@ Resources:
     DependsOn: [CodeBucketPolicy, AppLogGroup, AppLocalLogGroup]
     Properties:
       FunctionName: !Ref WebFunction
-      Description: !Sub 'TravelAgentDW (stack ${AWS::StackName})'
+      Description: !Sub 'Travel Agent AWS (stack ${AWS::StackName})'
       BuildConfig:
         CodeConfig:
           S3Object:
@@ -352,7 +445,8 @@ Resources:
         ExecutionRoleArn: !GetAtt ExecutionRole.Arn
         TimeoutSeconds: 300
         EnvironmentVariables:
-          # dist/lambda.js loads the require(esm) shim before the app (see README).
+          # dist/lambda.js loads the require(esm) shim, then the secrets in A365_SECRETS_ARN, then
+          # the app (see README).
           AWS_LAMBDA_NODEJS_ENTRYPOINT: dist/lambda.js
           NODE_ENV: production
           LLM_PROVIDER: bedrock
@@ -365,8 +459,8 @@ Resources:
           BEDROCK_REGION: !Ref AWS::Region
           ENABLE_A365_OBSERVABILITY_EXPORTER: 'false'
           agent_id: !Ref BlueprintId
+          A365_SECRETS_ARN: !Ref AgentSecret
           connections__service_connection__settings__clientId: !Ref BlueprintId
-          connections__service_connection__settings__clientSecret: !Ref BlueprintClientSecret
           connections__service_connection__settings__tenantId: !Ref TenantId
           connections__service_connection__settings__scopes: 5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default
           connectionsMap__0__serviceUrl: '*'
@@ -374,13 +468,12 @@ Resources:
           agentic_altBlueprintConnectionName: service_connection
           agentic_connectionName: AgenticAuthConnection
           agentic_scopes: https://graph.microsoft.com/.default
-          agent365Observability__agentId: !Ref BlueprintId
+          # No agent365Observability__agentId: spans use the per-turn agent instance ID, never the
+          # blueprint ID.
           agent365Observability__agentBlueprintId: !Ref BlueprintId
-          agent365Observability__clientId: !Ref BlueprintId
-          agent365Observability__clientSecret: !Ref BlueprintClientSecret
           agent365Observability__tenantId: !Ref TenantId
           agent365Observability__agentName: !Ref AgentName
-          agent365Observability__agentDescription: !Ref AgentName
+          agent365Observability__agentDescription: !Ref AgentDescription
 
   Endpoint:
     Type: AWS::Lambda::WebFunctionEndpoint

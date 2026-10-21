@@ -3,7 +3,7 @@
 
 <#
 .SYNOPSIS
-    Publishes TravelAgentDW for one-click AWS deployment: builds the code package once, uploads it
+    Publishes Travel Agent AWS for one-click AWS deployment: builds the code package once, uploads it
     with the CloudFormation template, and prints "Launch Stack" links.
 
 .DESCRIPTION
@@ -12,17 +12,20 @@
 
       1. Builds the production package (npm install --omit=dev, which runs tsc), the same way
          deploy-aws.ps1 does, and zips it.
-      2. Uploads package.zip and the template (with its PackageUrl default filled in) to
-         s3://<Bucket>/travelagentdw/<Version>/, creating the bucket (private, versioned) if needed.
-      3. Shares those two files according to -Share.
+      2. Uploads package.zip and the template (with its PackageUrl and PackageSha256 defaults filled
+         in) to s3://<Bucket>/travelagentdw/<Version>/, creating the bucket (private, versioned) if
+         needed. Deployments refuse a package whose SHA-256 doesn't match the template.
+      3. Shares exactly those two files according to -Share. The bucket policy is merged: other
+         versions and unrelated statements keep their access.
       4. Prints a Launch Stack link for each Region that has Lambda Web Functions.
 
     Each deployment copies the package into its own S3 bucket, so new releases, or deleting old
     ones from -Bucket, don't affect agents that are already deployed.
 
 .PARAMETER Share
-    Who can use the links:
-      Account       only this AWS account (default; use it to test)
+    Who can use this version's links (other versions keep the access they were published with):
+      Account       only this AWS account (default; use it to test). Withdraws an earlier
+                    Organization or Public grant for this version only.
       Organization  every account in your AWS Organization; requires -OrganizationId
       Public        anyone with the link. The package and template contain no secrets: each person
                     enters their agent's values when they deploy.
@@ -76,6 +79,7 @@ $PSNativeCommandUseErrorActionPreference = $false
 $WebFunctionRegions = @('us-east-1', 'us-east-2', 'us-west-2', 'eu-west-1', 'ap-northeast-1')
 $KeyPrefix = 'travelagentdw'
 $PackageUrlPlaceholder = "Default: ''  # set by aws/publish-launch-stack.ps1"
+$PackageShaPlaceholder = "Default: ''  # SHA-256, set by aws/publish-launch-stack.ps1"
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 
@@ -179,6 +183,8 @@ try {
     }
     if ($npmExit -ne 0) { throw "npm install/build failed (exit $npmExit). See the output above." }
     if (-not (Test-Path -LiteralPath (Join-Path $packageDir 'dist/lambda.js'))) { throw "The build did not produce dist/lambda.js." }
+    # typescript/@types are in dependencies so 'npm install --omit=dev' can compile via postinstall;
+    # they're compile-time only, so drop them from the package.
     foreach ($buildOnly in 'src', 'node_modules/typescript', 'node_modules/@types') {
         $buildOnlyPath = Join-Path $packageDir $buildOnly
         if (Test-Path -LiteralPath $buildOnlyPath) { Remove-Item -LiteralPath $buildOnlyPath -Recurse -Force }
@@ -193,6 +199,7 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::CreateFromDirectory($packageDir, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
     $zipMb = [math]::Round((Get-Item -LiteralPath $zipPath).Length / 1MB, 1)
+    $packageSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Host "    package.zip: $zipMb MB ($sizeMb MB unzipped)"
 
     # --- 2. Upload ----------------------------------------------------------------------------
@@ -218,11 +225,13 @@ try {
     $templateUrl = "$baseUrl/$templateKey"
 
     $templateText = [IO.File]::ReadAllText($templatePath)
-    if (([regex]::Matches($templateText, [regex]::Escape($PackageUrlPlaceholder))).Count -ne 1) {
-        throw "Expected exactly one $PackageUrlPlaceholder in $templatePath."
+    foreach ($placeholder in $PackageUrlPlaceholder, $PackageShaPlaceholder) {
+        if (([regex]::Matches($templateText, [regex]::Escape($placeholder))).Count -ne 1) {
+            throw "Expected exactly one $placeholder in $templatePath."
+        }
     }
     $releaseTemplatePath = Join-Path $workDir 'template.yaml'
-    [IO.File]::WriteAllText($releaseTemplatePath, $templateText.Replace($PackageUrlPlaceholder, "Default: '$packageUrl'"))
+    [IO.File]::WriteAllText($releaseTemplatePath, $templateText.Replace($PackageUrlPlaceholder, "Default: '$packageUrl'").Replace($PackageShaPlaceholder, "Default: '$packageSha256'"))
 
     foreach ($upload in @(@($zipPath, $packageKey), @($releaseTemplatePath, $templateKey))) {
         $copy = Invoke-Aws @('s3', 'cp', $upload[0], "s3://$Bucket/$($upload[1])", '--only-show-errors')
@@ -232,8 +241,35 @@ try {
     if ($validate.ExitCode -ne 0) { throw "CloudFormation rejected the template:`n$($validate.Error)" }
 
     # --- 3. Share -----------------------------------------------------------------------------
+    # Grants cover exactly this version's two files, and the existing bucket policy is merged so
+    # other versions and unrelated statements keep their access.
     Write-Step "Sharing the release ($Share)"
-    $releaseObjects = "arn:${partition}:s3:::$Bucket/$KeyPrefix/*"
+    $releaseObjects = @("arn:${partition}:s3:::$Bucket/$packageKey", "arn:${partition}:s3:::$Bucket/$templateKey")
+    # Sid must be alphanumeric and -Version may contain . _ -, so key this version's statements by a hash.
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $versionHash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Version)) | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha.Dispose()
+    }
+    $sidPrefix = 'TravelAgentRelease' + $versionHash.Substring(0, 12)
+    $keptStatements = @()
+    $currentPolicy = Invoke-Aws @('s3api', 'get-bucket-policy', '--bucket', $Bucket, '--output', 'json')
+    if ($currentPolicy.ExitCode -eq 0) {
+        $current = ($currentPolicy.Output | ConvertFrom-Json).Policy | ConvertFrom-Json
+        foreach ($statement in @($current.Statement)) {
+            $sid = [string]$statement.Sid
+            # HttpsOnly is re-added below; this version's earlier grant is replaced.
+            if ($sid -eq 'HttpsOnly' -or $sid.StartsWith($sidPrefix)) { continue }
+            if ($sid -eq 'OrganizationRead' -or $sid -eq 'PublicRead') {
+                Write-Warning "Removed the '$sid' statement an earlier version of this script wrote: it exposed every release under $KeyPrefix/. Re-run this script for each older version that should stay shared."
+                continue
+            }
+            $keptStatements += $statement
+        }
+    } elseif ($currentPolicy.Error -notmatch 'NoSuchBucketPolicy') {
+        throw "Could not read the bucket policy of ${Bucket}:`n$($currentPolicy.Error)"
+    }
     $statements = @(@{
         Sid       = 'HttpsOnly'
         Effect    = 'Deny'
@@ -241,20 +277,21 @@ try {
         Action    = 's3:*'
         Resource  = @("arn:${partition}:s3:::$Bucket", "arn:${partition}:s3:::$Bucket/*")
         Condition = @{ Bool = @{ 'aws:SecureTransport' = 'false' } }
-    })
+    }) + $keptStatements
     switch ($Share) {
         'Organization' {
             $statements += @{
-                Sid = 'OrganizationRead'; Effect = 'Allow'; Principal = '*'; Action = 's3:GetObject'; Resource = $releaseObjects
+                Sid = "${sidPrefix}Org"; Effect = 'Allow'; Principal = '*'; Action = 's3:GetObject'; Resource = $releaseObjects
                 Condition = @{ StringEquals = @{ 'aws:PrincipalOrgID' = $OrganizationId } }
             }
         }
         'Public' {
-            # Allow a public bucket policy on this bucket only; ACLs stay blocked.
+            # Allow a public bucket policy on this bucket only; ACLs stay blocked. Not reverted for
+            # Account, because other versions may still be public.
             $pab = Invoke-Aws @('s3api', 'put-public-access-block', '--bucket', $Bucket, '--public-access-block-configuration',
                 'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false')
             if ($pab.ExitCode -ne 0) { throw "Could not allow a public policy on ${Bucket}:`n$($pab.Error)" }
-            $statements += @{ Sid = 'PublicRead'; Effect = 'Allow'; Principal = '*'; Action = 's3:GetObject'; Resource = $releaseObjects }
+            $statements += @{ Sid = "${sidPrefix}Public"; Effect = 'Allow'; Principal = '*'; Action = 's3:GetObject'; Resource = $releaseObjects }
         }
     }
     $policyFile = Join-Path $workDir 'bucket-policy.json'
@@ -281,6 +318,7 @@ try {
     Write-Host "==> Published release $Version in $minutes min." -ForegroundColor Green
     Write-Host "    Template: $templateUrl"
     Write-Host "    Package:  $packageUrl"
+    Write-Host "    SHA-256:  $packageSha256"
     Write-Host ""
     Write-Host "    Launch Stack links (open the one for your Region, sign in, fill in the 3 Agent 365 values):"
     foreach ($linkRegion in $WebFunctionRegions) {
@@ -290,7 +328,7 @@ try {
     }
     Write-Host ""
     switch ($Share) {
-        'Account' { Write-Host "    Shared with this account only. To let other accounts deploy, re-run with -Share Public or -Share Organization -OrganizationId o-..." -ForegroundColor Yellow }
+        'Account' { Write-Host "    This version is shared with this account only. To let other accounts deploy it, re-run with -Version $Version and -Share Public or -Share Organization -OrganizationId o-..." -ForegroundColor Yellow }
         'Organization' { Write-Host "    Usable from every account in $OrganizationId. To deploy to many accounts at once, use CloudFormation StackSets with the template URL above (see README)." }
         'Public' { Write-Host "    Anyone with a link can deploy. Each deployment copies the package into its own account." }
     }

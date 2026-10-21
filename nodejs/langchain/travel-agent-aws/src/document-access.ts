@@ -1,0 +1,239 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+// Requester-scoped authorization for the Word document tools. Every document lives in, or is
+// reached through, the AGENT's account, so possession of a URL or id is not permission: the model
+// may read or comment only on (a) documents the agent created for this caller, or (b) the document
+// named by an authenticated Word comment notification on this turn. Agents (and their MCP tools)
+// are cached per caller, so the per-turn scope travels in AsyncLocalStorage, not in a closure.
+// It also records, at the tool boundary, every file created during one invocation, so a turn that
+// fails after a successful create can still share and report it (see client.ts runTurn).
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { BoundedTtlMap } from './identity.js';
+import { CreatedDriveItem, documentIdsFromResult, toolNameIs } from './tool-results.js';
+
+export interface DocScope {
+  // From the authenticated WpxComment notification turn only.
+  documentUrl?: string;
+  documentId?: string;
+  commentIds?: string[];
+}
+
+export interface TurnDocAccess {
+  callerKeys: string[];
+  allowedUrls: Set<string>;
+  // Lowercased 'driveId|itemId', or a bare itemId when the drive is unknown.
+  allowedDocs: Set<string>;
+  notifiedCommentIds: Set<string>;
+  isNotification: boolean;
+  // Notification turns only: the notified document's normalized URL and id, and the exact
+  // 'driveId|itemId' pairs a read of that URL returned (the only targets ReplyToComment may use).
+  notifiedUrl?: string;
+  notifiedDocumentId?: string;
+  notifiedDocs: Set<string>;
+  // Files created during this invocation, recorded as each create tool succeeds.
+  created: CreatedDriveItem[];
+}
+
+export interface OwnedDoc {
+  itemId: string;
+  driveId?: string;
+  webUrl?: string;
+}
+
+export const DOC_ACCESS_DENIED =
+  'Access denied - you can only read or comment on documents I created for you, or the document from this Word comment.';
+
+const OWNED_DOCS_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_OWNED_DOCS_PER_CALLER = 50;
+
+// Documents created for a caller, keyed by every stable caller key (tenant + agent instance + AAD
+// object id / verified UPN). In memory only: a cold start or another concurrent Lambda environment
+// does not see it, the same as the other identity maps.
+export const ownedDocsByCaller = new BoundedTtlMap<OwnedDoc[]>(OWNED_DOCS_TTL_MS, 1000);
+
+const docAccessStore = new AsyncLocalStorage<TurnDocAccess>();
+
+export class PartialInvocationError extends Error {
+  readonly cause: unknown;
+  readonly createdItems: CreatedDriveItem[];
+
+  constructor(cause: unknown, createdItems: CreatedDriveItem[]) {
+    super('The agent invocation failed before it finished.');
+    this.name = 'PartialInvocationError';
+    this.cause = cause;
+    this.createdItems = createdItems;
+  }
+}
+
+const lower = (v: unknown): string => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+
+// Lowercase origin + decoded path, without query, hash or trailing slash. Office web viewer URLs
+// (/_layouts/15/Doc.aspx?sourcedoc={guid}) keep the sourcedoc id, since the path alone names no file.
+export function normalizeDocUrl(u: unknown): string | undefined {
+  if (typeof u !== 'string' || !u.trim()) return undefined;
+  let url: URL;
+  try {
+    url = new URL(u.trim());
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== 'https:') return undefined;
+  let path: string;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    return undefined;
+  }
+  path = path.toLowerCase().replace(/\/+$/, '');
+  if (path.includes('/_layouts/')) {
+    const sourceDoc = lower(url.searchParams.get('sourcedoc')).replace(/[{}]/g, '');
+    if (!sourceDoc) return undefined;
+    return `${url.origin.toLowerCase()}${path}?sourcedoc=${sourceDoc}`;
+  }
+  return `${url.origin.toLowerCase()}${path}`;
+}
+
+function docKey(driveId: unknown, itemId: unknown): string | undefined {
+  const item = lower(itemId);
+  if (!item) return undefined;
+  const drive = lower(driveId);
+  return drive ? `${drive}|${item}` : item;
+}
+
+export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): TurnDocAccess {
+  const access: TurnDocAccess = {
+    callerKeys: [...callerKeys],
+    allowedUrls: new Set(),
+    allowedDocs: new Set(),
+    notifiedCommentIds: new Set(),
+    isNotification: !!scope,
+    notifiedDocs: new Set(),
+    created: [],
+  };
+  const url = normalizeDocUrl(scope?.documentUrl);
+  if (url) {
+    access.allowedUrls.add(url);
+    access.notifiedUrl = url;
+  }
+  const notifiedId = lower(scope?.documentId);
+  if (notifiedId) access.notifiedDocumentId = notifiedId;
+  for (const id of scope?.commentIds ?? []) {
+    if (id) access.notifiedCommentIds.add(id);
+  }
+  return access;
+}
+
+export function currentDocAccess(): TurnDocAccess | undefined {
+  return docAccessStore.getStore();
+}
+
+// Runs one agent invocation with a fresh per-invocation record. On failure, the files created
+// before the failure travel with the error so the caller can still share and report them.
+export async function runWithDocAccess<T>(access: TurnDocAccess, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await docAccessStore.run(access, fn);
+  } catch (err) {
+    throw new PartialInvocationError(err, [...access.created]);
+  }
+}
+
+function ownedDocs(callerKeys: string[]): OwnedDoc[] {
+  return callerKeys.flatMap((k) => ownedDocsByCaller.get(k) ?? []);
+}
+
+function ownsUrl(access: TurnDocAccess, url: string): boolean {
+  return ownedDocs(access.callerKeys).some((d) => normalizeDocUrl(d.webUrl) === url);
+}
+
+function ownsDoc(access: TurnDocAccess, driveId: unknown, documentId: unknown): boolean {
+  const item = lower(documentId);
+  const drive = lower(driveId);
+  if (!item) return false;
+  return ownedDocs(access.callerKeys).some((d) =>
+    lower(d.itemId) === item && (!d.driveId || !drive || lower(d.driveId) === drive));
+}
+
+function docAllowedThisTurn(access: TurnDocAccess, driveId: unknown, documentId: unknown): boolean {
+  const item = lower(documentId);
+  if (!item) return false;
+  const full = docKey(driveId, documentId);
+  return (!!full && access.allowedDocs.has(full)) || access.allowedDocs.has(item);
+}
+
+export interface DocDecision {
+  allowed: boolean;
+  // Fixed reason codes only — never URLs, ids or names.
+  reason: string;
+}
+
+// A Word comment notification turn is driven by text other collaborators can write (the comment and
+// the document body), so it is limited to the notified document: the caller's other documents are
+// not readable, AddComment is refused, and ReplyToComment must name a notified comment on the exact
+// drive/item pair a read of the notified URL returned. Owned documents never widen that scope.
+export function authorizeDocTool(toolName: string, args: Record<string, unknown> | undefined): DocDecision {
+  const access = currentDocAccess();
+  if (!access) return { allowed: false, reason: 'no-turn-scope' };
+  const a = args ?? {};
+  if (toolNameIs(toolName, 'GetDocumentContent')) {
+    const url = normalizeDocUrl(a.url);
+    if (!url) return { allowed: false, reason: 'invalid-url' };
+    if (access.allowedUrls.has(url)) return { allowed: true, reason: 'turn-document' };
+    if (!access.isNotification && ownsUrl(access, url)) return { allowed: true, reason: 'owned-document' };
+    return { allowed: false, reason: 'document-not-allowed' };
+  }
+  const isReply = toolNameIs(toolName, 'ReplyToComment');
+  const isAdd = toolNameIs(toolName, 'AddComment');
+  if (!isReply && !isAdd) return { allowed: false, reason: 'unguarded-tool' };
+  if (access.isNotification) {
+    if (isAdd) return { allowed: false, reason: 'add-comment-on-notification' };
+    const key = lower(a.driveId) ? docKey(a.driveId, a.documentId) : undefined;
+    if (!key || !access.notifiedDocs.has(key)) return { allowed: false, reason: 'document-not-allowed' };
+    if (!access.notifiedCommentIds.has(String(a.commentId ?? ''))) {
+      return { allowed: false, reason: 'comment-not-notified' };
+    }
+    return { allowed: true, reason: 'turn-document' };
+  }
+  const owned = ownsDoc(access, a.driveId, a.documentId);
+  if (!owned && !docAllowedThisTurn(access, a.driveId, a.documentId)) {
+    return { allowed: false, reason: 'document-not-allowed' };
+  }
+  return { allowed: true, reason: owned ? 'owned-document' : 'turn-document' };
+}
+
+// After an allowed GetDocumentContent: its driveId/documentId may be commented on for THIS turn.
+// On a notification turn, only a read of the notified URL counts, and only when the returned id
+// matches the notified document id (when the notification carried one).
+export function recordDocumentRead(rawResult: unknown, readUrl?: unknown): void {
+  const access = currentDocAccess();
+  const ids = documentIdsFromResult(rawResult);
+  if (!access || !ids) return;
+  const key = docKey(ids.driveId, ids.documentId);
+  if (!key) return;
+  if (!access.isNotification) {
+    access.allowedDocs.add(key);
+    return;
+  }
+  if (!access.notifiedUrl || normalizeDocUrl(readUrl) !== access.notifiedUrl) return;
+  if (access.notifiedDocumentId && lower(ids.documentId) !== access.notifiedDocumentId) return;
+  access.notifiedDocs.add(key);
+}
+
+// Records a file a create tool just made: in this invocation's list, in the caller's owned
+// documents, and in this turn's allowed sets.
+export function recordCreated(item: CreatedDriveItem): void {
+  const access = currentDocAccess();
+  if (!access) return;
+  if (item.itemId && access.created.some((c) => c.itemId === item.itemId)) return;
+  access.created.push(item);
+  if (!item.itemId) return;
+  const url = normalizeDocUrl(item.webUrl);
+  if (url) access.allowedUrls.add(url);
+  const key = docKey(item.driveId, item.itemId);
+  if (key) access.allowedDocs.add(key);
+  const owned: OwnedDoc = { itemId: item.itemId, driveId: item.driveId, webUrl: item.webUrl };
+  for (const callerKey of access.callerKeys) {
+    const previous = (ownedDocsByCaller.get(callerKey) ?? []).filter((d) => d.itemId !== item.itemId);
+    ownedDocsByCaller.set(callerKey, [owned, ...previous].slice(0, MAX_OWNED_DOCS_PER_CALLER));
+  }
+}

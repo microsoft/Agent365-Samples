@@ -5,7 +5,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import { DynamicStructuredTool } from '@langchain/core/tools';
-import { extractCreatedItems, extractToolInvocations } from '../src/tool-results.ts';
+import {
+  createdItemFromResult,
+  documentIdsFromResult,
+  extractCreatedItems,
+  extractToolInvocations,
+  mergeCreatedItems,
+} from '../src/tool-results.ts';
 import { SHARE_TOOL, selectModelMcpTools } from '../src/mcp-tool-policy.ts';
 
 const createDocCall = (content: ToolMessage['content'], artifact?: unknown) => [
@@ -90,4 +96,48 @@ test('CreateDocument exposed to the model has no shareWith and drops one if sent
   const msg = await tool.invoke({ type: 'tool_call', id: 't1', name: 'CreateDocument', args: { fileName: 'a', shareWith: 'b@contoso.com' } });
   assert.deepEqual(calls, [{ fileName: 'a' }]);
   assert.equal(msg.tool_call_id, 't1');
+});
+
+test('createdItemFromResult reads the string and [content, artifact] tuple shapes', () => {
+  assert.equal(createdItemFromResult('CreateDocument', '{"id":"s1","webUrl":"w"}').itemId, 's1');
+  const tuple = [[
+    { type: 'text', text: 'CorrelationId: N/A' },
+    { type: 'text', text: '{"driveItem":{"Id":"t1","WebUrl":"u","Name":"n.docx","ParentReference":{"DriveId":"d"}},"sharedWith":""}' },
+    { type: 'text', text: 'CorrelationId: N/A, TimeStamp: 2026-10-21_12:00:00' },
+  ], []];
+  assert.deepEqual(createdItemFromResult('CreateDocument', tuple), {
+    tool: 'CreateDocument', itemId: 't1', driveId: 'd', name: 'n.docx', webUrl: 'u', sharedWith: '',
+  });
+  const structured = [{ type: 'text', text: 'Created.', structuredContent: { driveItem: { id: 'sc1' } } }, []];
+  assert.equal(createdItemFromResult('CreateDocument', structured).itemId, 'sc1');
+  const artifact = ['Created.', [{ type: 'mcp_structured_content', data: { id: 'ar1' } }]];
+  assert.equal(createdItemFromResult('createSmallTextFileInMyOnedrive', artifact).itemId, 'ar1');
+  const unidentified = createdItemFromResult('CreateDocument', [[{ type: 'text', text: 'Done' }], []]);
+  assert.equal(unidentified.itemId, undefined);
+  assert.ok(unidentified.error);
+});
+
+test('documentIdsFromResult reads GetDocumentContent driveId/documentId', () => {
+  const result = [[
+    { type: 'text', text: '{"fileName":"a.docx","driveId":"d1","documentId":"i1","content":"x"}' },
+    { type: 'text', text: 'CorrelationId: N/A' },
+  ], []];
+  assert.deepEqual(documentIdsFromResult(result), { driveId: 'd1', documentId: 'i1' });
+  assert.equal(documentIdsFromResult('not json'), undefined);
+});
+
+test('mergeCreatedItems prefers recorded items and dedupes by itemId', () => {
+  const recorded = [{ tool: 'CreateDocument', itemId: 'a' }, { tool: 'CreateDocument', error: 'e' }];
+  const extracted = [{ tool: 'CreateDocument', itemId: 'a' }, { tool: 'CreateDocument', itemId: 'b' }, { tool: 'CreateDocument', error: 'e' }];
+  assert.deepEqual(mergeCreatedItems(recorded, extracted), [recorded[0], recorded[1], extracted[1]]);
+  assert.deepEqual(mergeCreatedItems([], extracted), extracted);
+});
+
+test('document tools given to the model are wrapped (guarded), keeping name and schema', () => {
+  const { modelTools } = selectModelMcpTools(['GetDocumentContent', 'ReplyToComment', 'AddComment'].map((n) => fakeMcpTool(n, [])));
+  for (const t of modelTools as any[]) {
+    assert.ok(t.schema.properties.fileName);
+    assert.equal(t.responseFormat, 'content_and_artifact');
+  }
+  assert.deepEqual(modelTools.map((t: any) => t.name), ['GetDocumentContent', 'ReplyToComment', 'AddComment']);
 });

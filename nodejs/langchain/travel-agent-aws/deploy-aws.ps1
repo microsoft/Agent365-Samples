@@ -3,7 +3,7 @@
 
 <#
 .SYNOPSIS
-    One-click deploy of the TravelAgentDW messaging endpoint to AWS
+    One-click deploy of the Travel Agent AWS messaging endpoint to AWS
     (AWS Lambda Web Functions + Amazon Bedrock).
 
 .DESCRIPTION
@@ -13,16 +13,25 @@
     creates everything, later runs publish a new revision behind the same URL.
 
       1. Checks the AWS CLI (v2 with `lambda-web`), your AWS sign-in, and Bedrock access to -ModelId.
-      2. Creates or updates the IAM execution role (CloudWatch Logs + Bedrock InvokeModel).
-      3. Builds a production-only package (npm install --omit=dev, which runs tsc) in a temp folder.
-      4. Runs `aws lambda-web deploy`, passing the settings in -EnvFile as environment variables.
-      5. Waits for /api/health and confirms /api/messages rejects unauthenticated calls.
-      6. With -UpdateA365Endpoint, points the Agent 365 blueprint at the new URL
+      2. Creates the IAM execution role if needed (CloudWatch Logs) and grants it Bedrock access to
+         -ModelId only (inline policy bedrock-invoke).
+      3. Stores the secret settings from -EnvFile (client secrets, keys, tokens, passwords) in the
+         AWS Secrets Manager secret <FunctionName>/agent365, from an owner-only temp file, and lets
+         the role read that one secret (inline policy secrets-read).
+      4. Builds a production-only package (npm install --omit=dev, which runs tsc) in a temp folder.
+      5. Runs `aws lambda-web deploy`, passing the non-secret settings in -EnvFile plus
+         A365_SECRETS_ARN as environment variables. Secret values are never passed on the AWS CLI
+         command line or stored in the function's environment; the app loads them at cold start.
+      6. Waits for /api/health and confirms /api/messages rejects unauthenticated calls.
+      7. With -UpdateA365Endpoint, points the Agent 365 blueprint at the new URL
          (`a365 setup blueprint --update-endpoint <url>/api/messages --m365`).
 
-    With -SettingsOnly, steps 2 and 3 are skipped: the settings in -EnvFile are published as a new
-    revision that reuses the deployed code, for example after `a365 setup` writes new blueprint
-    credentials to .env.
+    With -SettingsOnly, step 4 is skipped and the role isn't created: the settings in -EnvFile are
+    published as a new revision that reuses the deployed code and role, for example after
+    `a365 setup` writes new blueprint credentials to .env. The Bedrock grant, the secret value,
+    and the secrets-read grant are still refreshed. The first deploy after upgrading from a version
+    without Secrets Manager support must be a full deploy; -SettingsOnly refuses to move secrets out
+    of the environment of code that can't read them.
 
 .PREREQUISITES
     - AWS CLI v2 with `aws lambda-web` (2.38+), signed in: `aws login`, `aws configure sso`, or `aws configure`
@@ -68,6 +77,15 @@ $PSNativeCommandUseErrorActionPreference = $false
 # LLM settings this deployment replaces with Bedrock, local-dev-only switches, and the
 # values this script sets itself.
 $ExcludedSettingsPattern = '^(AWS_|LAMBDA_|_|AZURE_OPENAI_|OPENAI_|WEBSITE_|SCM_)|^(PORT|NODE_ENV|BEARER_TOKEN|ENABLE_TEST_ENDPOINT|LLM_PROVIDER|BEDROCK_MODEL_ID|BEDROCK_REGION)$'
+# Settings whose values go to AWS Secrets Manager instead of the function environment (-match is
+# case-insensitive). A365_SECRETS_ARN is the reference to that secret, not a secret itself, and
+# token-count settings such as BEDROCK_MAX_TOKENS are tuning values.
+$SecretSettingsPattern = '(secret|password|_key$|token)|^connections__.+__settings__clientSecret$'
+$NonSecretSettingsPattern = '^A365_SECRETS_ARN$|(_url|endpoint|_tokens)$'
+
+function Test-SecretSettingName([string]$Name) {
+    return ($Name -match $SecretSettingsPattern) -and ($Name -notmatch $NonSecretSettingsPattern)
+}
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 
@@ -105,6 +123,44 @@ function Write-JsonFile([string]$Path, $Object) {
     [IO.File]::WriteAllText($Path, ($Object | ConvertTo-Json -Depth 20 -Compress))
 }
 
+# Creates an empty file that only the current user can read, before any secret is written to it.
+function New-PrivateFile([string]$Path) {
+    [IO.File]::WriteAllText($Path, '')
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $acl = New-Object System.Security.AccessControl.FileSecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [Security.Principal.WindowsIdentity]::GetCurrent().User, 'FullControl', 'Allow')))
+        Set-Acl -LiteralPath $Path -AclObject $acl
+    } else {
+        # No '--': BSD/macOS chmod stops parsing options at '600' and would treat '--' as a file.
+        # The path is an absolute temp path, so it never starts with '-'.
+        & chmod 600 $Path
+        if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to $Path." }
+    }
+}
+
+# Setting names (never values) and execution role of the revisions the endpoint serves, or $null
+# when the function or endpoint doesn't exist yet.
+function Get-LiveRevisionInfo {
+    $endpointInfo = Invoke-Aws @('lambda-web', 'get-web-function-endpoint', '--function-name', $FunctionName,
+        '--endpoint-name', $EndpointName, '--query', 'revisionWeights[].revisionId', '--output', 'json')
+    if ($endpointInfo.ExitCode -ne 0) { return $null }
+    $revisionIds = @($endpointInfo.Output | ConvertFrom-Json) | Where-Object { $_ }
+    if (-not $revisionIds) { return $null }
+    $names = @()
+    $roleArn = $null
+    foreach ($revisionId in $revisionIds) {
+        $revision = Invoke-Aws @('lambda-web', 'get-web-function-revision', '--function-name', $FunctionName, '--revision-id', $revisionId,
+            '--query', '{names: keys(serviceConfig.environmentVariables || `{}`), role: serviceConfig.executionRoleArn}', '--output', 'json')
+        if ($revision.ExitCode -ne 0) { throw "Could not read revision $revisionId of '$FunctionName':`n$($revision.Error)" }
+        $info = $revision.Output | ConvertFrom-Json
+        $names += @($info.names)
+        if (-not $roleArn) { $roleArn = $info.role }
+    }
+    return [pscustomobject]@{ SettingNames = @($names | Where-Object { $_ } | Sort-Object -Unique); RoleArn = $roleArn }
+}
+
 function Read-DotEnv([string]$Path) {
     $settings = [ordered]@{}
     foreach ($raw in Get-Content -LiteralPath $Path) {
@@ -137,6 +193,7 @@ function Get-HttpStatus([scriptblock]$Request) {
 }
 
 Push-Location -Path $PSScriptRoot
+$workDir = $null
 try {
     $AwsCli = Resolve-AwsCli
     # Same precedence as the AWS CLI: AWS_REGION, AWS_DEFAULT_REGION, then the profile's region.
@@ -169,12 +226,15 @@ try {
         throw "$EnvFile not found. Run 'a365 setup all --aiteammate --m365' in this folder (it writes .env), or create it as described in README.md."
     }
     $settings = [ordered]@{}
+    $secretSettings = [ordered]@{}
     $skipped = @()
     $dotEnv = Read-DotEnv $EnvFile
     foreach ($key in $dotEnv.Keys) {
         $value = $dotEnv[$key]
         if ($key -match $ExcludedSettingsPattern -or [string]::IsNullOrEmpty($value)) { $skipped += $key; continue }
         if ($key -notmatch '^[A-Za-z][A-Za-z0-9_]*$') { Write-Warning "Skipping '$key': AWS environment variable names allow only letters, digits, and underscores."; continue }
+        # Secret values go to Secrets Manager through a file, never onto the command line.
+        if (Test-SecretSettingName $key) { $secretSettings[$key] = $value; continue }
         if ($value.Contains('"')) { throw "The value of '$key' in $EnvFile contains a double quote, which can't be passed safely to the AWS CLI." }
         $settings[$key] = $value
     }
@@ -188,6 +248,10 @@ try {
     # The packager only accepts the entry point together with --code; settings-only updates keep it.
     if (-not $SettingsOnly) { $settings['AWS_LAMBDA_NODEJS_ENTRYPOINT'] = 'dist/lambda.js' }
     Write-Host "    Passing $($settings.Count) settings; not shipping: $(if ($skipped) { $skipped -join ', ' } else { '(none)' })"
+    $secretName = "$FunctionName/agent365"
+    if ($secretSettings.Count -gt 0) {
+        Write-Host "    Storing $($secretSettings.Count) secrets in Secrets Manager (${secretName}): $($secretSettings.Keys -join ', ')"
+    }
 
     Write-Step "Checking AWS sign-in"
     $identityResult = Invoke-Aws @('sts', 'get-caller-identity', '--output', 'json')
@@ -208,8 +272,7 @@ try {
         throw "AWS Lambda Web Functions isn't reachable in $Region with these credentials:`n$($webSettings.Error)"
     }
 
-    $workDir = Join-Path ([IO.Path]::GetTempPath()) "$FunctionName-aws-deploy"
-    if (Test-Path -LiteralPath $workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force }
+    $workDir = Join-Path ([IO.Path]::GetTempPath()) "$FunctionName-aws-deploy-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     New-Item -ItemType Directory -Path $workDir | Out-Null
 
     if (-not $SkipModelCheck) {
@@ -238,59 +301,135 @@ try {
         Write-Host "    Model responded." -ForegroundColor Green
     }
 
-    if (-not $SettingsOnly) {
-        # --- 2. IAM execution role ----------------------------------------------------------------
-        $roleName = "$FunctionName-exec"
-        if ($roleName.Length -gt 64) { $roleName = $roleName.Substring(0, 64) }
-        Write-Step "Ensuring IAM execution role $roleName"
-        $roleCreated = $false
-        $getRole = Invoke-Aws @('iam', 'get-role', '--role-name', $roleName, '--output', 'json')
-        if ($getRole.ExitCode -eq 0) {
-            $roleArn = ($getRole.Output | ConvertFrom-Json).Role.Arn
-        } elseif ($getRole.Error -match 'NoSuchEntity') {
-            $trustFile = Join-Path $workDir 'trust-policy.json'
-            Write-JsonFile $trustFile @{
-                Version   = '2012-10-17'
-                Statement = @(@{ Effect = 'Allow'; Principal = @{ Service = 'lambda.amazonaws.com' }; Action = 'sts:AssumeRole' })
-            }
-            $createRole = Invoke-Aws @('iam', 'create-role', '--role-name', $roleName, '--assume-role-policy-document', "file://$trustFile",
-                '--description', "Execution role for the $FunctionName Lambda Web Function (TravelAgentDW)", '--output', 'json')
-            if ($createRole.ExitCode -ne 0) { throw "Could not create IAM role ${roleName}:`n$($createRole.Error)" }
-            $roleArn = ($createRole.Output | ConvertFrom-Json).Role.Arn
-            $attach = Invoke-Aws @('iam', 'attach-role-policy', '--role-name', $roleName,
-                '--policy-arn', "arn:${partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole")
-            if ($attach.ExitCode -ne 0) { throw "Could not attach the CloudWatch Logs policy to ${roleName}:`n$($attach.Error)" }
-            $roleCreated = $true
-        } else {
-            throw "Could not read IAM role ${roleName}:`n$($getRole.Error)"
+    # Setting names and role of the live revision (if any): -SettingsOnly reuses its role, and secret
+    # settings an earlier deploy stored in the environment are removed (deploy keeps other variables).
+    $live = Get-LiveRevisionInfo
+    if ($SettingsOnly) {
+        Write-Step "Checking Web Function '$FunctionName' (settings-only update)"
+        $existing = Invoke-Aws @('lambda-web', 'get-web-function', '--function-name', $FunctionName, '--output', 'json')
+        if ($existing.ExitCode -ne 0) {
+            throw "Web Function '$FunctionName' wasn't found in $Region; run without -SettingsOnly to deploy it first.`n$($existing.Error)"
         }
-        # Cross-Region inference profiles (us./eu./global.) also need the foundation-model ARNs of every
-        # destination Region, including the Region-less ARN used by global profiles.
-        $bedrockPolicyFile = Join-Path $workDir 'bedrock-policy.json'
-        Write-JsonFile $bedrockPolicyFile @{
-            Version   = '2012-10-17'
-            Statement = @(@{
-                Sid      = 'InvokeBedrockModels'
-                Effect   = 'Allow'
-                Action   = @('bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream')
-                Resource = @(
-                    "arn:${partition}:bedrock:*::foundation-model/*",
-                    "arn:${partition}:bedrock:::foundation-model/*",
-                    "arn:${partition}:bedrock:*:${accountId}:inference-profile/*",
-                    "arn:${partition}:bedrock:*:${accountId}:application-inference-profile/*"
-                )
-            })
+        Write-Host "    Reusing the deployed code and execution role."
+        # Code deployed before Secrets Manager support never reads A365_SECRETS_ARN, so moving its
+        # secrets out of the environment would leave it without credentials while health and the
+        # 401 check still pass. The first deploy after upgrading must ship the new code.
+        if ($secretSettings.Count -gt 0 -and $live -and ($live.SettingNames -notcontains 'A365_SECRETS_ARN')) {
+            throw ("The deployed code of '$FunctionName' predates Secrets Manager support (its settings have no A365_SECRETS_ARN). " +
+                "Run a full deploy (without -SettingsOnly) first; later settings updates can use -SettingsOnly.")
         }
-        $putPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'bedrock-invoke',
-            '--policy-document', "file://$bedrockPolicyFile")
-        if ($putPolicy.ExitCode -ne 0) { throw "Could not grant Bedrock access to ${roleName}:`n$($putPolicy.Error)" }
-        Write-Host "    $roleArn"
-        if ($roleCreated) {
-            Write-Host "    New role: waiting 15s for IAM propagation"
-            Start-Sleep -Seconds 15
-        }
+    }
 
-        # --- 3. Build. Mirrored in aws/publish-launch-stack.ps1; keep the two in sync. ---------
+    # --- 2. IAM execution role ----------------------------------------------------------------
+    $roleName = "$FunctionName-exec"
+    if ($roleName.Length -gt 64) { $roleName = $roleName.Substring(0, 64) }
+    if ($SettingsOnly -and $live -and $live.RoleArn) { $roleName = ($live.RoleArn -split '/')[-1] }
+    Write-Step "Ensuring IAM execution role $roleName"
+    $roleCreated = $false
+    $getRole = Invoke-Aws @('iam', 'get-role', '--role-name', $roleName, '--output', 'json')
+    if ($getRole.ExitCode -eq 0) {
+        $roleArn = ($getRole.Output | ConvertFrom-Json).Role.Arn
+    } elseif ($getRole.Error -match 'NoSuchEntity' -and -not $SettingsOnly) {
+        $trustFile = Join-Path $workDir 'trust-policy.json'
+        Write-JsonFile $trustFile @{
+            Version   = '2012-10-17'
+            Statement = @(@{ Effect = 'Allow'; Principal = @{ Service = 'lambda.amazonaws.com' }; Action = 'sts:AssumeRole' })
+        }
+        $createRole = Invoke-Aws @('iam', 'create-role', '--role-name', $roleName, '--assume-role-policy-document', "file://$trustFile",
+            '--description', "Execution role for the $FunctionName Lambda Web Function (Travel Agent AWS)", '--output', 'json')
+        if ($createRole.ExitCode -ne 0) { throw "Could not create IAM role ${roleName}:`n$($createRole.Error)" }
+        $roleArn = ($createRole.Output | ConvertFrom-Json).Role.Arn
+        $attach = Invoke-Aws @('iam', 'attach-role-policy', '--role-name', $roleName,
+            '--policy-arn', "arn:${partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole")
+        if ($attach.ExitCode -ne 0) { throw "Could not attach the CloudWatch Logs policy to ${roleName}:`n$($attach.Error)" }
+        $roleCreated = $true
+    } else {
+        throw "Could not read IAM role ${roleName}:`n$($getRole.Error)"
+    }
+    # Grants -ModelId only, and is rewritten on every run (including -SettingsOnly -ModelId ...).
+    # A cross-Region inference profile (us./eu./global.) routes to foundation models in several
+    # Regions, including the Region-less ARN global profiles use; the condition allows those only
+    # when the call goes through the selected profile. InvokeSelectedModel covers a plain
+    # foundation-model ID and is harmless for a profile ID.
+    $bedrockActions = @('bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream')
+    if ($ModelId -like 'arn:*') {
+        $profileArn = $ModelId
+        $modelArn = $ModelId
+    } else {
+        $profileArn = "arn:${partition}:bedrock:${Region}:${accountId}:inference-profile/$ModelId"
+        $modelArn = "arn:${partition}:bedrock:${Region}::foundation-model/$ModelId"
+    }
+    $bedrockPolicyFile = Join-Path $workDir 'bedrock-policy.json'
+    Write-JsonFile $bedrockPolicyFile @{
+        Version   = '2012-10-17'
+        Statement = @(
+            @{ Sid = 'InvokeSelectedProfile'; Effect = 'Allow'; Action = $bedrockActions; Resource = $profileArn },
+            @{
+                Sid       = 'InvokeModelsThroughProfile'
+                Effect    = 'Allow'
+                Action    = $bedrockActions
+                Resource  = @("arn:${partition}:bedrock:*::foundation-model/*", "arn:${partition}:bedrock:::foundation-model/*")
+                Condition = @{ StringEquals = @{ 'bedrock:InferenceProfileArn' = $profileArn } }
+            },
+            @{ Sid = 'InvokeSelectedModel'; Effect = 'Allow'; Action = $bedrockActions; Resource = $modelArn }
+        )
+    }
+    $putPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'bedrock-invoke',
+        '--policy-document', "file://$bedrockPolicyFile")
+    if ($putPolicy.ExitCode -ne 0) { throw "Could not grant Bedrock access to ${roleName}:`n$($putPolicy.Error)" }
+    Write-Host "    $roleArn"
+
+    # --- 3. Agent 365 secrets: AWS Secrets Manager, never CLI arguments or function settings ---
+    $grantedSecrets = $false
+    if ($secretSettings.Count -gt 0) {
+        Write-Step "Storing Agent 365 secrets in AWS Secrets Manager ($secretName)"
+        $secretFile = Join-Path $workDir 'agent365-secrets.json'
+        try {
+            New-PrivateFile $secretFile
+            Write-JsonFile $secretFile $secretSettings
+            # Outputs of these calls hold only the ARN, name, and version, never the value.
+            $describe = Invoke-Aws @('secretsmanager', 'describe-secret', '--secret-id', $secretName, '--output', 'json')
+            if ($describe.ExitCode -eq 0) {
+                if (($describe.Output | ConvertFrom-Json).DeletedDate) {
+                    $restore = Invoke-Aws @('secretsmanager', 'restore-secret', '--secret-id', $secretName, '--output', 'json')
+                    if ($restore.ExitCode -ne 0) { throw "Secret $secretName is scheduled for deletion and couldn't be restored:`n$($restore.Error)" }
+                }
+                $store = Invoke-Aws @('secretsmanager', 'put-secret-value', '--secret-id', $secretName,
+                    '--secret-string', "file://$secretFile", '--output', 'json')
+            } elseif ($describe.Error -match 'ResourceNotFoundException') {
+                $store = Invoke-Aws @('secretsmanager', 'create-secret', '--name', $secretName,
+                    '--description', "Agent 365 settings for $FunctionName", '--secret-string', "file://$secretFile", '--output', 'json')
+            } else {
+                throw "Could not read secret ${secretName}:`n$($describe.Error)"
+            }
+            if ($store.ExitCode -ne 0) { throw "Could not store the Agent 365 secrets in ${secretName}:`n$($store.Error)" }
+            $secretArn = ($store.Output | ConvertFrom-Json).ARN
+        } finally {
+            Remove-Item -LiteralPath $secretFile -Force -ErrorAction SilentlyContinue
+        }
+        if (-not $secretArn) { throw "Secrets Manager returned no ARN for $secretName." }
+
+        $hadSecretsGrant = (Invoke-Aws @('iam', 'get-role-policy', '--role-name', $roleName, '--policy-name', 'secrets-read', '--output', 'json')).ExitCode -eq 0
+        $secretsPolicyFile = Join-Path $workDir 'secrets-policy.json'
+        Write-JsonFile $secretsPolicyFile @{
+            Version   = '2012-10-17'
+            Statement = @(@{ Sid = 'ReadAgent365Secrets'; Effect = 'Allow'; Action = 'secretsmanager:GetSecretValue'; Resource = $secretArn })
+        }
+        $putSecretsPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'secrets-read',
+            '--policy-document', "file://$secretsPolicyFile")
+        if ($putSecretsPolicy.ExitCode -ne 0) { throw "Could not let ${roleName} read ${secretName}:`n$($putSecretsPolicy.Error)" }
+        $grantedSecrets = -not $hadSecretsGrant
+        $settings['A365_SECRETS_ARN'] = $secretArn
+        Write-Host "    $secretArn"
+    }
+
+    if ($roleCreated -or $grantedSecrets) {
+        Write-Host "    $(if ($roleCreated) { 'New role' } else { 'New grant' }): waiting 15s for IAM propagation"
+        Start-Sleep -Seconds 15
+    }
+
+    if (-not $SettingsOnly) {
+        # --- 4. Build. Mirrored in aws/publish-launch-stack.ps1; keep the two in sync. ---------
         Write-Step "Building a production package (npm install --omit=dev + tsc)"
         $packageDir = Join-Path $workDir 'package'
         New-Item -ItemType Directory -Path $packageDir | Out-Null
@@ -317,7 +456,8 @@ try {
         }
         if ($npmExit -ne 0) { throw "npm install/build failed (exit $npmExit). See the output above." }
         if (-not (Test-Path -LiteralPath (Join-Path $packageDir 'dist/lambda.js'))) { throw "The build did not produce dist/lambda.js." }
-        # typescript/@types are listed under dependencies for Azure's Oryx build but are compile-time only.
+        # typescript/@types are in dependencies so 'npm install --omit=dev' can compile via postinstall;
+        # they're compile-time only, so drop them from the package.
         foreach ($buildOnly in 'src', 'node_modules/typescript', 'node_modules/@types') {
             $buildOnlyPath = Join-Path $packageDir $buildOnly
             if (Test-Path -LiteralPath $buildOnlyPath) { Remove-Item -LiteralPath $buildOnlyPath -Recurse -Force }
@@ -330,25 +470,34 @@ try {
         $sizeMb = [math]::Round(((Get-ChildItem -LiteralPath $packageDir -Recurse -File | Measure-Object -Property Length -Sum).Sum) / 1MB, 1)
         Write-Host "    Package size (unzipped): $sizeMb MB (limit 512 MB)"
         if ($sizeMb -gt 512) { throw "The package exceeds the 512 MB Lambda Web Functions limit." }
-    } else {
-        Write-Step "Checking Web Function '$FunctionName' (settings-only update)"
-        $existing = Invoke-Aws @('lambda-web', 'get-web-function', '--function-name', $FunctionName, '--output', 'json')
-        if ($existing.ExitCode -ne 0) {
-            throw "Web Function '$FunctionName' wasn't found in $Region; run without -SettingsOnly to deploy it first.`n$($existing.Error)"
-        }
-        Write-Host "    Reusing the deployed code and execution role."
     }
 
-    # --- 4. Deploy --------------------------------------------------------------------------
+    # --- 5. Deploy --------------------------------------------------------------------------
     Write-Step "Deploying Lambda Web Function '$FunctionName' (endpoint '$EndpointName')"
     $deployArgs = @('lambda-web', 'deploy', '--name', $FunctionName, '--endpoint-name', $EndpointName,
-        '--timeout-seconds', "$TimeoutSeconds", '--revision-description', "TravelAgentDW deploy $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')")
+        '--timeout-seconds', "$TimeoutSeconds", '--revision-description', "Travel Agent AWS deploy $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')")
     # Without --code, the CLI publishes a revision that reuses the deployed code and role.
     if (-not $SettingsOnly) { $deployArgs += @('--code', $packageDir, '--create', '--execution-role-arn', $roleArn) }
     foreach ($key in $settings.Keys) { $deployArgs += @('--env', "$key=$($settings[$key])") }
+    # Deploy keeps variables it isn't given, so drop secret settings an earlier deploy put in the
+    # environment (names only; they now live in Secrets Manager).
+    $staleSecretNames = @(if ($live) { $live.SettingNames | Where-Object { Test-SecretSettingName $_ } })
+    if ($staleSecretNames) {
+        Write-Host "    Removing secret settings from the function environment: $($staleSecretNames -join ', ')"
+        foreach ($name in $staleSecretNames) { $deployArgs += @('--unset-env', $name) }
+    }
     # Called directly (not captured) so the CLI's progress streams to the console as it happens.
     & $AwsCli @deployArgs @AwsCommonArgs
     if ($LASTEXITCODE -ne 0) { throw "aws lambda-web deploy failed (exit $LASTEXITCODE). See the output above." }
+
+    # Only names are queried, so no setting value is ever printed.
+    $deployed = Get-LiveRevisionInfo
+    $leakedSecretNames = @(if ($deployed) { $deployed.SettingNames | Where-Object { Test-SecretSettingName $_ } })
+    if ($leakedSecretNames) {
+        throw ("The deployed revision still has secret settings in its environment: $($leakedSecretNames -join ', '). " +
+            "Remove them with: aws lambda-web deploy --name $FunctionName --endpoint-name $EndpointName --region $Region " +
+            "$(($leakedSecretNames | ForEach-Object { "--unset-env $_" }) -join ' '), then rotate those secrets.")
+    }
 
     $endpointResult = Invoke-Aws @('lambda-web', 'get-web-function-endpoint', '--function-name', $FunctionName,
         '--endpoint-name', $EndpointName, '--output', 'json')
@@ -358,7 +507,7 @@ try {
     $baseUrl = "https://$domain"
     $messagingEndpoint = "$baseUrl/api/messages"
 
-    # --- 5. Verify --------------------------------------------------------------------------
+    # --- 6. Verify --------------------------------------------------------------------------
     Write-Step "Waiting for $baseUrl/api/health"
     $healthy = $false
     for ($i = 1; $i -le 24; $i++) {
@@ -379,11 +528,16 @@ try {
     }
     if ($authStatus -eq 401) {
         Write-Host "    /api/messages rejects unauthenticated calls (401), as expected." -ForegroundColor Green
+    } elseif ($authStatus -ge 200 -and $authStatus -lt 300) {
+        # Fail before -UpdateA365Endpoint can point the blueprint at an open endpoint.
+        throw ("/api/messages accepted an unauthenticated call (HTTP $authStatus) on a public endpoint. " +
+            "Check the connections__*__settings__* values in $EnvFile and re-run, or remove the function: " +
+            "aws lambda-web delete-web-function --function-name $FunctionName --region $Region")
     } else {
         Write-Warning "/api/messages returned $authStatus to an unauthenticated call (expected 401). Check the connection settings in $EnvFile."
     }
 
-    # --- 6. Agent 365 messaging endpoint --------------------------------------------------------
+    # --- 7. Agent 365 messaging endpoint --------------------------------------------------------
     if ($UpdateA365Endpoint) {
         Write-Step "Pointing the Agent 365 blueprint at $messagingEndpoint"
         $a365Command = "a365 setup blueprint --update-endpoint $messagingEndpoint --m365"
@@ -423,5 +577,6 @@ try {
         & $AwsCli logs tail "/aws/lambda/web/$FunctionName" --follow @AwsCommonArgs
     }
 } finally {
+    if ($workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue }
     Pop-Location
 }

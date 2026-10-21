@@ -121,27 +121,101 @@ function driveItemPayload(t: ToolInvocation): { payload: any; driveItem: any; it
   return undefined;
 }
 
+const UNIDENTIFIED = 'the tool result did not include the new file id';
+
+function createdItemOf(t: ToolInvocation): CreatedDriveItem {
+  const found = driveItemPayload(t);
+  if (!found) return { tool: t.name, error: UNIDENTIFIED };
+  const sharedWith = pick(found.payload, 'sharedWith');
+  const driveId = pick(pick(found.driveItem, 'parentReference'), 'driveId');
+  const name = pick(found.driveItem, 'name');
+  const webUrl = pick(found.driveItem, 'webUrl');
+  return {
+    tool: t.name,
+    itemId: found.itemId,
+    driveId: typeof driveId === 'string' ? driveId : undefined,
+    name: typeof name === 'string' ? name : undefined,
+    webUrl: typeof webUrl === 'string' ? webUrl : undefined,
+    sharedWith: typeof sharedWith === 'string' ? sharedWith : undefined,
+  };
+}
+
 export function extractCreatedItems(tools: ToolInvocation[]): CreatedDriveItem[] {
   const seen = new Set<string>();
   const out: CreatedDriveItem[] = [];
   for (const t of tools) {
     if (t.status !== 'success' || !CREATE_TOOLS.some((base) => toolNameIs(t.name, base))) continue;
-    const found = driveItemPayload(t);
-    if (!found) {
-      out.push({ tool: t.name, error: 'the tool result did not include the new file id' });
-      continue;
+    const item = createdItemOf(t);
+    if (item.itemId) {
+      if (seen.has(item.itemId)) continue;
+      seen.add(item.itemId);
     }
-    if (seen.has(found.itemId)) continue;
-    seen.add(found.itemId);
-    const sharedWith = pick(found.payload, 'sharedWith');
-    out.push({
-      tool: t.name,
-      itemId: found.itemId,
-      driveId: pick(pick(found.driveItem, 'parentReference'), 'driveId'),
-      name: pick(found.driveItem, 'name'),
-      webUrl: pick(found.driveItem, 'webUrl'),
-      sharedWith: typeof sharedWith === 'string' ? sharedWith : undefined,
-    });
+    out.push(item);
+  }
+  return out;
+}
+
+// A successful MCP tool call returns either a string or a [content, artifact] tuple
+// (responseFormat 'content_and_artifact'); this reads it like the matching ToolMessage.
+function invocationFromResult(toolName: string, rawResult: unknown): ToolInvocation {
+  const isTuple = Array.isArray(rawResult) && rawResult.length === 2 && Array.isArray(rawResult[1]);
+  const content = isTuple ? (rawResult as unknown[])[0] : rawResult;
+  const artifact = isTuple ? (rawResult as unknown[])[1] : undefined;
+  const textBlocks = textBlocksOf(content);
+  return {
+    name: toolName,
+    status: 'success',
+    content: textBlocks.join('\n'),
+    textBlocks,
+    structured: structuredOf({ content, artifact }),
+  };
+}
+
+// The created item from a create tool's raw (successful) result, read at the tool boundary.
+export function createdItemFromResult(toolName: string, rawResult: unknown): CreatedDriveItem {
+  return createdItemOf(invocationFromResult(toolName, rawResult));
+}
+
+// driveId/documentId from a successful GetDocumentContent result
+// (MCP-Platform payload: { fileName, size, driveId, documentId, content, comments, ... }).
+export function documentIdsFromResult(rawResult: unknown): { driveId: string; documentId: string } | undefined {
+  const t = invocationFromResult('GetDocumentContent', rawResult);
+  const candidates: unknown[] = [...t.structured];
+  for (const text of t.textBlocks) {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      candidates.push(JSON.parse(trimmed));
+    } catch {
+      // Not a JSON block.
+    }
+  }
+  for (const payload of candidates) {
+    const driveId = pick(payload, 'driveId');
+    const documentId = pick(payload, 'documentId');
+    if (typeof driveId === 'string' && driveId && typeof documentId === 'string' && documentId) {
+      return { driveId, documentId };
+    }
+  }
+  return undefined;
+}
+
+// Items recorded at the create-tool boundary are authoritative; items read back from this turn's
+// ToolMessages only fill gaps. Deduped by itemId.
+export function mergeCreatedItems(recorded: CreatedDriveItem[], extracted: CreatedDriveItem[]): CreatedDriveItem[] {
+  const seen = new Set<string>();
+  const out: CreatedDriveItem[] = [];
+  for (const item of [...recorded, ...extracted]) {
+    if (item.itemId) {
+      if (seen.has(item.itemId)) continue;
+      seen.add(item.itemId);
+    }
+    out.push(item);
+  }
+  // An unidentified create seen in the ToolMessages is the same call the recorder already reported.
+  if (recorded.length) {
+    const extraUnidentified = new Set(extracted.filter((i) => !i.itemId));
+    return out.filter((i) => !extraUnidentified.has(i));
   }
   return out;
 }

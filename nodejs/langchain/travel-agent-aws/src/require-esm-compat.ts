@@ -21,7 +21,11 @@ if (!process.features.require_module) {
     try {
       // Resolve the exact file the CommonJS caller gets, including a nested copy if it has one.
       filename = createRequire(require.resolve(requiredBy)).resolve(dependency);
-    } catch {
+    } catch (err) {
+      console.warn(
+        `[esm-compat] Could not resolve ${dependency} for ${requiredBy}; skipping (a later ERR_REQUIRE_ESM may follow):`,
+        (err as Error)?.message?.slice(0, 120),
+      );
       continue;
     }
     if (require.cache[filename]) continue;

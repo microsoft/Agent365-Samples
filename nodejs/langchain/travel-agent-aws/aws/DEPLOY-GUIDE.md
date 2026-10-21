@@ -1,6 +1,6 @@
-# Deploy the Travel Agent on AWS: step-by-step guide
+# Deploy Travel Agent AWS: step-by-step guide
 
-This guide puts your own copy of the Travel Agent on AWS so you can chat with it in Microsoft Teams.
+This guide puts your own copy of Travel Agent AWS on AWS so you can chat with it in Microsoft Teams.
 You only need a web browser. Nothing to install, no code, no commands.
 
 **Time:** about 10 minutes (the deploy itself takes about 2).
@@ -123,6 +123,8 @@ a name without spaces or special characters, leave the other fields as they are,
 | A message about **capabilities** or **IAM resources** when you click **Create stack** | Tick the box in step 5, then click **Create stack** again. |
 | A box turns red (for example, "must be a GUID") | The value has a typo or extra spaces. Copy it again from your admin's message. |
 | **Stack [travelagentdw] already exists** | You already deployed it in this AWS account. Open **CloudFormation** > **Stacks** > **travelagentdw** > **Outputs** and continue from step 9. |
+| **CREATE_FAILED** on **AppLogGroup** or **AppLocalLogGroup** with **/aws/lambda/web/travelagentdw already exists** | An earlier deployment with the `deploy-aws.ps1` script left its log groups behind. Ask your admin to run `aws logs delete-log-group --log-group-name /aws/lambda/web/travelagentdw` and `aws logs delete-log-group --log-group-name /aws/lambda/web/travelagentdw.local` in that Region, or set **Advanced** > **Function name** to a different name. Then delete the failed stack and deploy again. |
+| **CREATE_FAILED** on **PackageCopy** with **package SHA-256 mismatch** | The code package doesn't match the release the link was made for. Don't retry; ask your admin for a new deploy link. |
 | Status **ROLLBACK_COMPLETE**, **ROLLBACK_IN_PROGRESS**, or **CREATE_FAILED** | Open the **Events** tab, take a screenshot of the first red row that says **CREATE_FAILED**, and send it to your admin. Then select **Delete**, confirm, and try again after they reply. |
 | **not authorized** or **AccessDenied** | Your AWS sign-in isn't an administrator. Ask your AWS account owner to deploy it, or to give you administrator access. |
 | The **HealthCheck** page doesn't open | Wait one minute and try again. |
@@ -156,7 +158,9 @@ aws login
 ```
 
 The script prints one deploy link per Region. Send people the link for the Region they should
-deploy to. Lambda Web Functions is available in:
+deploy to. Each link shares only that release's package and template, and the template carries
+the package's SHA-256: the stack refuses a package whose hash doesn't match the release. Lambda Web
+Functions is available in:
 
 | Region code | Region name shown in the AWS console |
 |---|---|
