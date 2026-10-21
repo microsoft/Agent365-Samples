@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation.
+﻿# Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
 <#
@@ -106,16 +106,18 @@ function Invoke-Aws {
     $allArgs = $Arguments + $script:AwsCommonArgs
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $errFile = [IO.Path]::GetTempFileName()
     try {
-        $stdout = & $script:AwsCli @allArgs 2> $errFile
+        # 2>&1 turns stderr lines into ErrorRecords; keep only their text. (Redirecting to a file in
+        # Windows PowerShell 5.1 writes "aws.exe : ... NativeCommandError" decoration around the message.)
+        $all = & $script:AwsCli @allArgs 2>&1
         $exitCode = $LASTEXITCODE
-        $stderr = [IO.File]::ReadAllText($errFile)
     } finally {
-        Remove-Item -LiteralPath $errFile -Force -ErrorAction SilentlyContinue
         $ErrorActionPreference = $previous
     }
-    return [pscustomobject]@{ ExitCode = $exitCode; Output = (@($stdout) -join "`n"); Error = $stderr.Trim() }
+    $stdout = @($all | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+    $stderr = (@($all | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } |
+        ForEach-Object { $_.Exception.Message }) -join "`n")
+    return [pscustomobject]@{ ExitCode = $exitCode; Output = ($stdout -join "`n"); Error = $stderr.Trim() }
 }
 
 function Write-JsonFile([string]$Path, $Object) {
@@ -576,7 +578,14 @@ try {
         Write-Step "Streaming application logs (Ctrl+C to stop)"
         & $AwsCli logs tail "/aws/lambda/web/$FunctionName" --follow @AwsCommonArgs
     }
+} catch {
+    # Print the actionable message once, without PowerShell's script position and error-record noise.
+    Write-Host ""
+    Write-Host "Deployment stopped: $($_.Exception.Message)" -ForegroundColor Red
+    $deployFailed = $true
 } finally {
     if ($workDir) { Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue }
     Pop-Location
 }
+
+if ($deployFailed) { exit 1 }
