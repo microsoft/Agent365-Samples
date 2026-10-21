@@ -1,0 +1,44 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Agent",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--inspect=9239",
+        "--signal",
+        "SIGINT",
+        "-r",
+        "ts-node/register"
+      ],
+      "args": ["index.ts"],
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Debug in Microsoft 365 Agents Playground",
+      "type": "node",
+      "request": "launch",
+      "runtimeArgs": [
+        "--inspect=9239",
+        "--signal",
+        "SIGINT",
+        "-r",
+        "ts-node/register"
+      ],
+      "args": ["index.ts"],
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "envFile": "${workspaceFolder}/env/.env.playground",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "Start Agents Playground"
+    }
+  ]
+}
