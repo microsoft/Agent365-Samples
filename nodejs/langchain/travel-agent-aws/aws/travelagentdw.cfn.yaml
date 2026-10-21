@@ -1,0 +1,419 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  TravelAgentDW (Agent 365 AI teammate) messaging endpoint on AWS Lambda Web Functions, answering
+  with Amazon Bedrock. Creates the Web Function and its HTTPS endpoint, an IAM execution role, and a
+  private S3 bucket that holds this account's copy of the code package. Publish with
+  aws/publish-launch-stack.ps1, which sets the PackageUrl default.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Agent 365 values (from your Agent 365 admin)
+        Parameters: [BlueprintId, BlueprintClientSecret, TenantId]
+      - Label:
+          default: Optional
+        Parameters: [AgentName, ModelId, MaxEnvironments]
+      - Label:
+          default: Advanced (leave as is)
+        Parameters: [FunctionName, PackageUrl]
+    ParameterLabels:
+      BlueprintId:
+        default: Agent blueprint ID
+      BlueprintClientSecret:
+        default: Agent blueprint client secret
+      TenantId:
+        default: Microsoft 365 tenant ID
+      AgentName:
+        default: Agent name
+      ModelId:
+        default: Bedrock model ID
+      MaxEnvironments:
+        default: Maximum environments
+      FunctionName:
+        default: Function name
+      PackageUrl:
+        default: Code package URL
+
+Parameters:
+  BlueprintId:
+    Type: String
+    Description: The agent blueprint ID (agentBlueprintId in a365.generated.config.json).
+    AllowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    ConstraintDescription: must be a GUID, for example 11111111-2222-3333-4444-555555555555.
+  BlueprintClientSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: The blueprint client secret (connections__service_connection__settings__clientSecret in .env).
+  TenantId:
+    Type: String
+    Description: The Microsoft 365 (Microsoft Entra) tenant ID.
+    AllowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    ConstraintDescription: must be a GUID.
+  AgentName:
+    Type: String
+    Default: Travel Agent
+    MinLength: 1
+    Description: Agent name shown in Agent 365 observability.
+  ModelId:
+    Type: String
+    Default: ''
+    Description: >-
+      Amazon Bedrock model or inference profile ID. Leave empty for Amazon Nova 2 Lite, which needs
+      no sign-up. Claude models need the Anthropic use-case form in this account first.
+  MaxEnvironments:
+    Type: Number
+    Default: 5
+    MinValue: 2
+    Description: >-
+      Cost cap: the most execution environments the endpoint can run at once. Each environment
+      handles up to 64 requests at the same time.
+  FunctionName:
+    Type: String
+    Default: travelagentdw
+    AllowedPattern: '^[a-zA-Z0-9_-]{1,56}$'
+    ConstraintDescription: use up to 56 letters, numbers, hyphens, or underscores.
+    Description: Name of the Lambda Web Function. Must be unique in this account and Region.
+  PackageUrl:
+    Type: String
+    Default: ''  # set by aws/publish-launch-stack.ps1
+    AllowedPattern: '^(https://.+)?$'
+    ConstraintDescription: must be the https:// URL of the code package (.zip).
+    Description: URL of the prebuilt code package (.zip). Set by the publisher; leave as is.
+
+Rules:
+  PackageUrlSet:
+    Assertions:
+      - Assert:
+          Fn::Not:
+            - Fn::Equals: [!Ref PackageUrl, '']
+        AssertDescription: >-
+          PackageUrl is empty. Deploy from a Launch Stack link made by aws/publish-launch-stack.ps1,
+          or set PackageUrl to the URL of the code package.
+  SupportedRegion:
+    Assertions:
+      - Assert:
+          Fn::Contains:
+            - [us-east-1, us-east-2, us-west-2, eu-west-1, ap-northeast-1]
+            - !Ref AWS::Region
+        AssertDescription: >-
+          Lambda Web Functions is available in us-east-1, us-east-2, us-west-2, eu-west-1, and
+          ap-northeast-1. Switch the console to one of those Regions and try again.
+
+Mappings:
+  # Bedrock cross-Region inference profiles are geo-scoped; match deploy-aws.ps1.
+  RegionGeo:
+    us-east-1:
+      Prefix: us
+    us-east-2:
+      Prefix: us
+    us-west-2:
+      Prefix: us
+    eu-west-1:
+      Prefix: eu
+    ap-northeast-1:
+      Prefix: global
+
+Conditions:
+  UseDefaultModel: !Equals [!Ref ModelId, '']
+
+Resources:
+  # --- Code package: each deployment keeps its own copy, so it doesn't depend on the publisher's
+  # bucket after it's created (Lambda reads a revision's code from S3 for as long as it runs).
+  CodeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  CodeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CodeBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: HttpsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt CodeBucket.Arn
+              - !Sub '${CodeBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: AllowLambdaWebFunctionCodeAccess
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: ['s3:GetObject', 's3:GetObjectVersion']
+            Resource: !Sub '${CodeBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  PackageCopierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  PackageCopierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: copy-package
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['logs:CreateLogStream', 'logs:PutLogEvents']
+                Resource: !GetAtt PackageCopierLogGroup.Arn
+              - Effect: Allow
+                Action: ['s3:PutObject', 's3:GetObject', 's3:GetObjectVersion', 's3:DeleteObject', 's3:DeleteObjectVersion']
+                Resource: !Sub '${CodeBucket.Arn}/*'
+              - Effect: Allow
+                Action: ['s3:ListBucket', 's3:ListBucketVersions']
+                Resource: !GetAtt CodeBucket.Arn
+              # Read the published package when PackageUrl is an S3 URL (bucket = first label of the host).
+              - Effect: Allow
+                Action: ['s3:GetObject', 's3:GetObjectVersion']
+                Resource: !Sub
+                  - 'arn:${AWS::Partition}:s3:::${SourceBucket}/*'
+                  - SourceBucket: !Select [0, !Split ['.', !Select [2, !Split ['/', !Ref PackageUrl]]]]
+
+  PackageCopier:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Copies the TravelAgentDW code package into this stack's bucket (CloudFormation custom resource).
+      Runtime: python3.13
+      Handler: index.handler
+      Role: !GetAtt PackageCopierRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      LoggingConfig:
+        LogGroup: !Ref PackageCopierLogGroup
+      Code:
+        ZipFile: |
+          # Copyright (c) Microsoft Corporation.
+          # Licensed under the MIT License.
+
+          import json, re, urllib.parse, urllib.request
+          import boto3
+
+          s3 = boto3.client('s3')
+          S3_URL = re.compile(r'^https://([^/]+?)\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com/(.+)$')
+
+
+          def respond(event, context, status, data=None, reason=''):
+              body = json.dumps({
+                  'Status': status,
+                  'Reason': (reason or 'See log stream ' + context.log_stream_name)[:1000],
+                  'PhysicalResourceId': event.get('PhysicalResourceId') or event['LogicalResourceId'],
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Data': data or {},
+              }).encode()
+              request = urllib.request.Request(event['ResponseURL'], data=body, method='PUT',
+                                               headers={'Content-Type': ''})
+              urllib.request.urlopen(request, timeout=60).close()
+
+
+          def empty_bucket(bucket):
+              try:
+                  for page in s3.get_paginator('list_object_versions').paginate(Bucket=bucket):
+                      items = page.get('Versions', []) + page.get('DeleteMarkers', [])
+                      if items:
+                          s3.delete_objects(Bucket=bucket, Delete={'Quiet': True, 'Objects': [
+                              {'Key': i['Key'], 'VersionId': i['VersionId']} for i in items]})
+              except s3.exceptions.ClientError as error:
+                  if error.response['Error']['Code'] != 'NoSuchBucket':
+                      raise
+
+
+          def handler(event, context):
+              props = event['ResourceProperties']
+              bucket, key, url = props['Bucket'], props['Key'], props['Url']
+              try:
+                  if event['RequestType'] == 'Delete':
+                      empty_bucket(bucket)  # lets CloudFormation delete the bucket
+                      respond(event, context, 'SUCCESS')
+                      return
+                  match = S3_URL.match(url)
+                  if match:
+                      # Server-side copy with this function's role: works for private,
+                      # organization-shared, and public packages.
+                      source = {'Bucket': match.group(1), 'Key': urllib.parse.unquote(match.group(2))}
+                      s3.copy(source, bucket, key)
+                  else:
+                      with urllib.request.urlopen(url, timeout=300) as response:
+                          s3.upload_fileobj(response, bucket, key)
+                  version = s3.head_object(Bucket=bucket, Key=key)['VersionId']
+                  print(f'Copied {url} to s3://{bucket}/{key} (version {version})')
+                  respond(event, context, 'SUCCESS', {'VersionId': version})
+              except Exception as error:
+                  print(f'Failed: {error!r}')
+                  respond(event, context, 'FAILED', reason=f'{type(error).__name__}: {error}')
+
+  PackageCopy:
+    Type: Custom::TravelAgentDWPackage
+    DependsOn: CodeBucketPolicy
+    Properties:
+      ServiceToken: !GetAtt PackageCopier.Arn
+      Bucket: !Ref CodeBucket
+      Key: package.zip
+      Url: !Ref PackageUrl
+
+  # --- The agent's messaging endpoint ---------------------------------------------------------
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: !Sub 'Execution role for the ${FunctionName} Lambda Web Function (TravelAgentDW)'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: bedrock-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Cross-Region inference profiles also need the foundation-model ARNs of every
+              # destination Region, including the Region-less ARN that global profiles use.
+              - Sid: InvokeBedrockModels
+                Effect: Allow
+                Action: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream']
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:::foundation-model/*'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*'
+                  - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:application-inference-profile/*'
+
+  # Lambda creates these on first use with no expiry; creating them here keeps logs for 30 days
+  # and removes them with the stack.
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${FunctionName}'
+      RetentionInDays: 30
+
+  AppLocalLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${FunctionName}.local'
+      RetentionInDays: 30
+
+  WebFunction:
+    Type: AWS::Lambda::WebFunction
+    Properties:
+      FunctionName: !Ref FunctionName
+
+  Revision:
+    Type: AWS::Lambda::WebFunctionRevision
+    DependsOn: [CodeBucketPolicy, AppLogGroup, AppLocalLogGroup]
+    Properties:
+      FunctionName: !Ref WebFunction
+      Description: !Sub 'TravelAgentDW (stack ${AWS::StackName})'
+      BuildConfig:
+        CodeConfig:
+          S3Object:
+            Bucket: !Ref CodeBucket
+            Key: package.zip
+            VersionId: !GetAtt PackageCopy.VersionId
+        RuntimeConfig:
+          Runtime: nodejs24.x
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+        TimeoutSeconds: 300
+        EnvironmentVariables:
+          # dist/lambda.js loads the require(esm) shim before the app (see README).
+          AWS_LAMBDA_NODEJS_ENTRYPOINT: dist/lambda.js
+          NODE_ENV: production
+          LLM_PROVIDER: bedrock
+          BEDROCK_MODEL_ID: !If
+            - UseDefaultModel
+            - !Sub
+              - '${Geo}.amazon.nova-2-lite-v1:0'
+              - Geo: !FindInMap [RegionGeo, !Ref AWS::Region, Prefix]
+            - !Ref ModelId
+          BEDROCK_REGION: !Ref AWS::Region
+          ENABLE_A365_OBSERVABILITY_EXPORTER: 'false'
+          agent_id: !Ref BlueprintId
+          connections__service_connection__settings__clientId: !Ref BlueprintId
+          connections__service_connection__settings__clientSecret: !Ref BlueprintClientSecret
+          connections__service_connection__settings__tenantId: !Ref TenantId
+          connections__service_connection__settings__scopes: 5a807f24-c9de-44ee-a3a7-329e88a00ffc/.default
+          connectionsMap__0__serviceUrl: '*'
+          connectionsMap__0__connection: service_connection
+          agentic_altBlueprintConnectionName: service_connection
+          agentic_connectionName: AgenticAuthConnection
+          agentic_scopes: https://graph.microsoft.com/.default
+          agent365Observability__agentId: !Ref BlueprintId
+          agent365Observability__agentBlueprintId: !Ref BlueprintId
+          agent365Observability__clientId: !Ref BlueprintId
+          agent365Observability__clientSecret: !Ref BlueprintClientSecret
+          agent365Observability__tenantId: !Ref TenantId
+          agent365Observability__agentName: !Ref AgentName
+          agent365Observability__agentDescription: !Ref AgentName
+
+  Endpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    Properties:
+      FunctionName: !Ref WebFunction
+      EndpointName: prod
+      EndpointType: HomeRegion
+      # The app validates the Teams/Agent 365 token on every request.
+      AuthType: ApplicationManaged
+      RevisionWeights:
+        - RevisionId: !GetAtt Revision.RevisionId
+          Weight: 100
+      ScalingConfig:
+        MaxEnvironments: !Ref MaxEnvironments
+
+Outputs:
+  MessagingEndpoint:
+    Description: Send this URL to your Agent 365 admin. It is the agent's messaging endpoint.
+    Value: !Sub 'https://${Endpoint.DomainName}/api/messages'
+  HealthCheck:
+    Description: Open in a browser. {"status":"healthy"} means the agent is running.
+    Value: !Sub 'https://${Endpoint.DomainName}/api/health'
+  Model:
+    Description: The Amazon Bedrock model the agent uses.
+    Value: !If
+      - UseDefaultModel
+      - !Sub
+        - '${Geo}.amazon.nova-2-lite-v1:0'
+        - Geo: !FindInMap [RegionGeo, !Ref AWS::Region, Prefix]
+      - !Ref ModelId
+  Logs:
+    Description: The agent's logs in CloudWatch.
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/$252Faws$252Flambda$252Fweb$252F${FunctionName}'
+  AdminCommand:
+    Description: For the Agent 365 admin. Points the agent blueprint at this endpoint.
+    Value: !Sub 'a365 setup blueprint --update-endpoint https://${Endpoint.DomainName}/api/messages --m365'

@@ -8,17 +8,23 @@ on:
   workflow_dispatch:  # Manual trigger
 jobs:
   nodejs-langchain-sampleagent:
-    name: Node.js LangChain Sample Agent
+    name: Node.js LangChain ${{ matrix.sample }} (Node ${{ matrix.node-version }})
     permissions:
       contents: read
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./nodejs/langchain/sample-agent
+        working-directory: ./nodejs/langchain/${{ matrix.sample }}
 
     strategy:
       matrix:
-        node-version: ['18', '20']
+        include:
+          - sample: sample-agent
+            node-version: '18'
+          - sample: sample-agent
+            node-version: '20'
+          - sample: travel-agent-aws
+            node-version: '24'
 
     steps:
     - name: Checkout repository
