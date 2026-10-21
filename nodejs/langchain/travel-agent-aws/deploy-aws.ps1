@@ -38,7 +38,11 @@
     - Node.js 24+ and npm
     - A .env with the agent's Agent 365 settings (written by `a365 setup all --aiteammate --m365`)
     - Amazon Bedrock access to -ModelId in -Region. The default, Amazon Nova 2 Lite, needs no extra
-      sign-up; Anthropic Claude models need the one-time Anthropic use-case form first.
+      sign-up; Anthropic Claude models need the one-time Anthropic use-case form first. New AWS
+      accounts can start with Bedrock quotas of 0; use -LlmProvider AzureOpenAI until they're raised.
+    - For -LlmProvider AzureOpenAI: AZURE_OPENAI_ENDPOINT (https://<resource>.openai.azure.com/),
+      AZURE_OPENAI_DEPLOYMENT and AZURE_OPENAI_API_KEY in -EnvFile, from an Azure AI Foundry or
+      Azure OpenAI resource. The key is stored in Secrets Manager and no Bedrock access is granted.
     - For -UpdateA365Endpoint: the Agent 365 CLI (`a365`), a365.config.json in this folder, and
       owner rights on the agent blueprint
 
@@ -47,6 +51,7 @@
     ./deploy-aws.ps1 -UpdateA365Endpoint
     ./deploy-aws.ps1 -SettingsOnly
     ./deploy-aws.ps1 -Region us-west-2 -ModelId us.anthropic.claude-sonnet-4-6 -AwsProfile my-sso
+    ./deploy-aws.ps1 -LlmProvider AzureOpenAI -UpdateA365Endpoint
 #>
 
 [CmdletBinding()]
@@ -55,6 +60,8 @@ param(
     [string]$FunctionName = 'travelagentdw',
     [string]$Region,
     [string]$ModelId,
+    [ValidateSet('Bedrock', 'AzureOpenAI')]
+    [string]$LlmProvider = 'Bedrock',
     [string]$AwsProfile,
     [string]$EnvFile = '.env',
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]{0,62}[A-Za-z0-9]$')]
@@ -73,10 +80,11 @@ $PSNativeCommandUseErrorActionPreference = $false
 # Windows PowerShell 5.1 doesn't offer TLS 1.2 by default; AWS endpoints require it.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-# .env keys that must not be shipped: AWS-reserved names and credentials, the Azure/OpenAI
-# LLM settings this deployment replaces with Bedrock, local-dev-only switches, and the
-# values this script sets itself.
-$ExcludedSettingsPattern = '^(AWS_|LAMBDA_|_|AZURE_OPENAI_|OPENAI_|WEBSITE_|SCM_)|^(PORT|NODE_ENV|BEARER_TOKEN|ENABLE_TEST_ENDPOINT|LLM_PROVIDER|BEDROCK_MODEL_ID|BEDROCK_REGION)$'
+# .env keys that must not be shipped: AWS-reserved names and credentials, the LLM settings of
+# the provider not in use, local-dev-only switches, and the values this script sets itself.
+# With -LlmProvider AzureOpenAI the AZURE_OPENAI_* settings ship (the API key through Secrets Manager).
+$ExcludedLlmPrefixes = if ($LlmProvider -eq 'AzureOpenAI') { 'OPENAI_' } else { 'AZURE_OPENAI_|OPENAI_' }
+$ExcludedSettingsPattern = "^(AWS_|LAMBDA_|_|$ExcludedLlmPrefixes|WEBSITE_|SCM_)|^(PORT|NODE_ENV|BEARER_TOKEN|ENABLE_TEST_ENDPOINT|LLM_PROVIDER|BEDROCK_MODEL_ID|BEDROCK_REGION)$"
 # Settings whose values go to AWS Secrets Manager instead of the function environment (-match is
 # case-insensitive). A365_SECRETS_ARN is the reference to that secret, not a secret itself, and
 # token-count settings such as BEDROCK_MAX_TOKENS are tuning values.
@@ -244,9 +252,22 @@ try {
         throw "$EnvFile has no Agent 365 connection settings (connections__<name>__settings__clientId). Run 'a365 setup all --aiteammate --m365' first."
     }
     $settings['NODE_ENV'] = 'production'
-    $settings['LLM_PROVIDER'] = 'bedrock'
-    $settings['BEDROCK_MODEL_ID'] = $ModelId
-    $settings['BEDROCK_REGION'] = $Region
+    if ($LlmProvider -eq 'AzureOpenAI') {
+        $missing = @(@('AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT') | Where-Object { -not $settings.Contains($_) })
+        if (-not $secretSettings.Contains('AZURE_OPENAI_API_KEY')) { $missing += 'AZURE_OPENAI_API_KEY' }
+        if ($missing) {
+            throw "-LlmProvider AzureOpenAI needs $($missing -join ', ') in $EnvFile (from your Azure AI Foundry / Azure OpenAI resource: Keys and Endpoint, and the model deployment name)."
+        }
+        # The app derives the resource name from this host, so it must be the Azure OpenAI endpoint.
+        if ($settings['AZURE_OPENAI_ENDPOINT'] -notmatch '^https://[A-Za-z0-9-]+\.(openai\.azure\.com|cognitiveservices\.azure\.com)/?$') {
+            throw "AZURE_OPENAI_ENDPOINT must look like https://<resource>.openai.azure.com/ (in Foundry: your resource > Overview > Azure OpenAI endpoint)."
+        }
+        $settings['LLM_PROVIDER'] = 'azure-openai'
+    } else {
+        $settings['LLM_PROVIDER'] = 'bedrock'
+        $settings['BEDROCK_MODEL_ID'] = $ModelId
+        $settings['BEDROCK_REGION'] = $Region
+    }
     # The packager only accepts the entry point together with --code; settings-only updates keep it.
     if (-not $SettingsOnly) { $settings['AWS_LAMBDA_NODEJS_ENTRYPOINT'] = 'dist/lambda.js' }
     Write-Host "    Passing $($settings.Count) settings; not shipping: $(if ($skipped) { $skipped -join ', ' } else { '(none)' })"
@@ -277,7 +298,29 @@ try {
     $workDir = Join-Path ([IO.Path]::GetTempPath()) "$FunctionName-aws-deploy-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
     New-Item -ItemType Directory -Path $workDir | Out-Null
 
-    if (-not $SkipModelCheck) {
+    if (-not $SkipModelCheck -and $LlmProvider -eq 'AzureOpenAI') {
+        $aoaiDeployment = $settings['AZURE_OPENAI_DEPLOYMENT']
+        Write-Step "Checking Azure OpenAI deployment $aoaiDeployment"
+        $apiVersion = if ($settings.Contains('AZURE_OPENAI_API_VERSION')) { $settings['AZURE_OPENAI_API_VERSION'] } else { '2024-12-01-preview' }
+        $uri = "$($settings['AZURE_OPENAI_ENDPOINT'].TrimEnd('/'))/openai/deployments/$([uri]::EscapeDataString($aoaiDeployment))/chat/completions?api-version=$apiVersion"
+        $body = @{ messages = @(@{ role = 'user'; content = 'Reply with the single word OK.' }); max_completion_tokens = 256 } | ConvertTo-Json -Depth 5
+        try {
+            Invoke-RestMethod -Method Post -Uri $uri -Headers @{ 'api-key' = $secretSettings['AZURE_OPENAI_API_KEY'] } -ContentType 'application/json' -Body $body -TimeoutSec 60 | Out-Null
+        } catch {
+            $status = $null
+            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            $hint = switch ($status) {
+                401 { 'The API key was rejected. Copy Key 1 from the resource''s Keys and Endpoint page into AZURE_OPENAI_API_KEY.' }
+                404 { "No deployment named '$aoaiDeployment' at that endpoint, or the API version is too old. Check the deployment name in Foundry > Deployments." }
+                429 { 'The deployment is rate-limited. Raise its tokens-per-minute in Foundry > Deployments, or wait and re-run.' }
+                default { 'Check AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT, and that the resource allows public network access.' }
+            }
+            throw "Azure OpenAI call to deployment '$aoaiDeployment' failed$(if ($status) { " (HTTP $status)" }).`n$hint Re-run with -SkipModelCheck to deploy anyway."
+        }
+        Write-Host "    Model responded." -ForegroundColor Green
+    }
+
+    if (-not $SkipModelCheck -and $LlmProvider -eq 'Bedrock') {
         Write-Step "Checking Amazon Bedrock access to $ModelId"
         $probeFile = Join-Path $workDir 'bedrock-probe.json'
         Write-JsonFile $probeFile @{
@@ -353,32 +396,40 @@ try {
     # Regions, including the Region-less ARN global profiles use; the condition allows those only
     # when the call goes through the selected profile. InvokeSelectedModel covers a plain
     # foundation-model ID and is harmless for a profile ID.
-    $bedrockActions = @('bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream')
-    if ($ModelId -like 'arn:*') {
-        $profileArn = $ModelId
-        $modelArn = $ModelId
+    if ($LlmProvider -eq 'Bedrock') {
+        $bedrockActions = @('bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream')
+        if ($ModelId -like 'arn:*') {
+            $profileArn = $ModelId
+            $modelArn = $ModelId
+        } else {
+            $profileArn = "arn:${partition}:bedrock:${Region}:${accountId}:inference-profile/$ModelId"
+            $modelArn = "arn:${partition}:bedrock:${Region}::foundation-model/$ModelId"
+        }
+        $bedrockPolicyFile = Join-Path $workDir 'bedrock-policy.json'
+        Write-JsonFile $bedrockPolicyFile @{
+            Version   = '2012-10-17'
+            Statement = @(
+                @{ Sid = 'InvokeSelectedProfile'; Effect = 'Allow'; Action = $bedrockActions; Resource = $profileArn },
+                @{
+                    Sid       = 'InvokeModelsThroughProfile'
+                    Effect    = 'Allow'
+                    Action    = $bedrockActions
+                    Resource  = @("arn:${partition}:bedrock:*::foundation-model/*", "arn:${partition}:bedrock:::foundation-model/*")
+                    Condition = @{ StringEquals = @{ 'bedrock:InferenceProfileArn' = $profileArn } }
+                },
+                @{ Sid = 'InvokeSelectedModel'; Effect = 'Allow'; Action = $bedrockActions; Resource = $modelArn }
+            )
+        }
+        $putPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'bedrock-invoke',
+            '--policy-document', "file://$bedrockPolicyFile")
+        if ($putPolicy.ExitCode -ne 0) { throw "Could not grant Bedrock access to ${roleName}:`n$($putPolicy.Error)" }
     } else {
-        $profileArn = "arn:${partition}:bedrock:${Region}:${accountId}:inference-profile/$ModelId"
-        $modelArn = "arn:${partition}:bedrock:${Region}::foundation-model/$ModelId"
+        # Azure OpenAI mode: the function doesn't call Bedrock, so drop any grant from a Bedrock deploy.
+        $removePolicy = Invoke-Aws @('iam', 'delete-role-policy', '--role-name', $roleName, '--policy-name', 'bedrock-invoke')
+        if ($removePolicy.ExitCode -ne 0 -and $removePolicy.Error -notmatch 'NoSuchEntity') {
+            Write-Warning "Could not remove the bedrock-invoke policy from ${roleName}: $($removePolicy.Error)"
+        }
     }
-    $bedrockPolicyFile = Join-Path $workDir 'bedrock-policy.json'
-    Write-JsonFile $bedrockPolicyFile @{
-        Version   = '2012-10-17'
-        Statement = @(
-            @{ Sid = 'InvokeSelectedProfile'; Effect = 'Allow'; Action = $bedrockActions; Resource = $profileArn },
-            @{
-                Sid       = 'InvokeModelsThroughProfile'
-                Effect    = 'Allow'
-                Action    = $bedrockActions
-                Resource  = @("arn:${partition}:bedrock:*::foundation-model/*", "arn:${partition}:bedrock:::foundation-model/*")
-                Condition = @{ StringEquals = @{ 'bedrock:InferenceProfileArn' = $profileArn } }
-            },
-            @{ Sid = 'InvokeSelectedModel'; Effect = 'Allow'; Action = $bedrockActions; Resource = $modelArn }
-        )
-    }
-    $putPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'bedrock-invoke',
-        '--policy-document', "file://$bedrockPolicyFile")
-    if ($putPolicy.ExitCode -ne 0) { throw "Could not grant Bedrock access to ${roleName}:`n$($putPolicy.Error)" }
     Write-Host "    $roleArn"
 
     # --- 3. Agent 365 secrets: AWS Secrets Manager, never CLI arguments or function settings ---
@@ -565,7 +616,11 @@ try {
     Write-Host ""
     Write-Host "==> Deployed to AWS." -ForegroundColor Green
     Write-Host "    Messaging endpoint: $messagingEndpoint"
-    Write-Host "    LLM:                Amazon Bedrock $ModelId ($Region)"
+    if ($LlmProvider -eq 'AzureOpenAI') {
+        Write-Host "    LLM:                Azure OpenAI deployment $($settings['AZURE_OPENAI_DEPLOYMENT'])"
+    } else {
+        Write-Host "    LLM:                Amazon Bedrock $ModelId ($Region)"
+    }
     Write-Host "    Console:            $consoleUrl > Web Functions (not Functions) > $FunctionName"
     Write-Host "    Logs:               aws logs tail /aws/lambda/web/$FunctionName --follow --region $Region"
     if (-not $UpdateA365Endpoint) {

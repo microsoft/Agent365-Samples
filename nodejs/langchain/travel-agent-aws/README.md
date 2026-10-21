@@ -372,14 +372,41 @@ Re-run it to ship code or setting changes; later runs publish a new revision beh
 | `-FunctionName` | `travelagentdw` | Web Function name; the IAM role is `<name>-exec` |
 | `-Region` | your AWS CLI Region | `AWS_REGION` / `AWS_DEFAULT_REGION` / `aws configure get region`, else `us-east-1`. Needs Lambda Web Functions + Bedrock (at launch: `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `ap-northeast-1`) |
 | `-ModelId` | `<geo>.amazon.nova-2-lite-v1:0` | Bedrock model or inference profile id. The default uses the `us.`, `eu.`, or `global.` profile matching `-Region` (`us.` profiles only work from US Regions) and works without any extra sign-up. For Claude, submit the Anthropic use-case form once, then use e.g. `us.anthropic.claude-sonnet-4-6` (new AWS accounts may not get the Claude 5.x models, such as `us.anthropic.claude-sonnet-5-5`, right away) |
+| `-LlmProvider` | `Bedrock` | `AzureOpenAI` uses an Azure AI Foundry / Azure OpenAI deployment instead of Bedrock (see below); `-ModelId` is then ignored |
 | `-AwsProfile` | default chain | AWS CLI profile to deploy with |
 | `-EnvFile` | `.env` | Settings to ship |
 | `-EndpointName` | `prod` | Web Function endpoint name |
 | `-TimeoutSeconds` | `300` | Per-request timeout (30–900); tool-heavy turns can run long |
 | `-SettingsOnly` | off | Publish the `-EnvFile` settings as a new revision that reuses the deployed code (no build or upload), e.g. after `a365 setup` writes new blueprint credentials. Also refreshes the Secrets Manager secret and the role's `bedrock-invoke` and `secrets-read` policies. The first deploy after upgrading from a version without Secrets Manager support must be a full deploy |
 | `-UpdateA365Endpoint` | off | Point the agent blueprint at the new endpoint |
-| `-SkipModelCheck` | off | Skip the Bedrock preflight call (keep it on for an account's first use of the model) |
+| `-SkipModelCheck` | off | Skip the model preflight call (Bedrock, or the Azure OpenAI deployment with `-LlmProvider AzureOpenAI`) |
 | `-TailLogs` | off | Stream logs after deploying |
+
+**Use Azure AI Foundry (Azure OpenAI) instead of Bedrock**
+
+New AWS accounts can start with Amazon Bedrock quotas of 0 in every Region until AWS reviews the
+account (calls fail with `ThrottlingException`). The agent can call an Azure OpenAI model deployment
+instead; the endpoint still runs on AWS Lambda. Add these to `.env` (from your Foundry or Azure
+OpenAI resource: **Keys and Endpoint**, and **Deployments**):
+
+```bash
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=<deployment name, e.g. gpt-4o-mini>
+AZURE_OPENAI_API_KEY=<key>
+# AZURE_OPENAI_API_VERSION=2024-12-01-preview
+```
+
+Then deploy (or switch an existing deployment) with:
+
+```powershell
+./deploy-aws.ps1 -LlmProvider AzureOpenAI -UpdateA365Endpoint
+./deploy-aws.ps1 -LlmProvider AzureOpenAI -SettingsOnly   # switch without rebuilding
+```
+
+The script checks the deployment with one call, stores the API key in the Secrets Manager secret
+(never in the function settings), and removes the role's `bedrock-invoke` policy. Switch back with
+`./deploy-aws.ps1 -SettingsOnly` (Bedrock is the default). Prompts and replies are then processed
+by Azure OpenAI, not AWS. The CloudFormation template supports Bedrock only.
 
 **Operate**
 
@@ -565,6 +592,7 @@ ToolingManifest.json     WorkIQ MCP servers (mcp_WordServer, mcp_OneDriveRemoteS
 | Missing `.env` or Agent 365 connection settings | Complete step 2 in this folder. Confirm the connection client ID, client secret, and tenant ID are populated; do not post their values in logs or issues. |
 | AWS sign-in or permission error | Run `aws login`, then `aws sts get-caller-identity`. The identity needs Web Functions, IAM, S3, CloudWatch Logs, and Bedrock permissions. |
 | Bedrock says the account is being verified | Wait for AWS account verification, then retry. `-SkipModelCheck` can deploy the endpoint earlier but does not make the model available. |
+| Every message fails with `ThrottlingException status=429` in the logs | The account's Bedrock quotas are 0 or too low (common for new accounts in every Region). Check with `aws service-quotas list-service-quotas --service-code bedrock --region <region>`, request an increase through Service Quotas or AWS Support, or deploy with `-LlmProvider AzureOpenAI`. |
 | Bedrock model access error | Use the Region-compatible inference profile. For Claude, complete the account's Anthropic use-case form and first-use Marketplace subscription requirements. |
 | Function is healthy but Teams is silent | Confirm the blueprint endpoint and Developer Portal notification URL match, the instance is approved, and the connection credentials belong to this blueprint. Tail CloudWatch logs while sending a message. |
 | Agent is missing from the Lambda **Functions** list | Select **Web Functions** in the correct Region instead. |
