@@ -2,8 +2,8 @@
 
 An AI Teammate built with **LangChain** on the **Microsoft Agent 365 SDK**. Give it a
 destination and travel dates and it plans the trip — flights, hotels, and restaurants —
-writes an **editable Word document** to OneDrive, shares the link with you, and can reply
-to **@mentions on Word comments**.
+writes an **editable Word document** to OneDrive, shares it with you (edit access) when your work
+account can be verified, and can reply to **@mentions on Word comments**.
 
 The messaging endpoint runs on **AWS Lambda Web Functions** and calls **Amazon Bedrock**
 using an execution role, without model API keys. Microsoft 365 continues to provide the
@@ -32,7 +32,8 @@ see the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.co
 - **Plans trips** — "Plan a 3-day trip to San Francisco on July 9 departing from Seattle"
   → searches 3 flights, 3 hotels, and breakfast/lunch/dinner restaurant picks.
 - **Creates editable documents** — writes the itinerary to a `.docx` in the agent's OneDrive
-  and shares an **editable** link with the requesting user (no "Request access").
+  and grants **edit** access to the verified requesting user only. If the requester can't be
+  verified, or the grant fails, the agent says so instead of creating a broader link.
 - **Replies to Word comments** — when you `@mention` the agent on a comment in a shared Word
   doc, it reads the document and posts a reply on that comment, then DMs you the reply in Teams.
 - **Remembers context** — per-conversation memory resolves follow-ups like "cheaper ones" or
@@ -137,10 +138,13 @@ tenant/blueprint configuration stay local and are ignored by Git.
    | `BEDROCK_REGION` / `BEDROCK_MAX_TOKENS` | Bedrock region (default `AWS_REGION`, then `us-east-1`) / max output tokens incl. model reasoning (default 8192) |
    | `connections__service_connection__settings__clientId` / `clientSecret` / `tenantId` | Blueprint connection for `/api/messages` auth; setup populates these three settings |
    | `agentic_*` | Agentic auth handler settings (written by `a365 setup all`) |
-   | `agent365Observability__agentId` | Agent blueprint id (observability) |
+   | `agent365Observability__agentId` | Agent instance id (`recipient.agenticAppId`), used on spans when the activity lacks it |
    | `agent365Observability__agentBlueprintId` | Blueprint id stamped on spans for blueprint-level activity |
    | `agent365Observability__tenantId` | Tenant id |
-   | `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` by default; cloud telemetry needs separate configuration and validation |
+   | `ENABLE_A365_OBSERVABILITY_EXPORTER` | `false` by default. When `true`, spans export over the S2S endpoint with an app-only token and the four `AGENT365_OBS_*` settings below are required (startup fails if any is missing or a placeholder) |
+   | `AGENT365_OBS_TENANT_ID` / `AGENT365_OBS_AGENT_ID` | Tenant and agent **instance** client id that export is allowed for; must match the activity's `recipient.tenantId` / `recipient.agenticAppId` |
+   | `AGENT365_OBS_BLUEPRINT_CLIENT_ID` / `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` | Blueprint credential used only to acquire the app-only OBS token (FMI chain). Store the secret in AWS Secrets Manager / SSM for production rather than a plain Lambda environment variable |
+   | `SHARE_SEND_INVITATION` | `true` by default; set `false` to grant edit access to created documents without the OneDrive invitation email |
 
    > `a365 setup all --aiteammate --m365` populates most of the A365 keys automatically.
    > To use Amazon Bedrock locally, set `LLM_PROVIDER=bedrock` and `BEDROCK_MODEL_ID`; the AWS SDK
@@ -169,7 +173,13 @@ npm start       # node dist/index.js  (listens on http://127.0.0.1:3978)
 For live-reload development:
 
 ```bash
-npm run dev
+npm run dev   # tsx watch (ESM TypeScript, auto-restart, Node inspector on 9239)
+```
+
+Unit tests (tool-result parsing and the MCP tool policy, no credentials needed):
+
+```bash
+npm test
 ```
 
 ## Key features
@@ -182,38 +192,75 @@ Three LangChain tools ([src/tools/](src/tools/)) back the planning flow — `Sea
 
 ### Editable Word documents + sharing
 
-When you ask the agent to "create a Word document I can edit and share the link with me", it
-uses the `mcp_WordServer` / `mcp_OneDriveRemoteServer` tools to create the `.docx`, then grants
-**edit** access. Because the document lives in the agent's OneDrive, the agent resolves the
-**requesting user's UPN** (see below) and shares with that user — preferring an
-organization-scoped editable link so the user never hits "Request access".
+When you ask for a Word document, the model creates the `.docx` with `mcp_WordServer`
+`CreateDocument` in the **agent's** OneDrive. After the turn, the code (not the model) reads only
+this turn's tool results for created files — each MCP text block separately, since MCP-Platform
+appends a `CorrelationId` block to every result — and grants **you** write access by calling
+`mcp_OneDriveRemoteServer` `shareFileOrFolderInMyOnedrive` with `roles: ["write"]`. The reply ends
+with the document link and the real outcome — or an explicit failure message (including when a
+document was created but could not be identified or shared).
+
+- **Who it is shared with** — only the verified requester. Your UPN comes from the authenticated
+  agents channel or from the Teams roster entry whose AAD object id matches yours; it is never
+  inferred from a display name. If it can't be verified, the document is not shared and the agent
+  tells you so.
+- **No broader fallback** — the agent never creates organization-wide or anonymous links, and it
+  does not broaden access when a grant fails. To give other people access, open the document (you
+  have edit access) and use **Share**.
+- **Code-enforced tool policy** — the agent's OneDrive holds documents for **everyone** who uses this
+  agent instance, so the model only receives `CreateDocument` (with its `shareWith` parameter
+  removed), `GetDocumentContent`, `ReplyToComment`, `AddComment`, and `createSmallTextFileInMyOnedrive`
+  ([src/mcp-tool-policy.ts](src/mcp-tool-policy.ts)). OneDrive list, search, read, move, rename,
+  delete and share tools are withheld from the model; the share tool is called only by code, for an
+  item created in the current turn. Word tools that take a document URL can reach any document the
+  agent's account can open, so treat document links as sensitive.
+- **Requirements** — the OneDrive share tool accepts email/UPN recipients only (not AAD object ids),
+  the Teams roster must return `userPrincipalName` or `email` for you, and your tenant's
+  SharePoint/OneDrive sharing and sensitivity-label policies must allow the in-organization invite.
 
 ### Word `@mention` comment replies
 
-`@mention`ing the agent on a comment in a shared Word document is delivered on the wpx/agents
-channel. The agent ([src/agent.ts](src/agent.ts)) reads the `WpxComment` notification
-(`subjectCommentId` / `initiatingCommentId`), reads the document once, posts a reply on **that**
-comment via the Word reply tool (verifying the tool actually ran before reporting success), and
-proactively DMs you the reply in Teams.
+`@mention`ing the agent on a comment in a shared Word document is delivered on the agents
+channel as a `WpxComment` notification. Only that combination (agents channel + `WpxComment`
+entity) takes the Word path; ordinary Teams `@mentions` are handled as normal chat. The agent
+([src/agent.ts](src/agent.ts)) reads the document once, posts a reply on **that** comment via
+`ReplyToComment`, and DMs you in Teams. The DM says "I replied" only if `ReplyToComment` ran in
+this turn, targeted the notified comment id, and succeeded; otherwise it says the reply didn't go
+through. If the notification carries no comment id, the agent does not reply in Word and DMs you that
+it couldn't identify the comment.
+
+### Identity & proactive messages
+
+Proactive DM routing, UPN resolution, and the MCP agent cache are keyed by tenant + agent instance
++ AAD object id or verified UPN — never by display name. A Word comment DM requires that you have
+messaged the agent in a Teams 1:1 (`personal`) chat since the current Lambda instance started (the
+maps are in memory; use durable storage such as DynamoDB keyed the same way for production). Group
+chats, channels and conversations without a `personal` type are never stored as DM targets. Without
+a verified mapping the DM is skipped and logged rather than sent to a guessed user.
+
+Logs record only lengths, entity/attachment types, tool names and status — not message text,
+display names, document URLs or raw tool payloads.
 
 ### Observability
 
 A365 OpenTelemetry is wired in [src/index.ts](src/index.ts) and the per-turn
 `InvokeAgentScope` in [src/agent.ts](src/agent.ts). The code attaches the **agent id**,
-**blueprint id**, and, when resolved, the **caller's UPN**.
-The supplied `.env.example` and browser stack disable cloud export. Enabling the exporter
-alone does not verify MAC Activity or Defender reporting; configure the supported telemetry
-authentication for your environment and validate it separately.
+**blueprint id**, and, when verified, the **caller's UPN**. Export uses the S2S endpoint with an
+app-only token for the agent instance ([src/observability-token-service.ts](src/observability-token-service.ts));
+it never reuses the user's delegated token. The supplied `.env.example` and browser stack disable
+cloud export. Enabling the exporter alone does not verify MAC Activity or Defender reporting;
+validate it separately.
 
-> The caller's UPN is present in `from.id` on @mention / email turns but not on direct 1:1
-> chats (which carry only the Teams MRI). The agent resolves it from the conversation roster via
-> the connector client and bridges it across channels for the same user.
+> The caller's UPN is present in `from.id` on agents-channel (Word comment) turns but not on direct
+> 1:1 chats (which carry only the Teams MRI). The agent resolves it from the conversation roster via
+> the connector client and accepts it only when the roster member's AAD object id matches the caller's.
 
 ### Conversation memory & MCP caching
 
 A process-wide LangGraph `MemorySaver` keyed by `thread_id` gives each conversation memory, and
-the MCP-enabled agent is cached per user (short TTL) so the ~6–10s Word/OneDrive MCP handshake is
-paid once, not every turn ([src/client.ts](src/client.ts)).
+the MCP-enabled agent is cached per tenant + agent instance + caller (short TTL) so the ~6–10s
+Word/OneDrive MCP handshake is paid once, not every turn ([src/client.ts](src/client.ts)). Each turn's
+input message carries a unique id, so tool checks only see tools executed in that turn.
 
 ## Deploying to AWS
 
@@ -388,11 +435,16 @@ src/
   index.ts               Entry point — observability init, Express host, /api/messages
   lambda.ts              AWS Lambda entry — loads require-esm-compat.ts, then index.ts
   require-esm-compat.ts  Lets CommonJS dependencies require() ESM-only packages on Lambda
-  agent.ts               AgentApplication: message + notification handlers, scopes, sharing, UPN
-  client.ts              LangChain agent factory, system prompt, MCP wiring, per-user cache
+  agent.ts               AgentApplication: message + notification handlers, scopes, document sharing
+  client.ts              LangChain agent factory, system prompt, MCP wiring, identity-scoped cache
+  tool-results.ts        Reads this turn's tool results (multi-block MCP output) and created files
+  mcp-tool-policy.ts     Allow-list of MCP tools the model may call (no OneDrive list/read/delete/share)
+  identity.ts            Tenant/agent/caller-scoped identity keys (no display names)
+  observability-token-service.ts  App-only OBS token resolver for S2S export
   mcp-tool-service.ts    Shared WorkIQ MCP tool registration service
   tools/                 SearchFlights / SearchHotels / SearchRestaurants
   agent/                 travelAgent helper
+test/                    Unit tests (`npm test`)
 manifest/                Teams/A365 app manifest + icons (color.png, outline.png)
 deploy-aws.ps1           AWS Lambda Web Functions + Amazon Bedrock deploy script
 aws/
@@ -415,7 +467,11 @@ ToolingManifest.json     WorkIQ MCP servers (mcp_WordServer, mcp_OneDriveRemoteS
 | Bedrock model access error | Use the Region-compatible inference profile. For Claude, complete the account's Anthropic use-case form and first-use Marketplace subscription requirements. |
 | Function is healthy but Teams is silent | Confirm the blueprint endpoint and Developer Portal notification URL match, the instance is approved, and the connection credentials belong to this blueprint. Tail CloudWatch logs while sending a message. |
 | Agent is missing from the Lambda **Functions** list | Select **Web Functions** in the correct Region instead. |
-| Word comment reply has no proactive Teams message | Chat directly with the agent first so it can store your personal conversation reference. The in-memory reference resets after a cold start. |
+| Word comment reply has no proactive Teams message | Chat directly with the agent first so it can store your personal conversation reference. The in-memory reference resets after a cold start. Look for `[Proactive] No verified 1:1 mapping` in the logs. |
+| Document created but you see "Request access", or the reply says it could not grant access | Check the `[Share]` log lines and the error in the reply. Confirm `shareFileOrFolderInMyOnedrive` appears in the `[MCP] Withheld from model` log (the code calls it directly), that `[Caller] ... verifiedUpn=present`, and that tenant sharing policy allows the invite. |
+| Reply says a document was created but couldn't be identified | The create tool's result had no driveItem id in any text block or structured content. Check the `[Tools]` and `[Share]` log lines; nothing was shared and no broader link was created. |
+| Reply says your work account couldn't be verified | The Teams roster did not return a UPN/email with a matching AAD object id. Chat 1:1 with the agent (not in a group) and retry. |
+| Startup fails with `AGENT365_OBS_...` | `ENABLE_A365_OBSERVABILITY_EXPORTER=true` requires all four `AGENT365_OBS_*` settings with real values; set it to `false` to run without cloud export. |
 
 ## Additional resources
 

@@ -40,3 +40,7 @@ jobs:
 
     - name: Build
       run: npm run build
+
+    - name: Test
+      if: matrix.sample == 'travel-agent-aws'
+      run: npm test

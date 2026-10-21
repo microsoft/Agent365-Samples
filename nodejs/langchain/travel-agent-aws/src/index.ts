@@ -4,13 +4,11 @@
 import { configDotenv } from 'dotenv';
 configDotenv();
 
-// A365 Observability — best-effort instrumentation (verify against official sample)
-// A365 auth mode: agentic-user
-import {
-  useMicrosoftOpenTelemetry,
-  AgenticTokenCacheInstance,
-} from '@microsoft/opentelemetry';
+// A365 Observability — exports over the S2S endpoint with an app-only token for the agent
+// instance (observability-token-service.ts). Export is off unless ENABLE_A365_OBSERVABILITY_EXPORTER=true.
+import { useMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
 import { resourceFromAttributes } from '@opentelemetry/resources';
+import { createObservabilityTokenResolver } from './observability-token-service.js';
 
 useMicrosoftOpenTelemetry({
   enableConsoleExporters: process.env.NODE_ENV !== 'production' && !process.env.WEBSITE_SITE_NAME,
@@ -19,9 +17,11 @@ useMicrosoftOpenTelemetry({
   }),
   a365: {
     enabled: true,
-    enableObservabilityExporter: process.env.ENABLE_A365_OBSERVABILITY_EXPORTER === 'true',
-    tokenResolver: (agentId, tenantId) =>
-      AgenticTokenCacheInstance.getObservabilityToken(agentId, tenantId) ?? '',
+    useS2SEndpoint: true,
+    enableObservabilityExporter: ['true', '1', 'yes', 'on'].includes((process.env.ENABLE_A365_OBSERVABILITY_EXPORTER ?? '').toLowerCase()),
+    // Published 1.4.0+ can replay stored legacy route choices; keep replay disabled.
+    durableDelivery: { enabled: false },
+    tokenResolver: createObservabilityTokenResolver(),
   },
   instrumentationOptions: { langchain: {} },
 });
@@ -82,11 +82,11 @@ if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ENDPOINT ==
         },
       } as any;
       console.log('[Test] Creating client...');
-      const client = await getClient(mockAuth, 'auth', mockTurnContext, 'Test');
+      const client = await getClient(mockAuth, 'auth', mockTurnContext);
       const prompt = _req.body?.prompt || 'Search for 3 hotels in Paris from June 1 to June 5, 2026';
-      console.log(`[Test] Invoking LLM with prompt: ${prompt.slice(0, 80)}`);
+      console.log(`[Test] Invoking LLM (prompt length ${prompt.length})`);
       const response = await client.invoke(prompt);
-      console.log(`[Test] Response (${response?.length} chars): ${response?.slice(0, 200)}`);
+      console.log(`[Test] Response (${response?.length} chars)`);
       res.json({ success: true, response: response?.slice(0, 500) });
     } catch (err: any) {
       console.error('[Test] Error:', err.message);
@@ -98,11 +98,10 @@ if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ENDPOINT ==
 server.use(authorizeJWT(authConfig));
 
 server.post('/api/messages', async (req: Request, res: Response) => {
-  const b = (req.body ?? {}) as { type?: string; text?: string; from?: { name?: string } };
+  // Shapes only — no message text or sender names in the logs.
+  const b = (req.body ?? {}) as { type?: string; channelId?: string; text?: string };
   console.log(
-    `[/api/messages] ${req.method} type=${b.type} from=${b.from?.name} text=${(b.text ?? '')
-      .toString()
-      .slice(0, 60)}`
+    `[/api/messages] ${req.method} type=${b.type} channel=${b.channelId} textLength=${(b.text ?? '').toString().length}`
   );
   try {
     await adapter.process(req, res, async (context) => {
