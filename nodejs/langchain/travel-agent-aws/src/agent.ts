@@ -30,7 +30,7 @@ import {
   callerUpnKey,
   isEmailLike,
 } from './identity.js';
-import { shareFailureNote, spanAgentId, turnCorrelationId, wordCommentFrom } from './activity-helpers.js';
+import { entityShape, shareFailureNote, spanAgentId, turnCorrelationId, wordCommentFrom, wordCommentIds } from './activity-helpers.js';
 import { untrustedBlock } from './prompt-safety.js';
 import { debug, logError, logWarn } from './log.js';
 // A365 Observability — the app-only OBS token is acquired by the resolver configured in index.ts.
@@ -243,13 +243,15 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
             const cleanText = userMessage.replace(/<at>.*?<\/at>/gi, '').trim();
             const senderName = from?.name ?? 'a user';
 
-            // Prefer the subject comment (the exact reply the user @mentioned us on); fall
-            // back to the thread root.
+            // Reply under the thread's top-level comment (ReplyToComment posts to
+            // .../comments/{id}/replies); the @mentioned reply id is allowed too as a fallback.
             const documentId = wordComment.documentId ?? '';
-            const commentId = wordComment.subjectCommentId ?? wordComment.initiatingCommentId ?? '';
-            for (const id of [wordComment.subjectCommentId, wordComment.initiatingCommentId]) {
+            const ids = wordCommentIds(wordComment);
+            const commentId = ids.threadId ?? '';
+            for (const id of [ids.threadId, ids.subjectId]) {
               if (id) commentIds.add(id);
             }
+            if (!commentIds.size) console.warn(`[Word] WpxComment carries no comment id; fields: ${entityShape(wordComment)}`);
             // Only this notification's document and comment(s) are reachable by the Word tools. When
             // the notification has no comment id, the guard finds the comment by its exact text.
             const mentionNames = [
@@ -263,7 +265,10 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
             canMatchByText = !!normalizeCommentText(cleanText, mentionNames);
             const idBlock =
               (documentId ? `documentId: ${documentId}\n` : '') +
-              (commentId ? `commentId (reply to THIS comment): ${commentId}\n` : '');
+              (commentId ? `commentId (the comment thread to reply in): ${commentId}\n` : '') +
+              (ids.subjectId && ids.subjectId !== commentId
+                ? `If ReplyToComment fails with that id, retry once with commentId ${ids.subjectId}.\n`
+                : '');
             const replyStep = commentId
               ? `2. Reply to THAT comment with mcp_WordServer ReplyToComment, using commentId above — never AddComment, never start a new thread.\n`
               : `2. The notification did not include the comment id. In the comments that GetDocumentContent returned, find the ONE ` +

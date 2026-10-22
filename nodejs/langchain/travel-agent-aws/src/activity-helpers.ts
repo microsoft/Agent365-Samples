@@ -16,6 +16,34 @@ export function wordCommentFrom(activity: any): WpxComment | undefined {
   return (activity?.entities ?? []).find((e: any) => isWpxComment(e)) as WpxComment | undefined;
 }
 
+export interface WordCommentIds {
+  // The thread's top-level comment: the id ReplyToComment posts under (.../comments/{id}/replies).
+  threadId?: string;
+  // The comment or reply the user @mentioned the agent in.
+  subjectId?: string;
+}
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+// Comment ids from a WpxComment entity. Besides the SDK's initiatingCommentId/subjectCommentId,
+// notifications have been seen with commentId/parentCommentId, and the OData path
+// (…/comments('<thread>')/replies('<reply>') or …/comments/<thread>/replies/<reply>) names both.
+export function wordCommentIds(entity: any): WordCommentIds {
+  const odata = str(entity?.odataId) ?? str(entity?.['@odata.id']) ?? str(entity?.['odata.id']) ?? '';
+  const seg = (name: string) => new RegExp(`/${name}(?:\\('([^']+)'\\)|\\(([^)'/]+)\\)|/([^/?#()]+))`, 'i').exec(odata);
+  const fromPath = (m: RegExpExecArray | null) => (m ? decodeURIComponent(m[1] ?? m[2] ?? m[3]) : undefined);
+  const pathThread = fromPath(seg('comments'));
+  const pathReply = fromPath(seg('replies'));
+  const threadId = str(entity?.initiatingCommentId) ?? str(entity?.parentCommentId) ?? pathThread;
+  const subjectId = str(entity?.subjectCommentId) ?? str(entity?.commentId) ?? pathReply ?? threadId;
+  return { threadId: threadId ?? subjectId, subjectId };
+}
+
+// Field names (never values) of an entity, for diagnosing notification shapes in production logs.
+export function entityShape(entity: any): string {
+  return entity && typeof entity === 'object' ? Object.keys(entity).sort().join(',') : typeof entity;
+}
+
 // Shown to the user as "Reference: <id>" and logged server-side, so the two can be matched.
 export function turnCorrelationId(activity: any): string {
   const id = activity?.id;

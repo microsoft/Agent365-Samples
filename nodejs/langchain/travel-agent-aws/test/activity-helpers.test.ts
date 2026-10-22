@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAgentsChannel, spanAgentId, turnCorrelationId, wordCommentFrom } from '../src/activity-helpers.ts';
+import { entityShape, isAgentsChannel, spanAgentId, turnCorrelationId, wordCommentFrom, wordCommentIds } from '../src/activity-helpers.ts';
 import { stableCallerKeys } from '../src/identity.ts';
 
 const wpx = { type: 'WpxComment', documentId: 'doc', subjectCommentId: 'c1' };
@@ -51,4 +51,28 @@ test('caller keys need a stable id and are scoped by tenant and agent instance',
   assert.equal(a.length, 1);
   assert.notDeepEqual(a, otherTenant);
   assert.notDeepEqual(a, otherAgent);
+});
+
+test('wordCommentIds targets the thread and keeps the @mentioned reply', () => {
+  assert.deepEqual(wordCommentIds({ initiatingCommentId: 'T1', subjectCommentId: 'R1' }), { threadId: 'T1', subjectId: 'R1' });
+  assert.deepEqual(wordCommentIds({ subjectCommentId: 'C1' }), { threadId: 'C1', subjectId: 'C1' });
+  assert.deepEqual(wordCommentIds({ parentCommentId: 'T2', commentId: 'R2' }), { threadId: 'T2', subjectId: 'R2' });
+  assert.deepEqual(wordCommentIds({ commentId: 'C3' }), { threadId: 'C3', subjectId: 'C3' });
+});
+
+test('wordCommentIds reads ids from the OData path', () => {
+  assert.deepEqual(
+    wordCommentIds({ odataId: "/drives/d1/items/i1/document/comments('T4')/replies('R4')" }),
+    { threadId: 'T4', subjectId: 'R4' });
+  assert.deepEqual(
+    wordCommentIds({ odataId: '/drives/d1/items/i1/document/comments/T5%2B1/replies/R5' }),
+    { threadId: 'T5+1', subjectId: 'R5' });
+  assert.deepEqual(wordCommentIds({ '@odata.id': '/drives/d/items/i/document/comments(T6)' }), { threadId: 'T6', subjectId: 'T6' });
+  assert.deepEqual(wordCommentIds({ type: 'WpxComment', documentId: 'doc' }), { threadId: undefined, subjectId: undefined });
+  assert.deepEqual(wordCommentIds(undefined), { threadId: undefined, subjectId: undefined });
+});
+
+test('entityShape lists field names only', () => {
+  assert.equal(entityShape({ type: 'WpxComment', documentId: 'secret-id', b: 1 }), 'b,documentId,type');
+  assert.equal(entityShape(undefined), 'undefined');
 });
