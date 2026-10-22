@@ -6,6 +6,7 @@
 a365.config.json
 a365.generated.config.json
 a365*.backup*.json
+a365*.json.bak*
 .a365-workspace-detection.local.json
 
 # Build output & dependencies

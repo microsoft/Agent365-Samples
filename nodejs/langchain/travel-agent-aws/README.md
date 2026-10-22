@@ -492,7 +492,58 @@ The role gets an extra inline policy, `tenant-secrets-read`: `secretsmanager:Get
 `travelagent/tenants/*` only, plus `ListSecrets`/`BatchGetSecretValue` (which AWS doesn't scope by
 resource). Note the printed messaging endpoint.
 
-**2. Register each tenant** (whoever sets up that tenant; needs `a365`, Azure CLI, and AWS CLI access):
+**2. Onboard tenants.** For many tenants from one machine, use [add-tenant.ps1](add-tenant.ps1): one
+command per tenant, run from the folder you deployed from. First check the backend without changing
+anything:
+
+```powershell
+.\add-tenant.ps1 -Name contoso -Tenant contoso.onmicrosoft.com -Region us-east-2 -PrepareOnly
+```
+
+Then, for each tenant:
+
+```powershell
+.\add-tenant.ps1 -Name contoso -Tenant contoso.onmicrosoft.com -Region us-east-2
+```
+
+`-Name` is a short label (letters, digits, `-`) used for the tenant's folder and the agent name
+(`Travel-<Name>`, or pass `-AgentName`). The script:
+
+1. finds the backend's messaging endpoint and checks that it serves `travelagent/tenants/`;
+2. signs Azure CLI in to the tenant (a browser window opens; use an account that can run `a365 setup`);
+3. copies this sample, without any `.env`, `a365*.json`, package or build output, to
+   `%USERPROFILE%\travel-agent-tenants\<Name>` (`-TenantsRoot` changes the parent; it must be outside
+   the git repository, so a tenant's files can't be committed);
+4. runs `register-tenant.ps1` there: `a365 setup all`, the Secrets Manager registration, and the
+   blueprint's messaging endpoint; then removes the client secret from that folder's `.env` (it stays
+   only in Secrets Manager; `-KeepLocalSecret` keeps it);
+5. runs `a365 publish`, which builds `<folder>\manifest\manifest.zip` named `Travel-<Name> Blueprint`;
+6. appends the tenant to `travel-agent-tenants\tenants.csv`.
+
+To onboard a list, put `Name,Tenant` rows in a CSV and loop; each tenant still opens its own sign-in:
+
+```powershell
+Import-Csv .\tenants-to-add.csv | ForEach-Object {
+    .\add-tenant.ps1 -Name $_.Name -Tenant $_.Tenant -Region us-east-2
+    if ($LASTEXITCODE -ne 0) { Write-Warning "$($_.Name) did not finish; see the message above." }
+}
+```
+
+If a tenant stops part-way, the script says how to finish it in that tenant's folder
+(`register-tenant.ps1 -SkipSetup`, then `a365 publish --aiteammate`); re-running `add-tenant.ps1` for
+the same name refuses to overwrite the folder.
+
+Then, in each tenant, an admin of that tenant completes the steps no script can do for them:
+
+1. [Microsoft 365 admin center](https://admin.microsoft.com) > **Agents** > **All agents** >
+   **Upload custom agent**: upload that tenant's `manifest.zip`, then approve the agent. To replace a
+   package, raise `version` in `manifest\manifest.json` and run `a365 publish --aiteammate` again.
+2. Give the agent's user a license that includes OneDrive, and create its OneDrive:
+   `Request-SPOPersonalSite -UserEmails <agent user UPN>` (SharePoint Online PowerShell).
+3. In Teams, hire the agent and send it a message.
+
+To register one tenant by hand instead (for example, a tenant admin setting up their own agent), run
+`register-tenant.ps1` in a copy of this folder that has no `.env` or `a365*.json` from another tenant:
 
 ```powershell
 az login --tenant contoso.onmicrosoft.com
@@ -503,8 +554,7 @@ az login --tenant contoso.onmicrosoft.com
 It runs `a365 setup all`, stores the blueprint's credentials as `travelagent/tenants/<tenantId>/<blueprintId>`
 from an owner-only temp file, points the blueprint at the shared endpoint, and (with
 `-RemoveLocalSecret`) blanks the secret in the local `.env`. Use `-SkipSetup` to register an agent that
-`a365 setup` already created. Then complete the usual per-tenant steps: approve the agent, give the
-agent user a license that includes OneDrive, and hire it in Teams.
+`a365 setup` already created.
 
 Give each person who registers tenants write-only access to **their own tenant's** registrations (no
 read, and no access to other tenants' names):
@@ -519,12 +569,23 @@ read, and no access to other tenants' names):
 If one team registers every tenant, scope it to `travelagent/tenants/*` instead.
 
 **3. Pick up new registrations.** Running environments keep the tenant list they loaded at cold start.
-New environments load the latest list automatically; to serve a new tenant right away, publish a new
-revision:
+New environments load the latest list automatically; to serve new tenants right away, publish a new
+revision once per batch: run the same command as step 1 with `-SettingsOnly` added (keep
+`-LlmProvider`, which otherwise defaults to Bedrock):
 
 ```powershell
-.\deploy-aws.ps1 -Region us-east-2 -TenantSecretPrefix travelagent/tenants/ -SettingsOnly
+.\deploy-aws.ps1 -Region us-east-2 -TenantSecretPrefix travelagent/tenants/ -LlmProvider AzureOpenAI -SettingsOnly
 ```
+
+Check that the backend loaded them all, and list the registrations:
+
+```powershell
+aws logs tail /aws/lambda/web/travelagentdw --since 15m --region us-east-2 | Select-String "\[Tenants\]"
+aws secretsmanager list-secrets --region us-east-2 --filters Key=name,Values=travelagent/tenants/ --query "SecretList[].Name"
+```
+
+The log line reads `[Tenants] <n> tenants, <n> blueprints routed by audience`; a `[Tenants] skipped`,
+`could not read` or `conflicting registrations` line names a registration to fix.
 
 **Operate.** Offboard a tenant by deleting its secret (`aws secretsmanager delete-secret --secret-id
 travelagent/tenants/<tenantId>/<blueprintId>`) and restarting as above. Rotate a blueprint secret with
@@ -657,6 +718,7 @@ test/                    Unit tests (`npm test`)
 manifest/                Generated by `a365 publish` (git-ignored, not committed)
 deploy-aws.ps1           AWS Lambda Web Functions + Amazon Bedrock deploy script
 register-tenant.ps1      Registers one tenant's blueprint with a shared multi-tenant backend
+add-tenant.ps1           Onboards one more tenant in one command (folder, agent, registration, package)
 aws/
   DEPLOY-GUIDE.md          Step-by-step guide for people deploying from a Launch Stack link
   travelagentdw.cfn.yaml   CloudFormation template for one-click (Launch Stack) deployments
@@ -682,7 +744,7 @@ ToolingManifest.json     WorkIQ MCP servers (mcp_WordServer, mcp_OneDriveRemoteS
 | Word comment reply has no proactive Teams message | Chat directly with the agent first so it can store your personal conversation reference. The in-memory reference resets after a cold start and is not shared between concurrent environments. Look for `[Proactive] No verified 1:1 mapping` in the logs. |
 | Startup fails with `Failed to load settings from A365_SECRETS_ARN` | The function couldn't read its Secrets Manager secret. Confirm `travelagentdw/agent365` exists in the function's Region and that the `travelagentdw-exec` role has the `secrets-read` policy, then re-run `.\deploy-aws.ps1 -SettingsOnly`. |
 | Startup fails with `Failed to load tenant registrations` | Multi-tenant mode found no valid registration or couldn't read them. Check the `[Tenants]` log lines, that secrets exist under the prefix in the function's Region, and that the role has the `tenant-secrets-read` policy (re-run `deploy-aws.ps1 -TenantSecretPrefix ...`). |
-| One tenant's agent gets 401s while others work | Its blueprint isn't registered, or the backend hasn't restarted since registration. Run `register-tenant.ps1 -SkipSetup` in that tenant's folder, then `.\deploy-aws.ps1 -TenantSecretPrefix <prefix> -SettingsOnly`. |
+| One tenant's agent gets 401s while others work | Its blueprint isn't registered, or the backend hasn't restarted since registration. Run `register-tenant.ps1 -SkipSetup` in that tenant's folder, then re-run your deploy command with `-SettingsOnly` added (keep `-TenantSecretPrefix` and `-LlmProvider`). |
 | Health check passes but every message fails | Check CloudWatch for `[LLM] Configuration error` (for example, a missing `BEDROCK_MODEL_ID`), fix the setting, and re-run with `-SettingsOnly`. |
 | Agent says "Access denied" for a Word document | The Word tools only work on documents the agent created for you (in the same warm environment, within 24 hours) or on the document from the comment you @mentioned it in. Ask the agent to create the document, or @mention it on a comment in that document. |
 | The user sees "Sorry — ..." with a reference id | Search the CloudWatch logs for that reference id to find the server-side error. |

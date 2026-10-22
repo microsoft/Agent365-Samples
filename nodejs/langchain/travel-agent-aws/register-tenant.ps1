@@ -18,8 +18,8 @@
       5. With -RemoveLocalSecret, blanks the client secret in .env afterwards.
 
     The backend (deploy-aws.ps1 -TenantSecretPrefix <SecretPrefix>) loads every registration at
-    cold start. To serve a new registration immediately, the backend owner runs
-    `.\deploy-aws.ps1 -TenantSecretPrefix <SecretPrefix> -SettingsOnly` (it publishes a new revision).
+    cold start. To serve a new registration immediately, the backend owner re-runs their deploy command
+    with -SettingsOnly added, keeping its -LlmProvider (it publishes a new revision).
 
 .PREREQUISITES
     - Agent 365 CLI (a365), Azure CLI signed in to the agent's tenant, PowerShell 7 for a365
@@ -200,8 +200,9 @@ try {
 
     Write-Host ""
     Write-Host "==> Registered." -ForegroundColor Green
-    Write-Host "    The backend serves this blueprint after its next cold start. To serve it now, the backend owner runs:"
-    Write-Host "      .\deploy-aws.ps1 -Region $Region -TenantSecretPrefix $SecretPrefix -SettingsOnly"
+    Write-Host "    The backend serves this blueprint after its next cold start. To serve it now, the backend owner re-runs"
+    Write-Host "    their deploy command with -SettingsOnly added (keep its -LlmProvider), for example:"
+    Write-Host "      .\deploy-aws.ps1 -Region $Region -TenantSecretPrefix $SecretPrefix -LlmProvider <provider> -SettingsOnly"
 } catch {
     Write-Host ""
     Write-Host "Registration stopped: $($_.Exception.Message)" -ForegroundColor Red
