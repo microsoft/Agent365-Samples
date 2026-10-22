@@ -373,6 +373,8 @@ Re-run it to ship code or setting changes; later runs publish a new revision beh
 | `-Region` | your AWS CLI Region | `AWS_REGION` / `AWS_DEFAULT_REGION` / `aws configure get region`, else `us-east-1`. Needs Lambda Web Functions + Bedrock (at launch: `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, `ap-northeast-1`) |
 | `-ModelId` | `<geo>.amazon.nova-2-lite-v1:0` | Bedrock model or inference profile id. The default uses the `us.`, `eu.`, or `global.` profile matching `-Region` (`us.` profiles only work from US Regions) and works without any extra sign-up. For Claude, submit the Anthropic use-case form once, then use e.g. `us.anthropic.claude-sonnet-4-6` (new AWS accounts may not get the Claude 5.x models, such as `us.anthropic.claude-sonnet-5-5`, right away) |
 | `-LlmProvider` | `Bedrock` | `AzureOpenAI` uses an Azure AI Foundry / Azure OpenAI deployment instead of Bedrock (see below); `-ModelId` is then ignored |
+| `-TenantSecretPrefix` | none | Multi-tenant mode: serve every blueprint registered with `register-tenant.ps1` under this Secrets Manager prefix, e.g. `travelagent/tenants/` (see [One backend for many tenants](#one-backend-for-many-tenants-multi-tenant-mode)) |
+| `-DisableMultiTenant` | off | Turn a multi-tenant backend back into a single-tenant one |
 | `-AwsProfile` | default chain | AWS CLI profile to deploy with |
 | `-EnvFile` | `.env` | Settings to ship |
 | `-EndpointName` | `prod` | Web Function endpoint name |
@@ -458,6 +460,85 @@ Functions in that account and Region; do not delete it while another Web Functio
 > [src/require-esm-compat.ts](src/require-esm-compat.ts), then `secrets.ts` (settings from Secrets
 > Manager), then the app. To reproduce Lambda's
 > behavior locally, run `node --no-experimental-require-module dist/lambda.js`.
+
+### One backend for many tenants (multi-tenant mode)
+
+One deployment can serve agent blueprints from many Microsoft 365 tenants (for example, one agent
+per customer or per lab participant). Each blueprint keeps its own credentials, registered once in
+AWS Secrets Manager; nobody copies secrets by hand.
+
+**How it works.** Every registration is a secret named `<prefix><tenantId>/<blueprintId>` holding
+`{"tenantId","blueprintId","clientSecret"}`. At cold start, [src/secrets.ts](src/secrets.ts) reads all
+secrets under `A365_TENANT_SECRETS_PREFIX`, and [src/tenant-registry.ts](src/tenant-registry.ts) turns
+each into an Agents SDK connection plus a `connectionsMap` entry whose `audience` is the blueprint id.
+The SDK then accepts an incoming request only if its token was issued for a registered blueprint, and
+uses the same blueprint for replies and agent-user tokens (WorkIQ, Word, OneDrive). The app also
+rejects (403) an activity whose tenant differs from the tenant registered for the token's blueprint.
+A registration must be named exactly `<prefix><tenantId>/<blueprintId>` for the ids inside it. If two
+registrations name the same blueprint, the backend keeps only the one whose credentials can get a token
+as that blueprint in its tenant (proving ownership); if that doesn't settle it, both are skipped and
+logged as a conflict. `agentic_altBlueprintConnectionName` is removed in this mode
+because it pins every agent token to one blueprint. Caches, proactive-DM references and the
+document-access guard are already keyed by tenant and agent.
+
+**1. Deploy the shared backend once** (from any tenant's folder, or with a `.env` that has only the
+non-connection settings):
+
+```powershell
+.\deploy-aws.ps1 -Region us-east-2 -TenantSecretPrefix travelagent/tenants/ -LlmProvider AzureOpenAI
+```
+
+The role gets an extra inline policy, `tenant-secrets-read`: `secretsmanager:GetSecretValue` on
+`travelagent/tenants/*` only, plus `ListSecrets`/`BatchGetSecretValue` (which AWS doesn't scope by
+resource). Note the printed messaging endpoint.
+
+**2. Register each tenant** (whoever sets up that tenant; needs `a365`, Azure CLI, and AWS CLI access):
+
+```powershell
+az login --tenant contoso.onmicrosoft.com
+.\register-tenant.ps1 -AgentName Travel-contoso -Region us-east-2 `
+    -MessagingEndpoint https://<backend-url>/api/messages -RemoveLocalSecret
+```
+
+It runs `a365 setup all`, stores the blueprint's credentials as `travelagent/tenants/<tenantId>/<blueprintId>`
+from an owner-only temp file, points the blueprint at the shared endpoint, and (with
+`-RemoveLocalSecret`) blanks the secret in the local `.env`. Use `-SkipSetup` to register an agent that
+`a365 setup` already created. Then complete the usual per-tenant steps: approve the agent, give the
+agent user a license that includes OneDrive, and hire it in Teams.
+
+Give each person who registers tenants write-only access to **their own tenant's** registrations (no
+read, and no access to other tenants' names):
+
+```json
+{ "Version": "2012-10-17", "Statement": [{ "Effect": "Allow",
+  "Action": ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:DescribeSecret",
+             "secretsmanager:RestoreSecret", "secretsmanager:TagResource"],
+  "Resource": "arn:aws:secretsmanager:us-east-2:<account-id>:secret:travelagent/tenants/<tenantId>/*" }] }
+```
+
+If one team registers every tenant, scope it to `travelagent/tenants/*` instead.
+
+**3. Pick up new registrations.** Running environments keep the tenant list they loaded at cold start.
+New environments load the latest list automatically; to serve a new tenant right away, publish a new
+revision:
+
+```powershell
+.\deploy-aws.ps1 -Region us-east-2 -TenantSecretPrefix travelagent/tenants/ -SettingsOnly
+```
+
+**Operate.** Offboard a tenant by deleting its secret (`aws secretsmanager delete-secret --secret-id
+travelagent/tenants/<tenantId>/<blueprintId>`) and restarting as above. Rotate a blueprint secret with
+`a365` in that tenant, then `register-tenant.ps1 -SkipSetup` (a registration replaces the secret of a
+`.env` connection for the same blueprint and tenant). Plan capacity for all tenants together:
+LLM quota (Bedrock or Azure OpenAI tokens per minute) and **Maximum environments**. One backend is
+also one blast radius: a bad deploy affects every tenant. Once a backend is multi-tenant, every
+`deploy-aws.ps1` run must pass `-TenantSecretPrefix` (the script refuses otherwise); pass
+`-DisableMultiTenant` instead to turn the mode off.
+
+> Multi-tenant mode needs a full deploy of this version first (`-SettingsOnly` reuses the deployed
+> code). The Agent 365 observability exporter takes one blueprint's `AGENT365_OBS_*` settings, so keep
+> `ENABLE_A365_OBSERVABILITY_EXPORTER=false` in this mode unless you only need one tenant's telemetry.
+> The CloudFormation template deploys single-tenant only.
 
 ### One-click deploy without tools (CloudFormation "Launch Stack")
 
@@ -558,7 +639,8 @@ src/
   app.ts                 Express host, CloudAdapter, /api/health and /api/messages
   lambda.ts              AWS Lambda entry — loads require-esm-compat.ts, secrets.ts, then index.ts
   require-esm-compat.ts  Lets CommonJS dependencies require() ESM-only packages on Lambda
-  secrets.ts             Loads secret settings from AWS Secrets Manager (A365_SECRETS_ARN) at Lambda cold start
+  secrets.ts             Loads secret settings from AWS Secrets Manager (A365_SECRETS_ARN) and tenant registrations (A365_TENANT_SECRETS_PREFIX) at Lambda cold start
+  tenant-registry.ts     Multi-tenant mode: turns registered blueprints into connections routed by token audience
   agent.ts               AgentApplication: message + notification handlers, scopes, document sharing
   activity-helpers.ts    Word comment detection, span agent id, turn correlation id, share failure note
   client.ts              LangChain agent factory, system prompt, MCP wiring, identity-scoped cache
@@ -574,6 +656,7 @@ src/
 test/                    Unit tests (`npm test`)
 manifest/                Generated by `a365 publish` (git-ignored, not committed)
 deploy-aws.ps1           AWS Lambda Web Functions + Amazon Bedrock deploy script
+register-tenant.ps1      Registers one tenant's blueprint with a shared multi-tenant backend
 aws/
   DEPLOY-GUIDE.md          Step-by-step guide for people deploying from a Launch Stack link
   travelagentdw.cfn.yaml   CloudFormation template for one-click (Launch Stack) deployments
@@ -598,6 +681,8 @@ ToolingManifest.json     WorkIQ MCP servers (mcp_WordServer, mcp_OneDriveRemoteS
 | Agent is missing from the Lambda **Functions** list | Select **Web Functions** in the correct Region instead. |
 | Word comment reply has no proactive Teams message | Chat directly with the agent first so it can store your personal conversation reference. The in-memory reference resets after a cold start and is not shared between concurrent environments. Look for `[Proactive] No verified 1:1 mapping` in the logs. |
 | Startup fails with `Failed to load settings from A365_SECRETS_ARN` | The function couldn't read its Secrets Manager secret. Confirm `travelagentdw/agent365` exists in the function's Region and that the `travelagentdw-exec` role has the `secrets-read` policy, then re-run `.\deploy-aws.ps1 -SettingsOnly`. |
+| Startup fails with `Failed to load tenant registrations` | Multi-tenant mode found no valid registration or couldn't read them. Check the `[Tenants]` log lines, that secrets exist under the prefix in the function's Region, and that the role has the `tenant-secrets-read` policy (re-run `deploy-aws.ps1 -TenantSecretPrefix ...`). |
+| One tenant's agent gets 401s while others work | Its blueprint isn't registered, or the backend hasn't restarted since registration. Run `register-tenant.ps1 -SkipSetup` in that tenant's folder, then `.\deploy-aws.ps1 -TenantSecretPrefix <prefix> -SettingsOnly`. |
 | Health check passes but every message fails | Check CloudWatch for `[LLM] Configuration error` (for example, a missing `BEDROCK_MODEL_ID`), fix the setting, and re-run with `-SettingsOnly`. |
 | Agent says "Access denied" for a Word document | The Word tools only work on documents the agent created for you (in the same warm environment, within 24 hours) or on the document from the comment you @mentioned it in. Ask the agent to create the document, or @mention it on a comment in that document. |
 | The user sees "Sorry — ..." with a reference id | Search the CloudWatch logs for that reference id to find the server-side error. |

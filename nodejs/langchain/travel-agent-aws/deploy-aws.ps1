@@ -43,6 +43,9 @@
     - For -LlmProvider AzureOpenAI: AZURE_OPENAI_ENDPOINT (https://<resource>.openai.azure.com/),
       AZURE_OPENAI_DEPLOYMENT and AZURE_OPENAI_API_KEY in -EnvFile, from an Azure AI Foundry or
       Azure OpenAI resource. The key is stored in Secrets Manager and no Bedrock access is granted.
+    - For -TenantSecretPrefix (one backend for many tenants' blueprints): blueprints registered with
+      register-tenant.ps1 under that prefix. The role gets the inline policy tenant-secrets-read, and
+      the app loads the registrations at cold start; -EnvFile then needs no connection settings.
     - For -UpdateA365Endpoint: the Agent 365 CLI (`a365`), a365.config.json in this folder, and
       owner rights on the agent blueprint
 
@@ -52,6 +55,7 @@
     ./deploy-aws.ps1 -SettingsOnly
     ./deploy-aws.ps1 -Region us-west-2 -ModelId us.anthropic.claude-sonnet-4-6 -AwsProfile my-sso
     ./deploy-aws.ps1 -LlmProvider AzureOpenAI -UpdateA365Endpoint
+    ./deploy-aws.ps1 -TenantSecretPrefix travelagent/tenants/   # multi-tenant: see register-tenant.ps1
 #>
 
 [CmdletBinding()]
@@ -62,6 +66,12 @@ param(
     [string]$ModelId,
     [ValidateSet('Bedrock', 'AzureOpenAI')]
     [string]$LlmProvider = 'Bedrock',
+    # Multi-tenant mode: serve every blueprint registered with register-tenant.ps1 under this
+    # Secrets Manager name prefix (one secret per blueprint: <prefix><tenantId>/<blueprintId>).
+    [ValidatePattern('^[A-Za-z0-9/_+=.@-]+/$')]
+    [string]$TenantSecretPrefix,
+    # Turns a multi-tenant backend back into a single-tenant one (removes the prefix and its grant).
+    [switch]$DisableMultiTenant,
     [string]$AwsProfile,
     [string]$EnvFile = '.env',
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]{0,62}[A-Za-z0-9]$')]
@@ -89,7 +99,7 @@ $ExcludedSettingsPattern = "^(AWS_|LAMBDA_|_|$ExcludedLlmPrefixes|WEBSITE_|SCM_)
 # case-insensitive). A365_SECRETS_ARN is the reference to that secret, not a secret itself, and
 # token-count settings such as BEDROCK_MAX_TOKENS are tuning values.
 $SecretSettingsPattern = '(secret|password|_key$|token)|^connections__.+__settings__clientSecret$'
-$NonSecretSettingsPattern = '^A365_SECRETS_ARN$|(_url|endpoint|_tokens)$'
+$NonSecretSettingsPattern = '^A365_SECRETS_ARN$|^A365_TENANT_SECRETS_PREFIX$|(_url|endpoint|_tokens)$'
 
 function Test-SecretSettingName([string]$Name) {
     return ($Name -match $SecretSettingsPattern) -and ($Name -notmatch $NonSecretSettingsPattern)
@@ -248,9 +258,10 @@ try {
         if ($value.Contains('"')) { throw "The value of '$key' in $EnvFile contains a double quote, which can't be passed safely to the AWS CLI." }
         $settings[$key] = $value
     }
-    if (-not ($settings.Keys | Where-Object { $_ -match '^connections__.+__settings__clientId$' })) {
+    if (-not $TenantSecretPrefix -and -not ($settings.Keys | Where-Object { $_ -match '^connections__.+__settings__clientId$' })) {
         throw "$EnvFile has no Agent 365 connection settings (connections__<name>__settings__clientId). Run 'a365 setup all --aiteammate --m365' first."
     }
+    if ($TenantSecretPrefix) { $settings['A365_TENANT_SECRETS_PREFIX'] = $TenantSecretPrefix }
     $settings['NODE_ENV'] = 'production'
     if ($LlmProvider -eq 'AzureOpenAI') {
         $missing = @(@('AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT') | Where-Object { -not $settings.Contains($_) })
@@ -359,6 +370,13 @@ try {
     # Setting names and role of the live revision (if any): -SettingsOnly reuses its role, and secret
     # settings an earlier deploy stored in the environment are removed (deploy keeps other variables).
     $live = Get-LiveRevisionInfo
+    if ($TenantSecretPrefix -and $DisableMultiTenant) { throw "Pass either -TenantSecretPrefix or -DisableMultiTenant, not both." }
+    # A multi-tenant backend serves every registered tenant; deploying it without the prefix would cut
+    # them all off, so that has to be explicit.
+    if (-not $TenantSecretPrefix -and -not $DisableMultiTenant -and $live -and ($live.SettingNames -contains 'A365_TENANT_SECRETS_PREFIX')) {
+        throw ("'$FunctionName' is a multi-tenant backend. Re-run with -TenantSecretPrefix <prefix> (e.g. travelagent/tenants/) " +
+            "to keep serving the registered tenants, or with -DisableMultiTenant to turn multi-tenant mode off.")
+    }
     if ($SettingsOnly) {
         Write-Step "Checking Web Function '$FunctionName' (settings-only update)"
         $existing = Invoke-Aws @('lambda-web', 'get-web-function', '--function-name', $FunctionName, '--output', 'json')
@@ -486,6 +504,41 @@ try {
         Write-Host "    $secretArn"
     }
 
+    # --- 3b. Multi-tenant registrations (register-tenant.ps1), read by the app at cold start ---
+    if ($TenantSecretPrefix) {
+        Write-Step "Checking tenant registrations under $TenantSecretPrefix"
+        $listed = Invoke-Aws @('secretsmanager', 'list-secrets', '--filters', "Key=name,Values=$TenantSecretPrefix",
+            '--query', 'SecretList[].Name', '--output', 'json')
+        if ($listed.ExitCode -ne 0) { throw "Could not list secrets under ${TenantSecretPrefix}:`n$($listed.Error)" }
+        $registered = @($listed.Output | ConvertFrom-Json | Where-Object { $_ -like "$TenantSecretPrefix*" })
+        $baseConnections = @($settings.Keys | Where-Object { $_ -match '^connections__.+__settings__clientId$' }).Count
+        Write-Host "    $($registered.Count) registered blueprints$(if ($baseConnections) { " + $baseConnections from $EnvFile" })"
+        if ($registered.Count -eq 0 -and $baseConnections -eq 0) {
+            throw "No blueprints to serve: register one with .\register-tenant.ps1 -SecretPrefix $TenantSecretPrefix, or add connection settings to $EnvFile."
+        }
+        $hadTenantGrant = (Invoke-Aws @('iam', 'get-role-policy', '--role-name', $roleName, '--policy-name', 'tenant-secrets-read', '--output', 'json')).ExitCode -eq 0
+        $tenantPolicyFile = Join-Path $workDir 'tenant-secrets-policy.json'
+        # BatchGetSecretValue with a name filter needs ListSecrets, which has no resource scope;
+        # secret values stay readable only under the prefix.
+        Write-JsonFile $tenantPolicyFile @{
+            Version   = '2012-10-17'
+            Statement = @(
+                @{ Sid = 'FindTenantSecrets'; Effect = 'Allow'; Action = @('secretsmanager:ListSecrets', 'secretsmanager:BatchGetSecretValue'); Resource = '*' },
+                @{ Sid = 'ReadTenantSecrets'; Effect = 'Allow'; Action = 'secretsmanager:GetSecretValue'
+                   Resource = "arn:${partition}:secretsmanager:${Region}:${accountId}:secret:$TenantSecretPrefix*" }
+            )
+        }
+        $putTenantPolicy = Invoke-Aws @('iam', 'put-role-policy', '--role-name', $roleName, '--policy-name', 'tenant-secrets-read',
+            '--policy-document', "file://$tenantPolicyFile")
+        if ($putTenantPolicy.ExitCode -ne 0) { throw "Could not let ${roleName} read ${TenantSecretPrefix}*:`n$($putTenantPolicy.Error)" }
+        if (-not $hadTenantGrant) { $grantedSecrets = $true }
+    } else {
+        $removeTenantPolicy = Invoke-Aws @('iam', 'delete-role-policy', '--role-name', $roleName, '--policy-name', 'tenant-secrets-read')
+        if ($removeTenantPolicy.ExitCode -ne 0 -and $removeTenantPolicy.Error -notmatch 'NoSuchEntity') {
+            Write-Warning "Could not remove the tenant-secrets-read policy from ${roleName}: $($removeTenantPolicy.Error)"
+        }
+    }
+
     if ($roleCreated -or $grantedSecrets) {
         Write-Host "    $(if ($roleCreated) { 'New role' } else { 'New grant' }): waiting 15s for IAM propagation"
         Start-Sleep -Seconds 15
@@ -548,6 +601,11 @@ try {
     if ($staleSecretNames) {
         Write-Host "    Removing secret settings from the function environment: $($staleSecretNames -join ', ')"
         foreach ($name in $staleSecretNames) { $deployArgs += @('--unset-env', $name) }
+    }
+    # Leaving multi-tenant mode (-DisableMultiTenant): drop the prefix with its tenant-secrets-read grant.
+    if ($DisableMultiTenant -and $live -and ($live.SettingNames -contains 'A365_TENANT_SECRETS_PREFIX')) {
+        Write-Host "    Turning off multi-tenant mode: removing A365_TENANT_SECRETS_PREFIX"
+        $deployArgs += @('--unset-env', 'A365_TENANT_SECRETS_PREFIX')
     }
     # Called directly (not captured) so the CLI's progress streams to the console as it happens.
     & $AwsCli @deployArgs @AwsCommonArgs

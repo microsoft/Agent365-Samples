@@ -45,3 +45,62 @@ if (secretsArn) {
     throw err;
   }
 }
+
+// Multi-tenant mode (see tenant-registry.ts): every secret whose name starts with
+// A365_TENANT_SECRETS_PREFIX is one registered blueprint. Bad entries are skipped and logged by name.
+const tenantPrefix = process.env.A365_TENANT_SECRETS_PREFIX?.trim();
+if (tenantPrefix) {
+  try {
+    const { SecretsManagerClient, BatchGetSecretValueCommand } = await import('@aws-sdk/client-secrets-manager');
+    type BatchPage = import('@aws-sdk/client-secrets-manager').BatchGetSecretValueCommandOutput;
+    const { parseTenantRegistration, applyTenantConnections, resolveDuplicateRegistrations } = await import('./tenant-registry.js');
+    const region = secretsArn?.split(':')[3] || process.env.AWS_REGION || undefined;
+    const client = new SecretsManagerClient({ region });
+    const registrations: import('./tenant-registry.js').TenantRegistration[] = [];
+    let nextToken: string | undefined;
+    do {
+      const page: BatchPage = await client.send(new BatchGetSecretValueCommand({
+        Filters: [{ Key: 'name', Values: [tenantPrefix] }],
+        MaxResults: 20,
+        NextToken: nextToken,
+      }));
+      for (const s of page.SecretValues ?? []) {
+        // The name filter is a prefix match on words; keep only exact prefix matches.
+        if (!s.Name?.startsWith(tenantPrefix) || !s.SecretString) continue;
+        try {
+          registrations.push(parseTenantRegistration(s.SecretString, s.Name, tenantPrefix));
+        } catch (e) {
+          console.warn(`[Tenants] skipped: ${(e as Error).message}`);
+        }
+      }
+      for (const e of page.Errors ?? []) console.warn(`[Tenants] could not read ${e.SecretId}: ${e.ErrorCode}`);
+      nextToken = page.NextToken;
+    } while (nextToken);
+    // Only blueprints registered more than once are checked: the registration whose credentials can
+    // get a token as that blueprint in its tenant is the owner's (Entra rejects anyone else's).
+    const authority = 'https://login.microsoftonline.com';
+    const resolved = await resolveDuplicateRegistrations(registrations, async (r) => {
+      const res = await fetch(`${authority}/${r.tenantId}/oauth2/v2.0/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: r.blueprintId,
+          client_secret: r.clientSecret,
+          scope: 'https://graph.microsoft.com/.default',
+        }),
+        signal: AbortSignal.timeout(4000),
+      });
+      return res.ok;
+    });
+    const summary = applyTenantConnections(resolved.registrations, process.env);
+    for (const id of [...resolved.conflicts, ...summary.conflicts]) {
+      console.warn(`[Tenants] blueprint ${id} has conflicting registrations; skipped`);
+    }
+    console.log(`[Tenants] ${summary.tenants} tenants, ${summary.blueprints} blueprints routed by audience`);
+    if (summary.blueprints === 0) throw new Error(`no valid tenant registrations under ${tenantPrefix}`);
+  } catch (err) {
+    console.error(`Failed to load tenant registrations from A365_TENANT_SECRETS_PREFIX: ${(err as Error)?.name ?? 'Error'}`);
+    throw err;
+  }
+}

@@ -156,9 +156,10 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
         // agent-invocation span.
         const recipient: any = turnContext.activity?.recipient;
         // Blueprint id — emitted as the `microsoft.a365.agent.blueprint.id` span tag so MAC
-        // can roll activity up to the blueprint (not just the per-instance AUID).
-        const blueprintId: string = process.env.agent365Observability__agentBlueprintId
-          ?? recipient?.agenticAppBlueprintId ?? '';
+        // can roll activity up to the blueprint (not just the per-instance AUID). The activity's
+        // value comes first: one backend can serve several blueprints (tenant-registry.ts).
+        const blueprintId: string = recipient?.agenticAppBlueprintId
+          ?? process.env.agent365Observability__agentBlueprintId ?? '';
         const agentDetails: AgentDetails = {
           agentId: spanAgentId(recipient?.agenticAppId, blueprintId),
           agentName: process.env.agent365Observability__agentName ?? AGENT_DISPLAY_NAME,

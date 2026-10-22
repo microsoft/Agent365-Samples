@@ -14,8 +14,13 @@ import { agentApplication } from './agent.js';
 import { configureA365Hosting } from '@microsoft/opentelemetry';
 import { isAgentsChannel, turnCorrelationId } from './activity-helpers.js';
 import { logError } from './log.js';
+import { activityTenantMismatch, tenantsByBlueprint } from './tenant-registry.js';
 
 const authConfig: AuthConfiguration = loadAuthConfigFromEnv();
+// Multi-tenant mode (A365_TENANT_SECRETS_PREFIX): blueprint id -> registered tenant, used to reject
+// activities whose tenant isn't the one registered for the token's blueprint.
+const multiTenant = Boolean(process.env.A365_TENANT_SECRETS_PREFIX?.trim());
+const registeredTenants = multiTenant ? tenantsByBlueprint(process.env) : new Map<string, string>();
 
 const adapter = agentApplication.adapter as CloudAdapter;
 
@@ -55,6 +60,11 @@ server.post('/api/messages', async (req: Request, res: Response) => {
   console.log(
     `[/api/messages] ${req.method} type=${b.type} channel=${b.channelId} textLength=${(b.text ?? '').toString().length}`
   );
+  if (multiTenant && activityTenantMismatch(registeredTenants, (req as any).user?.aud, req.body)) {
+    console.warn('[/api/messages] rejected: activity tenant does not match the tenant registered for the token audience');
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
   try {
     await adapter.process(req, res, async (context) => {
       await agentApplication.run(context);
