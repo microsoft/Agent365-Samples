@@ -20,7 +20,12 @@ This sample demonstrates how to build an agent using Perplexity in Node.js with 
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
+
+- [@microsoft/agents-a365-observability - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
 
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 

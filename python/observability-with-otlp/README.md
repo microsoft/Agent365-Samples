@@ -54,8 +54,12 @@ blueprint assertion flow.
 
 This sample shows two patterns at once:
 
-1. Adding the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
+1. Adding the Microsoft Agent 365 Python SDK to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
 2. **Manual instrumentation** using `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` — useful when you don't use an agent framework, or when you want explicit control over which calls produce spans.
+
+This sample uses the following Agent 365 package:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 

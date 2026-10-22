@@ -20,7 +20,15 @@ This sample demonstrates how to build an agent using LangChain in Node.js with t
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
+
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-a365-tooling - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling)
+- [@microsoft/agents-a365-tooling-extensions-langchain - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-langchain)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
+- [@microsoft/opentelemetry - npm](https://www.npmjs.com/package/@microsoft/opentelemetry)
 
 For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 

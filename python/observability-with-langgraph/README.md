@@ -12,7 +12,12 @@ description: "Add Agent 365 observability to a Python LangGraph agent while pres
 
 # Observability — Agent 365 SDK with LangGraph
 
-This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to a [LangGraph](https://langchain-ai.github.io/langgraph/) agent that **already** uses OpenTelemetry. After running this, both your existing exporter and the Agent 365 backend receive every span produced by the agent.
+This sample shows how to add the Microsoft Agent 365 Python SDK to a [LangGraph](https://langchain-ai.github.io/langgraph/) agent that **already** uses OpenTelemetry. After running this, both your existing exporter and the Agent 365 backend receive every span produced by the agent.
+
+This sample uses the following Agent 365 packages:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-extensions-langchain · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-extensions-langchain/)
 
 The structure mirrors Google Cloud's [LangGraph + OpenTelemetry reference sample](https://docs.cloud.google.com/stackdriver/docs/instrumentation/ai-agent-langgraph): an OTel TracerProvider is set up first, an auto-instrumentor handles the LLM and tool spans, and a manual top-level span wraps `agent.invoke(...)` so the trace tree has a clear "agent run" root.
 

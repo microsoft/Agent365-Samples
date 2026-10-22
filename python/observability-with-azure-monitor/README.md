@@ -12,7 +12,12 @@ description: "Add Agent 365 observability to a Python app that already exports O
 
 # Observability — Agent 365 SDK alongside Azure Monitor
 
-This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app that **already** uses [Azure Monitor / Application Insights OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-overview). After running this, both Azure Monitor and the Agent 365 backend receive your agent's spans.
+This sample shows how to add the Microsoft Agent 365 Python SDK to an app that **already** uses [Azure Monitor / Application Insights OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-overview). After running this, both Azure Monitor and the Agent 365 backend receive your agent's spans.
+
+This sample uses the following Agent 365 packages:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-extensions-openai · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-extensions-openai/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 

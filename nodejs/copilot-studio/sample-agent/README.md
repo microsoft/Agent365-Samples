@@ -33,7 +33,14 @@ This sample demonstrates:
 - **Observability**: End-to-end tracing with OpenTelemetry spans for Copilot Studio calls
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [@microsoft/agents-copilotstudio-client](https://github.com/microsoft/Agents-for-js/tree/main/packages/agents-copilotstudio-client) package and the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
+
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-observability - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-copilotstudio-client - npm](https://www.npmjs.com/package/@microsoft/agents-copilotstudio-client)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
 
 ## Prerequisites
 
