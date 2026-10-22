@@ -245,7 +245,8 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
 
             // Reply under the thread's top-level comment (ReplyToComment posts to
             // .../comments/{id}/replies); the @mentioned reply id is allowed too as a fallback.
-            const documentId = wordComment.documentId ?? '';
+            // The notification's documentId is a Word id, not the Graph item id ReplyToComment needs,
+            // so it is not given to the model; the ids come from GetDocumentContent.
             const ids = wordCommentIds(wordComment);
             const commentId = ids.threadId ?? '';
             for (const id of [ids.threadId, ids.subjectId]) {
@@ -261,18 +262,19 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
                 .flatMap((e: any) => [e?.mentioned?.name, e?.text]),
             ].filter((n): n is string => typeof n === 'string' && !!n.trim())
               .map((n) => n.replace(/<\/?at>/gi, ''));
-            docScope = { documentUrl, documentId, commentIds: [...commentIds], commentText: cleanText, mentionNames };
+            docScope = { documentUrl, commentIds: [...commentIds], commentText: cleanText, mentionNames };
             canMatchByText = !!normalizeCommentText(cleanText, mentionNames);
             const idBlock =
-              (documentId ? `documentId: ${documentId}\n` : '') +
               (commentId ? `commentId (the comment thread to reply in): ${commentId}\n` : '') +
               (ids.subjectId && ids.subjectId !== commentId
                 ? `If ReplyToComment fails with that id, retry once with commentId ${ids.subjectId}.\n`
                 : '');
             const replyStep = commentId
-              ? `2. Reply to THAT comment with mcp_WordServer ReplyToComment, using commentId above — never AddComment, never start a new thread.\n`
+              ? `2. Reply to THAT comment with mcp_WordServer ReplyToComment, using commentId above and the driveId and ` +
+                `documentId that GetDocumentContent returned — never AddComment, never start a new thread.\n`
               : `2. The notification did not include the comment id. In the comments that GetDocumentContent returned, find the ONE ` +
                 `comment whose text is the comment above, and reply to it with mcp_WordServer ReplyToComment using that comment's id ` +
+                `and the driveId and documentId that GetDocumentContent returned ` +
                 `— never AddComment, never start a new thread. If no single comment matches exactly, do not reply.\n`;
 
             effectiveMessage =

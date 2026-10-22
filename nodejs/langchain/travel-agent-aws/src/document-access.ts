@@ -13,9 +13,9 @@ import { BoundedTtlMap } from './identity.js';
 import { CreatedDriveItem, commentsFromResult, documentIdsFromResult, toolNameIs } from './tool-results.js';
 
 export interface DocScope {
-  // From the authenticated WpxComment notification turn only.
+  // From the authenticated WpxComment notification turn only. The notification's own documentId is
+  // a Word id, not the Graph drive item id the Word tools use, so the document is named by its URL.
   documentUrl?: string;
-  documentId?: string;
   commentIds?: string[];
   // Used only when the notification carries no comment id: the notified comment's text and the
   // agent names it @mentions, to find that one comment in a read of the notified document.
@@ -30,11 +30,12 @@ export interface TurnDocAccess {
   allowedDocs: Set<string>;
   notifiedCommentIds: Set<string>;
   isNotification: boolean;
-  // Notification turns only: the notified document's normalized URL and id, and the exact
-  // 'driveId|itemId' pairs a read of that URL returned (the only targets ReplyToComment may use).
+  // Notification turns only: the notified document's normalized URL, and the exact
+  // 'driveId|itemId' pairs a read of that URL returned (the only targets ReplyToComment may use),
+  // also kept with their original case for pinning the reply's arguments.
   notifiedUrl?: string;
-  notifiedDocumentId?: string;
   notifiedDocs: Set<string>;
+  notifiedTargets: Array<{ driveId: string; documentId: string }>;
   // Normalized notified comment text (no-comment-id notifications only).
   notifiedCommentText?: string;
   mentionNames: string[];
@@ -127,6 +128,7 @@ export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): Tur
     notifiedCommentIds: new Set(),
     isNotification: !!scope,
     notifiedDocs: new Set(),
+    notifiedTargets: [],
     mentionNames: (scope?.mentionNames ?? []).filter((n) => typeof n === 'string' && n.trim()),
     created: [],
   };
@@ -135,8 +137,6 @@ export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): Tur
     access.allowedUrls.add(url);
     access.notifiedUrl = url;
   }
-  const notifiedId = lower(scope?.documentId);
-  if (notifiedId) access.notifiedDocumentId = notifiedId;
   for (const id of scope?.commentIds ?? []) {
     if (id) access.notifiedCommentIds.add(id);
   }
@@ -210,6 +210,7 @@ export function authorizeDocTool(toolName: string, args: Record<string, unknown>
   if (!isReply && !isAdd) return { allowed: false, reason: 'unguarded-tool' };
   if (access.isNotification) {
     if (isAdd) return { allowed: false, reason: 'add-comment-on-notification' };
+    if (access.notifiedDocs.size === 0) return { allowed: false, reason: 'notified-document-not-read' };
     const key = lower(a.driveId) ? docKey(a.driveId, a.documentId) : undefined;
     if (!key || !access.notifiedDocs.has(key)) return { allowed: false, reason: 'document-not-allowed' };
     if (!access.notifiedCommentIds.has(String(a.commentId ?? ''))) {
@@ -224,29 +225,43 @@ export function authorizeDocTool(toolName: string, args: Record<string, unknown>
   return { allowed: true, reason: owned ? 'owned-document' : 'turn-document' };
 }
 
-// After an allowed GetDocumentContent: its driveId/documentId may be commented on for THIS turn.
-// On a notification turn, only a read of the notified URL counts, and only when the returned id
-// matches the notified document id (when the notification carried one).
-export function recordDocumentRead(rawResult: unknown, readUrl?: unknown): void {
+// On a notification turn, ReplyToComment can only target the document a read of the notified URL
+// returned, so when there is exactly one such document its drive/item ids replace whatever the
+// model passed (for example the notification's Word document id, which Graph does not accept).
+export function pinNotifiedReplyTarget(args: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
   const access = currentDocAccess();
+  if (!access?.isNotification || access.notifiedTargets.length !== 1) return args;
+  const [target] = access.notifiedTargets;
+  return { ...(args ?? {}), driveId: target.driveId, documentId: target.documentId };
+}
+
+// After an allowed GetDocumentContent: its driveId/documentId may be commented on for THIS turn.
+// On a notification turn, only a read of the notified URL counts. Returns a fixed reason code when
+// the read unlocks nothing, for logging.
+export function recordDocumentRead(rawResult: unknown, readUrl?: unknown): string | undefined {
+  const access = currentDocAccess();
+  if (!access) return 'no-turn-scope';
   const ids = documentIdsFromResult(rawResult);
-  if (!access || !ids) return;
-  const key = docKey(ids.driveId, ids.documentId);
-  if (!key) return;
+  const key = ids ? docKey(ids.driveId, ids.documentId) : undefined;
+  if (!ids || !key) return 'no-ids-in-result';
   if (!access.isNotification) {
     access.allowedDocs.add(key);
-    return;
+    return undefined;
   }
-  if (!access.notifiedUrl || normalizeDocUrl(readUrl) !== access.notifiedUrl) return;
-  if (access.notifiedDocumentId && lower(ids.documentId) !== access.notifiedDocumentId) return;
-  access.notifiedDocs.add(key);
+  if (!access.notifiedUrl || normalizeDocUrl(readUrl) !== access.notifiedUrl) return 'not-the-notified-url';
+  if (!access.notifiedDocs.has(key)) {
+    access.notifiedDocs.add(key);
+    access.notifiedTargets.push({ driveId: ids.driveId, documentId: ids.documentId });
+  }
   // No comment id in the notification: the comment it names is the one comment in this document
   // whose text matches exactly. Anything other than a single match leaves replies refused.
   if (access.notifiedCommentIds.size === 0 && access.notifiedCommentText) {
     const matches = commentsFromResult(rawResult)
       .filter((c) => normalizeCommentText(c.text, access.mentionNames) === access.notifiedCommentText);
     if (matches.length === 1) access.notifiedCommentIds.add(matches[0].id);
+    else return matches.length ? 'comment-text-ambiguous' : 'comment-text-not-found';
   }
+  return undefined;
 }
 
 // Records a file a create tool just made: in this invocation's list, in the caller's owned

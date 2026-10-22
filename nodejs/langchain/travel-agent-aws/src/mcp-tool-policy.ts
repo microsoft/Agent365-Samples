@@ -9,7 +9,7 @@
 // Word read/comment tools only reach documents this caller may use (document-access.ts).
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { CREATE_TOOLS, CreatedDriveItem, createdItemFromResult, toolNameIs } from './tool-results.js';
-import { DOC_ACCESS_DENIED, authorizeDocTool, recordCreated, recordDocumentRead } from './document-access.js';
+import { DOC_ACCESS_DENIED, authorizeDocTool, pinNotifiedReplyTarget, recordCreated, recordDocumentRead } from './document-access.js';
 import { logError } from './log.js';
 
 // Base tool names (from MCP-Platform mcp_WordServer and mcp_OneDriveRemoteServer) the model may call.
@@ -108,12 +108,16 @@ export function withCreateRecording(tool: any): any {
 // (document-access.ts). A denial throws, which LangGraph's ToolNode turns into an error
 // ToolMessage, so a denied ReplyToComment never counts as posted.
 export function withDocumentGuard(tool: any): any {
-  return wrapTool(tool, async (args, runManager, config) => {
+  return wrapTool(tool, async (rawArgs, runManager, config) => {
+    const args = toolNameIs(tool.name, 'ReplyToComment') ? pinNotifiedReplyTarget(rawArgs) : rawArgs;
     const decision = authorizeDocTool(tool.name, args);
     console.log(`[DocAccess] ${tool.name}: ${decision.allowed ? 'allowed' : 'denied'} (${decision.reason})`);
     if (!decision.allowed) throw new Error(DOC_ACCESS_DENIED);
     const result = await tool.func(args, runManager, config);
-    if (toolNameIs(tool.name, 'GetDocumentContent')) recordDocumentRead(result, args?.url);
+    if (toolNameIs(tool.name, 'GetDocumentContent')) {
+      const unrecorded = recordDocumentRead(result, args?.url);
+      if (unrecorded) console.warn(`[DocAccess] GetDocumentContent read unlocks no reply (${unrecorded})`);
+    }
     return result;
   });
 }

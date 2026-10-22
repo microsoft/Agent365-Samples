@@ -110,7 +110,7 @@ test('a caller without a stable identity can use a created document only within 
 test('a Word comment notification allows only its document and comment', async () => {
   const { byName } = modelTools();
   const notifiedUrl = 'https://contoso.sharepoint.com/sites/team/Shared%20Documents/Plan.docx';
-  const scope = { documentUrl: notifiedUrl, documentId: 'DOC-N', commentIds: ['c-1', 'c-2'] };
+  const scope = { documentUrl: notifiedUrl, commentIds: ['c-1', 'c-2'] };
   const access = createTurnDocAccess(['caller-n1'], scope);
   await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: notifiedUrl }));
   await assert.rejects(
@@ -126,7 +126,7 @@ test('a notification turn cannot reach the commenter\'s other documents', async 
   const { byName, readCalls } = modelTools('owned-n', 'drive-o');
   await runWithDocAccess(createTurnDocAccess(['caller-n2']), () => byName.CreateDocument.invoke({ fileName: 'a', contentInHtml: 'b' }));
   const notifiedUrl = 'https://contoso.sharepoint.com/sites/team/Shared%20Documents/Plan.docx';
-  const access = createTurnDocAccess(['caller-n2'], { documentUrl: notifiedUrl, documentId: 'doc-n', commentIds: ['c-1'] });
+  const access = createTurnDocAccess(['caller-n2'], { documentUrl: notifiedUrl, commentIds: ['c-1'] });
 
   // Owned documents are not readable or commentable on a notification turn.
   assert.deepEqual(authorizeDocToolIn(access, 'GetDocumentContent', { url: ITEM_URL }), { allowed: false, reason: 'document-not-allowed' });
@@ -140,7 +140,7 @@ test('a notification turn cannot reach the commenter\'s other documents', async 
 test('a notification reply needs the exact drive returned by reading the notified document', async () => {
   const { byName } = modelTools();
   const notifiedUrl = 'https://contoso.sharepoint.com/sites/team/Shared%20Documents/Plan.docx';
-  const access = createTurnDocAccess(['caller-n3'], { documentUrl: notifiedUrl, documentId: 'doc-n', commentIds: ['c-1'] });
+  const access = createTurnDocAccess(['caller-n3'], { documentUrl: notifiedUrl, commentIds: ['c-1'] });
 
   // The notified id alone (before any read, or with a missing/other drive) is not enough.
   assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: 'c-1', driveId: 'drive-n', documentId: 'doc-n' }).allowed, false);
@@ -151,12 +151,35 @@ test('a notification reply needs the exact drive returned by reading the notifie
   assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: 'c-1', driveId: 'drive-n', documentId: 'doc-n' }).allowed, true);
 });
 
-test('a read whose id differs from the notified document id unlocks nothing', async () => {
+test('a read of the notified URL unlocks its Graph ids, and a notification reply is pinned to them', async () => {
   const { byName } = modelTools();
+  const calls: any[] = [];
+  const { modelTools: tools } = selectModelMcpTools([fakeMcpTool('ReplyToComment', { ok: true }, calls)]);
+  const reply = tools.find((t: any) => t.name === 'ReplyToComment');
   const notifiedUrl = 'https://contoso.sharepoint.com/sites/team/Shared%20Documents/Plan.docx';
-  const access = createTurnDocAccess(['caller-n4'], { documentUrl: notifiedUrl, documentId: 'other-doc', commentIds: ['c-1'] });
+  const access = createTurnDocAccess(['caller-n4'], { documentUrl: notifiedUrl, commentIds: ['c-1'] });
+
+  // Before the notified document is read, nothing is reachable.
+  assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: 'c-1', driveId: 'drive-n', documentId: 'doc-n' }).reason, 'notified-document-not-read');
+  await assert.rejects(runWithDocAccess(access, () => reply.invoke({ commentId: 'c-1', driveId: 'x', documentId: 'WORD-ID', newComment: 'ok' })));
+  assert.equal(calls.length, 0);
+
   await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: notifiedUrl }));
-  assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: 'c-1', driveId: 'drive-n', documentId: 'doc-n' }).allowed, false);
+  // The model passed the notification's Word id; the reply still lands on the read document only.
+  await runWithDocAccess(access, () => reply.invoke({ commentId: 'c-1', driveId: 'x', documentId: 'WORD-ID', newComment: 'ok' }));
+  assert.deepEqual(calls.map((c) => [c.driveId, c.documentId, c.commentId]), [['drive-n', 'doc-n', 'c-1']]);
+  // Pinning never widens the comment scope.
+  await assert.rejects(runWithDocAccess(access, () => reply.invoke({ commentId: 'c-9', driveId: 'drive-n', documentId: 'doc-n', newComment: 'x' })));
+  assert.equal(calls.length, 1);
+});
+
+test('outside a notification turn, ReplyToComment arguments are not rewritten', async () => {
+  const calls: any[] = [];
+  const { modelTools: tools } = selectModelMcpTools([fakeMcpTool('ReplyToComment', { ok: true }, calls)]);
+  const reply = tools.find((t: any) => t.name === 'ReplyToComment');
+  await assert.rejects(runWithDocAccess(createTurnDocAccess(['caller-n5']), () =>
+    reply.invoke({ commentId: 'c-1', driveId: 'drive-z', documentId: 'doc-z', newComment: 'x' })));
+  assert.equal(calls.length, 0);
 });
 
 test('ids from an allowed GetDocumentContent result unlock ReplyToComment in the same turn only', async () => {
@@ -235,7 +258,7 @@ test('normalizeCommentText drops markup and the agent mention', () => {
 test('without a comment id, the single comment whose text matches the notification can be replied to', async () => {
   const byName = commentTools(COMMENTS);
   const access = createTurnDocAccess(['caller-t1'], {
-    documentUrl: PLAN_URL, documentId: 'doc-n', commentIds: [],
+    documentUrl: PLAN_URL, commentIds: [],
     commentText: 'what is the best time to visit?', mentionNames: ['Travel-A'],
   });
   await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
@@ -250,7 +273,7 @@ test('without a comment id, no reply is allowed when the text matches no comment
     ['Comment 1: same question\nAnchor 1: a\nComment 2: Same question!\nAnchor 2: b\n', 'same question'],
   ] as const) {
     const byName = commentTools(comments);
-    const access = createTurnDocAccess(['caller-t2'], { documentUrl: PLAN_URL, documentId: 'doc-n', commentIds: [], commentText: text });
+    const access = createTurnDocAccess(['caller-t2'], { documentUrl: PLAN_URL, commentIds: [], commentText: text });
     await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
     assert.equal(access.notifiedCommentIds.size, 0);
     assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: '1', driveId: 'drive-n', documentId: 'doc-n' }).reason, 'comment-not-notified');
