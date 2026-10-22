@@ -10,13 +10,17 @@
 // fails after a successful create can still share and report it (see client.ts runTurn).
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BoundedTtlMap } from './identity.js';
-import { CreatedDriveItem, documentIdsFromResult, toolNameIs } from './tool-results.js';
+import { CreatedDriveItem, commentsFromResult, documentIdsFromResult, toolNameIs } from './tool-results.js';
 
 export interface DocScope {
   // From the authenticated WpxComment notification turn only.
   documentUrl?: string;
   documentId?: string;
   commentIds?: string[];
+  // Used only when the notification carries no comment id: the notified comment's text and the
+  // agent names it @mentions, to find that one comment in a read of the notified document.
+  commentText?: string;
+  mentionNames?: string[];
 }
 
 export interface TurnDocAccess {
@@ -31,6 +35,9 @@ export interface TurnDocAccess {
   notifiedUrl?: string;
   notifiedDocumentId?: string;
   notifiedDocs: Set<string>;
+  // Normalized notified comment text (no-comment-id notifications only).
+  notifiedCommentText?: string;
+  mentionNames: string[];
   // Files created during this invocation, recorded as each create tool succeeds.
   created: CreatedDriveItem[];
 }
@@ -101,6 +108,17 @@ function docKey(driveId: unknown, itemId: unknown): string | undefined {
   return drive ? `${drive}|${item}` : item;
 }
 
+// Comparable form of a comment: no markup, no @mention of the agent, letters and digits only.
+export function normalizeCommentText(text: unknown, mentionNames: string[] = []): string {
+  let s = typeof text === 'string' ? text : '';
+  s = s.replace(/<at>[\s\S]*?<\/at>/gi, ' ').replace(/<[^>]+>/g, ' ');
+  for (const name of mentionNames) {
+    const n = name.trim();
+    if (n) s = s.replace(new RegExp(`@?${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'), ' ');
+  }
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
 export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): TurnDocAccess {
   const access: TurnDocAccess = {
     callerKeys: [...callerKeys],
@@ -109,6 +127,7 @@ export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): Tur
     notifiedCommentIds: new Set(),
     isNotification: !!scope,
     notifiedDocs: new Set(),
+    mentionNames: (scope?.mentionNames ?? []).filter((n) => typeof n === 'string' && n.trim()),
     created: [],
   };
   const url = normalizeDocUrl(scope?.documentUrl);
@@ -120,6 +139,10 @@ export function createTurnDocAccess(callerKeys: string[], scope?: DocScope): Tur
   if (notifiedId) access.notifiedDocumentId = notifiedId;
   for (const id of scope?.commentIds ?? []) {
     if (id) access.notifiedCommentIds.add(id);
+  }
+  if (access.notifiedCommentIds.size === 0) {
+    const text = normalizeCommentText(scope?.commentText, access.mentionNames);
+    if (text) access.notifiedCommentText = text;
   }
   return access;
 }
@@ -217,6 +240,13 @@ export function recordDocumentRead(rawResult: unknown, readUrl?: unknown): void 
   if (!access.notifiedUrl || normalizeDocUrl(readUrl) !== access.notifiedUrl) return;
   if (access.notifiedDocumentId && lower(ids.documentId) !== access.notifiedDocumentId) return;
   access.notifiedDocs.add(key);
+  // No comment id in the notification: the comment it names is the one comment in this document
+  // whose text matches exactly. Anything other than a single match leaves replies refused.
+  if (access.notifiedCommentIds.size === 0 && access.notifiedCommentText) {
+    const matches = commentsFromResult(rawResult)
+      .filter((c) => normalizeCommentText(c.text, access.mentionNames) === access.notifiedCommentText);
+    if (matches.length === 1) access.notifiedCommentIds.add(matches[0].id);
+  }
 }
 
 // Records a file a create tool just made: in this invocation's list, in the caller's owned

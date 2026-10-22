@@ -200,7 +200,40 @@ export function documentIdsFromResult(rawResult: unknown): { driveId: string; do
   return undefined;
 }
 
-// Items recorded at the create-tool boundary are authoritative; items read back from this turn's
+export interface DocumentComment {
+  id: string;
+  text: string;
+}
+
+// Comments in a GetDocumentContent result. The Word MCP server returns them either as an array of
+// {id, content} or as text lines "Comment <id>: <text>" each followed by "Anchor <id>: <anchor text>".
+export function commentsFromResult(rawResult: unknown): DocumentComment[] {
+  const t = invocationFromResult('GetDocumentContent', rawResult);
+  const payloads: unknown[] = [...t.structured];
+  for (const text of t.textBlocks) {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      payloads.push(JSON.parse(trimmed));
+    } catch {
+      // Not a JSON block.
+    }
+  }
+  for (const payload of payloads) {
+    const comments = pick(payload, 'comments');
+    if (Array.isArray(comments)) {
+      return comments.flatMap((c: any) =>
+        typeof c?.id === 'string' && c.id ? [{ id: c.id, text: String(c.content ?? c.text ?? '') }] : []);
+    }
+    if (typeof comments === 'string') {
+      const out: DocumentComment[] = [];
+      const re = /^Comment ([^\s:]+): ([\s\S]*?)\r?\nAnchor \1: /gm;
+      for (let m = re.exec(comments); m; m = re.exec(comments)) out.push({ id: m[1], text: m[2] });
+      return out;
+    }
+  }
+  return [];
+}
 // ToolMessages only fill gaps. Deduped by itemId.
 export function mergeCreatedItems(recorded: CreatedDriveItem[], extracted: CreatedDriveItem[]): CreatedDriveItem[] {
   const seen = new Set<string>();

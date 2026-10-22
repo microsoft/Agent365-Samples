@@ -9,6 +9,7 @@ import {
   PartialInvocationError,
   authorizeDocTool,
   createTurnDocAccess,
+  normalizeCommentText,
   normalizeDocUrl,
   ownedDocsByCaller,
   runWithDocAccess,
@@ -212,3 +213,57 @@ function authorizeDocToolIn(access: ReturnType<typeof createTurnDocAccess>, name
   void runWithDocAccess(access, async () => { decision = authorizeDocTool(name, args); });
   return decision!;
 }
+
+function commentTools(comments: unknown) {
+  const { modelTools: tools } = selectModelMcpTools([
+    fakeMcpTool('GetDocumentContent', { fileName: 'Plan.docx', driveId: 'drive-n', documentId: 'doc-n', content: '...', comments }),
+    fakeMcpTool('ReplyToComment', { ok: true }),
+  ]);
+  return Object.fromEntries(tools.map((t: any) => [t.name, t]));
+}
+
+const PLAN_URL = 'https://contoso.sharepoint.com/sites/team/Shared%20Documents/Plan.docx';
+const COMMENTS = 'Comment 7A1: @Travel-A what is the best time to visit?\nAnchor 7A1: Day 1\n' +
+  'Comment 7A2: Looks good to me\nAnchor 7A2: Hotel\n';
+
+test('normalizeCommentText drops markup and the agent mention', () => {
+  assert.equal(normalizeCommentText('<at>Travel-A</at> What is the BEST time to visit?', ['Travel-A']), 'what is the best time to visit');
+  assert.equal(normalizeCommentText('@Travel-A what is the best time to visit?', ['Travel-A']), 'what is the best time to visit');
+  assert.equal(normalizeCommentText(undefined), '');
+});
+
+test('without a comment id, the single comment whose text matches the notification can be replied to', async () => {
+  const byName = commentTools(COMMENTS);
+  const access = createTurnDocAccess(['caller-t1'], {
+    documentUrl: PLAN_URL, documentId: 'doc-n', commentIds: [],
+    commentText: 'what is the best time to visit?', mentionNames: ['Travel-A'],
+  });
+  await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
+  assert.deepEqual([...access.notifiedCommentIds], ['7A1']);
+  await runWithDocAccess(access, () => byName.ReplyToComment.invoke({ commentId: '7A1', driveId: 'drive-n', documentId: 'doc-n', newComment: 'ok' }));
+  assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: '7A2', driveId: 'drive-n', documentId: 'doc-n' }).reason, 'comment-not-notified');
+});
+
+test('without a comment id, no reply is allowed when the text matches no comment or several', async () => {
+  for (const [comments, text] of [
+    [COMMENTS, 'something else entirely'],
+    ['Comment 1: same question\nAnchor 1: a\nComment 2: Same question!\nAnchor 2: b\n', 'same question'],
+  ] as const) {
+    const byName = commentTools(comments);
+    const access = createTurnDocAccess(['caller-t2'], { documentUrl: PLAN_URL, documentId: 'doc-n', commentIds: [], commentText: text });
+    await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
+    assert.equal(access.notifiedCommentIds.size, 0);
+    assert.equal(authorizeDocToolIn(access, 'ReplyToComment', { commentId: '1', driveId: 'drive-n', documentId: 'doc-n' }).reason, 'comment-not-notified');
+  }
+});
+
+test('comment matching also reads the array form and ignores reads of other documents', async () => {
+  const byName = commentTools([{ id: 'x9', content: 'Book a later flight' }]);
+  const access = createTurnDocAccess(['caller-t3'], { documentUrl: PLAN_URL, commentIds: [], commentText: 'book a later flight' });
+  await runWithDocAccess(access, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
+  assert.deepEqual([...access.notifiedCommentIds], ['x9']);
+
+  const withId = createTurnDocAccess(['caller-t4'], { documentUrl: PLAN_URL, commentIds: ['given'], commentText: 'book a later flight' });
+  await runWithDocAccess(withId, () => byName.GetDocumentContent.invoke({ url: PLAN_URL }));
+  assert.deepEqual([...withId.notifiedCommentIds], ['given']);
+});
