@@ -33,6 +33,16 @@ import {
 import { entityShape, shareFailureNote, spanAgentId, turnCorrelationId, wordCommentFrom, wordCommentIds } from './activity-helpers.js';
 import { untrustedBlock } from './prompt-safety.js';
 import { debug, logError, logWarn } from './log.js';
+import {
+  type DlpTurn,
+  type DlpVerdict,
+  PURVIEW_GRAPH_SCOPE,
+  evaluatePrompt,
+  evaluateResponse,
+  purviewChecksOutput,
+  purviewEnabled,
+} from './purview.js';
+import { AgenticAuthenticationService } from '@microsoft/agents-a365-runtime';
 // A365 Observability — the app-only OBS token is acquired by the resolver configured in index.ts.
 import {
   BaggageBuilder,
@@ -156,6 +166,26 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
         // outbound message; setting it here links the ack + final response to this
         // agent-invocation span.
         const recipient: any = turnContext.activity?.recipient;
+
+        // Purview DLP (purview.ts, off unless PURVIEW_DLP_ENABLED=true): the prompt is checked
+        // before the model, the acknowledgement and the telemetry span see it. The policy is
+        // the one scoped to this turn's blueprint, so each tenant's policy applies.
+        const dlpTurn: DlpTurn = {
+          blueprintId: recipient?.agenticAppBlueprintId,
+          agentId: recipient?.agenticAppId,
+          conversationId: turnContext.activity?.conversation?.id,
+        };
+        const dlpToken = () => AgenticAuthenticationService.GetAgenticUserToken(
+          this.authorization, TravelTeammateAgent.authHandlerName, turnContext, [PURVIEW_GRAPH_SCOPE]);
+        if (purviewEnabled()) {
+          // The raw message: it contains everything the model receives on both paths (chat sends
+          // it as is; Word sends it with mention markup removed), so nothing reaches it unchecked.
+          const promptCheck = await evaluatePrompt(userMessage, dlpTurn, dlpToken);
+          if (promptCheck.blocked) {
+            await this.notifyDlpBlock(turnContext, isWordMention, promptCheck, correlationId);
+            return;
+          }
+        }
         // Blueprint id — emitted as the `microsoft.a365.agent.blueprint.id` span tag so MAC
         // can roll activity up to the blueprint (not just the per-instance AUID). The activity's
         // value comes first: one backend can serve several blueprints (tenant-registry.ts).
@@ -389,6 +419,16 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
           }
 
           console.log(`[Response] Got response (${response?.length ?? 0} chars)`);
+          // Purview audit of the reply (PURVIEW_CHECK_OUTPUT). Word replies are posted by the
+          // ReplyToComment tool during the model run, so only chat replies pass through here.
+          if (!isWordMention && purviewChecksOutput()) {
+            const replyCheck = await evaluateResponse(response, dlpTurn, dlpToken);
+            if (replyCheck.blocked) {
+              response = replyCheck.decision === 'blocked'
+                ? `🚫 My response was withheld by your organization's data loss prevention policy. Reference: ${correlationId}`
+                : `🚫 I couldn't check my response against your organization's data policy, so I've withheld it. Please try again shortly. Reference: ${correlationId}`;
+            }
+          }
           if (scope) scope.recordOutputMessages([response]);
           if (!isWordMention) {
             try {
@@ -467,6 +507,39 @@ export class TravelTeammateAgent extends AgentApplication<TurnState> {
 
   // Never sends on the agents channel (its reply URL 404s) and never includes exception text.
   // Word comment turns get a DM only through the verified tenant/agent/caller 1:1 mapping.
+  // A prompt Purview blocked (or couldn't check while failing closed): the model never ran.
+  // Chat gets the notice directly; a Word comment gets it as a DM, as nothing is posted there.
+  private async notifyDlpBlock(
+    turnContext: TurnContext,
+    isWordMention: boolean,
+    verdict: DlpVerdict,
+    correlationId: string
+  ): Promise<void> {
+    const text = verdict.decision === 'blocked'
+      ? (isWordMention
+        ? "🚫 I didn't reply to your Word comment: it was blocked by your organization's data loss prevention policy."
+        : "🚫 I can't help with that: your request was blocked by your organization's data loss prevention policy.")
+      : `🚫 I couldn't check this against your organization's data policy, so I've stopped the request. Please try again shortly. Reference: ${correlationId}`;
+    if (!isWordMention) {
+      try {
+        await turnContext.sendActivity(text);
+      } catch (sendErr) {
+        console.warn('[purview] block notice sendActivity failed:', (sendErr as Error)?.name ?? 'Error');
+      }
+      return;
+    }
+    const convId = this.findDmConversation(turnContext);
+    if (!convId) {
+      console.warn('[Proactive] No verified 1:1 mapping for this caller in tenant/agent scope — block DM skipped.');
+      return;
+    }
+    try {
+      await (this as any).proactive.sendActivity((this as any).adapter, convId, { text });
+    } catch (dmErr) {
+      console.warn('[purview] block DM failed:', (dmErr as Error)?.name ?? 'Error');
+    }
+  }
+
   private async notifyTurnFailure(
     turnContext: TurnContext,
     isWordMention: boolean,

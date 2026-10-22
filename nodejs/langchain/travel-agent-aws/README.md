@@ -19,6 +19,8 @@ agent identity, Teams integration, and Word/OneDrive tools.
 - **WorkIQ MCP tools** — create / read / edit Word documents and manage OneDrive files via
   the `mcp_WordServer` and `mcp_OneDriveRemoteServer` Model Context Protocol servers
 - **Notifications** — Word `@mention` comment replies and proactive Teams DMs
+- **Data loss prevention (optional)** — a Microsoft Purview DLP check that blocks sensitive prompts
+  before the model sees them
 - **Observability wiring** - A365 OpenTelemetry scopes and hosting integration; cloud export
   is optional and disabled in the supplied environment template and CloudFormation deployment
 - **Hosting patterns** — Express + `CloudAdapter` hosting with the Microsoft 365 Agents SDK
@@ -302,6 +304,73 @@ validate it separately.
 > The caller's UPN is present in `from.id` on agents-channel (Word comment) turns but not on direct
 > 1:1 chats (which carry only the Teams MRI). The agent resolves it from the conversation roster via
 > the connector client and accepts it only when the roster member's AAD object id matches the caller's.
+
+### Purview data loss prevention (optional)
+
+[src/purview.ts](src/purview.ts) checks each prompt with Microsoft Purview before the model, the
+acknowledgement, or the telemetry span sees it, using the Graph `processContent` API and the agent's
+own agentic Graph token (evaluated as the agent user, `/me`). When a DLP policy scoped to the agent's
+blueprint blocks it, the model never runs: chat gets a "blocked by your organization's data loss
+prevention policy" reply, and a Word comment gets a Teams DM instead of a document reply. It's adapted
+from the `purview-dlp-integration` skill in [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills).
+
+- **Off by default.** `PURVIEW_DLP_ENABLED=false` in `.env.example`; nothing calls Purview until you
+  turn it on.
+- **Fails closed.** A Purview error, timeout (`PURVIEW_TIMEOUT_MS`, default 2000) or missing permission
+  stops the turn; `PURVIEW_FAIL_MODE=open` lets it through instead.
+- **Policy per blueprint.** The policy location sent with each check is the turn's own blueprint id,
+  so in [multi-tenant mode](#one-backend-for-many-tenants-multi-tenant-mode) each tenant's policy applies.
+- **Replies are audited, not filtered.** With `PURVIEW_CHECK_OUTPUT=true` (default) chat replies are
+  also submitted to Purview; the Applications workload doesn't block responses, but a failed check
+  withholds the reply when failing closed. Word replies are posted by the Word tool during the model
+  run, so only the comment text is checked.
+- **What isn't checked:** content the model reads through tools (for example, a document's body).
+- **Logs** show `[purview] uploadText -> allowed|BLOCKED (HTTP 200, <n> policyAction(s), …)`, never the text.
+
+To turn it on, in each tenant whose agent should be gated (with a Purview administrator):
+
+1. **Tenant prerequisites:** Microsoft 365 E5 or E5 Compliance licensing, Purview **pay-as-you-go
+   billing** (Purview portal > Settings > Billing), and **DSPM for AI** onboarded (DSPM > AI observability).
+   Without them, every check returns `allowed (… 0 policyAction(s) …)` and nothing blocks.
+2. **Permission:** add the delegated Graph permission `Content.Process.User` to the agent's consent.
+   From a clone of [microsoft/agent365-skills](https://github.com/microsoft/agent365-skills), signed in
+   with `az login --tenant <tenant>`, run the skill's script in the folder that holds that agent's
+   `a365.config.json` (this folder, or the tenant's folder under `travel-agent-tenants`):
+
+   ```powershell
+   & <agent365-skills>\plugins\agent365\skills\purview-dlp-integration\scripts\Grant-DelegatedGraphScope.ps1
+   ```
+
+   It appends the scope to the existing consent. Don't run `az ad app permission admin-consent` on the
+   blueprint: it can narrow the agent's consent and break its sign-in.
+3. **Policy:** create a DLP policy whose only location is **Managed cloud apps**, scoped to the agent's
+   blueprint, with a rule that blocks (Restrict access > Block) a sensitive information type such as
+   Credit Card Number. The skill's script does it (needs the `ExchangeOnlineManagement` module):
+
+   ```powershell
+   & <agent365-skills>\plugins\agent365\skills\purview-dlp-integration\scripts\New-AiAppDlpPolicy.ps1 `
+       -SensitiveInfoType "Credit Card Number" -NotifyUser <admin UPN>
+   ```
+
+   In the portal, Managed cloud apps can't be combined with any other location in the same policy;
+   it stays greyed out until every other location is cleared.
+4. **Turn it on:** set `PURVIEW_DLP_ENABLED=true` in the backend's `.env` and re-run your deploy command
+   with `-SettingsOnly` added (keep `-LlmProvider` and, in multi-tenant mode, `-TenantSecretPrefix`).
+   The agent itself needs no change: no new package, publish or instance. In multi-tenant mode the
+   switch applies to every tenant at once, and a tenant without step 2 gets HTTP 403, so all its
+   messages are blocked; finish step 2 in every tenant first, or roll out with `PURVIEW_FAIL_MODE=open`.
+5. **Check it:** send `My credit card is 4111 1111 1111 1111` (a test number). The agent replies that the
+   request was blocked, and the logs show `[purview] uploadText -> BLOCKED (… 1 policyAction(s) … errors=0)`.
+   An ordinary prompt still gets an answer. A new policy can take up to an hour to apply; until then
+   checks log `allowed (… 0 policyAction(s) …)`.
+
+| Log | Meaning |
+|---|---|
+| `uploadText -> BLOCKED (… errors=0)` | Working: the policy blocked the prompt. |
+| `uploadText -> allowed (… 0 policyAction(s) … errors=0)` | Checked, but no policy matched yet: scope, propagation, or tenant prerequisites. |
+| `uploadText -> HTTP 403` | The agent's consent lacks `Content.Process.User` (step 2). |
+| `uploadText -> REQUEST ERROR` | Purview rejected the request; nothing was evaluated (fails closed). |
+| `uploadText -> error (timeout)` | Purview didn't answer within `PURVIEW_TIMEOUT_MS`. |
 
 ### Conversation memory & MCP caching
 
@@ -706,6 +775,7 @@ src/
   activity-helpers.ts    Word comment detection, span agent id, turn correlation id, share failure note
   client.ts              LangChain agent factory, system prompt, MCP wiring, identity-scoped cache
   prompt-safety.ts       Wraps untrusted text (comments, names) in delimited blocks for the model
+  purview.ts             Optional Microsoft Purview DLP check of prompts (and audit of replies)
   log.ts                 Production-safe logging: metadata only unless DEBUG is set
   tool-results.ts        Reads this turn's tool results (multi-block MCP output) and created files
   mcp-tool-policy.ts     Allow-list of MCP tools the model may call (no OneDrive list/read/delete/share); code-driven share
