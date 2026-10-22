@@ -98,7 +98,7 @@ if (tenantPrefix) {
       console.warn(`[Tenants] blueprint ${id} has conflicting registrations; skipped`);
     }
     console.log(`[Tenants] ${summary.tenants} tenants, ${summary.blueprints} blueprints routed by audience`);
-    if (summary.blueprints === 0) throw new Error(`no valid tenant registrations under ${tenantPrefix}`);
+    if (summary.blueprints === 0) throw new Error('no valid tenant registrations under the configured prefix');
   } catch (err) {
     console.error(`Failed to load tenant registrations from A365_TENANT_SECRETS_PREFIX: ${(err as Error)?.name ?? 'Error'}`);
     throw err;
