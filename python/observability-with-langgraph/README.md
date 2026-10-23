@@ -96,7 +96,7 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 
 ## Going further
 
-- Integration patterns and pitfalls: [Integrating with existing OpenTelemetry](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md) (in the SDK repo)
+- Integration patterns and pitfalls: [Use existing OpenTelemetry instrumentation with the distro](https://learn.microsoft.com/microsoft-agent-365/developer/microsoft-opentelemetry#use-existing-opentelemetry-instrumentation-with-the-distro)
 - Manual instrumentation example (no agent framework): [`python/observability-with-otlp`](../observability-with-otlp)
 - Auto-instrumented OpenAI Agents SDK example: [`python/observability-with-azure-monitor`](../observability-with-azure-monitor)
 - Google Cloud reference this sample mirrors: [LangGraph + OpenTelemetry on Stackdriver](https://docs.cloud.google.com/stackdriver/docs/instrumentation/ai-agent-langgraph)
@@ -106,7 +106,7 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 - **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **No spans printed to stdout** — `BatchSpanProcessor` may not have flushed; the sample calls `force_flush()` on exit, so make sure the script ran to completion.
 - **`KeyError` or auth error from OpenAI** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. `langchain-openai` reads these directly.
-- **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. See [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration).
+- **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network.
 - **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step and the dedicated OBS prerequisites below.
 - **`RuntimeError: Tracing SDK is not configured`** — `CustomLangChainInstrumentor()` ran before `configure()`. Make sure Step 2 (`configure(...)`) executes successfully before Step 2b.
 - **`TypeError: wrap_function_wrapper() got an unexpected keyword argument 'module'`** — the LangChain extension uses `wrapt`'s legacy keyword-argument call style, which `wrapt 2.x` removed. `pyproject.toml` pins `wrapt<2` to keep the extension working; if you assemble dependencies manually, do the same until the SDK ships a fix.
