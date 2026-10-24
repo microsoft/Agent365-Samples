@@ -109,6 +109,7 @@ class OpenAIClient implements Client {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: this.agent.model.toString(),
+      providerName: 'openai',
     };
 
     const request: Request = {

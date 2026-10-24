@@ -189,11 +189,11 @@ def test_all_observability_initializers_are_covered():
 @pytest.mark.parametrize("name", ["openai", "copilot-studio", "devin", "perplexity", "vercel-sdk"])
 def test_node_manager_samples_use_sdk_with_otlp_route(name):
     package = json.loads(source(f"nodejs/{name}/sample-agent/package.json"))
-    assert package["dependencies"]["@microsoft/agents-a365-observability"] == "1.0.0"
+    assert package["dependencies"]["@microsoft/agents-a365-observability"] == "2.0.0"
     assert "@microsoft/opentelemetry" not in package["dependencies"]
     for dependency, version in package["dependencies"].items():
         if dependency.startswith("@microsoft/agents-a365-"):
-            assert version == "1.0.0"
+            assert version == "2.0.0"
     if name in {"copilot-studio", "vercel-sdk"}:
         assert "@microsoft/agents-a365-observability-hosting" not in package["dependencies"]
 

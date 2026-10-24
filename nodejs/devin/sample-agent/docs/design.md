@@ -37,7 +37,7 @@ This sample demonstrates an agent built using Cognition's Devin AI as the orches
 
 ### src/otel.ts
 Imported first by `src/index.ts`, this bootstrap loads dotenv and initializes one
-`ObservabilityManager` from `@microsoft/agents-a365-observability@1.0.0`, using
+`ObservabilityManager` from `@microsoft/agents-a365-observability@2.0.0`, using
 `.withTokenResolver(createObservabilityTokenResolver())`. Explicit
 `exporterOptions.useS2SEndpoint = true` selects the S2S OTLP service route
 `/observabilityService/tenants/{tenantId}/otlp/agents/{agentId}/traces?api-version=1`.
@@ -90,7 +90,7 @@ AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 {
   "dependencies": {
     "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "1.0.0",
+    "@microsoft/agents-a365-observability": "2.0.0",
     "express": "^4.18.0"
   }
 }

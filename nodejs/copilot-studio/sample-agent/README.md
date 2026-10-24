@@ -153,7 +153,7 @@ connections__service_connection__settings__tenantId=<<TENANT_ID>>
 ### Observability export
 
 `src/index.ts` imports `src/otel.ts` first. This sample uses
-`@microsoft/agents-a365-observability@1.0.0`; with
+`@microsoft/agents-a365-observability@2.0.0`; with
 `Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
 `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
 Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
