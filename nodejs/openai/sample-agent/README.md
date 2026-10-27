@@ -1,3 +1,15 @@
+<!--
+---
+name: "OpenAI Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build an OpenAI agent in TypeScript with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # OpenAI Sample Agent - Node.js
 
 
@@ -8,9 +20,19 @@ This sample demonstrates how to build an agent using OpenAI in Node.js with the 
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-observability - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability)
+- [@microsoft/agents-a365-observability-extensions-openai - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability-extensions-openai)
+- [@microsoft/agents-a365-observability-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability-hosting)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-a365-tooling - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling)
+- [@microsoft/agents-a365-tooling-extensions-openai - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-openai)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -24,7 +46,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 ### Observability export
 
 `src/index.ts` imports `src/otel.ts` first. This sample uses
-`@microsoft/agents-a365-observability@1.0.0`; with
+`@microsoft/agents-a365-observability@2.0.0`; with
 `Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
 `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
 Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
@@ -130,14 +152,14 @@ try {
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

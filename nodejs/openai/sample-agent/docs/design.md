@@ -243,8 +243,8 @@ export async function getClient(authorization, authHandlerName, turnContext) {
   "dependencies": {
     "@microsoft/agents-hosting": "^0.0.1",
     "@microsoft/agents-activity": "^0.0.1",
-    "@microsoft/agents-a365-observability": "1.0.0",
-    "@microsoft/agents-a365-observability-hosting": "1.0.0",
+    "@microsoft/agents-a365-observability": "2.0.0",
+    "@microsoft/agents-a365-observability-hosting": "2.0.0",
     "@microsoft/agents-a365-tooling-extensions-openai": "^0.0.1",
     "@microsoft/agents-a365-notifications": "^0.0.1",
     "@openai/agents": "^0.0.1",

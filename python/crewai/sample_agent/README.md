@@ -1,3 +1,15 @@
+<!--
+---
+name: "CrewAI Agent Sample - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a CrewAI multi-agent weather and driving safety workflow with Agent 365 tracing, notifications, and MCP tools."
+---
+-->
+
 # CrewAI Agent Sample - Python
 
 This sample demonstrates how to build a multi-agent system using CrewAI while integrating with the Microsoft Agent 365 SDK. It mirrors the structure and hosting patterns of the AgentFramework/OpenAI Agent 365 samples, while preserving native CrewAI logic in `src/crew_agent/`.
@@ -11,9 +23,19 @@ This sample demonstrates how to build a multi-agent system using CrewAI while in
 - **Azure OpenAI Integration**: Native support for Azure OpenAI deployments via CrewAI's `azure-ai-inference` extra and LiteLLM routing
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [microsoft-agents-activity · PyPI](https://pypi.org/project/microsoft-agents-activity/)
+- [microsoft-agents-authentication-msal · PyPI](https://pypi.org/project/microsoft-agents-authentication-msal/)
+- [microsoft-agents-hosting-aiohttp · PyPI](https://pypi.org/project/microsoft-agents-hosting-aiohttp/)
+- [microsoft-agents-hosting-core · PyPI](https://pypi.org/project/microsoft-agents-hosting-core/)
+- [microsoft-agents-a365-notifications · PyPI](https://pypi.org/project/microsoft-agents-a365-notifications/)
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-hosting · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-hosting/)
+- [microsoft-agents-a365-runtime · PyPI](https://pypi.org/project/microsoft-agents-a365-runtime/)
+- [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -288,7 +310,7 @@ For issues, questions, or feedback:
 
 - **CrewAI Documentation**: https://docs.crewai.com
 - **CrewAI GitHub**: https://github.com/joaomdmoura/crewai
-- **Microsoft Agent 365 Documentation**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/
+- **Microsoft Agent 365 Documentation**: https://learn.microsoft.com/microsoft-agent-365/developer/
 - **Discord**: https://discord.com/invite/X4JWnZnxPb
 
 ## Contributing

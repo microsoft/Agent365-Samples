@@ -1,3 +1,15 @@
+<!--
+---
+name: "Copilot Studio Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Bridge a Microsoft Copilot Studio agent to Agent 365 with TypeScript hosting, notifications, and observability."
+---
+-->
+
 # Copilot Studio Sample Agent - Node.js
 
 
@@ -21,7 +33,14 @@ This sample demonstrates:
 - **Observability**: End-to-end tracing with OpenTelemetry spans for Copilot Studio calls
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [@microsoft/agents-copilotstudio-client](https://github.com/microsoft/Agents-for-js/tree/main/packages/agents-copilotstudio-client) package and the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
+
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-observability - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-copilotstudio-client - npm](https://www.npmjs.com/package/@microsoft/agents-copilotstudio-client)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
 
 ## Prerequisites
 
@@ -89,7 +108,7 @@ Users must have access to chat with your Copilot Studio agent:
 
 > **Note:** Individual users cannot be granted access directly—you must use security groups or organization-wide sharing. Authentication must be configured with **Microsoft Entra ID** and **"Require users to sign in"** enabled.
 
-For more details, see [Share agents with other users](https://learn.microsoft.com/en-us/microsoft-copilot-studio/admin-share-bots).
+For more details, see [Share agents with other users](https://learn.microsoft.com/microsoft-copilot-studio/admin-share-bots).
 
 ### 3. Microsoft 365 Copilot License Requirement
 
@@ -134,7 +153,7 @@ connections__service_connection__settings__tenantId=<<TENANT_ID>>
 ### Observability export
 
 `src/index.ts` imports `src/otel.ts` first. This sample uses
-`@microsoft/agents-a365-observability@1.0.0`; with
+`@microsoft/agents-a365-observability@2.0.0`; with
 `Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
 `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
 Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
@@ -315,8 +334,8 @@ for await (const activity of client.sendActivityStreaming(userActivity)) {
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- **Copilot Studio**: See [Copilot Studio documentation](https://learn.microsoft.com/en-us/microsoft-copilot-studio/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- **Copilot Studio**: See [Copilot Studio documentation](https://learn.microsoft.com/microsoft-copilot-studio/)
 - **Security**: For security issues, please see [SECURITY.md](../../../SECURITY.md)
 
 ## Contributing
@@ -332,7 +351,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 - [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
 - [@microsoft/agents-copilotstudio-client package](https://github.com/microsoft/Agents-for-js/tree/main/packages/agents-copilotstudio-client)
-- [Copilot Studio documentation](https://learn.microsoft.com/en-us/microsoft-copilot-studio/)
+- [Copilot Studio documentation](https://learn.microsoft.com/microsoft-copilot-studio/)
 - [Node.js API documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 
 ## Trademarks
