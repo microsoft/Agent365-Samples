@@ -25,7 +25,7 @@
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-copilotstudio-client": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
-    "@opentelemetry/core": "2.1.0",
+    "@opentelemetry/core": "2.8.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0"
   },

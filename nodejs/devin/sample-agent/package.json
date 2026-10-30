@@ -19,7 +19,7 @@
     "@microsoft/agents-a365-runtime": "2.0.0",
     "@microsoft/agents-a365-tooling": "2.0.0",
     "@microsoft/agents-hosting": "^1.0.15",
-    "@opentelemetry/core": "2.1.0",
+    "@opentelemetry/core": "2.8.0",
     "dotenv": "^17.2.3",
     "uuid": "^13.0.0"
   },
