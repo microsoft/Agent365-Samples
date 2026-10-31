@@ -15,7 +15,7 @@
   "license": "MIT",
   "dependencies": {
     "@azure/identity": "^4.6.0",
-    "@azure/msal-node": "^5.1.5",
+    "@azure/msal-node": "^7.1.0",
     "@microsoft/opentelemetry": "1.0.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
