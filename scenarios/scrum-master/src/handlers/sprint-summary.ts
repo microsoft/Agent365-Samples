@@ -259,7 +259,8 @@ export async function runSprintSummary(opts?: {
     // Gate: fire only on end-2 unless forced.
     const now = DateTime.now().setZone(tz);
     const end = DateTime.fromISO(sprint.endDate).setZone(tz);
-    const daysRemaining = Math.ceil(end.diff(now, 'days').days);
+    if (!now.isValid || !end.isValid) throw new Error('Sprint summary requires a valid timezone and sprint end date.');
+    const daysRemaining = Math.round(end.startOf('day').diff(now.startOf('day'), 'days').days);
     if (!opts?.force && daysRemaining !== 2) {
         return { uploaded: false, note: `Not the T-2 day. daysRemaining=${daysRemaining}. Pass force=true for demo.` };
     }

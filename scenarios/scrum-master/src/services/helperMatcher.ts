@@ -10,7 +10,8 @@
  * `SMA_HelperRoster` list (see `scripts/seed-helper-roster.ts`).
  *
  * Matching is deterministic and keyword-based: the blocker text is scanned for
- * substring hits against each roster row's `Keywords` column. On the first hit
+ * keyword hits against each roster row's `Keywords` column. Two-letter keywords
+ * match whole words; longer keywords retain substring matching. On the first hit
  * we return the matching helper. If nothing matches, `findHelperForBlocker`
  * returns `null` and the caller schedules the meeting with just the SM +
  * reporter + owner (previous behaviour).
@@ -70,7 +71,7 @@ async function loadRoster(): Promise<HelperRosterFields[]> {
  * unblock meeting with only the SM + reporter + owner.
  */
 export async function findHelperForBlocker(blockerText: string): Promise<HelperMatch | null> {
-    if (!blockerText || blockerText.trim().length < 3) return null;
+    if (!blockerText || blockerText.trim().length < 2) return null;
     const roster = await loadRoster();
     if (roster.length === 0) return null;
 
@@ -79,9 +80,13 @@ export async function findHelperForBlocker(blockerText: string): Promise<HelperM
         const kws = (row.Keywords ?? '')
             .split(',')
             .map(k => k.trim().toLowerCase())
-            .filter(k => k.length >= 3);
+            .filter(k => k.length >= 2);
         for (const kw of kws) {
-            if (lower.includes(kw)) {
+            const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const matched = kw.length === 2
+                ? new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'u').test(lower)
+                : lower.includes(kw);
+            if (matched) {
                 return {
                     topic: row.Title,
                     email: row.HelperEmail,

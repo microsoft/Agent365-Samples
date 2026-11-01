@@ -107,8 +107,14 @@ async function deliverStandup(
 ): Promise<{ ok: boolean; error?: string }> {
     const context = getJiraMode() === 'mock' ? mockTurnContexts.get(standupId) : undefined;
     if (context && reference.conversation?.id === context.activity.conversation?.id) {
-        await logic(context);
-        return { ok: true };
+        try {
+            await logic(context);
+            return { ok: true };
+        } catch (error) {
+            const message = (error as Error).message;
+            console.warn(`[standup] Local delivery failed: ${message}`);
+            return { ok: false, error: message };
+        }
     }
     return sendProactive(reference, logic);
 }
@@ -141,6 +147,11 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     // don't re-fan-out. Callers get a friendly note.
     const existingMem = getSession(standupId);
     const completed = getCompletedSession(standupId);
+    if (existingMem?.state === 'open' &&
+        (allExpectedResponded(existingMem) || Date.now() >= DateTime.fromISO(existingMem.cutoffUtc).toMillis())) {
+        await summarizeStandup(existingMem);
+        return { standupId, sentTo: existingMem.sentTo.size, skipped: 0, note: 'Existing standup summary delivered without repeating fan-out.' };
+    }
     const persisted = !existingMem && !completed
         ? await findByTitle<StandupSessionFields>('standupSessions', standupId)
         : null;
@@ -526,28 +537,40 @@ export async function summarizeStandup(session: StandupSession): Promise<void> {
         : null;
 
     // Post to the configured channel (via TeamsConfig).
-    const configRows = await findByField<TeamsConfigFields>('teamsConfig', 'Title', 'primary').catch(() => []);
+    const configRows = await findByField<TeamsConfigFields>('teamsConfig', 'Title', 'primary').catch(error => {
+        console.warn('[standup] Channel configuration lookup failed; trying SM DM:', (error as Error).message);
+        return [];
+    });
     const targetConvRef = configRows[0]?.fields?.ConversationRef;
-    if (!targetConvRef) {
-        console.warn('[standup] No TeamsConfig.primary channel set — falling back to DM the SM.');
-        if (smMember?.conversationReference) {
-            await deliverStandup(session.standupId, smMember.conversationReference, async ctx => {
-                await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
-                if (boardMsg) await ctx.sendActivity(boardMsg);
-            });
-        } else {
-            console.error('[standup] No SM conversation reference either — cannot deliver summary.');
-        }
-    } else {
+    let deliveredReference: TeamMember['conversationReference'] = null;
+    const sendCard = async (ctx: TurnContext) => {
+        await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+    };
+    if (targetConvRef) {
         try {
             const ref = JSON.parse(targetConvRef);
-            await deliverStandup(session.standupId, ref, async ctx => {
-                await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
-                if (boardMsg) await ctx.sendActivity(boardMsg);
-            });
+            const result = await deliverStandup(session.standupId, ref, sendCard);
+            if (result.ok) deliveredReference = ref;
+            else console.warn('[standup] Channel summary delivery failed; trying SM DM:', result.error);
         } catch (e) {
-            console.error('[standup] Bad ConversationRef in TeamsConfig:', (e as Error).message);
+            console.warn('[standup] Channel summary unavailable; trying SM DM:', (e as Error).message);
         }
+    }
+    if (!deliveredReference && smMember?.conversationReference) {
+        const result = await deliverStandup(session.standupId, smMember.conversationReference, sendCard);
+        if (result.ok) deliveredReference = smMember.conversationReference;
+        else console.warn('[standup] SM summary delivery failed:', result.error);
+    }
+    if (!deliveredReference) {
+        session.state = 'open';
+        console.error('[standup] Summary was not delivered; retaining the open session for retry.');
+        throw new Error('Standup summary was not delivered. Retry /standup after cutoff or once all responses are collected.');
+    }
+    if (boardMsg) {
+        const result = await deliverStandup(session.standupId, deliveredReference, async ctx => {
+            await ctx.sendActivity(boardMsg);
+        });
+        if (!result.ok) console.warn('[standup] Board-update follow-up failed; the summary itself was delivered:', result.error);
     }
 
     // Mark session summarized.

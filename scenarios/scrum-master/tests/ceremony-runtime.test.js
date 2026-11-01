@@ -188,7 +188,11 @@ test('meeting cards cannot book twice concurrently, after success, or after reso
 
 test('Jira reads all sprint, issue and token-based subtask pages', async () => {
     const calls = [];
-    const raw = n => ({ id: String(n), key: `T-${n}`, fields: { summary: `Issue ${n}`, status: { name: 'Done' }, issuetype: { name: 'Task' } } });
+    const raw = n => ({ id: String(n), key: `T-${n}`, fields: {
+        summary: `Issue ${n}`, status: { name: 'Done' }, project: { key: 'T' },
+        issuetype: { name: n >= 3 ? 'Sub-task' : 'Task' },
+        ...(n >= 3 ? { parent: { key: 'T-1' } } : {}),
+    } });
     const http = {
         get: async (url, options) => {
             calls.push([url, options.params]);
@@ -208,7 +212,7 @@ test('Jira reads all sprint, issue and token-based subtask pages', async () => {
         '../mock/jira-mock': {},
         '../util/httpLogger': { attachHttpLogging: client => { attached = client === http; } },
     });
-    const client = new LiveJiraClient({ email: 'test', apiToken: 'placeholder', baseUrl: 'https://example.test', boardId: 1 });
+    const client = new LiveJiraClient({ email: 'test', apiToken: 'placeholder', baseUrl: 'https://example.test', boardId: 1, projectKey: 'T' });
     assert.equal(attached, true);
     assert.equal((await client.getSprints('closed')).length, 2);
     assert.deepEqual((await client.searchSprintIssues(21)).map(i => i.key), ['T-1', 'T-2']);

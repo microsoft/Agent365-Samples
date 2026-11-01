@@ -79,6 +79,31 @@ export interface JiraClient {
     addComment(issueKey: string, body: string): Promise<void>;
 }
 
+function assertProjectIssue(issueKey: string, projectKey: string): string {
+    const key = issueKey.trim().toUpperCase();
+    const project = projectKey.trim().toUpperCase();
+    const match = key.match(/^([A-Z][A-Z0-9]*)-(\d+)$/);
+    if (!match || match[1] !== project) {
+        throw new Error('Issue reads are restricted to the configured Jira project.');
+    }
+    return key;
+}
+
+function isProjectIssue(issueKey: unknown, projectKey: string): boolean {
+    if (typeof issueKey !== 'string') return false;
+    try {
+        assertProjectIssue(issueKey, projectKey);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function projectJql(projectKey: string): string {
+    const key = assertProjectIssue(`${projectKey.trim()}-1`, projectKey);
+    return `project = "${key.split('-')[0]}"`;
+}
+
 export class LiveJiraClient implements JiraClient {
     private readonly http: AxiosInstance;
 
@@ -133,12 +158,16 @@ export class LiveJiraClient implements JiraClient {
         while (true) {
             const res = await this.http.get(`/rest/agile/1.0/sprint/${sprintId}/issue`, {
                 params: {
+                    jql: projectJql(this.cfg.projectKey),
                     fields: 'summary,status,assignee,customfield_10016,duedate,parent,issuetype',
                     startAt, maxResults: 100,
                 },
             }).catch(this.wrap(`searchSprintIssues(${sprintId})`));
             const page: any[] = res.data?.issues ?? [];
-            issues.push(...page.map(i => mapIssue(i, this.cfg.baseUrl, sprintId)));
+            issues.push(...page
+                .filter(i => isProjectIssue(i.key, this.cfg.projectKey)
+                    && (!i.fields?.parent || isProjectIssue(i.fields.parent.key, this.cfg.projectKey)))
+                .map(i => mapIssue(i, this.cfg.baseUrl, sprintId)));
             startAt += page.length;
             if (!page.length || res.data.isLast === true ||
                 (typeof res.data.total === 'number' && startAt >= res.data.total)) break;
@@ -148,7 +177,8 @@ export class LiveJiraClient implements JiraClient {
 
     async getSprintSubtasks(sprintId: number, parentKeys: string[]): Promise<JiraIssue[]> {
         if (parentKeys.length === 0) return [];
-        const jql = `parent in (${parentKeys.map(k => `"${k}"`).join(', ')})`;
+        parentKeys = parentKeys.map(key => assertProjectIssue(key, this.cfg.projectKey));
+        const jql = `${projectJql(this.cfg.projectKey)} AND parent in (${parentKeys.map(k => `"${k}"`).join(', ')})`;
         const issues: JiraIssue[] = [];
         let nextPageToken: string | undefined;
         const seenTokens = new Set<string>();
@@ -159,7 +189,11 @@ export class LiveJiraClient implements JiraClient {
                 maxResults: 100,
                 ...(nextPageToken ? { nextPageToken } : {}),
             }).catch(this.wrap(`getSprintSubtasks(${parentKeys.length} parents)`));
-            issues.push(...(res.data?.issues ?? []).map((i: any) => mapIssue(i, this.cfg.baseUrl, sprintId)));
+            issues.push(...(res.data?.issues ?? [])
+                .filter((i: any) => isProjectIssue(i.key, this.cfg.projectKey)
+                    && isProjectIssue(i.fields?.parent?.key, this.cfg.projectKey)
+                    && parentKeys.includes(i.fields.parent.key.trim().toUpperCase()))
+                .map((i: any) => mapIssue(i, this.cfg.baseUrl, sprintId)));
             nextPageToken = res.data?.isLast === true ? undefined : res.data?.nextPageToken;
             if (nextPageToken && seenTokens.has(nextPageToken)) throw new Error('Jira returned a repeated search page token');
             if (nextPageToken) seenTokens.add(nextPageToken);
@@ -168,9 +202,11 @@ export class LiveJiraClient implements JiraClient {
     }
 
     async getIssue(issueKey: string): Promise<JiraIssue> {
+        issueKey = assertProjectIssue(issueKey, this.cfg.projectKey);
         const res = await this.http.get(`/rest/api/3/issue/${encodeURIComponent(issueKey)}`, {
             params: { fields: 'summary,status,assignee,customfield_10016,sprint' },
         }).catch(this.wrap(`getIssue(${issueKey})`));
+        assertProjectIssue(res.data?.key ?? '', this.cfg.projectKey);
         return mapIssue(res.data, this.cfg.baseUrl, null);
     }
 
@@ -205,6 +241,10 @@ export class LiveJiraClient implements JiraClient {
     }
 
     async getComments(issueKey: string, limit = 5): Promise<JiraComment[]> {
+        issueKey = assertProjectIssue(issueKey, this.cfg.projectKey);
+        // Jira can resolve an old same-project key to an issue moved elsewhere.
+        // Comments carry no issue key, so verify the resolved issue before reading them.
+        await this.getIssue(issueKey);
         // Jira Cloud returns comments oldest-first by default — request desc order so
         // "latest N" is just the first N entries after the response.
         const res = await this.http.get(`/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
@@ -311,7 +351,31 @@ let cached: JiraClient | null = null;
 export function getJiraClient(): JiraClient {
     if (cached) return cached;
     const cfg = getJiraConfig();
-    cached = cfg.mode === 'mock' ? mockJira() : new LiveJiraClient(cfg);
+    if (cfg.mode === 'mock') {
+        const mock = mockJira();
+        const getIssue = mock.getIssue.bind(mock);
+        const getComments = mock.getComments.bind(mock);
+        const searchSprintIssues = mock.searchSprintIssues.bind(mock);
+        const getSprintSubtasks = mock.getSprintSubtasks.bind(mock);
+        // The seeded board is SCRUM regardless of a leftover live project setting.
+        mock.getIssue = async key => {
+            const issue = await getIssue(assertProjectIssue(key, 'SCRUM'));
+            assertProjectIssue(issue.key, 'SCRUM');
+            return issue;
+        };
+        mock.getComments = async (key, limit) =>
+            getComments(assertProjectIssue(key, 'SCRUM'), limit);
+        mock.searchSprintIssues = async sprintId =>
+            (await searchSprintIssues(sprintId)).filter(issue => isProjectIssue(issue.key, 'SCRUM'));
+        mock.getSprintSubtasks = async (sprintId, parentKeys) => {
+            const parents = parentKeys.map(key => assertProjectIssue(key, 'SCRUM'));
+            return (await getSprintSubtasks(sprintId, parents))
+                .filter(issue => isProjectIssue(issue.key, 'SCRUM') && parents.includes(issue.parentKey ?? ''));
+        };
+        cached = mock;
+    } else {
+        cached = new LiveJiraClient(cfg);
+    }
     console.log(`[Jira] Using ${cfg.mode} client`);
     return cached;
 }

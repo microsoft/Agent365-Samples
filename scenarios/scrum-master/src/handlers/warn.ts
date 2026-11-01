@@ -17,7 +17,7 @@
 import { DateTime } from 'luxon';
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
 import { getWarnConfig, getScheduleConfig } from '../config';
-import { createItem, findByTitle } from '../services/sharepoint';
+import { createItem, findByTitle, updateItem } from '../services/sharepoint';
 import { listTeamMembers } from '../services/team-roster';
 import { sendProactive } from '../services/proactive';
 
@@ -28,6 +28,8 @@ interface SprintRiskFields {
     Reason: string;
     PointsToDoPct: number;
     Payload: string;
+    State?: 'pending' | 'delivered';
+    DeliveredUtc?: string;
 }
 
 export interface RiskAssessment {
@@ -100,23 +102,21 @@ export async function runWarnCheck(opts?: { forceAlert?: boolean }): Promise<Ris
     const nowUtc = new Date().toISOString();
     const riskId = `${assessment.sprintId}#${nowUtc.slice(0, 10)}${opts?.forceAlert ? `#${Date.now()}` : ''}`;
 
-    // Idempotent per-day (unless forceAlert, which appends a timestamp so multiple
-    // demo runs on the same day each write a distinct row).
-    if (!opts?.forceAlert) {
-        const existing = await findByTitle<SprintRiskFields>('sprintRisks', riskId).catch(() => null);
-        if (existing) {
-            console.log(`[warn] Risk already recorded today (${riskId}) — skipping notify.`);
-            return assessment;
-        }
+    // Detection alone is not delivery: pending and legacy rows remain retryable.
+    const existing = opts?.forceAlert ? null : await findByTitle<SprintRiskFields>('sprintRisks', riskId);
+    if (existing?.fields.State === 'delivered') {
+        console.log(`[warn] Risk already delivered today (${riskId}) — skipping notify.`);
+        return assessment;
     }
 
-    await createItem<SprintRiskFields>('sprintRisks', {
+    const risk = existing ?? await createItem<SprintRiskFields>('sprintRisks', {
         Title: riskId,
         SprintId: String(assessment.sprintId),
         DetectedUtc: nowUtc,
         Reason: assessment.reason,
         PointsToDoPct: Math.round(assessment.toDoPct * 100),
         Payload: JSON.stringify(assessment),
+        State: 'pending',
     });
 
     // DM the SM. Keep it plain-text for the POC — an Adaptive Card is trivial
@@ -124,8 +124,7 @@ export async function runWarnCheck(opts?: { forceAlert?: boolean }): Promise<Ris
     const members = await listTeamMembers();
     const sm = members.find(m => m.Role === 'SM');
     if (!sm?.conversationReference) {
-        console.warn('[warn] No SM conversation ref — logged only.');
-        return assessment;
+        throw new Error('[warn] No SM conversation reference; risk alert remains pending.');
     }
 
     const tz = getScheduleConfig().timezone;
@@ -140,8 +139,15 @@ export async function runWarnCheck(opts?: { forceAlert?: boolean }): Promise<Ris
         `**Reason:** ${assessment.reason}\n\n` +
         `Consider re-planning, splitting large items, or narrowing the sprint goal.`;
 
-    await sendProactive(sm.conversationReference, async ctx => {
+    const delivery = await sendProactive(sm.conversationReference, async ctx => {
         await ctx.sendActivity(message);
+    });
+    if (!delivery.ok) {
+        throw new Error(`[warn] Risk alert delivery failed: ${delivery.error ?? 'unknown send failure'}`);
+    }
+    await updateItem<SprintRiskFields>('sprintRisks', risk.id, {
+        State: 'delivered',
+        DeliveredUtc: new Date().toISOString(),
     });
 
     return assessment;

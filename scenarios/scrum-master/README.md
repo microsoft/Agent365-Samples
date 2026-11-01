@@ -340,7 +340,7 @@ Recommended target: **Azure App Service (Node 22 or later) + Azure Functions tim
 
 Minimum runtime configuration:
 
-- Azure App Service (Linux, Node 20 LTS). Set `WEBSITES_PORT=3978`.
+- Azure App Service (Linux, Node 22 LTS). Set `WEBSITES_PORT=3978`.
 - Configure application settings explicitly; do **not** copy the local `.env` blindly. Required cloud overrides: `NODE_ENV=production`, `HOST=0.0.0.0`, and a nonempty random `INTERNAL_TRIGGER_TOKEN`. Supply live Jira, Graph, LLM and hosting/auth connection settings securely; never commit secrets.
 - Health check path: `/api/health`.
 - Always-On: enabled for the long-lived agent. Use the sibling [`azure-functions/`](azure-functions) package for timer triggers and set `LOCAL_CRON=false` on the agent so only one scheduler is active.
@@ -351,7 +351,7 @@ Example deployment commands (replace placeholders; no deployment validation is i
 ```powershell
 # From the scenario folder
 npm run build
-az webapp up --name <app-name> --resource-group <rg> --runtime "NODE|20-lts"
+az webapp up --name <app-name> --resource-group <rg> --runtime "NODE|22-lts"
 ```
 
 Wire the Function App to point at your App Service:

@@ -52,7 +52,7 @@ sprint close report. One row per team.
 
 | Column | Type | Description |
 |---|---|---|
-| `Title` | text | Friendly channel name |
+| `Title` | text | Single-row lookup key: handlers write and read the literal `primary`, not the channel display name |
 | `TeamId` | text | Microsoft Teams team id |
 | `ChannelId` | text | Channel id (normalised — thread/message anchors are stripped) |
 | `ConversationRef` | note | Cached conversation reference for posting proactively |
@@ -113,6 +113,8 @@ sprint within a short window.
 | `Reason` | note | Human-readable summary of which thresholds tripped |
 | `PointsToDoPct` | number | Fraction of committed points still in `To Do` |
 | `Payload` | note | JSON snapshot of the sprint state used for the decision |
+| `State` | text | `pending` until the Scrum Master DM succeeds, then `delivered`; legacy rows without a state are retryable |
+| `DeliveredUtc` | dateTime | Timestamp of confirmed DM delivery; empty for pending notifications |
 
 ### `SMA_HelperRoster`
 

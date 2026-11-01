@@ -155,11 +155,11 @@ export async function findByField<T extends object>(
     const siteId = await getSiteId();
     const graph = getGraphClient();
     const filter = `fields/${fieldName} eq '${escapeODataString(value)}'`;
-    const res = await graph
-        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=${encodeURIComponent(filter)}`)
-        .header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly')
-        .get();
-    return (res.value ?? []).map((v: any) => ({ id: v.id, fields: v.fields }));
+    return readItemPages<T>(
+        graph,
+        `/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$filter=${encodeURIComponent(filter)}`,
+        { Prefer: 'HonorNonIndexedQueriesWarningMayFailRandomly' },
+    );
 }
 
 export async function listItems<T extends object>(
@@ -168,10 +168,22 @@ export async function listItems<T extends object>(
     if (getJiraMode() === 'mock') return copy([...mockList(key).values()]);
     const siteId = await getSiteId();
     const graph = getGraphClient();
-    const res = await graph
-        .api(`/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$top=200`)
-        .get();
-    return (res.value ?? []).map((v: any) => ({ id: v.id, fields: v.fields }));
+    return readItemPages<T>(graph, `/sites/${siteId}/lists/${listName(key)}/items?$expand=fields&$top=200`);
+}
+
+async function readItemPages<T extends object>(
+    graph: ReturnType<typeof getGraphClient>, path: string, headers: Record<string, string> = {},
+): Promise<ListItem<T>[]> {
+    const items: ListItem<T>[] = [];
+    let next: string | undefined = path;
+    while (next) {
+        let request = graph.api(next);
+        for (const [name, value] of Object.entries(headers)) request = request.header(name, value);
+        const page = await request.get();
+        items.push(...(page.value ?? []).map((item: any) => ({ id: item.id, fields: item.fields })));
+        next = page['@odata.nextLink'];
+    }
+    return items;
 }
 
 /** Atomic state transition: a stale reader cannot acquire a second claim. */
@@ -315,6 +327,8 @@ export const LIST_SCHEMAS: Record<ListKey, {
             { name: 'Reason', type: 'note' },
             { name: 'PointsToDoPct', type: 'number' },
             { name: 'Payload', type: 'note' },
+            { name: 'State', type: 'text' },
+            { name: 'DeliveredUtc', type: 'dateTime' },
         ],
     },
     helperRoster: {

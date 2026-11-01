@@ -36,20 +36,47 @@ Tool-selection guidance:
 `;
 
 /**
- * Per-user rolling conversation history so follow-ups like "provide more details"
+ * Per-conversation rolling history so follow-ups like "provide more details"
  * or "and the assignee?" resolve against the most recent turn. Cap at HISTORY_MAX
- * items (user+assistant combined) per user to keep the prompt cheap and drop
+ * items (user+assistant combined) per caller to keep the prompt cheap and drop
  * stale context.
  *
- * Keyed by the Teams AAD id (fall back to activity.from.id) — one thread per user.
+ * Incomplete identities get no saved history, rather than a shared anonymous bucket.
  */
 type HistoryItem = { role: 'user' | 'assistant'; content: string };
 const HISTORY_MAX = 8;
-const historyByUser = new Map<string, HistoryItem[]>();
+const historyByConversation = new Map<string, HistoryItem[]>();
 
-function historyKey(context: TurnContext): string {
-    const from = context.activity.from;
-    return from?.aadObjectId ?? from?.id ?? 'anon';
+function historyKey(context: TurnContext): string | undefined {
+    const activity = context.activity;
+    const conversation = activity.conversation;
+    const data = activity.channelData as {
+        tenant?: { id?: string };
+        team?: { id?: string };
+        channel?: { id?: string };
+        teamsChannelId?: string;
+    } | undefined;
+    const identity = (value: unknown): string =>
+        typeof value === 'string' ? value.trim() : '';
+    const tenant = identity(conversation?.tenantId) || identity(data?.tenant?.id)
+        || identity(activity.recipient?.tenantId);
+    const caller = identity(activity.from?.aadObjectId) || identity(activity.from?.id);
+    const channel = identity(activity.channelId);
+    const conversationId = identity(conversation?.id);
+    if (!tenant || !caller || !channel || !conversationId) return undefined;
+    const audience = identity(conversation?.conversationType);
+    const teamsChannel = identity(data?.channel?.id) || identity(data?.teamsChannelId);
+    // Channel roots and their replies share a thread; distinct roots must not.
+    const isChannel = Boolean(teamsChannel) || audience === 'channel';
+    const thread = isChannel
+        ? identity(activity.replyToId) || identity(activity.id)
+        : '';
+    if (isChannel && !thread) return undefined;
+    return JSON.stringify([
+        tenant, channel, conversationId, caller, audience,
+        conversation?.isGroup ?? null, identity(data?.team?.id), teamsChannel, thread,
+        identity(activity.recipient?.id),
+    ]);
 }
 
 export async function handleAnswer(context: TurnContext, userMessage: string): Promise<void> {
@@ -67,7 +94,7 @@ export async function handleAnswer(context: TurnContext, userMessage: string): P
     await context.sendActivity({ type: 'typing' } as Activity);
 
     const key = historyKey(context);
-    const prior = historyByUser.get(key) ?? [];
+    const prior = key ? historyByConversation.get(key) ?? [] : [];
     const input: HistoryItem[] = [...prior, { role: 'user' as const, content: userMessage }];
 
     try {
@@ -78,7 +105,7 @@ export async function handleAnswer(context: TurnContext, userMessage: string): P
         await context.sendActivity(reply);
 
         const next: HistoryItem[] = [...input, { role: 'assistant' as const, content: reply }].slice(-HISTORY_MAX);
-        historyByUser.set(key, next);
+        if (key) historyByConversation.set(key, next);
     } catch (e) {
         console.error('[answer] error:', (e as Error).message);
         await context.sendActivity(`Sorry — I hit an error answering that: ${(e as Error).message}`);

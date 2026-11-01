@@ -344,8 +344,7 @@ the last discussed task — no need to repeat the key.
 classified:
 
 - **RED** — `dueDate < today` and status not `Done`
-- **AMBER** — `dueDate <= today + AMBER_WINDOW_DAYS` and status not
-  `Done`/`In Review`
+- **AMBER** — `dueDate <= today + AMBER_WINDOW_DAYS` and status not `Done`
 - **GREEN** — otherwise
 
 The output is a prioritised markdown table posted inline to the configured
@@ -447,9 +446,21 @@ depends on model output. Everything else is TypeScript.
 - **Session state** in `session-store.ts` is in-memory. A restart drops
   pending fan-in and cutoff timers; a persisted SharePoint row does not
   rebuild them. Live triggers check existing SharePoint records before new
-  fanout, but this check is not atomic across processes. Failed finalization
-  stays `summarizing` to avoid an ambiguous duplicate post; inspect existing
-  records before manually recovering a run.
+  fanout, but this check is not atomic across processes. A thrown failure
+  before delivery can leave the in-memory state `summarizing`; SharePoint
+  stores `open` or `summarized`, not `summarizing`. Explicitly failed summary
+  delivery leaves the session `open` and does not mark it completed. In the
+  same process, retry `/standup` after cutoff or when all responses are
+  collected to resend the summary without repeating fan-out. After a restart,
+  inspect existing records before manually recovering a run.
+
+Warn risk detection and notification delivery are separate: `SMA_SprintRisks`
+rows stay `pending` until the Scrum Master DM succeeds, then become `delivered`
+with `DeliveredUtc`. Failed roster lookups, missing destinations, or connector
+failures propagate to the nightly caller and remain retryable. Run the
+SharePoint setup script to add the new columns to existing lists. There is no
+distributed exactly-once guarantee; a persistence failure after a successful
+DM can cause a duplicate on retry.
 
 ## 10. Observability
 

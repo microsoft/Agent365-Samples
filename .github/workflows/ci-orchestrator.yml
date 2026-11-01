@@ -39,6 +39,10 @@ jobs:
     name: Node.js Vercel SDK
     uses: ./.github/workflows/ci-nodejs-vercelsdk-sampleagent.yml
 
+  nodejs-scrum-master:
+    name: Node.js Scrum Master
+    uses: ./.github/workflows/ci-nodejs-scrum-master.yml
+
   # Python Jobs - Call existing workflows
   python-agentframework:
     name: Python Agent Framework
@@ -68,6 +72,7 @@ jobs:
       - nodejs-langchain
       - nodejs-openai
       - nodejs-vercelsdk
+      - nodejs-scrum-master
       - python-agentframework
       - python-googleadk
       - python-openai
@@ -77,16 +82,16 @@ jobs:
       - name: Check CI Status
         run: |
           echo "Checking CI job results..."
-          
+
           # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
-          
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.nodejs-scrum-master.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }}"
+
           echo "Job results: $results"
-          
+
           # Check if any job failed or was cancelled
           if echo "$results" | grep -qE "failure|cancelled"; then
             echo "❌ One or more CI jobs failed or were cancelled"
             exit 1
           fi
-          
+
           echo "✅ All CI jobs passed"

@@ -6,7 +6,7 @@
  *
  * Signs in the developer via device-code, creates all SMA_* lists with the
  * schemas declared in `services/sharepoint.ts`, and creates the SprintReports
- * document library. Idempotent — running it twice is a no-op.
+ * document library. Also adds missing risk-delivery columns on existing lists.
  *
  * Usage: `npm run setup:sharepoint`
  */
@@ -60,6 +60,22 @@ async function main() {
             .catch(() => ({ value: [] }));
 
         if ((existing.value ?? []).length > 0) {
+            if (key === 'sprintRisks') {
+                const listId = existing.value[0].id;
+                const columnsPath = `/sites/${siteId}/lists/${listId}/columns`;
+                const names = new Set<string>();
+                let next: string | undefined = columnsPath;
+                while (next) {
+                    const page = await graph.api(next).get();
+                    for (const column of page.value ?? []) names.add(column.name);
+                    next = page['@odata.nextLink'];
+                }
+                for (const column of schema.columns.filter(col =>
+                    ['State', 'DeliveredUtc'].includes(col.name) && !names.has(col.name))) {
+                    await graph.api(columnsPath).post({ name: column.name, ...COLUMN_TYPE_MAP[column.type] });
+                    console.log(`[setup] Added ${displayName}.${column.name}.`);
+                }
+            }
             console.log(`[setup] List ${displayName} already exists — skipping.`);
             continue;
         }
