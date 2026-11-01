@@ -26,13 +26,13 @@
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
     "@microsoft/microsoft-graph-client": "^3.0.7",
-    "@opentelemetry/core": "2.1.0",
+    "@opentelemetry/core": "2.8.0",
     "@perplexity-ai/perplexity_ai": "^0.16.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "mammoth": "^1.11.0",
     "pdf-parse": "^2.4.5",
-    "zod": "^3.23.8"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@microsoft/m365agentsplayground": "^0.2.18",

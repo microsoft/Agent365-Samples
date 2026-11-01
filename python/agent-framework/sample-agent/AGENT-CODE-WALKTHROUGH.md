@@ -337,7 +337,7 @@ async def handle_agent_notification_activity(
 
             email = notification_activity.email
             email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
-            message = f"You have received the following email. Please follow any instructions in it. {email_body}"
+            message = _build_email_reply_prompt(email_body)
 
             result = await self.agent.run(message)
             return self._extract_result(result) or "Email notification processed."
@@ -379,7 +379,7 @@ async def handle_agent_notification_activity(
 **What happens**:
 1. **Setup Tools**: Makes sure MCP tools are connected (notifications might arrive before any regular messages)
 2. **Identify Type**: Checks what kind of notification it is (email, Word comment, etc.)
-3. **Email Notifications**: Extracts email body and processes with the agent
+3. **Email Notifications**: Wraps the email body as untrusted data with `_build_email_reply_prompt` and asks the agent to write a reply, so instructions inside an email are never followed (prompt-injection protection)
 4. **Word Comments**: Retrieves document content, then processes the comment with context
 5. **Generic Handling**: Falls back to simple text processing for other notification types
 
