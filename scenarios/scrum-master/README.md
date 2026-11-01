@@ -55,6 +55,8 @@ The hosting package's MSAL dependency is overridden to patched 7.1.2+ for [GHSA-
 
 OpenTelemetry's Node SDK is pinned through an override to patched 0.217.x for [GHSA-q7rr-3cgh-j5r3](https://github.com/advisories/GHSA-q7rr-3cgh-j5r3); this also selects its patched Prometheus exporter without changing the agent's exporter configuration.
 
+Its optional Jaeger propagator is overridden to 2.9.0+ for [GHSA-45rx-2jwx-cxfr](https://github.com/advisories/GHSA-45rx-2jwx-cxfr). This does not enable Jaeger propagation; it keeps the installed dependency safe if explicitly selected.
+
 ## Quick start — mock mode (no external services)
 
 Uses the built-in mock Jira sprint in [`src/mock/jira-mock.ts`](src/mock/jira-mock.ts) and an in-memory roster/standup path. This exercises local card interactions, not real Teams delivery or SharePoint persistence.

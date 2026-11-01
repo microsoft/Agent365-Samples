@@ -4,6 +4,20 @@
 const assert = require('node:assert/strict');
 const { test, mock } = require('node:test');
 
+test('patched Jaeger propagator ignores malformed headers and retains valid trace context', () => {
+    const { context, trace, defaultTextMapGetter } = require('@opentelemetry/api');
+    const { JaegerPropagator } = require('@opentelemetry/propagator-jaeger');
+    const propagator = new JaegerPropagator();
+    const base = context.active();
+    for (const headers of [{ 'uber-trace-id': '%' }, { 'uberctx-user': '%' }]) {
+        assert.doesNotThrow(() => propagator.extract(base, headers, defaultTextMapGetter));
+    }
+    const valid = propagator.extract(base, {
+        'uber-trace-id': '11111111111111111111111111111111:2222222222222222:0:1',
+    }, defaultTextMapGetter);
+    assert.equal(trace.getSpanContext(valid).traceId, '11111111111111111111111111111111');
+});
+
 test('patched OpenTelemetry SDK preserves A365 scope initialization and export processing offline', async () => {
     const keys = ['ENABLE_A365_OBSERVABILITY_EXPORTER', 'OTEL_METRICS_EXPORTER', 'OTEL_LOGS_EXPORTER'];
     const previous = keys.map(key => process.env[key]);
