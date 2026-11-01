@@ -1,3 +1,15 @@
+<!--
+---
+name: "W365 Computer Use Sample"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Control a Windows 365 Cloud PC from a .NET agent using the OpenAI Responses API and W365 Computer Use MCP tools."
+---
+-->
+
 # W365 Computer Use Sample
 
 ## Overview
@@ -43,7 +55,7 @@ Response to User
 - Azure OpenAI resource with a CUA-capable model deployment:
   - `computer-use-preview` or `gpt-5.4` / `gpt-5.4-mini`
   - [Request access to gpt-5.4](https://aka.ms/OAI/gpt54access) if needed
-- Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/))
+- Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/microsoft-agent-365/developer/))
 - A bearer token with `Tools.ListInvoke.All` scope
 
 ## Setup
@@ -153,6 +165,57 @@ Ensure the MCP Platform is running locally on port 52857, or update the `McpServ
 
 ### 6. Run the agent
 
+A365 export is disabled by default. To send traces to Agent 365, set `EnableAgent365Exporter=true` and configure the **independent OBS-only application credentials**. The MCP/Graph bearer
+tokens above remain business tokens and are never sent to the S2S observability service:
+
+```json
+{
+  "EnableAgent365Exporter": true,
+  "Agent365Observability": {
+    "TenantId": "<<AGENT_HOME_TENANT_ID>>",
+    "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
+    "BlueprintClientId": "<<BLUEPRINT_CLIENT_ID>>",
+    "UseManagedIdentity": true,
+    "ManagedIdentityClientId": ""
+  }
+}
+```
+
+`AgentId` must be the actual agent instance client ID, not the blueprint ID or service principal
+object ID. For Azure, the configured managed identity must already be federated with the blueprint;
+empty `ManagedIdentityClientId` selects the system-assigned identity, otherwise supply a user-assigned
+client ID. For local development use `UseManagedIdentity=false` and supply
+`Agent365Observability:BlueprintClientSecret` through user secrets, or
+`Agent365Observability__BlueprintClientSecret` through the environment. All keys support the .NET
+double-underscore environment format. Do not store a secret in checked-in configuration.
+
+The sample-local provider implements the [documented app-only token flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
+produces T1; agent `client_credentials` uses T1 as `client_assertion` for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. No user token, `user_fic`, or OBO is used for OBS.
+
+This sample provider is single-instance: one configured tenant and agent instance. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential. The provider requests tokens from `login.microsoftonline.com`; sovereign clouds need provider changes.
+Both Microsoft.OpenTelemetry 1.0.6's `options.Agent365` and the
+`services.Configure<Agent365ExporterOptions>` registration explicitly set `UseS2SEndpoint=true`
+and use the same separate provider as `TokenResolver`.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **the **exact registered
+Agent 365 agent instance** and authorization; selecting S2S or creating an
+Entra identity alone is insufficient.
+For registered blueprint agents, do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim. For AI Teammates, complete the OtelWrite application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S without that step has not been validated. Business OBO/MCP/Graph permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail when export is enabled; with export disabled, placeholders do not block local/Playground startup.
+Export identity mismatches, any delegated `scp` claim (even empty), explicit non-app/null `idtyp`,
+malformed `roles`, and invalid/expired responses fail closed. Tokens without `idtyp` need either
+`oid` equal to `sub` or a valid nonempty array of nonblank string roles. Original agent/user baggage
+is preserved: use the matching configured identity rather than overwriting turn context. For service
+authorization failures, verify instance registration and authorization; this sample
+does not provision identities or modify permissions. Requests are bounded to 30 seconds; tokens
+refresh 60 seconds before expiry with no stale-token fallback.
+
+**Deployment:** The OBS helper files live in this sample's `Observability/` folder and are compiled with the project, so copying or publishing the sample is self-contained. Retain the `Azure.Identity` package alias in the project file.
+
 ```powershell
 cd sample-agent
 $env:ASPNETCORE_ENVIRONMENT = "Development"
@@ -166,6 +229,87 @@ dotnet run
 2. Connect to `http://localhost:3978/api/messages`
 3. Send a message like: *"Open Notepad and type Hello World"*
 4. Screenshots are saved under `./Screenshots/<session-id>/` automatically
+
+## Authentication to the W365 Computer Use MCP server
+
+The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Streamable HTTP / SSE). Every request is authenticated with an OAuth 2.0 **bearer token for the calling agent's identity**; the agent's identity is carried by the token, so no separate identity header is required. The sample also sends optional `x-ms-*` correlation headers (see below).
+
+### Endpoint
+
+| Environment | URL |
+|-------------|-----|
+| Production (gateway) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
+| Local development | Your local MCP Platform URL (`McpServer:Url`) |
+
+### Token
+
+The bearer token must be issued for the **Windows 365 for Agents MCP** resource:
+
+| Field | Value |
+|-------|-------|
+| Resource / audience (app ID) | `da81128c-e5b5-4f9e-8d89-50d906f107c5` |
+| Scope string | `da81128c-e5b5-4f9e-8d89-50d906f107c5/.default` |
+| Delegated scope | `Tools.ListInvoke.All` |
+| Token type | Agent-identity ("agentic") token — the agent acts as itself, not the end user |
+
+- **Production:** the Microsoft Agents (A365) SDK acquires and attaches the token automatically through the `w365` auth handler (`AgenticUserAuthorization`, configured under `AgentApplication:UserAuthorization:Handlers:w365`). See `MyAgent.GetToolsAsync` → `UserAuthorization.GetTurnTokenAsync(context, "w365")`.
+- **Local development:** mint the token with [`Get-CuaAgentUserToken.ps1`](#get-the-windows-365-for-agents-mcp-token) and set it as `BEARER_TOKEN`; the sample sends it directly on the MCP connection.
+
+### Headers
+
+Only one header is required: `Authorization: Bearer <token>` for the resource above. The sample also sends a few optional `x-ms-*` correlation headers (`x-ms-conversation-id`, `x-ms-channel-id`, `x-ms-user-message-id`, `x-ms-user-agent`) for telemetry — none are required.
+
+> **Note:** the calling agent's identity is taken from the bearer token itself — you don't send a separate identity header.
+
+### Minimal request example
+
+The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. Starting a session (`mcp_W365ComputerUse_StartSession`) takes no arguments and returns a `sessionId`; every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes that `sessionId`.
+
+```http
+POST /agents/servers/mcp_W365ComputerUse HTTP/1.1
+Host: agent365.svc.cloud.microsoft
+Authorization: Bearer <token>
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_StartSession",
+    "arguments": {}
+  }
+}
+```
+
+The response includes a `sessionId` (and, on start, a `screenShareUrl`). Pass the `sessionId` on the next call:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_GetSessionDetails",
+    "arguments": { "sessionId": "<sessionId-from-StartSession>" }
+  }
+}
+```
+
+In .NET, the sample uses the MCP SDK rather than hand-rolling JSON-RPC — it attaches the headers via `SseClientTransportOptions.AdditionalHeaders` and calls `IMcpClient.CallToolAsync(...)` (see `ComputerUse/W365McpSessionClient.cs`):
+
+```csharp
+var transport = new SseClientTransportOptions
+{
+    Endpoint = new Uri("https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse"),
+    TransportMode = HttpTransportMode.AutoDetect,
+    AdditionalHeaders = new Dictionary<string, string>
+    {
+        ["Authorization"] = $"Bearer {accessToken}",
+    },
+};
+```
 
 ## Configuration Reference
 
@@ -186,6 +330,15 @@ dotnet run
 | `Screenshots:OneDriveUserId` | UPN/email to upload screenshots to a specific user's OneDrive (instead of token owner) | - |
 | `BEARER_TOKEN` (env var) | MCP Platform token with `Tools.ListInvoke.All` scope (dev only) | - |
 | `GRAPH_TOKEN` (env var) | Graph API token with `Files.ReadWrite` scope for OneDrive upload (dev only) | - |
+| `AgentApplication:UserAuthorization:Handlers:w365:Settings:Scopes` | W365 MCP audience (`da81128c-e5b5-4f9e-8d89-50d906f107c5/.default`, scope `Tools.ListInvoke.All`) | - |
+| `AgentApplication:ScreenShareAuthHandlerName` | Auth handler used to mint ARI screenshare tokens | `ari` |
+| `AgentApplication:UserAuthorization:Handlers:ari:Settings:Scopes` | ARI audience (production `90ecec28-f5a6-42b3-9bde-dae1ca98f8b5/.default`) | - |
+| `ScreenShare:AuthMode` | `EasyAuth` for Azure deployment, `DevBypass` for local development | `EasyAuth` |
+| `ScreenShare:SdkVersion` | Screenshare SDK version loaded from the CDN | `1.0.0` |
+| `ScreenShare:CdnOrigin` | Public Microsoft CDN origin for the screenshare SDK | `https://packages.global.cloudinferenceplatform.azure.com` |
+| `ScreenShare:PageBaseUrl` | Public base URL for links to `screenshare.html`; defaults to the App Service host if unset | - |
+| `ScreenShare:AllowedFrameAncestors` | CSP `frame-ancestors` values allowed to embed the screenshare page | Teams / M365 hosts |
+| `ARI_BEARER_TOKEN` (env var) | Optional local ARI token override for screenshare development | - |
 
 ## Supported Models
 
@@ -219,6 +372,39 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 - On app shutdown (`Ctrl+C`), the agent calls `EndSession` for each cached `sessionId` to release VMs back to the pool
 - If the app crashes, sessions auto-expire after ~30 minutes on the W365 backend
 
+## Screenshare
+
+The agent can expose a live screenshare link to the running Cloud PC through the W365 / ARI screenshare SDK. The link is created during the bot turn, when `turnContext` is available.
+
+1. The W365 MCP start-session response includes a `screenShareUrl`.
+2. The agent mints an ARI token through the `ari` auth handler, or uses `ARI_BEARER_TOKEN` in local development.
+3. The agent stores a one-time handoff record in memory (`HandoffStore`):
+   - `sessionId`
+   - `screenShareUrl`
+   - owner Entra object id from the original Teams activity
+   - hashed handoff code
+   - ARI token and parsed token expiry
+4. The bot posts a link to `/screenshare.html?sid=<sessionId>&hc=<handoffCode>`.
+5. The browser signs in through EasyAuth and calls `POST /api/screenshare/{sid}/token`.
+6. The server validates the EasyAuth identity against the original owner object id and returns the ARI token to the page.
+7. The page loads the screenshare SDK from `ScreenShare:CdnOrigin` and starts the session.
+
+The screenshare SDK is served from the public Microsoft CDN (`ScreenShare:CdnOrigin`, default `https://packages.global.cloudinferenceplatform.azure.com`); `/api/screenshare/config` templates the origin and SDK version so `screenshare.js` stays in sync.
+
+The in-memory handoff store is single-process. If the web app is scaled out to multiple instances, replace it with a distributed cache.
+
+### Local testing
+
+- Run the agent — it binds `http://localhost:3978` and `https://localhost:3979` (the SPA requires a secure context).
+- Set `ScreenShare:AuthMode` to `DevBypass` to skip the EasyAuth identity check locally.
+- Set `ARI_BEARER_TOKEN` to a valid ARI token so the page can start the SDK without EasyAuth.
+
+### Production
+
+- Enable App Service Authentication (EasyAuth) with Microsoft Entra ID so browser requests to `screenshare.html` are authenticated.
+- Set `ScreenShare:AuthMode=EasyAuth` and `ScreenShare:PageBaseUrl=https://<webapp-name>.azurewebsites.net`.
+- Register the `ari` auth handler scopes and grant the agent identity the ARI screenshare permissions on the target W365 Cloud PC pool.
+
 ## Production Deployment
 
 1. Register an Azure Bot and configure the agent
@@ -239,6 +425,6 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 
 ## Links
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - [Microsoft 365 Agents SDK](https://learn.microsoft.com/microsoft-365/agents-sdk/)
-- [Azure OpenAI Computer Use Guide](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use)
+- [Azure OpenAI Computer Use Guide](https://learn.microsoft.com/azure/foundry-classic/openai/how-to/computer-use)

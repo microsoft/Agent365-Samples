@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>ChannelName__c</fullName>
+    <description>Optional channel name for Agentforce-originated turns. Emitted as the invoke_agent span attribute microsoft.channel.name, mapped to CloudAppEvents ChannelName. Falls back to 'agentforce' when blank.</description>
+    <externalId>false</externalId>
+    <label>Channel Name</label>
+    <length>255</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

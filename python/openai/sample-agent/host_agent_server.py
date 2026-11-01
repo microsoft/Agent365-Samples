@@ -46,10 +46,6 @@ from microsoft_agents_a365.notifications.agent_notification import (
 )
 from microsoft_agents_a365.notifications import EmailResponse
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-from microsoft_agents_a365.runtime.environment_utils import (
-    get_observability_authentication_scope,
-)
-from token_cache import cache_agentic_token
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
@@ -237,21 +233,6 @@ class GenericAgentHost:
                         await context.send_activity(error_msg)
                         return
 
-                    # Exchange token for observability if auth handler is configured
-                    if self.auth_handler_name:
-                        exaau_token = await self.agent_app.auth.exchange_token(
-                            context,
-                            scopes=get_observability_authentication_scope(),
-                            auth_handler_id=self.auth_handler_name,
-                        )
-
-                        # Cache the agentic token for Agent 365 Observability exporter use
-                        cache_agentic_token(
-                            tenant_id,
-                            agent_id,
-                            exaau_token.token,
-                        )
-
                     user_message = context.activity.text or ""
                     logger.info(f"📨 Processing message: '{user_message}'")
 
@@ -351,15 +332,6 @@ class GenericAgentHost:
                         logger.error("Agent not available")
                         await context.send_activity("❌ Sorry, the agent is not available.")
                         return
-
-                    # Exchange token for observability if auth handler is configured
-                    if self.auth_handler_name and tenant_id and agent_id:
-                        exaau_token = await self.agent_app.auth.exchange_token(
-                            context,
-                            scopes=get_observability_authentication_scope(),
-                            auth_handler_id=self.auth_handler_name,
-                        )
-                        cache_agentic_token(tenant_id, agent_id, exaau_token.token)
 
                     logger.info(f"📬 Processing notification: {notification_activity.notification_type}")
 

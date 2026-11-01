@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>AgentName__c</fullName>
+    <description>Optional display name for the Agentforce agent. Emitted as the invoke_agent span attribute gen_ai.agent.name, mapped to CloudAppEvents TargetAgentName. Falls back to AgentforceServiceName__c when blank.</description>
+    <externalId>false</externalId>
+    <label>Agent Name</label>
+    <length>255</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

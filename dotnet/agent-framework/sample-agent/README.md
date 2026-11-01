@@ -1,3 +1,15 @@
+<!--
+---
+name: "Agent Framework (Simple) Sample"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Build a .NET agent with Agent Framework and Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Agent Framework (Simple) Sample
 
 ## Overview
@@ -9,9 +21,16 @@ It covers:
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for .NET](https://github.com/microsoft/Agent365-dotnet).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [NuGet Gallery | Microsoft.Agents.A365.Notifications](https://www.nuget.org/packages/Microsoft.Agents.A365.Notifications)
+- [NuGet Gallery | Microsoft.Agents.A365.Tooling.Extensions.AgentFramework](https://www.nuget.org/packages/Microsoft.Agents.A365.Tooling.Extensions.AgentFramework)
+- [NuGet Gallery | Microsoft.Agents.AI](https://www.nuget.org/packages/Microsoft.Agents.AI)
+- [NuGet Gallery | Microsoft.Agents.Authentication.Msal](https://www.nuget.org/packages/Microsoft.Agents.Authentication.Msal)
+- [NuGet Gallery | Microsoft.Agents.Hosting.AspNetCore](https://www.nuget.org/packages/Microsoft.Agents.Hosting.AspNetCore)
+- [NuGet Gallery | Microsoft.OpenTelemetry](https://www.nuget.org/packages/Microsoft.OpenTelemetry)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -118,14 +137,78 @@ finally
 
 ## Observability
 
-This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro, configured in `Program.cs` with a single call:
+### Required OBS-only application credentials
+
+A365 export is disabled by default. To send traces to Agent 365, set `EnableAgent365Exporter=true` and configure the separate `Agent365Observability` credentials:
+
+```json
+{
+  "EnableAgent365Exporter": true,
+  "Agent365Observability": {
+    "TenantId": "<<AGENT_HOME_TENANT_ID>>",
+    "AgentId": "<<AGENT_INSTANCE_CLIENT_ID>>",
+    "BlueprintClientId": "<<BLUEPRINT_CLIENT_ID>>",
+    "UseManagedIdentity": true,
+    "ManagedIdentityClientId": ""
+  }
+}
+```
+
+`AgentId` is the actual agent instance **application/client ID**, not its service principal
+object ID or the blueprint ID. Empty `ManagedIdentityClientId` selects the system-assigned
+identity; set it to a user-assigned managed identity client ID otherwise. This identity must
+already be configured as a federated credential on the blueprint. For local development,
+set `UseManagedIdentity` to `false` and supply `Agent365Observability:BlueprintClientSecret`
+through user secrets, or `Agent365Observability__BlueprintClientSecret` through the environment.
+All settings support the standard .NET double-underscore environment syntax. Never commit secrets.
+
+The [sample-local OBS provider](Observability/ObservabilityAppTokenProvider.cs) uses the
+[documented app-only flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
+produces T1; agent `client_credentials` uses T1 as `client_assertion` for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. The existing autonomous sample uses the same
+protocol through MSAL. No `user_fic`, OBO, or developer bearer token is used for OBS.
+Business MCP/Graph authentication and original user/agent baggage are unchanged.
+
+This sample provider is single-instance: one configured tenant and agent instance. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential. The provider requests tokens from `login.microsoftonline.com`; sovereign clouds need provider changes.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may
+omit `roles` or have `roles: []`. Roleless service acceptance requires an **the **exact registered
+Agent 365 agent instance** and authorization; selecting S2S or creating an
+Entra identity alone is insufficient.
+For registered blueprint agents, do not add an `Agent365.Observability.OtelWrite` grant solely to populate a `roles` claim. For AI Teammates, complete the OtelWrite application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S without that step has not been validated. Business OBO/MCP/Graph permissions and consent remain independent.
+
+**Troubleshooting:** Missing/placeholder settings or using the blueprint as `AgentId` fail when export is enabled; with export disabled, placeholders do not block local/Playground startup.
+Tenant/agent export mismatches, any delegated `scp` claim (even empty), explicit non-app/null
+`idtyp`, malformed `roles`, malformed responses, or expired tokens fail closed without a fallback
+credential. Tokens without `idtyp` need either `oid` equal to `sub` or a valid nonempty array of
+nonblank string roles. Configure the actual identity represented in the original turn baggage;
+do not rewrite baggage to bypass a mismatch. For service authorization failures, verify instance
+registration and authorization; the sample neither provisions identities nor changes
+permissions. Acquisition has a 30-second bound and expiry-aware caching with a 60-second refresh
+margin; a failed refresh never returns a stale token.
+
+**Build/deployment:** The OBS helper files live in this sample's `Observability/` folder and are compiled with the project, so copying or publishing the sample is self-contained. Retain the `Azure.Identity` package alias in the project file.
+
+This sample uses the [`Microsoft.OpenTelemetry`](https://www.nuget.org/packages/Microsoft.OpenTelemetry) distro. `Program.cs` creates the provider and enables Agent 365 export only when configured:
 
 ```csharp
+using var observabilityTokens = ObservabilityAppTokenFactory.CreateIfEnabled(builder.Configuration);
+var agent365ExporterEnabled = observabilityTokens is not null;
+
 builder.UseMicrosoftOpenTelemetry(o =>
 {
-    o.Exporters = builder.Environment.IsDevelopment()
-        ? ExportTarget.Agent365 | ExportTarget.Console
-        : ExportTarget.Agent365;
+    o.Exporters = agent365ExporterEnabled ? ExportTarget.Agent365 : (ExportTarget)0;
+    if (builder.Environment.IsDevelopment())
+    {
+        o.Exporters |= ExportTarget.Console;
+    }
+
+    if (observabilityTokens is not null)
+    {
+        o.Agent365.Exporter.UseS2SEndpoint = true;
+        o.Agent365.Exporter.TokenResolver = observabilityTokens.ResolveAsync;
+    }
 
     o.Instrumentation.EnableAspNetCoreInstrumentation = true;
     o.Instrumentation.EnableHttpClientInstrumentation = true;
@@ -158,7 +241,7 @@ Set this in your local launch profile, deployment environment, or container conf
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
@@ -167,7 +250,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-dotnet/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

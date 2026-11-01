@@ -142,7 +142,7 @@ ENABLE_OBSERVABILITY=true
     "@langchain/openai": "^0.2.0",
     "@langchain/core": "^0.2.0",
     "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "^0.0.1",
+    "@microsoft/opentelemetry": "^1.4.0",
     "express": "^4.18.0"
   }
 }

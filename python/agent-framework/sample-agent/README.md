@@ -1,3 +1,15 @@
+<!--
+---
+name: "Agent Framework Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build an Agent Framework agent in Python with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Agent Framework Sample Agent - Python
 
 This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
@@ -7,9 +19,20 @@ This sample demonstrates how to build an agent using Agent Framework in Python w
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [microsoft-agents-activity · PyPI](https://pypi.org/project/microsoft-agents-activity/)
+- [microsoft-agents-authentication-msal · PyPI](https://pypi.org/project/microsoft-agents-authentication-msal/)
+- [microsoft-agents-hosting-aiohttp · PyPI](https://pypi.org/project/microsoft-agents-hosting-aiohttp/)
+- [microsoft-agents-hosting-core · PyPI](https://pypi.org/project/microsoft-agents-hosting-core/)
+- [microsoft-agents-a365-notifications · PyPI](https://pypi.org/project/microsoft-agents-a365-notifications/)
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-runtime · PyPI](https://pypi.org/project/microsoft-agents-a365-runtime/)
+- [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
+- [microsoft-agents-a365-tooling-extensions-agentframework · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling-extensions-agentframework/)
+- [microsoft-opentelemetry · PyPI](https://pypi.org/project/microsoft-opentelemetry/)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -35,6 +58,24 @@ Set up the Python virtual environment manually before running the agent or deplo
 3. Activate the virtual environment:
 	- Windows PowerShell: `.venv\Scripts\Activate.ps1`
 	- macOS/Linux: `source .venv/bin/activate`
+
+## Observability S2S export
+
+A365 export is disabled by default. To send traces to Agent 365, set the dedicated OBS credentials and enable the exporter:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+`AGENT365_OBS_AGENT_ID` is the actual runtime agent instance client ID, not the blueprint ID, service-principal object ID, or agent-user ID. `ENABLE_A365_OBSERVABILITY_EXPORTER=false` disables A365 HTTP export; samples using the Microsoft OpenTelemetry distro can still enrich spans for other exporters.
+
+The sample-local provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
+
+Accepted OBS tokens are app-only tokens with `idtyp=app`, valid nonempty `roles`, or absent `idtyp` with nonempty `oid == sub`; any `scp` claim is rejected. See [Agent 365 observability S2S export](../../../docs/observability-s2s.md) for route details and validation commands.
 
 ## Working with User Identity
 
@@ -126,7 +167,7 @@ Each `send_activity` call produces a separate Teams message. You can call it as 
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
 
@@ -135,7 +176,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

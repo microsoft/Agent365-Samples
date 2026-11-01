@@ -1,0 +1,140 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+// A365ObsConfig — thin reader over the A365_Observability_Config__mdt 'Default' record.
+//
+// Centralizes the non-secret runtime config (enable flag, ids, endpoints, scopes) so the
+// emitter, token service and queueable read one source of truth. NEVER holds secrets —
+// the blueprint secret lives only in the External Credential (Setup-entered).
+//
+// Resilient by design: if the Default record is missing (e.g. a fresh scratch org), the
+// reader falls back to built-in default constants so the pipeline degrades gracefully rather
+// than throwing. Tests can force a config via the @TestVisible override.
+public with sharing class A365ObsConfig {
+
+    // Default fallbacks — used only when the Default CMDT record is absent.
+    @TestVisible private static final String DEF_TENANT = '11111111-1111-1111-1111-111111111111';
+    @TestVisible private static final String DEF_AGENT = '22222222-2222-2222-2222-222222222222';
+    @TestVisible private static final String DEF_INGEST_BASE = 'https://agent365.svc.cloud.microsoft';
+    @TestVisible private static final String DEF_OBS_SCOPE = 'api://9b975845-388f-4429-889e-eab1ef63949c/.default';
+    @TestVisible private static final String DEF_FMI_SCOPE = 'api://AzureADTokenExchange/.default';
+    @TestVisible private static final String DEF_SERVICE_NAME = 'salesforce-apex';
+    @TestVisible private static final String DEF_AF_SERVICE_NAME = 'salesforce-agentforce';
+    @TestVisible private static final String DEF_CHANNEL_NAME = 'agentforce';
+
+    // Test override — when set, getInstance() returns this instead of querying CMDT
+    // (CMDT rows cannot be inserted in tests, so this is how disabled/enabled is exercised).
+    @TestVisible private static A365_Observability_Config__mdt overrideRecord;
+
+    // Cached per-transaction so repeated reads don't re-query.
+    private static A365_Observability_Config__mdt cached;
+
+    @TestVisible
+    private static A365_Observability_Config__mdt getInstance() {
+        if (overrideRecord != null) {
+            return overrideRecord;
+        }
+        if (cached == null) {
+            cached = A365_Observability_Config__mdt.getInstance('Default');
+        }
+        return cached;
+    }
+
+    public static Boolean isEnabled() {
+        A365_Observability_Config__mdt c = getInstance();
+        // Absent record => treat as DISABLED (fail-safe: never emit without explicit config).
+        return c != null && c.Enabled__c == true;
+    }
+
+    public static String tenantId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.TenantId__c)) ? c.TenantId__c : DEF_TENANT;
+    }
+
+    public static String agentId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.AgentId__c)) ? c.AgentId__c : DEF_AGENT;
+    }
+
+    public static String ingestBase() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.IngestBase__c)) ? c.IngestBase__c : DEF_INGEST_BASE;
+    }
+
+    public static String obsScope() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.ObsScope__c)) ? c.ObsScope__c : DEF_OBS_SCOPE;
+    }
+
+    public static String fmiScope() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.FmiScope__c)) ? c.FmiScope__c : DEF_FMI_SCOPE;
+    }
+
+    public static String serviceName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.ServiceName__c)) ? c.ServiceName__c : DEF_SERVICE_NAME;
+    }
+
+    // --- Origination (Agentforce-native) config ----------------------------------
+
+    // service.name for Salesforce-ORIGINATED (Agentforce) traces — disambiguates this path
+    // from the boundary emitter when both share the mapped agentId.
+    public static String agentforceServiceName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.AgentforceServiceName__c))
+            ? c.AgentforceServiceName__c : DEF_AF_SERVICE_NAME;
+    }
+
+    // Master switch for the origination path, independent of the boundary Enabled__c.
+    // Absent record/field => DISABLED (fail-safe: never originate without explicit opt-in).
+    public static Boolean originateEnabled() {
+        A365_Observability_Config__mdt c = getInstance();
+        return c != null && c.OriginateEnabled__c == true;
+    }
+
+    // --- Admin Center attribution / enrichment (Option 1 + 3) --------------------
+    //
+    // Agentforce turns have no native Entra user, so an ORIGINATED invoke_agent span is
+    // user-less by default (CloudAppEvents UserKey = 0) and therefore lands only in Defender
+    // raw logs — it never surfaces as a session/run-time in the M365 Admin Center. Setting a
+    // run-as Entra user object id (below) makes Salesforce attribute the session to a real
+    // identity (user.id -> UserKey), which is what the Admin Center "Activity" tab keys on.
+    // The remaining getters enrich the session record (agent/blueprint/channel names).
+
+    // Optional Entra (AAD) user object id to attribute Agentforce-originated sessions to.
+    // Blank => omit user.id (preserves the prior user-less, Defender-only behavior).
+    public static String runAsUserId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.RunAsUserId__c)) ? c.RunAsUserId__c : null;
+    }
+
+    // Optional agent blueprint id (microsoft.a365.agent.blueprint.id). Blank => omit.
+    public static String blueprintId() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.BlueprintId__c)) ? c.BlueprintId__c : null;
+    }
+
+    // Display name for the agent (gen_ai.agent.name); falls back to the service name.
+    public static String agentName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.AgentName__c)) ? c.AgentName__c : agentforceServiceName();
+    }
+
+    // Channel name for Agentforce turns (microsoft.channel.name); defaults to 'agentforce'.
+    public static String channelName() {
+        A365_Observability_Config__mdt c = getInstance();
+        return (c != null && String.isNotBlank(c.ChannelName__c)) ? c.ChannelName__c : DEF_CHANNEL_NAME;
+    }
+
+    public static Boolean useS2SEndpoint() {
+        // Compatibility accessor: the deprecated metadata flag no longer selects a route.
+        return true;
+    }
+
+    // OBS always uses S2S, including records with the legacy flag set to false.
+    public static String tracesPath() {
+        return '/observabilityService/tenants/' + tenantId()
+            + '/otlp/agents/' + agentId() + '/traces?api-version=1';
+    }
+}

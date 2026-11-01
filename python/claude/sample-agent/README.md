@@ -1,3 +1,15 @@
+<!--
+---
+name: "Claude Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a Python agent using the Claude Agent SDK with extended thinking, built-in tools, and Agent 365 integration."
+---
+-->
+
 # Claude Sample Agent - Python
 
 This directory contains a sample agent implementation using Python and Anthropic's Claude Agent SDK with extended thinking capabilities. This sample demonstrates how to build an agent using the Agent365 framework with Python and Claude Agent SDK. It covers:
@@ -7,14 +19,42 @@ This directory contains a sample agent implementation using Python and Anthropic
 - **Tools**: Built-in Claude tools (Read, Write, WebSearch, Bash, Grep) for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [microsoft-agents-activity · PyPI](https://pypi.org/project/microsoft-agents-activity/)
+- [microsoft-agents-authentication-msal · PyPI](https://pypi.org/project/microsoft-agents-authentication-msal/)
+- [microsoft-agents-hosting-aiohttp · PyPI](https://pypi.org/project/microsoft-agents-hosting-aiohttp/)
+- [microsoft-agents-hosting-core · PyPI](https://pypi.org/project/microsoft-agents-hosting-core/)
+- [microsoft-agents-a365-notifications · PyPI](https://pypi.org/project/microsoft-agents-a365-notifications/)
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-hosting · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-hosting/)
+- [microsoft-agents-a365-runtime · PyPI](https://pypi.org/project/microsoft-agents-a365-runtime/)
+- [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
 - Python 3.11+
 - Anthropic Claude API access (API key)
+
+## Observability S2S export
+
+A365 export is disabled by default. To send traces to Agent 365, set the dedicated OBS credentials and enable the exporter:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+`AGENT365_OBS_AGENT_ID` is the actual runtime agent instance client ID, not the blueprint ID, service-principal object ID, or agent-user ID. `ENABLE_A365_OBSERVABILITY_EXPORTER=false` disables A365 HTTP export; samples using the Microsoft OpenTelemetry distro can still enrich spans for other exporters.
+
+The sample-local provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
+
+Accepted OBS tokens are app-only tokens with `idtyp=app`, valid nonempty `roles`, or absent `idtyp` with nonempty `oid == sub`; any `scp` claim is rejected. See [Agent 365 observability S2S export](../../../docs/observability-s2s.md) for route details and validation commands.
 
 ## Working with User Identity
 
@@ -103,7 +143,7 @@ finally:
 
 For detailed setup and running instructions, please refer to the official documentation:
 
-- **[Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)** - Complete setup and testing guide
+- **[Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)** - Complete setup and testing guide
 - **[AGENT-CODE-WALKTHROUGH.md](AGENT-CODE-WALKTHROUGH.md)** - Detailed code explanation and architecture walkthrough
 
 ## Architecture
@@ -197,7 +237,7 @@ MCP tools require proper Azure authentication:
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 
 ## Contributing
 
@@ -210,7 +250,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 ## Resources
 
 - [Claude Agent SDK](https://anthropic.mintlify.app/en/api/agent-sdk/overview)
-- [Microsoft 365 Agents SDK](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/)
+- [Microsoft 365 Agents SDK](https://learn.microsoft.com/microsoft-365/agents-sdk/)
 - [Microsoft Agents A365 Python](https://github.com/microsoft/Agent365-python)
 
 ## Trademarks

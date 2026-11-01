@@ -1,4 +1,17 @@
+<!--
+---
+name: "Claude Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build a Claude agent in TypeScript with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Claude Sample Agent - Node.js
+
 
 This sample demonstrates how to build an agent using Claude in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -7,9 +20,16 @@ This sample demonstrates how to build an agent using Claude in Node.js with the 
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-tooling - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling)
+- [@microsoft/agents-a365-tooling-extensions-claude - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-claude)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
+- [@microsoft/opentelemetry - npm](https://www.npmjs.com/package/@microsoft/opentelemetry)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -23,6 +43,30 @@ For comprehensive documentation and guidance on building agents with the Microso
 > - Microsoft Agent 365 SDK
 > - Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
 > - A365 CLI: Required for agent deployment and management.
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports the observability bootstrap first. With
+`useS2SEndpoint: true` and the app-only `tokenResolver`, OBS posts to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+The resolver uses `AGENT365_OBS_TENANT_ID`, `AGENT365_OBS_AGENT_ID`,
+`AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and `AGENT365_OBS_BLUEPRINT_CLIENT_SECRET`;
+`AGENT365_OBS_AGENT_ID` must be the actual agent instance client ID. Business MCP,
+Graph, and OBO calls remain separate from OBS authentication.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 
@@ -169,7 +213,10 @@ This sample uses the [`@microsoft/opentelemetry`](https://www.npmjs.com/package/
 
 ```typescript
 import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
-useMicrosoftOpenTelemetry();
+import { createObservabilityTokenResolver } from './observability-token-service';
+useMicrosoftOpenTelemetry({
+  a365: { enabled: true, useS2SEndpoint: true, tokenResolver: createObservabilityTokenResolver() },
+});
 ```
 
 This file is imported first in `src/index.ts` so instrumentation patches are applied before any HTTP modules load.
@@ -196,7 +243,7 @@ OTEL_SERVICE_NAME=Claude Sample Agent
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
 ## Troubleshooting
 
@@ -266,7 +313,7 @@ AADSTS7000216: 'client_assertion', 'client_secret' or 'request' is required
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

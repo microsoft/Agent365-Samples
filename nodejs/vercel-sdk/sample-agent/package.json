@@ -20,18 +20,17 @@
   "license": "MIT",
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.31",
-    "@microsoft/agents-a365-notifications": "^0.1.0-preview.125",
-    "@microsoft/agents-a365-observability": "^0.1.0-preview.125",
-    "@microsoft/agents-a365-observability-hosting": "^0.1.0-preview.125",
-    "@microsoft/agents-a365-runtime": "^0.1.0-preview.125",
-    "@microsoft/agents-a365-tooling": "^0.1.0-preview.125",
+    "@microsoft/agents-a365-notifications": "2.0.0",
+    "@microsoft/agents-a365-observability": "2.0.0",
+    "@microsoft/agents-a365-runtime": "2.0.0",
+    "@microsoft/agents-a365-tooling": "2.0.0",
     "@microsoft/agents-activity": "^1.1.0-alpha.85",
     "@microsoft/agents-hosting": "^1.1.0-alpha.85",
     "ai": "^5.0.72",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-fetch": "^3.3.2",
-    "uuid": "^9.0.0"
+    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@azure/monitor-opentelemetry-exporter": "^1.0.0-beta.32",

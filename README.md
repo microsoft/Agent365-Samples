@@ -7,14 +7,30 @@ This repository contains sample agents and prompts for building with the Microso
 
 ## SDK Versions
 
+### Observability S2S export
+
+Agent 365 OBS export uses the S2S `/observabilityService/.../otlp/...` route with an app-only token for the agent instance. This changes telemetry transport only: preserve business MCP/Graph/OBO authentication, development bearer-token flows, and original user/agent baggage.
+
+A live validation on September 28, 2026 showed that a registered agent instance using a roleless app-only token (`idtyp=app`, `roles=[]`, no `scp`) received `200` from `/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces`. The legacy non-`/otlp` S2S route (`/observabilityService/tenants/{tenant}/agents/{agent}/traces`) rejected the same token with `401` (`AuthenticationSchemeNotSupported`). Every sample must use an SDK/exporter configuration that posts to `/otlp`.
+
+Enable export explicitly and configure the dedicated OBS app-token provider for the runtime agent instance, not the blueprint ID, service-principal object ID, or agent-user ID. The provider accepts app-only tokens with `idtyp=app`, or valid nonempty `roles`, or absent `idtyp` with nonempty `oid == sub`; any `scp` claim is rejected.
+
+The sample providers are single-instance examples: one configured tenant and agent instance, plus a separate blueprint credential. Python and Node.js samples include only a client-secret development flow and no managed-identity option; .NET can use managed-identity assertions. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential. Providers request tokens from `login.microsoftonline.com`; sovereign clouds require provider changes.
+
+AI Teammates should complete the `Agent365.Observability.OtelWrite` application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S export without that step has not been validated.
+
+See [Agent 365 observability S2S export](docs/observability-s2s.md) for configuration snippets, token contract details, and offline validation commands.
+
 The SDK versions used by each sample are displayed in the **E2E test workflow summaries**. Each E2E run installs the latest compatible packages and logs the resolved versions.
 
 📦 **View SDK Versions**: Click any E2E status badge above, then select a workflow run and view the **"Log SDK Versions"** step in the job summary.
 
-The samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to automatically pick up the latest compatible SDK releases during each test run.
+Most samples use flexible version constraints (`>=`, `^`, `*-beta.*`) to pick up
+compatible SDK releases. Legacy Node.js samples pin their tested SDK family to
+preserve compatible tracing APIs and S2S exporter options.
 
 > #### Note:
-> Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+> Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Survey
 
@@ -28,7 +44,7 @@ This samples repository is currently in active development and contains:
 
 ## Documentation
 
-For comprehensive documentation and guides, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guides, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ### Microsoft Agent 365 SDK
 

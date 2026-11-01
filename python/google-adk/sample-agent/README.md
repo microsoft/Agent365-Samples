@@ -1,3 +1,15 @@
+<!--
+---
+name: "Google ADK Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build a Google ADK agent in Python with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Google ADK Sample Agent - Python
 
 This sample demonstrates how to build an agent using Google ADK in Python with the Microsoft Agent 365 SDK. It covers:
@@ -7,9 +19,69 @@ This sample demonstrates how to build an agent using Google ADK in Python with t
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [microsoft-agents-activity · PyPI](https://pypi.org/project/microsoft-agents-activity/)
+- [microsoft-agents-authentication-msal · PyPI](https://pypi.org/project/microsoft-agents-authentication-msal/)
+- [microsoft-agents-hosting-aiohttp · PyPI](https://pypi.org/project/microsoft-agents-hosting-aiohttp/)
+- [microsoft-agents-hosting-core · PyPI](https://pypi.org/project/microsoft-agents-hosting-core/)
+- [microsoft-agents-a365-notifications · PyPI](https://pypi.org/project/microsoft-agents-a365-notifications/)
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
+
+## Observability S2S export
+
+OBS attribution uses `recipient.agentic_app_id`, or the explicitly configured
+`AGENT365_OBS_AGENT_ID` when instance metadata is absent. It never treats the
+agent-user object ID as the application client ID. Business authentication and
+the caller's user metadata are not changed.
+
+When enabling A365 export, provide these **dedicated** settings in `.env` or deployment
+secrets. Leaving the exporter disabled retains console-only observability.
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+Use the actual **instance client ID**, never `AGENTIC_USER_ID`, a blueprint, or a
+service-principal object ID. Permissionless S2S export is conditional on **eligible
+agent instance registration** and authorization, not merely Entra identity
+creation or selecting the S2S endpoint. This sample does not provision identities or
+grant OBS permissions; workload MCP/Graph/OBO permissions remain independent.
+
+This sample provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
+
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
+
+`observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint credentials + `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion
+to request `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`. Business MCP/Graph/OBO authentication and original user/agent
+baggage are not changed.
+
+Missing/placeholder settings fail when export is enabled; with export disabled, placeholders do not block local/Playground startup. Export tenant/agent and returned
+token identity must match the configured instance, and delegated `scp` tokens are
+rejected. The OBS-only cache uses real `expires_in`/`exp` with a 60-second refresh margin.
+Token failures produce safe errors without stale, empty, delegated or legacy-route
+fallback. On 401/403, check IDs, blueprint credentials, instance registration and authorization
+for the exact agent instance.
+If existing instrumentation supplies an agent-user/object ID as agent baggage, export
+fails closed: do not put that ID in the dedicated client-ID setting or rewrite baggage
+merely to bypass the check.
+
+The provided secret flow is for **development**. Production should use the documented
+certificate/managed-identity blueprint assertion flow through your approved provider.
+
 
 ---
 
@@ -65,7 +137,7 @@ The fastest way is the **AI-guided setup** — attach the instruction file to Gi
 Follow the steps in #file:a365-setup-instructions.md
 ```
 
-> See [AI-guided setup for Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/ai-guided-setup) for full instructions and to download `a365-setup-instructions.md`.
+> See [AI-guided setup for Agent 365](https://learn.microsoft.com/microsoft-agent-365/developer/ai-guided-setup) for full instructions and to download `a365-setup-instructions.md`.
 
 Alternatively, run the CLI manually:
 
@@ -176,7 +248,7 @@ agentsplayground -e "http://localhost:3978/api/messages" -c "emulator" \
 
 Run `agentsplayground --help` for all options.
 
-> For full setup documentation see [Test your agent locally in Agents Playground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project).
+> For full setup documentation see [Test your agent locally in Agents Playground](https://learn.microsoft.com/microsoft-365/agents-sdk/test-with-toolkit-project).
 
 ### Testing checklist
 
@@ -219,7 +291,7 @@ a365 publish
 
 ### Running on Azure App Service
 
-See [Deploy agent to Azure](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet) for full instructions.
+See [Deploy agent to Azure](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet) for full instructions.
 
 Set `messagingEndpoint` in `a365.config.json` to your Azure Web App URL and `"needDeployment": true` (see [configuration reference above](#3-initialize-a365-configuration)).
 
@@ -259,7 +331,7 @@ All values below come from `a365.config.json` and `a365.generated.config.json` (
 
 ### Running on GCP (Cloud Run)
 
-See [Deploy agent to GCP](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-gcp) for full instructions.
+See [Deploy agent to GCP](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-gcp) for full instructions.
 
 ```bash
 # Deploy to Cloud Run
@@ -285,7 +357,7 @@ a365 setup blueprint --endpoint-only
 
 ### Messaging endpoint reference
 
-See [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-messaging-endpoint) for all hosting options.
+See [Configure messaging endpoint](https://learn.microsoft.com/microsoft-agent-365/developer/agent-messaging-endpoint) for all hosting options.
 
 | Hosting | `messagingEndpoint` format | `needDeployment` |
 |---------|--------------------------|-----------------|
@@ -317,7 +389,7 @@ After `a365 deploy` and `a365 publish` complete, the following steps require bro
 4. Set **Bot ID** to your `agentBlueprintId`
 5. Click **Save**
 
-> See [Configure agent in Teams Developer Portal](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) and [Publish agent](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish) for full instructions.
+> See [Configure agent in Teams Developer Portal](https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal) and [Publish agent](https://learn.microsoft.com/microsoft-agent-365/developer/publish) for full instructions.
 
 ### Step 2: Upload manifest to M365 Admin Center
 
@@ -539,7 +611,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
@@ -555,13 +627,13 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 - [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
 - [Microsoft 365 Agents SDK - Python repository](https://github.com/Microsoft/Agents-for-python)
 - [Google ADK API documentation](https://google.github.io/adk-docs/)
-- [Configure messaging endpoint](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-messaging-endpoint)
-- [Deploy agent to Azure](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet)
-- [Deploy agent to GCP](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/deploy-agent-gcp)
-- [Publish agent](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/publish)
-- [Configure agent in Teams Developer Portal](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal)
-- [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python)
-- [Test your agent locally in Agents Playground](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/test-with-toolkit-project)
+- [Configure messaging endpoint](https://learn.microsoft.com/microsoft-agent-365/developer/agent-messaging-endpoint)
+- [Deploy agent to Azure](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-azure?tabs=dotnet)
+- [Deploy agent to GCP](https://learn.microsoft.com/microsoft-agent-365/developer/deploy-agent-gcp)
+- [Publish agent](https://learn.microsoft.com/microsoft-agent-365/developer/publish)
+- [Configure agent in Teams Developer Portal](https://learn.microsoft.com/microsoft-agent-365/developer/create-instance#1-configure-agent-in-teams-developer-portal)
+- [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=python)
+- [Test your agent locally in Agents Playground](https://learn.microsoft.com/microsoft-365/agents-sdk/test-with-toolkit-project)
 
 ## Trademarks
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>RunAsUserId__c</fullName>
+    <description>Optional Entra (AAD) user object id to attribute Agentforce-originated sessions to. Emitted as the invoke_agent span attribute user.id, which the ingest pipeline maps to CloudAppEvents UserKey — the key the M365 Admin Center uses to surface sessions/run-time. Leave blank to keep spans user-less (Defender-only, no Admin Center Activity).</description>
+    <externalId>false</externalId>
+    <label>Run As User Id</label>
+    <length>36</length>
+    <required>false</required>
+    <type>Text</type>
+    <unique>false</unique>
+</CustomField>

@@ -1,3 +1,15 @@
+<!--
+---
+name: "Autonomous Agent — Node.js Sample"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Run an autonomous TypeScript agent that summarizes trending GitHub repositories with Azure OpenAI and Agent 365 tracing."
+---
+-->
+
 # Autonomous Agent — Node.js Sample
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for Node.js/TypeScript. It has **no chat functionality** — it runs entirely as a background service.
@@ -11,7 +23,7 @@ Every 60 seconds, the agent:
 
 All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
 
@@ -29,7 +41,7 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 
 - [Node.js 18](https://nodejs.org/) or higher
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
+- [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 
@@ -45,13 +57,21 @@ cd nodejs/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 
-This creates the blueprint, agent identity, configures observability permissions, and writes provisioned values. Copy the output values into your `.env` file (see below).
+Complete blueprint/identity provisioning and Agent 365 registration for the exact
+runtime instance, then copy the provisioned values into `.env` (see below).
+CLI versions may offer permission setup separately; an OBS grant is not a
+universal requirement. Eligible registered instances can use roleless app tokens
+on the public S2S OTLP route when service policy permits. Entra identity creation
+alone is not registration. Confirm the CLI permission choices rather than
+automatically granting `Agent365.Observability.OtelWrite`.
+For AI Teammates, complete the `Agent365.Observability.OtelWrite`
+application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S
+without it has not been validated.
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+The MSAL application-token flow does not require a client-side `roles` check.
+Its token is cached by agent/tenant only while the returned expiry is valid.
+For 401/403, check instance registration, token identity/audience and service
+policy; never substitute an OBO token or switch the exporter route.
 
 ### Configuration
 
@@ -183,14 +203,14 @@ Production (MSI):
 
 The token is refreshed every 50 minutes and cached in `token-cache.ts`.
 
-For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 
 ## Contributing
@@ -205,8 +225,8 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 - [Microsoft Agent 365 SDK - Node.js repository](https://github.com/microsoft/Agent365-nodejs)
 - [Microsoft 365 Agents SDK - Node.js repository](https://github.com/Microsoft/Agents-for-js)
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability)
 
 ## Trademarks
 

@@ -1,10 +1,22 @@
+<!--
+---
+name: "Autonomous Agent — .NET Sample"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Run an autonomous .NET agent that summarizes trending GitHub repositories with Azure OpenAI and Agent 365 tracing."
+---
+-->
+
 # Autonomous Agent — .NET Sample
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for .NET. Unlike the interactive agent samples, this agent has **no chat functionality** — it runs entirely as a background service using the `BackgroundService` pattern.
 
 Every 60 seconds, the agent prompts Azure OpenAI to fetch trending GitHub repositories using a registered tool. The model calls the `GetTrendingRepositories` tool, which queries the GitHub Search API, then summarizes the results into a readable digest that is logged to the console. All operations are **manually instrumented** with Agent 365 observability using the tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`), making this a useful reference for instrumenting any non-interactive or custom agent loop.
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
 
@@ -22,7 +34,7 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 
 - [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) or higher
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
+- [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 
@@ -50,14 +62,15 @@ a365 setup all --agent-name <your-agent-name>
 This command:
 - Creates the **blueprint** app registration in Entra ID
 - Creates the **agent identity** service principal
-- Configures **inheritable permissions** for the Observability API (`Agent365.Observability.OtelWrite`) and Power Platform API
 - Writes all provisioned values into `appsettings.json`
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+3. Verify agent registration and service authorization. The OBS service may accept an app-only
+   token (no `scp` claim) with absent or empty `roles` only for an **eligible registered Agent 365
+   agent instance**. Selecting S2S or creating an Entra identity alone
+   is insufficient. Do not add an `Agent365.Observability.OtelWrite` grant solely to populate
+   a `roles` claim. Existing role-based authorization requirements still apply where used.
+   Business API permissions and consent, including any OBO requirements in other workloads,
+   remain independent of OBS authorization.
 
 4. Configure Azure OpenAI — the CLI does not configure Azure OpenAI settings. Set these manually in `appsettings.json` or via environment variables:
 
@@ -143,14 +156,14 @@ Each autonomous cycle produces three nested spans: an `InvokeAgentScope` wrappin
 
 The `ObservabilityTokenService` acquires tokens for the A365 exporter via a 3-hop FMI chain: the blueprint authenticates (MSI in production, client secret locally), exchanges for a T1 token targeting the agent identity via `.WithFmiPath`, then the agent identity uses T1 as an assertion to acquire an Observability API token. This token is cached in `ServiceTokenCache` and refreshed every 50 minutes. `UseManagedIdentity: true` in `appsettings.json` controls whether the managed identity path or the client secret path is used.
 
-For details on the observability SDK and instrumentation patterns, see the [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+For details on the observability SDK and instrumentation patterns, see the [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 
 ## Contributing
@@ -163,6 +176,7 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 
 ## Additional Resources
 
+- [Microsoft Agent 365 SDK - .NET repository](https://github.com/microsoft/Agent365-dotnet)
 - [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
 - [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
 

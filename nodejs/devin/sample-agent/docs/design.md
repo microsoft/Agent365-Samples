@@ -35,6 +35,19 @@ This sample demonstrates an agent built using Cognition's Devin AI as the orches
 
 ## Key Components
 
+### src/otel.ts
+Imported first by `src/index.ts`, this bootstrap loads dotenv and initializes one
+`ObservabilityManager` from `@microsoft/agents-a365-observability@2.0.0`, using
+`.withTokenResolver(createObservabilityTokenResolver())`. Explicit
+`exporterOptions.useS2SEndpoint = true` selects the S2S OTLP service route
+`/observabilityService/tenants/{tenantId}/otlp/agents/{agentId}/traces?api-version=1`.
+Business MCP/Graph/OBO authentication is independent and unchanged. The OBS resolver
+obtains an app-only token for the actual agent and rejects delegated `scp` tokens.
+
+SDK imports use the 1.0.0 scope signatures (`Request`, `AgentDetails`,
+`InvokeAgentScopeDetails`, and `UserDetails`). The public OpenTelemetry distribution
+is not used in this sample.
+
 ### src/client.ts
 Devin-specific client:
 - Devin API configuration
@@ -55,7 +68,11 @@ CLIENT_ID=...
 TENANT_ID=...
 
 # Observability
-ENABLE_OBSERVABILITY=true
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
 ```
 
 ## Message Flow
@@ -73,7 +90,7 @@ ENABLE_OBSERVABILITY=true
 {
   "dependencies": {
     "@microsoft/agents-hosting": "^0.0.1",
-    "@microsoft/agents-a365-observability": "^0.0.1",
+    "@microsoft/agents-a365-observability": "2.0.0",
     "express": "^4.18.0"
   }
 }

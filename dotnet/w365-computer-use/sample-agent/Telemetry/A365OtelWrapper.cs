@@ -1,27 +1,64 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Agents.A365.Observability.Caching;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using Microsoft.Agents.A365.Runtime.Utils;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Builder.App.UserAuth;
 using Microsoft.Agents.Builder.State;
+using System.Text.RegularExpressions;
 using W365ComputerUseSample.Telemetry;
 
 namespace W365ComputerUseSample;
 
 public static class A365OtelWrapper
 {
-    public static async Task InvokeObservedAgentOperation(
+    private static readonly Regex HandoffCodeQueryParameter = new(
+        @"(?<prefix>[?&]hc=)[^&\s\)]+",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    public static Task InvokeObservedAgentOperation(
         string operationName,
         ITurnContext turnContext,
         ITurnState turnState,
-        IExporterTokenCache<AgenticTokenStruct>? agentTokenCache,
+        CancellationToken cancellationToken,
+        Agent365TelemetryOptions? telemetryOptions,
         UserAuthorization authSystem,
         string authHandlerName,
         ILogger? logger,
         Func<Task> func)
+    {
+        ArgumentNullException.ThrowIfNull(func);
+
+        Func<Task<string?>> outputHandler = async () =>
+        {
+            await func().ConfigureAwait(false);
+            return null;
+        };
+
+        return InvokeObservedAgentOperation(
+            operationName,
+            turnContext,
+            turnState,
+            cancellationToken,
+            telemetryOptions,
+            authSystem,
+            authHandlerName,
+            logger,
+            outputHandler);
+    }
+
+    public static async Task InvokeObservedAgentOperation(
+        string operationName,
+        ITurnContext turnContext,
+        ITurnState turnState,
+        CancellationToken cancellationToken,
+        Agent365TelemetryOptions? telemetryOptions,
+        UserAuthorization authSystem,
+        string authHandlerName,
+        ILogger? logger,
+        Func<Task<string?>> func)
     {
         await AgentMetrics.InvokeObservedAgentOperation(
             operationName,
@@ -29,29 +66,46 @@ public static class A365OtelWrapper
             async () =>
             {
                 (string agentId, string tenantId) = await ResolveTenantAndAgentId(turnContext, authSystem, authHandlerName);
+                var telemetryContext = Agent365TelemetryContext.FromTurnContext(
+                    turnContext,
+                    agentId,
+                    tenantId,
+                    telemetryOptions);
 
-                using var baggageScope = new BaggageBuilder()
-                    .TenantId(tenantId)
-                    .AgentId(agentId)
-                    .Build();
+                using var baggageScope = telemetryContext.BuildBaggageScope();
+                using var invokeAgentScope = InvokeAgentScope.Start(
+                    telemetryContext.ToRequest(turnContext.Activity.Text),
+                    telemetryContext.ToInvokeEndpoint(),
+                    telemetryContext.ToAgentDetails(),
+                    telemetryContext.ToCallerDetails());
+                invokeAgentScope.SetTagMaybe("server.port", telemetryContext.ToServerPortAttribute());
 
                 try
                 {
-                    agentTokenCache?.RegisterObservability(agentId, tenantId, new AgenticTokenStruct
+                    var outputMessage = await func().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(outputMessage))
                     {
-                        UserAuthorization = authSystem,
-                        TurnContext = turnContext,
-                        AuthHandlerName = authHandlerName
-                    }, EnvironmentUtils.GetObservabilityAuthenticationScope());
+                        outputMessage = RedactTelemetryOutput(outputMessage);
+                        invokeAgentScope.RecordOutputMessages([outputMessage]);
+                    }
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (OperationCanceledException)
                 {
-                    logger?.LogWarning("There was an error registering for observability: {Message}", ex.Message);
+                    invokeAgentScope.RecordCancellation();
+                    throw;
                 }
-
-                await func().ConfigureAwait(false);
+                catch (Exception ex)
+                {
+                    invokeAgentScope.RecordError(ex);
+                    throw;
+                }
             }).ConfigureAwait(false);
     }
+
+    private static string RedactTelemetryOutput(string outputMessage) =>
+        HandoffCodeQueryParameter.Replace(
+            TelemetryContentPolicy.RedactModelPayload(outputMessage),
+            "${prefix}<redacted>");
 
     private static async Task<(string agentId, string tenantId)> ResolveTenantAndAgentId(ITurnContext turnContext, UserAuthorization authSystem, string authHandlerName)
     {

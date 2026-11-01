@@ -1,9 +1,65 @@
+<!--
+---
+name: "Observability — Agent 365 SDK with manual OTel + manual instrumentation"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Instrument a Python agent manually with OpenTelemetry and Agent 365 tracing, with optional Agent 365 S2S export."
+---
+-->
+
 # Observability — Agent 365 SDK with manual OTel + manual instrumentation
+
+## Optional A365 S2S export
+
+Console/OTLP-only operation needs no OBS credentials. To enable A365 export, set:
+
+```dotenv
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+AGENT365_OBS_TENANT_ID=<<YOUR_TENANT_ID>>
+AGENT365_OBS_AGENT_ID=<<YOUR_AGENT_INSTANCE_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_ID=<<YOUR_BLUEPRINT_CLIENT_ID>>
+AGENT365_OBS_BLUEPRINT_CLIENT_SECRET=<<YOUR_BLUEPRINT_CLIENT_SECRET>>
+```
+
+Use the actual instance **client ID**, not its blueprint or an object/user ID.
+Permissionless S2S export is conditional on **eligible agent instance registration**
+and authorization, not merely Entra identity creation or selecting the S2S
+endpoint. This sample does not provision identities or grant OBS permissions;
+workload permissions remain independent.
+
+This sample provider is single-instance: one configured tenant and agent instance, plus a separate blueprint secret. It has no managed-identity option and requests tokens from `login.microsoftonline.com`, so sovereign clouds need provider changes. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential.
+
+Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` when
+`oid` equals `sub`. Valid nonempty roles also support legacy app tokens without
+`idtyp`; any `scp` claim is rejected.
+
+The standalone `observability_token_service.py` adapts the autonomous sample's
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+blueprint client credentials with `fmi_path=agent instance client ID` acquire T1 for
+`api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
+`api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
+`client_credentials`. When enabled, demo `AgentDetails` uses these explicit IDs.
+Existing business auth and caller baggage are not repurposed for export.
+
+Active export rejects missing/placeholder config, mismatched tenant/agent identities,
+and delegated `scp` tokens. The dedicated cache refreshes using real `expires_in`/`exp`
+with a 60-second margin. Safe errors replace stale, empty or legacy-route fallback.
+On 401/403 check IDs, blueprint credentials, registration and authorization
+for the exact agent instance; do not rewrite incoming baggage. Client secrets are for
+**development**; production should implement the documented certificate/managed-identity
+blueprint assertion flow.
 
 This sample shows two patterns at once:
 
-1. Adding the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
+1. Adding the Microsoft Agent 365 Python SDK to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
 2. **Manual instrumentation** using `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` — useful when you don't use an agent framework, or when you want explicit control over which calls produce spans.
+
+This sample uses the following Agent 365 package:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 

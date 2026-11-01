@@ -7,9 +7,16 @@
 // Loading .env here ensures OTEL_* variables are populated when useMicrosoftOpenTelemetry() initialises.
 import { configDotenv } from 'dotenv';
 import { useMicrosoftOpenTelemetry, shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
+import { createObservabilityTokenResolver } from './observability-token-service';
 
 configDotenv();
-useMicrosoftOpenTelemetry();
+useMicrosoftOpenTelemetry({
+  a365: {
+    enabled: true,
+    useS2SEndpoint: true,
+    tokenResolver: createObservabilityTokenResolver(),
+  },
+});
 
 const shutdown = async () => {
   try { await shutdownMicrosoftOpenTelemetry(); } catch (err) { console.error(err); }

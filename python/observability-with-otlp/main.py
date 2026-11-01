@@ -65,17 +65,20 @@ from microsoft_agents_a365.observability.core import (
     ToolCallDetails,
     configure,
 )
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+from observability_token_service import create_observability_token_resolver
 
 
-def _stub_token_resolver(agent_id: str, tenant_id: str) -> str | None:
-    # In a real app, return a bearer token for the Agent 365 backend.
-    return "stub-token"
+token_resolver = create_observability_token_resolver()
 
 
 _configure_ok = configure(
     service_name=os.environ.get("AGENT_SERVICE_NAME", "sample-agent-otlp"),
     service_namespace="agent365-samples",
-    token_resolver=_stub_token_resolver,
+    exporter_options=Agent365ExporterOptions(
+        use_s2s_endpoint=True,
+        token_resolver=token_resolver,
+    ),
 )
 if not _configure_ok:
     raise SystemExit(
@@ -111,7 +114,11 @@ WEATHER_TOOL_SCHEMA = {
     },
 }
 
-AGENT = AgentDetails(agent_id="sample-agent", agent_name="WeatherAgent")
+AGENT = AgentDetails(
+    agent_id=token_resolver.agent_id if token_resolver else "sample-agent",
+    agent_name="WeatherAgent",
+    tenant_id=token_resolver.tenant_id if token_resolver else None,
+)
 
 
 # ---------------------------------------------------------------------------

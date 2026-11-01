@@ -1,7 +1,7 @@
-// It is important to load environment variables before importing other modules
-import { configDotenv } from 'dotenv';
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
-configDotenv();
+import './otel'; // Configure S2S export before SDK and HTTP modules load.
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'

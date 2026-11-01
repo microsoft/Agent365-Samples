@@ -1,4 +1,17 @@
+<!--
+---
+name: "Perplexity Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build a Perplexity agent in TypeScript with Agent 365 observability."
+---
+-->
+
 # Perplexity Sample Agent - Node.js
+
 
 This sample demonstrates how to build an agent using Perplexity in Node.js with the Microsoft Agent 365 SDK. It covers:
 
@@ -7,15 +20,56 @@ This sample demonstrates how to build an agent using Perplexity in Node.js with 
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [@microsoft/agents-a365-observability - npm](https://www.npmjs.com/package/@microsoft/agents-a365-observability)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
 - Node.js 18.x or higher
 - Microsoft Agent 365 SDK
 - Perplexity API credentials
+
+## Configuration
+
+### Observability export
+
+`src/index.ts` imports `src/otel.ts` first. This sample uses
+`@microsoft/agents-a365-observability@2.0.0`; with
+`Agent365ExporterOptions.useS2SEndpoint = true`, exports post to
+`/observabilityService/tenants/{tenant}/otlp/agents/{agent}/traces?api-version=1`.
+Leave `ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT` unset or false because the
+1.0.0 per-request mode still reads `runWithExportToken`, not the configured
+app-only resolver.
+
+`@opentelemetry/core` is an explicit dependency because the 1.0.0 exporter imports it
+without declaring it; relying on incidental dependency hoisting can fail at startup.
+
+When `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `AGENT365_OBS_TENANT_ID`,
+`AGENT365_OBS_AGENT_ID`, `AGENT365_OBS_BLUEPRINT_CLIENT_ID`, and
+`AGENT365_OBS_BLUEPRINT_CLIENT_SECRET` from the template. `AGENT365_OBS_AGENT_ID`
+must be the actual agent instance client ID. The sample-local resolver uses
+blueprint credentials plus `fmi_path` to acquire T1, then the agent identity's
+`client_credentials` grant for OBS. It fails closed on delegated `scp` tokens,
+identity, tenant, audience, role, expiry, or response-shape mismatches. Business
+MCP, Graph, Power Platform, and OBO calls remain separate.
+
+**Single-instance limitation:** this resolver exports for one statically configured
+agent instance and tenant (`AGENT365_OBS_*`). It needs its own copy of the
+blueprint secret and has no managed-identity option. Multi-instance or multi-tenant
+deployments should reuse the hosting connection per agent/tenant instead of sharing
+this static provider.
+
+Sovereign clouds are not supported by this sample provider because the authority is
+hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
+`Agent365.Observability.OtelWrite` application-role step printed by
+`a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
 
 ## Working with User Identity
 
@@ -76,14 +130,14 @@ try {
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

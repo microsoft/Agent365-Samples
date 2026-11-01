@@ -48,6 +48,7 @@ from microsoft_agents_a365.tooling.extensions.openai import mcp_tool_registratio
 
 # Observability Components (updated paths)
 from microsoft_agents_a365.observability.core.config import configure
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
 from microsoft_agents_a365.observability.extensions.openai import OpenAIAgentsTraceInstrumentor
 
 from opentelemetry import trace
@@ -139,27 +140,7 @@ Always be friendly and explain your reasoning when using tools.
 ## Step 3: Observability Configuration
 
 ```python
-def token_resolver(self, agent_id: str, tenant_id: str) -> str | None:
-    """
-    Resolve an agentic bearer token for secure Agent 365 Observability exporter calls.
-
-    Tokens are cached in the generic host (see host_agent_server.py) when:
-        exaau_token = agent_app.auth.exchange_token(...)
-        cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-
-    Returns:
-        str | None: Returns cached token or None (exporter will skip authenticated export).
-    """
-    try:
-        logger.info(f"Token resolver called for agent_id={agent_id}, tenant_id={tenant_id}")
-        cached_token = get_cached_agentic_token(tenant_id, agent_id)
-        if cached_token:
-            return cached_token
-        logger.warning("No cached agentic token found; exporter may skip secure send.")
-        return None
-    except Exception as e:
-        logger.error(f"Token resolver error for agent {agent_id}/{tenant_id}: {e}")
-        return None
+from observability_token_service import create_observability_token_resolver
 
 def _setup_observability(self):
         """
@@ -171,13 +152,18 @@ def _setup_observability(self):
         - token_resolver for secure exporter usage
         - cluster_category selection (prod/preprod)
         """
+        # Validate dedicated AGENT365_OBS_* config before best-effort instrumentation.
+        self.token_resolver = create_observability_token_resolver()
         try:
             # Step 1: Configure Agent 365 Observability with service information
             status = configure(
                 service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "openai-sample-agent"),
                 service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-                token_resolver=self.token_resolver,
-                cluster_category=os.getenv("CLUSTER_CATEGORY", "prod"),
+                exporter_options=Agent365ExporterOptions(
+                    use_s2s_endpoint=True,
+                    token_resolver=self.token_resolver,
+                    cluster_category=os.getenv("CLUSTER_CATEGORY", "prod"),
+                ),
             )
 
             if not status:

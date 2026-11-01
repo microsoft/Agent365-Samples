@@ -1,3 +1,15 @@
+<!--
+---
+name: "Semantic Kernel Sample Agent - C#/.NET"
+page_type: sample
+languages:
+- csharp
+products:
+- agent-365
+description: "Build a Semantic Kernel agent in .NET with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Semantic Kernel Sample Agent - C#/.NET
 
 This sample demonstrates how to build an agent using Semantic Kernel in C#/.NET with the Microsoft Agent 365 SDK. It covers:
@@ -7,9 +19,15 @@ This sample demonstrates how to build an agent using Semantic Kernel in C#/.NET 
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for .NET](https://github.com/microsoft/Agent365-dotnet).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [NuGet Gallery | Microsoft.Agents.A365.Notifications](https://www.nuget.org/packages/Microsoft.Agents.A365.Notifications)
+- [NuGet Gallery | Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel](https://www.nuget.org/packages/Microsoft.Agents.A365.Tooling.Extensions.SemanticKernel)
+- [NuGet Gallery | Microsoft.Agents.Authentication.Msal](https://www.nuget.org/packages/Microsoft.Agents.Authentication.Msal)
+- [NuGet Gallery | Microsoft.Agents.Hosting.AspNetCore](https://www.nuget.org/packages/Microsoft.Agents.Hosting.AspNetCore)
+- [NuGet Gallery | Microsoft.OpenTelemetry](https://www.nuget.org/packages/Microsoft.OpenTelemetry)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 
@@ -47,6 +65,20 @@ Simplified profile for early local development using bearer token authentication
 4. Run the agent
 
 > **Note**: Bearer tokens are for development only and expire regularly. Refresh with `a365 develop get-token`.
+
+## Observability
+
+A365 export is disabled by default. To send traces to Agent 365, set `EnableAgent365Exporter=true` and configure the separate `Agent365Observability` values: `TenantId` (agent home tenant GUID), `AgentId` (actual agent instance client ID), and `BlueprintClientId`. For Azure, set `UseManagedIdentity=true`; optional `ManagedIdentityClientId` selects a user-assigned identity, otherwise the system-assigned identity is used. The blueprint federation must already exist. For local development, set `UseManagedIdentity=false` and supply `BlueprintClientSecret` through user secrets or the `Agent365Observability__BlueprintClientSecret` environment variable.
+
+The provider in `Observability/` obtains a blueprint T1 using `client_credentials`, `fmi_path=AgentId`, and `api://AzureADTokenExchange/.default`, then uses T1 as the agent's client assertion for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. This is the documented app-only protocol, not OBO or `user_fic`. Existing business MCP/Graph tokens, auth handlers, and original turn baggage remain unchanged; a developer bearer token cannot authenticate S2S OBS.
+
+This sample provider is single-instance: one configured tenant and agent instance. Multi-instance or multi-tenant deployments should cache per agent/tenant and reuse the hosting connection credential. The provider requests tokens from `login.microsoftonline.com`; sovereign clouds need provider changes.
+
+An app-only OBS token with `idtyp=app`, or without `idtyp` but with `oid` equal to `sub`, may omit `roles` or have `roles: []`. Valid nonempty application roles also remain supported when `idtyp` is absent. Any `scp` claim is rejected. For registered blueprint agents, do not add an `Agent365.Observability.OtelWrite` grant solely to populate `roles`. For AI Teammates, complete the OtelWrite application-role step printed by `a365 setup all --aiteammate`; AI Teammate S2S without that step has not been validated.
+
+Missing/placeholder settings or using the blueprint as `AgentId` fail when export is enabled; with export disabled, placeholders do not block local/Playground startup. Export tenant/agent mismatches, delegated `scp`, explicit non-app/null `idtyp`, malformed `roles`, invalid responses, and expired tokens fail closed. The isolated cache refreshes 60 seconds before the earliest expiry.
+
+Microsoft.OpenTelemetry 1.0.1 is configured with `o.Agent365.Exporter.UseS2SEndpoint = true` and the dedicated provider's `TokenResolver` only when export is enabled. See [Agent 365 observability S2S export](../../../docs/observability-s2s.md) for the route finding and token contract.
 
 ## Working with User Identity
 
@@ -116,7 +148,7 @@ Typing indicators show a `...` animation in Teams while the agent is working. Th
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=dotnet) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
@@ -125,7 +157,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-dotnet/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing
