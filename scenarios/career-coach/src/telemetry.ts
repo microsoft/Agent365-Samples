@@ -31,9 +31,10 @@ useMicrosoftOpenTelemetry({
   a365: {
     // BOTH flags are required for spans to reach the A365 backend:
     //   enabled → A365SpanProcessor (enrichment); enableObservabilityExporter → Agent365Exporter (export).
-    // The exporter is on unless ENABLE_A365_OBSERVABILITY_EXPORTER is explicitly "false" (local dev).
+    // Export is opt-in: only the exact string "true" turns it on (the checked-in template ships "false"),
+    // so a copied template or a Playground run never sends coaching turns to the A365 collector.
     enabled: true,
-    enableObservabilityExporter: process.env.ENABLE_A365_OBSERVABILITY_EXPORTER !== 'false',
+    enableObservabilityExporter: process.env.ENABLE_A365_OBSERVABILITY_EXPORTER === 'true',
     // Every auth mode exports over the S2S route with an app-only token for the exporting
     // agent identity. The S2S route rejects delegated (OBO / Agentic User) tokens.
     useS2SEndpoint: true,

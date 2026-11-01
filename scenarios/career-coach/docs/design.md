@@ -103,7 +103,7 @@ Out of scope: acting for anyone but the signed-in user, writing to the reference
 ```
 
 - At most **one Active** goal per user.
-- Saving over an Active goal **without** progress edits it in place; **with** progress it becomes Replaced and a new row is created.
+- Saving over an Active goal **without** progress edits it in place; **with** progress the new goal row is created first and then the old one becomes Replaced (rolled back if that fails), so there is always a usable active goal.
 - Completed only after the completion email is sent, so a failed send can be retried.
 - Legacy rows without `PlanStatus` map to Completed (if `Completion100Fired`) or Active.
 - With no Active goal the user gets the welcome card; "previous goals" and "prep my 1:1" can read finished goals (read-only).
@@ -135,7 +135,7 @@ List change → Graph notification → webhook (validated by a shared secret) �
 | LLM claims progress it didn't earn | Progress guard rejects Complete / passed-quiz / skill-level writes (including records with no `courseId`); every plan course must exist in the catalog; quiz-earned progress is merged from the fresh row into stale writes; a quiz only counts for a course on the current plan |
 | LLM corrupts lifecycle data | Lifecycle columns and the manager identity stripped from model writes (under their display **and** internal names); finished goals read-only; one active goal; role switch with progress rejected |
 | LLM reads or writes another employee's data | Data tools are limited to the configured site and the five Career Coach lists; personal lists are filtered to the caller's own rows in code; new plans are bound to the caller; updates verify row ownership fail-closed and can't change the owner; chat writes are limited to `UserState`; email threads are keyed on the verified sender so members never share a conversation |
-| LLM redirects the completion email | `ManagerName` / `ManagerEmail` are app-managed — populated only from the directory, never from a model write |
+| LLM redirects the completion email | `ManagerName` / `ManagerEmail` are app-managed and never written from the model. The manager copied on the completion email is resolved from the directory at send time (the value cached at save time is not used as a recipient), and the card only says the manager was copied if they were |
 | Concurrent turns overwrite each other's plan changes | Every `UserState` read-modify-write runs under a per-user lock; quiz generation shares one in-flight result per user/course so a card is always graded against its own answer key; the completion email is claimed per goal and only closes the goal it was sent for |
 | LLM bypasses guards through a second SharePoint path | WorkIQ SharePoint server exposes only read tools |
 | Unknown or external email senders | Ignored; only organisation Members get replies; bounces ignored |
@@ -169,10 +169,12 @@ Goal: every run — LLM turn, button click, email, proactive event — appears i
 The agent is registered with `a365 setup all --aiteammate` (blueprint + agent identity + permissions). At runtime it acts as its **own agentic user** (own mailbox and Graph identity), not as the person chatting:
 
 - SharePoint lists: the agent user must be a Member of the site.
-- Background work with no user turn (the Graph change subscription, the notification row scan, startup warm-up) also runs as the agent user: `graph-service.ts` mints its token with the hosting connection's `getAgenticUserToken`, using the tenant / agent instance / agentic user ids captured from the first message (persisted to `.agent-identity.json`, or set by `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). The notification read is filtered server-side to recently updated rows. In production the portal trigger refuses to start without the service connection and a valid secret, so it never silently runs as a developer.
-- Completion email and user-requested email come from the agent's mailbox.
+- Background work with no user turn (the Graph change subscription, the notification row scan, startup warm-up) also runs as the agent user: `graph-service.ts` mints its token with the hosting connection's `getAgenticUserToken`, using the tenant / agent instance / agentic user ids captured from the first message (persisted to `.agent-identity.json`, or set by `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). The notification read is filtered server-side to recently updated rows, and a row already turned into a DM is not re-sent by a later notification.
+  - **Production** (`NODE_ENV=production`): background work never uses a developer sign-in. Until the ids are known the calls fail and the subscription retries with backoff (immediately when the ids arrive); startup exits if `PORTAL_WEBHOOK_URL` is set without a valid secret and the service connection.
+  - **Elsewhere**: an attempt before the ids are known may use the developer's `.mstoken-cache.json`. Such a subscription is recorded as developer-created and replaced by an agent-user one when the ids arrive (it is deleted with the identity that created it, since a subscription is only visible to its creator). Each attempt is pinned to one identity and setup is single-flight, so overlapping calls never leave two live subscriptions.
+- Completion email and user-requested email come from the agent's mailbox. The manager copied on the completion email is looked up from the directory at send time, never taken from the value cached when the plan was saved.
 - WorkIQ Mail/Calendar/SharePoint need the MCP grants applied by a Global Administrator (`a365 setup permissions mcp`).
-- Developer scripts use delegated MSAL (device code) instead, as a signed-in admin; the running agent only uses it as a local fallback before it has learned its own ids.
+- Developer scripts use delegated MSAL (device code) instead, as a signed-in admin (`npm run setup:sharepoint` does the sign-in; the others reuse its cache).
 
 ## 11. Configuration
 

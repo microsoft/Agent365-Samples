@@ -137,7 +137,7 @@ These are written by the A365 CLI during registration (`a365 setup all --agent-n
 ### Observability (Agent 365 telemetry)
 | Variable | Value |
 |---|---|
-| `ENABLE_A365_OBSERVABILITY_EXPORTER` | `true` to send spans to Agent 365 (MAC Activity / Defender). Set `false` for local-only runs. |
+| `ENABLE_A365_OBSERVABILITY_EXPORTER` | Export is **opt-in**: only the exact value `true` sends spans to Agent 365 (MAC Activity / Defender); the template ships `false`, and an unset value also means off. Set it to `true` once the agent is registered and you want its activity reported. |
 | `A365_OBSERVABILITY_LOG_LEVEL` | `none`, or any of `info`, `warn`, `error` joined with `\|`. Use `info\|warn\|error` while verifying (shows exporter / token lines); `warn\|error` afterwards. |
 | `agent365Observability__agentId` | The **runtime Agent Identity** app ID (the agent instance — **not** the blueprint ID). Only a fallback; the live ID is read from each turn. The startup log line `[A365 Observability] App-only export token acquired for agent <id>` shows it. |
 | `agent365Observability__agentBlueprintId` | The blueprint's app ID |
@@ -164,7 +164,7 @@ The agent never blocks on WorkIQ: if an MCP server can't be reached it logs `[Wo
 | `PORTAL_EVENT_SECRET` | A random secret of at least 16 characters (empty or placeholder values are rejected). It is the Graph subscription `clientState` **and** the `X-Portal-Secret` header for manual tests, and `/api/portal-event` sits in front of the JWT check — so treat it as a real secret. Changing it replaces the Graph subscription on the next start. |
 | `AGENT_INSTANCE_ID`, `AGENT_USER_ID` | Optional. The agent's own ids, so the background subscription can start before anyone has messaged the agent. Normally leave empty: they are learned from the first message and saved to `.agent-identity.json`. |
 
-With `NODE_ENV=production` and `PORTAL_WEBHOOK_URL` set, the agent **refuses to start** unless `PORTAL_EVENT_SECRET` is valid and the service connection (`connections__service_connection__settings__clientId` / `clientSecret`) is configured — the background Graph work runs as the agent identity and must not silently fall back to a developer sign-in.
+With `NODE_ENV=production` and `PORTAL_WEBHOOK_URL` set, the agent **refuses to start** unless `PORTAL_EVENT_SECRET` is valid and the service connection (`connections__service_connection__settings__clientId` / `clientSecret`) is configured. In that mode the background Graph work **never** uses a developer sign-in: until the agent's own ids are known (its first message, or `AGENT_INSTANCE_ID` + `AGENT_USER_ID`) those calls fail and the subscription retries with backoff. Set the two ids on a production host to start the subscription immediately. Outside production, a local `.mstoken-cache.json` is used as a fallback until the ids are known (see §5.3).
 
 > **Security note** — never check `.env` or `a365.generated.config.json` into git (they hold secrets). The shipped `.env.template` has no secrets.
 
@@ -174,13 +174,15 @@ With `NODE_ENV=production` and `PORTAL_WEBHOOK_URL` set, the agent **refuses to 
 
 **Step 4.1 — MSAL device-code sign-in** (one-time, per developer machine)
 
-The setup scripts use MSAL delegated auth (device-code flow) as a developer signed in with **Sites.Manage.All** or a Site Collection Admin. When you run any `setup:*` / `seed:*` / `mark:*` / `reset:*` / `backup:*` script the first time, you'll see:
+The setup scripts use MSAL delegated auth (device-code flow) as a developer signed in with **Sites.Manage.All** or a Site Collection Admin. **Only `npm run setup:sharepoint` performs the sign-in** (§4.2). It prints:
 
 ```
-To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code XXXXXXX to authenticate.
+ Microsoft sign-in required (device code flow)
+ 1. Open https://microsoft.com/devicelogin
+ 2. Enter code: XXXXXXX
 ```
 
-Sign in with an account that has admin rights on the SharePoint site. Token is cached in `.mstoken-cache.json` for future runs (60 days).
+Sign in with an account that has admin rights on the SharePoint site. The token is cached in `.mstoken-cache.json` for future runs (60 days). The other helper scripts (`seed:reference`, `mark:complete`, `reset:milestones`, `backup:user`, `clear:list`) only **reuse that cached token** — on a new machine, or after deleting the cache, run `npm run setup:sharepoint` first, otherwise they stop with `No cached Microsoft account found. Run npm run setup:sharepoint once to sign in.`
 
 **Step 4.2 — Provision the 5 lists**
 
@@ -238,7 +240,12 @@ PORTAL_WEBHOOK_URL=https://spiffy-dog-h50g1wc-3978.inc1.devtunnels.ms/api/portal
 
 When you `npm run dev` (see §6), the server calls Graph `POST /subscriptions` pointing at `PORTAL_WEBHOOK_URL`, as the **agent user** (the same agentic-user token the per-turn auth uses, minted from the hosting connection — no developer sign-in). Graph validates by POSTing `?validationToken=X` — your server must echo it back within ~10s (already handled). The subscription auto-renews every 30 minutes.
 
-The agent's tenant / instance / user ids are learned from the first message it receives (saved to `.agent-identity.json`, or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). Until then the startup attempt falls back to the developer device-code cache if there is one, otherwise it retries with backoff (30 s doubling to 10 min) and tries again immediately when the first message arrives. When a change notification arrives, only rows updated in the last 10 minutes are read (server-side `LastUpdated` filter, with a full-scan fallback).
+The agent's tenant / instance / user ids are learned from the first message it receives (saved to `.agent-identity.json`, or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). Setup is single-flight (overlapping attempts never create two subscriptions) and a failed attempt retries with backoff (30 s doubling to 10 min), again immediately when the ids arrive:
+
+- **`NODE_ENV=production`:** background Graph work never uses a developer sign-in. Until the ids are known the attempt fails and retries; once they arrive the subscription is created as the agent user.
+- **Otherwise (local development):** an attempt made before the ids are known may use `.mstoken-cache.json` if it exists. That subscription is recorded as developer-created and is **replaced** by an agent-user one (deleted with the identity that created it) as soon as the ids arrive.
+
+When a change notification arrives, only rows updated in the last 10 minutes are read (server-side `LastUpdated` filter, with a full-scan fallback), and each user's row is turned into a DM once — a later notification for someone else's update doesn't re-send it.
 
 ---
 
@@ -432,7 +439,7 @@ If an email gets no reply, check `dev.log` for `[Email]` lines (and that the Tea
 | `npm run test-tool` | Open Agents Playground for local testing without Teams (set `NODE_ENV=development` for that — it disables inbound auth). |
 | `npm run clean` / `npm run install:clean` | Remove `dist`, `node_modules` and the lockfile / do that, then reinstall. |
 | `npm run setup:sharepoint` | Create the 5 SharePoint lists and add any missing `UserState` columns (idempotent; re-run after upgrades). |
-| `npm run seed:reference` | Populate `CompetencyFramework_v2` + `LearningCatalog_v2` from CSVs. |
+| `npm run seed:reference` | Populate `CompetencyFramework_v2` + `LearningCatalog_v2` from CSVs. Safe to re-run: it adds only rows that are missing (keyed on RoleId + CompetencyId / CourseId), so an interrupted seed is completed. |
 | `npm run clear:list -- <ListName>` | Delete every item from a list. Useful for demo resets. |
 | `npm run mark:complete -- <CourseId> [CourseId…]` | Insert one or more rows into `LearningPortalStatus` marking those courses complete for the current test user (env var). |
 | `npm run reset:milestones -- <AadObjectId>` | Flip `Milestone80Fired` + `Completion100Fired` back to false so cards can re-fire. If the user has no active goal, it reopens their latest Completed goal. |
@@ -521,10 +528,10 @@ src/
 | `Something went wrong` red banner on card submit | Action.Execute took > 10s | Every card handler is fire-and-forget by design — check `dev.log` for the actual error. Common culprit: SharePoint token expired or Graph 429. |
 | Quiz questions all show `Q1.` numbering wrong (`1. 1. 1.`) | Old cards.ts | Should be fixed in this build. If it recurs, verify `cards.ts` uses `Q${qNum}.` not `${qNum}.`. |
 | Feature 4 email "Access is denied" | `sendMail` using `/users/{id}/sendMail` on a delegated token | Should be fixed — `graph-service.ts` uses `/me/sendMail` whenever a graph client is passed in. |
-| `Failed to acquire token silently` on script start | Cached MSAL token expired (60 days) or was for a different tenant | Delete `.mstoken-cache.json` and re-run — a fresh device-code prompt will appear. |
+| `Failed to acquire token silently` / `No cached Microsoft account found` on script start | Cached MSAL token expired (60 days), was for a different tenant, or was never created on this machine | Delete `.mstoken-cache.json` if it exists and run `npm run setup:sharepoint` — only that script prompts for the device-code sign-in; the other scripts reuse its cache. |
 | SharePoint 500 on write with no error detail | Column-name mismatch between display and internal | The log line `[SharePointTools] createListItem failed (status=…) writing columns: …` lists the column names sent (values are never logged); each must be a real column of the list. |
 | Graph subscription creation fails with "Notification URL invalid" | `PORTAL_WEBHOOK_URL` isn't reachable | Verify the dev tunnel is running and the URL in `.env` matches; test it with `Invoke-RestMethod -Method Post "<URL>?validationToken=hi"` (the handshake is a POST; it should echo `hi`). The agent retries with backoff (`[sub-mgr] Will retry …`). |
-| `[sub-mgr]` keeps retrying right after startup | The agent doesn't know its own ids yet and there is no developer sign-in cached | Send the agent one message (it saves its ids to `.agent-identity.json` and retries immediately), or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`. |
+| `[sub-mgr]` keeps retrying right after startup | The agent doesn't know its own ids yet (in production there is no developer fallback; locally there may be no cached sign-in either) | Send the agent one message (it saves its ids to `.agent-identity.json` and retries immediately), or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`. |
 | Costs pile up on Azure OpenAI | Every user turn hits GPT-4o | Only Stage 1 (role elicit) + short-answer grading + email body call the LLM. Card submits are deterministic. Verify your logs show `[Sync] Deterministic sync…` not full LLM turns. |
 | Agent says it is "having trouble accessing your progress" | The agent user isn't a member of the SharePoint site | Add the agent user as a Member of the site (§4.4); allow a few minutes. |
 | Agent goes quiet after "Got it…" / "Saving your plan…" | Network/DNS drop to Graph or SharePoint (`fetch failed`) | The agent now tells you and unlocks the card (keeps your answers) — click the button again. Check `dev.log` for `Deferred step failed (network)`. If you get no message at all, the outage also blocked the reply: restart the agent and retry. |
@@ -544,7 +551,7 @@ For anything else, grep `dev.log` — every subsystem prefixes its logs (`[Proac
 Three separate credentials, each used for one job:
 
 - **Runtime workload (the agent in Teams and email)** uses **agentic authentication**. The Agent 365 platform hands the agent a delegated Microsoft Graph token for its **own agentic user** on each turn, so `/me` is the Career Coach agent user (its own mailbox) — not the person chatting. SharePoint reads/writes, the completion email and WorkIQ MCP calls all use this identity. Configured via the `agentic_*` and `connections__service_connection__*` values in `.env` (stamped by `a365 setup all`). The person chatting is identified from the turn (`activity.from.aadObjectId`), and every SharePoint tool is scoped to that user's own rows.
-- **Background work (no user turn)** — the Graph change subscription, the notification row scan and startup warm-up — runs as the **same agent user**: `graph-service.ts` calls the hosting connection's `getAgenticUserToken(tenant, agentInstanceId, agenticUserId, …)` with the ids taken from the first message the agent receives (saved to `.agent-identity.json`, or `AGENT_INSTANCE_ID` / `AGENT_USER_ID`). The developer device-code cache is only a local fallback for scripts and for the moments before the agent has seen its own ids; with `NODE_ENV=production` the agent refuses to start the portal trigger without a valid service connection and secret.
+- **Background work (no user turn)** — the Graph change subscription, the notification row scan and startup warm-up — runs as the **same agent user**: `graph-service.ts` calls the hosting connection's `getAgenticUserToken(tenant, agentInstanceId, agenticUserId, …)` with the ids taken from the first message the agent receives (saved to `.agent-identity.json`, or `AGENT_INSTANCE_ID` / `AGENT_USER_ID`). The developer device-code cache is only a local fallback for scripts and for non-production runs before the agent has seen its own ids (such a subscription is replaced by an agent-user one when the ids arrive); with `NODE_ENV=production` background work never uses it — it waits for the ids and retries — and the agent refuses to start the portal trigger without a valid service connection and secret.
 - **Telemetry export** uses an **app-only** token for the runtime agent identity, exported over the S2S route (`src/observability/app-token-resolver.ts`): the blueprint credential issues an FMI assertion for the agent identity, which exchanges it for an Observability API token. The token is validated (no `scp`, matching client/tenant/audience) and never logged. `gen_ai.agent.id` is the runtime agent identity read from each turn (`activity.recipient.agenticAppId`); the Blueprint ID travels only as blueprint metadata.
 - **Setup / seed / helper scripts** use the **MSAL device-code** flow with delegated scopes (`Sites.Manage.All`, `Sites.ReadWrite.All`, `User.Read.All`, `Mail.Send`, `offline_access`), cached in `.mstoken-cache.json`. This is developer tooling only — the running agent does not use it.
 

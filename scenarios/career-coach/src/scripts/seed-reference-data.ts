@@ -7,8 +7,9 @@
  *   - CompetencyFramework_v2 <- CompetencyFramework_v2.csv
  *   - LearningCatalog_v2     <- LearningCatalog_v2.csv
  *
- * Idempotent: skips a list if it already has items. To re-seed, first delete the
- * items via the SharePoint UI (or extend this script with a --force flag).
+ * Idempotent by row key (RoleId + CompetencyId, CourseId): a re-run adds only the rows that are
+ * missing, so a seed that stopped part-way is completed by running it again. Rows already in the
+ * list are never changed; to replace content, delete the items via the SharePoint UI first.
  *
  * Uses the same MSAL device-code cache as `setup:sharepoint`, so no separate
  * sign-in is needed.
@@ -24,7 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGraphClient, getSiteId } from '../graph-service';
 import { SP_CONFIG } from '../career-coach-types';
-import { getColumnMap, toInternalFields } from '../sharepoint-column-map';
+import { getColumnMap, toInternalFields, toDisplayFields, type ColumnMap } from '../sharepoint-column-map';
 
 const CSV_DIR = resolveCsvDir();
 
@@ -49,6 +50,8 @@ interface SeedSpec {
     csvFileName: string;
     // Column names that should be parsed as numbers (SharePoint Number columns).
     numericFields: string[];
+    // Columns that together identify a row, so a re-run adds only the rows that are missing.
+    keyFields: string[];
 }
 
 const SEEDS: SeedSpec[] = [
@@ -56,13 +59,18 @@ const SEEDS: SeedSpec[] = [
         listDisplayName: SP_CONFIG.lists.competencyFramework,
         csvFileName: 'CompetencyFramework_v2.csv',
         numericFields: ['RequiredLevel'],
+        keyFields: ['RoleId', 'CompetencyId'],
     },
     {
         listDisplayName: SP_CONFIG.lists.learningCatalog,
         csvFileName: 'LearningCatalog_v2.csv',
         numericFields: ['FromLevel', 'ToLevel'],
+        keyFields: ['CourseId'],
     },
 ];
+
+const keyOf = (fields: Record<string, unknown>, keyFields: string[]): string =>
+    keyFields.map((k) => String(fields[k] ?? '').trim().toLowerCase()).join('|');
 
 // Minimal RFC-4180-ish CSV parser (handles quoted fields with commas + embedded quotes).
 function parseCsv(text: string): { header: string[]; rows: string[][] } {
@@ -111,16 +119,18 @@ async function findListId(graph: any, siteId: string, displayName: string): Prom
     return res?.value?.[0]?.id ?? null;
 }
 
-async function existingItemCount(graph: any, siteId: string, listId: string): Promise<number> {
-    // $count on list items is unreliable — just page through and count.
-    let total = 0;
-    let url: string | undefined = `/sites/${siteId}/lists/${listId}/items?$select=id&$top=200`;
+/** Keys of the rows already in the list (by the spec's key columns), so a re-run only adds what is missing. */
+async function existingKeys(graph: any, siteId: string, listId: string, colMap: ColumnMap, keyFields: string[]): Promise<Set<string>> {
+    const keys = new Set<string>();
+    let url: string | undefined = `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
     while (url) {
         const page: any = await graph.api(url).get();
-        total += (page?.value?.length ?? 0);
+        for (const item of page?.value ?? []) {
+            keys.add(keyOf(toDisplayFields(item.fields ?? {}, colMap), keyFields));
+        }
         url = page?.['@odata.nextLink'] ? String(page['@odata.nextLink']).replace('https://graph.microsoft.com/v1.0', '') : undefined;
     }
-    return total;
+    return keys;
 }
 
 async function seed(): Promise<void> {
@@ -129,19 +139,13 @@ async function seed(): Promise<void> {
     console.log(`[seed] Site: ${SP_CONFIG.siteUrl}`);
     console.log(`[seed] siteId=${siteId}\n`);
     const graph = getGraphClient();
+    let anyFailed = false;
 
     for (const spec of SEEDS) {
         console.log(`\n[seed] Processing ${spec.listDisplayName} <- ${spec.csvFileName}`);
         const listId = await findListId(graph, siteId, spec.listDisplayName);
         if (!listId) {
             console.warn(`[seed]   ! List not found — run "npm run setup:sharepoint" first.`);
-            continue;
-        }
-
-        // Idempotency: skip if any items already exist.
-        const existing = await existingItemCount(graph, siteId, listId);
-        if (existing > 0) {
-            console.log(`[seed]   List already has ${existing} items — skipping (delete them in SharePoint UI to re-seed).`);
             continue;
         }
 
@@ -157,13 +161,23 @@ async function seed(): Promise<void> {
         const numericSet = new Set(spec.numericFields);
         // Resolve display-name -> internal-name mapping ONCE per list.
         const colMap = await getColumnMap(graph, siteId, listId);
+
+        // Idempotency by row key, not by "has any items": a run that stopped part-way is completed by
+        // the next run instead of being mistaken for a finished seed.
+        const present = await existingKeys(graph, siteId, listId, colMap, spec.keyFields);
+        const missing = rows.filter((row) => !present.has(keyOf(toFields(header, row, numericSet), spec.keyFields)));
+        if (missing.length === 0) {
+            console.log(`[seed]   All ${rows.length} rows are already present — nothing to add.`);
+            continue;
+        }
+        console.log(`[seed]   ${present.size} row(s) present; adding ${missing.length} missing of ${rows.length}.`);
         console.log(`[seed]   Column mapping (display -> internal):`);
         for (const [d, i] of Object.entries(colMap.displayToInternal)) {
             if (d === i) continue; // system columns
             console.log(`[seed]     ${d} -> ${i}`);
         }
         let ok = 0, fail = 0;
-        for (const row of rows) {
+        for (const row of missing) {
             const displayFields = toFields(header, row, numericSet);
             const fields = toInternalFields(displayFields, colMap);
             try {
@@ -182,8 +196,14 @@ async function seed(): Promise<void> {
             }
         }
         console.log(`\n[seed]   Done: ${ok} created, ${fail} failed.`);
+        if (fail > 0) anyFailed = true;
     }
 
+    if (anyFailed) {
+        console.error('\n[seed] ❌ Some rows failed. Re-run "npm run seed:reference" — it adds only the rows that are still missing.');
+        process.exitCode = 1;
+        return;
+    }
     console.log('\n[seed] ✅ Reference data import complete.');
 }
 

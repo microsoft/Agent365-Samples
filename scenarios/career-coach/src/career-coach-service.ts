@@ -233,6 +233,11 @@ export async function upsertUserState(graph: MsGraphClient, state: UserState, ex
     return { itemId: created.id, siteId: site, listId, state };
 }
 
+/** Removes a UserState row (used only to roll back a goal that was created while its predecessor couldn't be retired). */
+export async function deleteUserStateRow(graph: MsGraphClient, record: UserStateRecord): Promise<void> {
+    await graph.api(`/sites/${record.siteId}/lists/${record.listId}/items/${record.itemId}`).delete();
+}
+
 export async function appendQuizResponse(graph: MsGraphClient, row: {
     userAADId: string;
     courseId: string;

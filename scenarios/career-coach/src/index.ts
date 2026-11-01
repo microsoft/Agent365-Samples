@@ -17,6 +17,7 @@ import { portalSecretProblem } from './portal-secret';
 import { setBackgroundTokenProvider } from './graph-service';
 import { onAgentIdentityChange } from './agent-identity';
 import { retrySubscriptionNow } from './subscription-manager';
+import { selectUsersToNotify } from './portal-notifications';
 
 // The observability token resolver mints app-only export tokens from the hosting connection
 // (the blueprint credential), so hand it the adapter's default connection.
@@ -155,22 +156,28 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
 /**
  * Handles a Microsoft Graph change-notification batch. Since list subscriptions only tell us
  * "something changed" without which item, we read recently-updated LearningPortalStatus rows
- * and fire a proactive DM per affected user.
+ * and fire a proactive DM per affected user — once per change (see `lastNotified`).
  */
+// Per user: LastUpdated (ms) of the newest portal row already turned into a DM. In memory, which is enough
+// because it only has to cover the 10-minute scan window; after a restart a row still in the window is
+// handled once more.
+const lastNotified = new Map<string, number>();
+
 async function handleGraphNotification(body: { value: Array<{ resource?: string; clientState?: string; subscriptionId?: string; changeType?: string }> }): Promise<void> {
   const { getSiteId, getListIdByName, getListItems, getBackgroundGraphClient } = await import('./graph-service');
   const { SP_CONFIG } = await import('./career-coach-types');
 
   console.log(`[Proactive] Graph notification received — ${body.value.length} entries.`);
   // Compute the "recently updated" window: the last 10 minutes covers Graph's typical latency
-  // plus a safety margin, and the LLM's Stage 4-SYNC is idempotent for users who have nothing new.
+  // plus a safety margin; rows already handled are skipped below, so overlap never re-sends a DM.
   const cutoff = new Date(Date.now() - 10 * 60_000);
 
+  const graph = getBackgroundGraphClient();
   let siteId: string;
   let listId: string | null;
   try {
-    siteId = await getSiteId();
-    listId = await getListIdByName(siteId, SP_CONFIG.lists.learningPortalStatus);
+    siteId = await getSiteId(graph);
+    listId = await getListIdByName(siteId, SP_CONFIG.lists.learningPortalStatus, graph);
     if (!listId) {
       console.warn('[Proactive] LearningPortalStatus list not found — cannot process notification.');
       return;
@@ -184,7 +191,6 @@ async function handleGraphNotification(body: { value: Array<{ resource?: string;
   try {
     // Read only recently-changed rows (server-side filter on LastUpdated); fall back to a full
     // scan if the filter is rejected so a notification is never silently dropped.
-    const graph = getBackgroundGraphClient();
     try {
       const { getColumnMap } = await import('./sharepoint-column-map');
       const colMap = await getColumnMap(graph, siteId, listId);
@@ -199,25 +205,14 @@ async function handleGraphNotification(body: { value: Array<{ resource?: string;
     return;
   }
 
-  const usersToNotify = new Map<string, any>();
-  for (const row of rows) {
-    const f = row.fields || {};
-    const lastUpdated = f.LastUpdated ? new Date(f.LastUpdated) : null;
-    if (!lastUpdated || isNaN(lastUpdated.valueOf())) continue;
-    if (lastUpdated < cutoff) continue;
-    const aad = String(f.UserAADId || '').trim();
-    if (!aad) continue;
-    // Keep the newest row per user (avoid double-DM if a user has multiple recent changes).
-    const existing = usersToNotify.get(aad);
-    if (!existing || new Date(existing.LastUpdated ?? 0) < lastUpdated) usersToNotify.set(aad, f);
-  }
+  const usersToNotify = selectUsersToNotify(rows, cutoff.getTime(), lastNotified);
 
   if (usersToNotify.size === 0) {
-    console.log('[Proactive] No rows changed within the last 10 min — nothing to DM.');
+    console.log('[Proactive] No new portal changes since the last notification — nothing to DM.');
     return;
   }
   console.log(`[Proactive] Firing proactive DM for ${usersToNotify.size} user(s): ${Array.from(usersToNotify.keys()).join(', ')}`);
-  for (const [aad, fields] of usersToNotify.entries()) {
+  for (const [aad, { fields, updatedAt }] of usersToNotify.entries()) {
     try {
       const result = await agentApplication.handleProactivePortalEvent(aad, {
         UserAADId: aad,
@@ -226,11 +221,15 @@ async function handleGraphNotification(body: { value: Array<{ resource?: string;
         PercentComplete: fields.PercentComplete,
         TimeSpentMinutes: fields.TimeSpentMinutes,
       });
-      if (!result.ok) console.warn(`[Proactive]   -> ${aad}: ${result.reason}`);
+      // The checkpoint advances only after the DM was actually handled, so an undeliverable one is retried.
+      if (result.ok) lastNotified.set(aad.toLowerCase(), updatedAt);
+      else console.warn(`[Proactive]   -> ${aad}: ${result.reason}`);
     } catch (err) {
       console.error(`[Proactive]   -> ${aad}: threw`, (err as any)?.message ?? err);
     }
   }
+  // Entries older than the scan window can never match a row again.
+  for (const [key, at] of lastNotified) if (at < cutoff.getTime()) lastNotified.delete(key);
 }
 
 server.use(authorizeJWT(authConfig))

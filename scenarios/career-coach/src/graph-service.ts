@@ -237,9 +237,23 @@ export function canUseAgentIdentityInBackground(): boolean {
     return !!backgroundProvider && !!getAgentIdentity();
 }
 
+/**
+ * In a running production agent the developer device-code cache is never used for background work: until
+ * the agent has learned its own ids (first message, or AGENT_INSTANCE_ID + AGENT_USER_ID) the call fails
+ * and the caller retries. Scripts (no provider registered) and non-production runs keep the local fallback.
+ */
+function developerFallbackProblem(): string | null {
+    if (backgroundProvider && !getAgentIdentity() && process.env.NODE_ENV === 'production') {
+        return 'The agent identity is not known yet (send the agent a message, or set AGENT_INSTANCE_ID and AGENT_USER_ID). Background Graph work does not use a developer sign-in in production.';
+    }
+    return null;
+}
+
 export async function getBackgroundGraphToken(): Promise<string> {
     const identity = getAgentIdentity();
     if (!backgroundProvider || !identity) {
+        const problem = developerFallbackProblem();
+        if (problem) throw new Error(problem);
         if (backgroundProvider && !warnedFallback) {
             warnedFallback = true;
             console.warn('[graph] Agent identity not known yet — background Graph work is using the developer device-code cache until the first message arrives.');
@@ -253,7 +267,7 @@ export async function getBackgroundGraphToken(): Promise<string> {
     return token;
 }
 
-/** Graph client for background work: the agent user when possible, the developer cache otherwise. */
+/** Graph client for background work: the agent user when possible, the developer cache otherwise (never in production). */
 export function getBackgroundGraphClient(): MsGraphClient {
     return MsGraphClient.init({
         authProvider: async (done) => {
@@ -264,6 +278,25 @@ export function getBackgroundGraphClient(): MsGraphClient {
             }
         },
     });
+}
+
+export type BackgroundIdentity = 'agent' | 'developer';
+
+/**
+ * A background client whose identity is decided once, up front. A multi-call operation (the subscription
+ * list / create / delete sequence) uses one pinned client, so a half-finished attempt can't mix the
+ * developer's token with the agent's — subscriptions are only visible to the identity that created them.
+ */
+export function getPinnedBackgroundGraphClient(): { client: MsGraphClient; identity: BackgroundIdentity } {
+    if (canUseAgentIdentityInBackground()) return { client: getBackgroundGraphClient(), identity: 'agent' };
+    const problem = developerFallbackProblem();
+    if (problem) throw new Error(problem);
+    return { client: getGraphClient(), identity: 'developer' };
+}
+
+/** The client for a subscription that was created by the given identity. */
+export function getBackgroundClientFor(identity: BackgroundIdentity): MsGraphClient {
+    return identity === 'agent' ? getBackgroundGraphClient() : getGraphClient();
 }
 
 /**
@@ -423,8 +456,7 @@ export interface GraphSubscription {
     applicationId?: string;
 }
 
-export async function listSubscriptions(): Promise<GraphSubscription[]> {
-    const graph = getBackgroundGraphClient();
+export async function listSubscriptions(graph: MsGraphClient = getBackgroundGraphClient()): Promise<GraphSubscription[]> {
     const res = await graph.api('/subscriptions').get();
     return (res?.value ?? []) as GraphSubscription[];
 }
@@ -435,8 +467,9 @@ export async function createSubscription(input: {
     changeType?: string;            // default 'updated' (list resource supports 'updated')
     expirationMinutes?: number;     // default 60 (max ~4230 for lists, but we auto-renew)
     clientState?: string;
+    graph?: MsGraphClient;
 }): Promise<GraphSubscription> {
-    const graph = getBackgroundGraphClient();
+    const graph = input.graph ?? getBackgroundGraphClient();
     const expiration = new Date(Date.now() + 60_000 * (input.expirationMinutes ?? 60)).toISOString();
     return await graph.api('/subscriptions').post({
         changeType: input.changeType ?? 'updated',
@@ -447,14 +480,12 @@ export async function createSubscription(input: {
     });
 }
 
-export async function renewSubscription(subscriptionId: string, expirationMinutes = 60): Promise<GraphSubscription> {
-    const graph = getBackgroundGraphClient();
+export async function renewSubscription(subscriptionId: string, expirationMinutes = 60, graph: MsGraphClient = getBackgroundGraphClient()): Promise<GraphSubscription> {
     const expiration = new Date(Date.now() + 60_000 * expirationMinutes).toISOString();
     return await graph.api(`/subscriptions/${subscriptionId}`).patch({ expirationDateTime: expiration });
 }
 
-export async function deleteSubscription(subscriptionId: string): Promise<void> {
-    const graph = getBackgroundGraphClient();
+export async function deleteSubscription(subscriptionId: string, graph: MsGraphClient = getBackgroundGraphClient()): Promise<void> {
     try {
         await graph.api(`/subscriptions/${subscriptionId}`).delete();
     } catch (err: any) {

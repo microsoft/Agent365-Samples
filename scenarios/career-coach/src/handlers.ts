@@ -22,7 +22,7 @@ import {
 import {
     readCompetencyFramework, readLearningCatalog, readUserState, readPreviousPlans, readLearningPortalStatus,
     readAllQuizResponsesForUser,
-    upsertUserState, appendQuizResponse,
+    upsertUserState, deleteUserStateRow, appendQuizResponse,
     findRole, matchCoursesForSkill, gapCategoryFor,
     recomputeGoalsAndOverall, applyQuizPass, applyQuizFail,
     diffPortalAgainstPlan, pickNextPendingQuiz,
@@ -210,7 +210,7 @@ export async function handleSavePlanSubmit(
 ): Promise<void> {
     const result = await savePlan(context, authorization, input);
     if (result.message) await sendPlain(context, result.message);
-    await sendCard(context, result.card);
+    if (result.card) await sendCard(context, result.card);
 }
 
 /** Builds the Save input from a planReview card payload (same mapping as the card's Save button). */
@@ -239,10 +239,11 @@ export function savePlanInputFromReview(
 }
 
 export interface SavePlanResult {
-    /** False when an existing plan with progress was kept instead of overwritten. */
+    /** False when an existing plan with progress was kept instead of overwritten, or the plan was rejected. */
     saved: boolean;
     message?: string;
-    card: CardPayload;
+    /** Absent when the plan was rejected before anything was changed. */
+    card?: CardPayload;
 }
 
 /** Stage 3 save, shared by the Teams Save button and the email "Save it" reply. */
@@ -272,6 +273,24 @@ async function savePlanLocked(
             saved: false,
             message: `Your **${existing.state.TargetRole}** plan is already saved and has progress — I didn't overwrite it. Here's where you stand:`,
             card: buildProgressCardFromState(existing.state),
+        };
+    }
+
+    // Every selected course must carry a catalog id. Dropping an id-less course (or persisting an unknown
+    // id that can never be quizzed) would report "saved" for a plan whose goals can't progress, so reject
+    // before either goal is touched.
+    const catalogIds = new Set((await readLearningCatalog(graph, existing?.siteId)).map((c) => String(c.CourseId ?? '').trim()));
+    const selected = (input.groups ?? []).flatMap((g) => g.courses ?? []);
+    const missingId = selected.filter((c) => !String(c.courseId ?? '').trim());
+    const unknownId = selected.filter((c) => String(c.courseId ?? '').trim() && !catalogIds.has(String(c.courseId).trim()));
+    if (missingId.length || unknownId.length) {
+        const parts: string[] = [];
+        if (missingId.length) parts.push(`no course id for ${missingId.map((c) => `"${c.title}"`).join(', ')}`);
+        if (unknownId.length) parts.push(`courses not in the catalog: ${unknownId.map((c) => c.courseId).join(', ')}`);
+        console.warn(`[SavePlan] Rejected "${input.roleTitle}" plan: ${parts.join('; ')}.`);
+        return {
+            saved: false,
+            message: `I didn't save this plan because it includes ${parts.join(' and ')}. Ask me to show the recommended courses again, then save it from that plan.`,
         };
     }
 
@@ -357,15 +376,23 @@ async function savePlanLocked(
     // Recompute (all goals should be 0% at save time, but this future-proofs it).
     state = recomputeGoalsAndOverall(state);
 
-    // Each goal has its own row. An active goal with no progress yet is simply re-saved in place;
-    // one with progress is kept as history (Replaced) and the new goal gets a new row.
-    let target = existing ?? undefined;
+    // Each goal has its own row. An active goal with no progress yet is simply re-saved in place. One with
+    // progress is kept as history (Replaced), but only AFTER the replacement exists: if creating the new goal
+    // fails the old one stays active, and if retiring the old one fails the new row is removed again, so the
+    // user is never left without a usable goal.
     if (existing && planHasProgress(existing.state)) {
-        await upsertUserState(graph, { ...existing.state, PlanStatus: 'Replaced', PlanCompletedDate: today() }, existing);
+        const created = await upsertUserState(graph, state, undefined);
+        try {
+            await upsertUserState(graph, { ...existing.state, PlanStatus: 'Replaced', PlanCompletedDate: today() }, existing);
+        } catch (err) {
+            await deleteUserStateRow(graph, created).catch((e) =>
+                console.warn('[SavePlan] Could not remove the new goal after a failed replace (it may need manual cleanup):', (e as any)?.message ?? e));
+            throw err;
+        }
         console.log(`[SavePlan] Kept unfinished "${existing.state.TargetRole}" goal as Replaced (item ${existing.itemId}).`);
-        target = undefined;
+    } else {
+        await upsertUserState(graph, state, existing ?? undefined);
     }
-    await upsertUserState(graph, state, target);
     // Quizzes cached for the previous plan must never be graded against (or credited to) this one.
     clearAllQuizzes(input.userAADId);
     console.log(`[SavePlan] Saved "${state.TargetRole}" plan (${goals.length} goals, ${learning.length} courses).`);
@@ -933,21 +960,21 @@ async function sendCompletion(
     let subject = `🎉 ${state.Title} completed the ${state.TargetRole} career plan`;
     let htmlBody = `<p>Congratulations to ${state.Title} on completing the ${state.TargetRole} career plan.</p>`;
 
-    // Resolve manager fresh if UserState doesn't have it cached (Save-plan may have missed it,
-    // or the manager relationship changed since then). Best-effort; not fatal.
-    let managerName = state.ManagerName;
-    let managerEmail = state.ManagerEmail;
-    if (!managerEmail) {
-        try {
-            const mgr = await getMyManager(graph, userAADId);
-            if (mgr) {
-                managerName = mgr.displayName ?? managerName;
-                managerEmail = mgr.mail ?? managerEmail;
-                console.log(`[Completion100] Resolved manager on the fly: ${managerName} <${managerEmail}>`);
-            }
-        } catch (err) {
-            console.warn('[Completion100] getMyManager failed (non-fatal):', (err as any)?.message ?? err);
+    // Resolve the manager from the directory right before sending. The address cached when the plan was
+    // saved is never used as a recipient: the manager may have changed (or been removed) since then, and
+    // career progress must not go to a former manager. If the lookup fails, only the employee is mailed.
+    let managerName: string | undefined;
+    let managerEmail: string | undefined;
+    let managerResolved = false;
+    try {
+        const mgr = await getMyManager(graph, userAADId);
+        managerResolved = true;
+        if (mgr) {
+            managerName = mgr.displayName;
+            managerEmail = mgr.mail;
         }
+    } catch (err) {
+        console.warn('[Completion100] Manager lookup failed — the manager will not be copied:', (err as any)?.message ?? err);
     }
 
     try {
@@ -996,11 +1023,43 @@ async function sendCompletion(
         }
     }
 
+    const managerMailed = sent && !!managerEmail && [...to, ...cc].some((a) => a.toLowerCase() === managerEmail!.toLowerCase());
+    const copiedManager = managerMailed;
+
+    // Record the send BEFORE rendering the summary card: once the email is out, a card-delivery failure
+    // must not leave the goal retryable (the next sync would mail the employee and manager again).
+    // Only the goal this email was sent for is closed; if it was replaced while sending, the new goal
+    // stays Active. Once Completed, the goal stays in UserState as history ("show my previous goals").
+    if (sent) {
+        const persistCompleted = (): Promise<void> => withUserLock(userAADId, async () => {
+            const record = await readUserState(graph, userAADId);
+            if (record && record.itemId === itemId) {
+                await upsertUserState(graph, {
+                    ...record.state,
+                    Completion100Fired: true,
+                    PlanStatus: 'Completed',
+                    PlanCompletedDate: today(),
+                    // Keep the cached manager in step with the directory result used for this send.
+                    ...(managerResolved ? { ManagerName: managerName ?? '', ManagerEmail: managerEmail ?? '' } : {}),
+                }, record);
+                console.log(`[Completion100] Goal "${record.state.TargetRole}" marked Completed.`);
+            }
+        });
+        try {
+            await persistCompleted();
+        } catch (err) {
+            console.warn('[Completion100] Saving the completed state failed; retrying once:', (err as any)?.message ?? err);
+            await persistCompleted();
+        }
+    } else {
+        console.warn('[Completion100] Email not sent — leaving Completion100Fired=false so a retry can succeed.');
+    }
+
     await sendCard(context, {
         type: 'completionSummary',
         roleTitle: state.TargetRole,
-        managerName,
-        managerEmail,
+        managerName: copiedManager ? managerName : undefined,
+        managerEmail: copiedManager ? managerEmail : undefined,
         userEmail,
         totalTimeMinutes: totalMinutes,
         coursesCompleted: completedCourses.length,
@@ -1008,34 +1067,9 @@ async function sendCompletion(
         sent,
         note,
         footer: sent
-            ? `Congratulations! An email has been sent to your manager. 🎉 This goal is now complete — say "hi" whenever you're ready to set your next one.`
+            ? `Congratulations! ${!copiedManager ? 'An email with your career plan wrap-up has been sent to you.' : userEmail ? 'An email with your career plan wrap-up has been sent to you, with your manager copied.' : 'An email with your career plan wrap-up has been sent to your manager.'} 🎉 This goal is now complete — say "hi" whenever you're ready to set your next one.`
             : `Your plan is 100% complete. ${note ?? ''}`,
     });
-
-    // Only close the goal when the email actually went out — otherwise it stays Active so a
-    // retry can succeed (say "check my progress"). Once Completed, the next chat starts fresh
-    // with the welcome card; the goal stays in UserState as history ("show my previous goals").
-    if (sent) {
-        await withUserLock(userAADId, async () => {
-            const record = await readUserState(graph, userAADId);
-            // Close only the goal this email was sent for. If it was replaced while the email was going
-            // out, the new goal must stay Active.
-            if (record && record.itemId === itemId) {
-                await upsertUserState(graph, {
-                    ...record.state,
-                    Completion100Fired: true,
-                    PlanStatus: 'Completed',
-                    PlanCompletedDate: today(),
-                    // Cache the manager we resolved (freshly) so next reads have it too.
-                    ManagerName: managerName ?? record.state.ManagerName,
-                    ManagerEmail: managerEmail ?? record.state.ManagerEmail,
-                }, record);
-                console.log(`[Completion100] Goal "${record.state.TargetRole}" marked Completed.`);
-            }
-        });
-    } else {
-        console.warn('[Completion100] Email not sent — leaving Completion100Fired=false so a retry can succeed.');
-    }
 }
 
 // ============================================================================

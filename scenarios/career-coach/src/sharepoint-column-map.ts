@@ -16,7 +16,7 @@ import { Client as MsGraphClient } from '@microsoft/microsoft-graph-client';
 
 type ColumnKind = 'text' | 'number' | 'dateTime' | 'boolean' | 'choice' | 'hyperlink' | 'unknown';
 
-interface ColumnMap {
+export interface ColumnMap {
     displayToInternal: Record<string, string>;
     internalToDisplay: Record<string, string>;
     /** Column kind keyed by internal name — used to auto-format hyperlink values, etc. */

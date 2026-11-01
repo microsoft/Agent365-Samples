@@ -554,7 +554,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // "I completed all the courses" → deterministic: list every not-yet-validated course in the
     // plan and quiz them one by one (the LLM path can't match "all" to specific courses).
     if (aadObjectId && isCompletedAllIntent(effectiveUserMessage)) {
-      console.log(`[CompletedAll] Triggered by user text: "${effectiveUserMessage}"`);
+      console.log('[CompletedAll] Completion-intent shortcut triggered.');
       try {
         await this.runObserved(turnContext, effectiveUserMessage,
           { name: 'validate_all_courses', description: 'List every course in the plan still to validate and start the first quiz' },
@@ -572,7 +572,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       try {
         const reported = await findReportedCourses(turnContext, this.authorization, aadObjectId, effectiveUserMessage);
         if (reported) {
-          console.log(`[CompletedCourses] Deterministic quiz queue for: "${effectiveUserMessage.replace(/\s+/g, ' ').slice(0, 120)}"`);
+          console.log(`[CompletedCourses] Deterministic quiz queue for ${reported.named.length} named course(s).`);
           await this.runObserved(turnContext, effectiveUserMessage,
             { name: 'validate_reported_courses', description: 'Quiz the courses the user reported as completed', args: { courseIds: reported.named.map((lp) => lp.courseId) } },
             () => handleReportedCompletions(turnContext, this.authorization, aadObjectId, reported));
@@ -1016,7 +1016,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       await reply(`<p>Hi ${displayName.split(' ')[0]}, your email looks empty — what would you like help with? 🙂</p>`);
       return;
     }
-    console.log(`[Email] Conversation turn from '${displayName}' (${emailText.length} chars).`);
+    console.log(`[Email] Conversation turn received (${emailText.length} chars).`);
 
     // The activity conversation id changes with every email; the email thread id is stable. The key
     // also carries the agent instance and the verified sender, so a second member replying in the
@@ -1034,7 +1034,7 @@ export class MyAgent extends AgentApplication<TurnState> {
           const intro = result.saved
             ? `<p>Your <b>${pending.roleTitle}</b> plan is saved! 🎉 Tell me when you complete a course and I'll track your progress.</p>`
             : markdownToHtml(result.message ?? '');
-          await reply(intro + cardPayloadToHtml(result.card));
+          await reply(intro + (result.card ? cardPayloadToHtml(result.card) : ''));
         } catch (error) {
           console.error('[Email] Plan save failed:', (error as any)?.message ?? error);
           await reply('<p>Sorry — I couldn\'t save your plan just now. Please reply "Save it" again in a moment.</p>');
