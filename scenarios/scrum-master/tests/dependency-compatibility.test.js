@@ -116,6 +116,9 @@ test('Azure OpenAI configuration accepts the aligned client types without creden
             if (previous[index] === undefined) delete process.env[key];
             else process.env[key] = previous[index];
         });
+        sdk.setDefaultOpenAIClient(offlineClient);
+    }
+});
 
         test('hosting loads patched MSAL and preserves client-credentials acquisition', async () => {
             const { createRequire } = require('node:module');
@@ -168,6 +171,3 @@ test('Azure OpenAI configuration accepts the aligned client types without creden
                 msal.ConfidentialClientApplication.prototype.acquireTokenOnBehalfOf = original;
             }
         });
-        sdk.setDefaultOpenAIClient(offlineClient);
-    }
-});

@@ -53,6 +53,8 @@ The agent uses OpenAI Agents SDK 0.7.x to match the Agent 365 OpenAI adapters, O
 
 The hosting package's MSAL dependency is overridden to patched 7.1.2+ for [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5), because hosting 1.9.1 pins affected MSAL 5.6.0. The separate Graph device-code MSAL dependency is unchanged. Offline compatibility tests cover hosting client-credentials and OBO calls.
 
+OpenTelemetry's Node SDK is pinned through an override to patched 0.217.x for [GHSA-q7rr-3cgh-j5r3](https://github.com/advisories/GHSA-q7rr-3cgh-j5r3); this also selects its patched Prometheus exporter without changing the agent's exporter configuration.
+
 ## Quick start — mock mode (no external services)
 
 Uses the built-in mock Jira sprint in [`src/mock/jira-mock.ts`](src/mock/jira-mock.ts) and an in-memory roster/standup path. This exercises local card interactions, not real Teams delivery or SharePoint persistence.
