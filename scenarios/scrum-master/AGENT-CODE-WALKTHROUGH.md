@@ -86,8 +86,11 @@ Friendly `Task-N` labels are translated at the tool boundary. `JIRA_MODE`
 selects live REST or the mutable mock board; even with mocked Jira, inference
 requires the configured OpenAI/Azure OpenAI service.
 
-The handler retains at most eight user/assistant history items per user in a
-process-local map. A restart loses this context. Empty model output receives
+The handler retains at most eight user/assistant history items per caller and
+conversation in a process-local map, scoped by tenant, channel, audience and
+thread. Missing scope identifiers disable retention; private DM history is
+not reused in a group or channel. Jira reads are restricted to the configured
+project. A restart loses this context. Empty model output receives
 a fallback message; exceptions produce an error reply, not invented Jira data.
 
 ## 5. Generic MCP assistant and notifications

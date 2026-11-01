@@ -315,13 +315,13 @@ day.
 sequenceDiagram
     participant User as User DM
     participant Answer as handlers/answer.ts
-    participant Hist as per-user rolling history<br/>(in-memory, keyed by AAD)
+    participant Hist as conversation/caller history<br/>(tenant, channel, audience and thread scoped)
     participant Agent as OpenAI Agents SDK
     participant Tools as jira-tool.ts
     participant Jira as jira.ts
 
     User->>Answer: "what's the status of Task-14?"
-    Answer->>Hist: getHistory(userAadId) — last 8 turns
+    Answer->>Hist: getHistory(conversationScope, userAadId) — last 8 turns
     Answer->>Agent: run(agent, [...hist, {role:user, content}])
     Agent->>Tools: jira_get_issue({key:"Task-14"})
     Tools->>Jira: getIssue("EDP-14")  (Task-N ↔ PROJ-N via issue-labels.ts)
@@ -333,9 +333,11 @@ sequenceDiagram
 ```
 
 Tools available to the agent: `jira_get_issue`, `jira_list_sprint_issues`,
-`jira_get_issue_comments`. The per-user rolling history means follow-ups
+`jira_get_issue_comments`. Caller-and-conversation-scoped history means follow-ups
 like *"provide more details"* or *"and the assignee?"* resolve against
-the last discussed task — no need to repeat the key.
+the last discussed task in the same conversation. Missing scope identifiers
+disable history retention. The shared Jira read boundary restricts issue,
+comment and collection results to the configured project.
 
 ### 5.6 Mid-sprint RAG (MVP 6)
 
