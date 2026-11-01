@@ -116,6 +116,58 @@ test('Azure OpenAI configuration accepts the aligned client types without creden
             if (previous[index] === undefined) delete process.env[key];
             else process.env[key] = previous[index];
         });
+
+        test('hosting loads patched MSAL and preserves client-credentials acquisition', async () => {
+            const { createRequire } = require('node:module');
+            const hostingRequire = createRequire(require.resolve('@microsoft/agents-hosting'));
+            const msal = hostingRequire('@azure/msal-node');
+            const [major, minor] = hostingRequire('@azure/msal-node/package.json').version.split('.').map(Number);
+            assert.ok(major > 7 || (major === 7 && minor >= 1));
+            const original = msal.ConfidentialClientApplication.prototype.acquireTokenByClientCredential;
+            const token = `header.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')}.signature`;
+            const requests = [];
+            msal.ConfidentialClientApplication.prototype.acquireTokenByClientCredential = async function (request) {
+                requests.push(request);
+                return { accessToken: token };
+            };
+            try {
+                const { MsalTokenProvider } = require('@microsoft/agents-hosting');
+                const provider = new MsalTokenProvider({
+                    clientId: '66666666-6666-4666-8666-666666666666',
+                    tenantId: '11111111-1111-4111-8111-111111111111',
+                    clientSecret: 'offline-test-secret', authorityEndpoint: 'https://login.microsoftonline.com',
+                });
+                assert.equal(await provider.getAccessToken('https://graph.microsoft.com'), token);
+                assert.deepEqual(requests[0].scopes, ['https://graph.microsoft.com/.default']);
+            } finally {
+                msal.ConfidentialClientApplication.prototype.acquireTokenByClientCredential = original;
+            }
+        });
+
+        test('patched hosting MSAL retains workload OBO behavior', async () => {
+            const { createRequire } = require('node:module');
+            const hostingRequire = createRequire(require.resolve('@microsoft/agents-hosting'));
+            const msal = hostingRequire('@azure/msal-node');
+            const original = msal.ConfidentialClientApplication.prototype.acquireTokenOnBehalfOf;
+            const requests = [];
+            msal.ConfidentialClientApplication.prototype.acquireTokenOnBehalfOf = async function (request) {
+                requests.push(request);
+                return { accessToken: 'offline-workload-token' };
+            };
+            try {
+                const { MsalTokenProvider } = require('@microsoft/agents-hosting');
+                const provider = new MsalTokenProvider({
+                    clientId: '77777777-7777-4777-8777-777777777777',
+                    tenantId: '11111111-1111-4111-8111-111111111111',
+                    clientSecret: 'offline-test-secret', authorityEndpoint: 'https://login.microsoftonline.com',
+                });
+                assert.equal(await provider.acquireTokenOnBehalfOf(['https://graph.microsoft.com/.default'], 'offline-user-assertion'), 'offline-workload-token');
+                assert.equal(requests[0].oboAssertion, 'offline-user-assertion');
+                assert.deepEqual(requests[0].scopes, ['https://graph.microsoft.com/.default']);
+            } finally {
+                msal.ConfidentialClientApplication.prototype.acquireTokenOnBehalfOf = original;
+            }
+        });
         sdk.setDefaultOpenAIClient(offlineClient);
     }
 });

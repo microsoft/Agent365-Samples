@@ -68,6 +68,9 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
+    "@microsoft/agents-hosting": {
+      "@azure/msal-node": "^7.1.2"
+    },
     "@openai/agents-core": "$@openai/agents",
     "@openai/agents-openai": "$@openai/agents",
     "openai": "$openai"

@@ -51,6 +51,8 @@ Fast path (mock standup): **Node.js and npm are required.** Jira and roster data
 
 The agent uses OpenAI Agents SDK 0.7.x to match the Agent 365 OpenAI adapters, OpenAI 6.x, and Zod 4.6.6 or later. Keep these dependencies compatible when upgrading; older Zod releases are affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
 
+The hosting package's MSAL dependency is overridden to patched 7.1.2+ for [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5), because hosting 1.9.1 pins affected MSAL 5.6.0. The separate Graph device-code MSAL dependency is unchanged. Offline compatibility tests cover hosting client-credentials and OBO calls.
+
 ## Quick start — mock mode (no external services)
 
 Uses the built-in mock Jira sprint in [`src/mock/jira-mock.ts`](src/mock/jira-mock.ts) and an in-memory roster/standup path. This exercises local card interactions, not real Teams delivery or SharePoint persistence.
