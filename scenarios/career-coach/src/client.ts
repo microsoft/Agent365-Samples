@@ -17,6 +17,8 @@ import { configureOpenAIClient, getModelName, isAzureOpenAI } from './openai-con
 
 // SharePoint access tools (agentic Graph auth, no MCP, no manual token refresh).
 import { makeSharePointTools, type RunCtx } from './sharepoint-tools';
+import { getAgenticGraphClient } from './graph-service';
+import { guardRecipients, resolveAllowedRecipients } from './mail-guard';
 import { observabilityConversationId } from './observability/conversation-id';
 
 // A365 WorkIQ — added by add-workiq-tools skill
@@ -41,6 +43,21 @@ function makeReadOnly(server: MCPServer): void {
     }
     return allowed;
   };
+}
+
+// Mail and Calendar writes are limited in code (not just in the prompt) to the current user's own
+// address, plus their manager when the user's own message asks for the manager.
+const MAIL_CALENDAR_SERVER = /mail|calendar/i;
+function guardMailRecipients(server: MCPServer, ctx: RunCtx): void {
+  const userId = ctx.turnContext.activity?.from?.aadObjectId;
+  guardRecipients(server, async () => {
+    if (!userId) return new Set<string>();
+    return resolveAllowedRecipients({
+      graph: getAgenticGraphClient(ctx.turnContext, ctx.authorization),
+      userId,
+      userText: ctx.userText ?? '',
+    });
+  });
 }
 
 // A365 Observability — best-effort instrumentation (verify against official sample)
@@ -135,7 +152,7 @@ Each row = one skill required for one role. Filter by RoleId to get all skills f
 
 LIST 2: "${SP_CONFIG.lists.learningCatalog}" (READ ONLY) — courses mapped to skills
 Columns: Title, CourseId, Provider, Format, SkillIds (semicolon-separated skill IDs), FromLevel, ToLevel, URL, Description, ResourceType.
-A course matches a skill gap when: SkillIds contains the competencyId AND FromLevel <= the user's current level for that skill AND ToLevel >= the skill's target (RequiredLevel).
+A course matches a skill gap when: SkillIds contains the competencyId AND its level range overlaps the gap — ToLevel > the user's current level for that skill AND FromLevel <= the skill's target (RequiredLevel).
 
 LIST 3: "${SP_CONFIG.lists.userState}" (READ/WRITE) — one row per GOAL; the user's ACTIVE goal is the living plan
 Columns: Title (display name), UserAADId, CurrentRole, CurrentLevel, TargetRole, TargetRoleId, TotalExperience, OverallProgress (0-100), Goals (JSON), Skills (JSON), LearningProgress (JSON), ManagerAsks, PlanCreatedDate, LastCheckIn, ManagerName, ManagerEmail, LastSyncDate, Milestone80Fired (Yes/No), Completion100Fired (Yes/No), PlanStatus, PlanCompletedDate.
@@ -237,7 +254,7 @@ Trigger: User message of the form ::skill-ratings:: {"roleTitle":"…","skills":
 1. Parse the ratings. If any skill's level is null/missing (user skipped it), treat as level 0. **CRITICAL: Use the "target" value from the ::skill-ratings:: payload EXACTLY — this is the authoritative RequiredLevel from Stage 1's CompetencyFramework read. Do NOT re-derive, look up again, or modify the target under any circumstances.** If the payload doesn't include target for a skill (plain-text fallback path), then and only then reuse the RequiredLevel you fetched from CompetencyFramework in Stage 1.
 2. For each skill: gap = target − level. Categorize: gap ≤ 0 = Strong, gap = 1 = Growing, gap ≥ 2 = To Build.
 3. Read "${SP_CONFIG.lists.learningCatalog}" via listListItems.
-4. For EACH skill with gap > 0, find matching courses: SkillIds (semicolon-split) contains the CompetencyId AND FromLevel <= currentLevel AND ToLevel >= targetLevel. Rank so the course whose (fromLevel..toLevel) range TIGHTLY covers the gap comes first (prefer courses whose fromLevel is exactly the user's currentLevel). Pick up to 3 per skill. NEVER invent courses. If none match a skill, its "courses" array is [] and the row shows "no course currently available".
+4. For EACH skill with gap > 0, find matching courses: SkillIds (semicolon-split) contains the CompetencyId AND the course's range overlaps the gap (ToLevel > currentLevel AND FromLevel <= targetLevel). Rank so the course whose (fromLevel..toLevel) range fits the gap best comes first (prefer courses whose fromLevel is closest to the user's currentLevel, then whose toLevel is closest to the targetLevel). Pick up to 3 per skill. NEVER invent courses. If none match a skill, its "courses" array is [] and the row shows "no course currently available".
 5. Emit the planReview card (schema #2) with:
    - ALL skills from the role (even the Strong ones with gap=0 and courses=[]).
    - Each skill row: name, competencyId, target (RequiredLevel), current (user's rating), gap, status, courses[].
@@ -421,6 +438,7 @@ class OpenAIClient implements Client {
       try {
         await server.connect();
         if (READ_ONLY_SERVER.test(server.name)) makeReadOnly(server);
+        else if (MAIL_CALENDAR_SERVER.test(server.name)) guardMailRecipients(server, ctx);
         connected.push(server);
       } catch (error) {
         console.warn(`[WorkIQ] Could not connect MCP server '${server.name}' (skipping it):`, (error as any)?.message ?? error);

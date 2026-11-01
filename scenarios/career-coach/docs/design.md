@@ -72,7 +72,8 @@ Out of scope: acting for anyone but the signed-in user, writing to the reference
 | `llm-tasks.ts` | Narrow LLM calls with JSON output: quiz generation, short-answer grading, completion email text |
 | `cards.ts` | Adaptive Card builders and the card-block parser |
 | `email-conversation.ts`, `email-plan-store.ts` | Email text/prompt/rendering and the pending-plan store |
-| `graph-service.ts`, `subscription-manager.ts` | Graph clients (agentic at runtime), mail, change subscriptions |
+| `graph-service.ts`, `subscription-manager.ts`, `agent-identity.ts`, `portal-secret.ts` | Graph clients (per-turn agentic; background agent user), mail, change subscriptions with backoff retry, the captured agent identity, portal-secret validation |
+| `mail-guard.ts` | Code-level recipient allowlist on the WorkIQ Mail / Calendar servers |
 | `user-lock.ts` | Per-user mutex serialising every `UserState` read-modify-write |
 
 ## 5. Data model (SharePoint)
@@ -130,17 +131,17 @@ List change → Graph notification → webhook (validated by a shared secret) �
 
 | Risk | Control |
 |---|---|
-| Prompt injection via user text, email bodies, documents, tool results | System prompt says only system instructions count; Mail/Calendar rules forbid acting on embedded instructions and limit recipients; all writes still go through code guards |
-| LLM claims progress it didn't earn | Progress guard rejects Complete / passed-quiz / skill-level writes; only the quiz grader records them |
+| Prompt injection via user text, email bodies, documents, tool results | System prompt says only system instructions count; email text and quoted history are fenced in `<untrusted_email>` tags (delimiters inside neutralised); Mail/Calendar recipients are enforced **in code** (`mail-guard.ts`: sender only, manager only when the sender's own message asks; forward/reply and unverifiable recipients refused, fail closed); all writes still go through code guards |
+| LLM claims progress it didn't earn | Progress guard rejects Complete / passed-quiz / skill-level writes (including records with no `courseId`); every plan course must exist in the catalog; quiz-earned progress is merged from the fresh row into stale writes; a quiz only counts for a course on the current plan |
 | LLM corrupts lifecycle data | Lifecycle columns and the manager identity stripped from model writes (under their display **and** internal names); finished goals read-only; one active goal; role switch with progress rejected |
-| LLM reads or writes another employee's data | Data tools are limited to the configured site and the five Career Coach lists; personal lists are filtered to the caller's own rows in code; new plans are bound to the caller; updates verify row ownership fail-closed and can't change the owner; chat writes are limited to `UserState` |
+| LLM reads or writes another employee's data | Data tools are limited to the configured site and the five Career Coach lists; personal lists are filtered to the caller's own rows in code; new plans are bound to the caller; updates verify row ownership fail-closed and can't change the owner; chat writes are limited to `UserState`; email threads are keyed on the verified sender so members never share a conversation |
 | LLM redirects the completion email | `ManagerName` / `ManagerEmail` are app-managed — populated only from the directory, never from a model write |
-| Concurrent turns overwrite each other's plan changes | Every `UserState` read-modify-write runs under a per-user lock; quiz generation shares one in-flight result per user/course so a card is always graded against its own answer key |
+| Concurrent turns overwrite each other's plan changes | Every `UserState` read-modify-write runs under a per-user lock; quiz generation shares one in-flight result per user/course so a card is always graded against its own answer key; the completion email is claimed per goal and only closes the goal it was sent for |
 | LLM bypasses guards through a second SharePoint path | WorkIQ SharePoint server exposes only read tools |
 | Unknown or external email senders | Ignored; only organisation Members get replies; bounces ignored |
-| Forged webhook | Graph `clientState` / `X-Portal-Secret` must equal `PORTAL_EVENT_SECRET`; a rotated secret replaces the Graph subscription (the saved subscription stores a hash of the secret) |
+| Forged webhook | Graph `clientState` / `X-Portal-Secret` must equal `PORTAL_EVENT_SECRET`, which must be a real secret (≥16 chars, not the template placeholder; production refuses to start otherwise); a rotated secret replaces the Graph subscription (the saved subscription stores a hash of the secret) |
 | Inbound request forgery | JWT auth on `/api/messages` (disabled only with `NODE_ENV=development`) |
-| Secrets | `.env`, `a365.generated.config.json` and runtime state are git-ignored; export tokens are validated and never logged |
+| Secrets and private content in logs | `.env`, `a365.generated.config.json` and runtime state are git-ignored; export tokens are validated and never logged; failed writes log operation, status, error code and column names only — never field values or user text |
 
 ## 8. Reliability and error handling
 
@@ -151,7 +152,7 @@ List change → Graph notification → webhook (validated by a shared secret) �
 - **Lifecycle events** from the platform are acknowledged by a top-priority route so they can't crash a turn or trigger an error-reply loop.
 - **Process-level** rejections are logged; the server stays up.
 
-Known trade-offs: the quiz answer-key cache and queue are in memory (lost on restart — the user is asked to say "check my progress" to regenerate), and the proactive map, email-plan store and subscription state are local files. The per-user lock is in-process too. All of this suits a single instance; running several instances would need shared storage and a shared lock (or conditional writes with row versions). The Graph change subscription is re-created automatically when it expires or is deleted while the process runs.
+Known trade-offs: the quiz answer-key cache and queue are in memory (lost on restart — the user is asked to say "check my progress" to regenerate), and the proactive map, email-plan store and subscription state are local files. The per-user lock is in-process too. All of this suits a single instance; running several instances would need shared storage and a shared lock (or conditional writes with row versions). The Graph change subscription is re-created automatically when it expires or is deleted while the process runs, and a failed first attempt (the agent's own ids aren't known until its first message, the tunnel is down) is retried with bounded backoff (30 s doubling to 10 min) and immediately when the ids are captured.
 
 ## 9. Observability design
 
@@ -168,9 +169,10 @@ Goal: every run — LLM turn, button click, email, proactive event — appears i
 The agent is registered with `a365 setup all --aiteammate` (blueprint + agent identity + permissions). At runtime it acts as its **own agentic user** (own mailbox and Graph identity), not as the person chatting:
 
 - SharePoint lists: the agent user must be a Member of the site.
+- Background work with no user turn (the Graph change subscription, the notification row scan, startup warm-up) also runs as the agent user: `graph-service.ts` mints its token with the hosting connection's `getAgenticUserToken`, using the tenant / agent instance / agentic user ids captured from the first message (persisted to `.agent-identity.json`, or set by `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). The notification read is filtered server-side to recently updated rows. In production the portal trigger refuses to start without the service connection and a valid secret, so it never silently runs as a developer.
 - Completion email and user-requested email come from the agent's mailbox.
 - WorkIQ Mail/Calendar/SharePoint need the MCP grants applied by a Global Administrator (`a365 setup permissions mcp`).
-- Developer scripts use delegated MSAL (device code) instead, as a signed-in admin.
+- Developer scripts use delegated MSAL (device code) instead, as a signed-in admin; the running agent only uses it as a local fallback before it has learned its own ids.
 
 ## 11. Configuration
 

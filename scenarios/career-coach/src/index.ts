@@ -13,10 +13,38 @@ import { setObservabilityConnection } from './telemetry';
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
 import { agentApplication } from './agent';
+import { portalSecretProblem } from './portal-secret';
+import { setBackgroundTokenProvider } from './graph-service';
+import { onAgentIdentityChange } from './agent-identity';
+import { retrySubscriptionNow } from './subscription-manager';
 
 // The observability token resolver mints app-only export tokens from the hosting connection
 // (the blueprint credential), so hand it the adapter's default connection.
 setObservabilityConnection(() => (agentApplication.adapter as CloudAdapter).connectionManager.getDefaultConnection());
+
+// Background Graph work (the change subscription and the notification row scan) has no user turn:
+// it mints the agent user's token from the same connection with getAgenticUserToken(...), using the
+// agent identity captured from the first message (or AGENT_INSTANCE_ID / AGENT_USER_ID).
+setBackgroundTokenProvider({
+  getAgenticUserToken: (tenantId, agentInstanceId, agenticUserId, scopes) =>
+    (agentApplication.adapter as CloudAdapter).connectionManager.getDefaultConnection()
+      .getAgenticUserToken(tenantId, agentInstanceId, agenticUserId, scopes),
+});
+onAgentIdentityChange(() => retrySubscriptionNow());
+
+// Production with a webhook configured must not run on the developer sign-in or a weak secret.
+if (process.env.NODE_ENV === 'production' && (process.env.PORTAL_WEBHOOK_URL || '').trim()) {
+  const problems: string[] = [];
+  const secretProblem = portalSecretProblem();
+  if (secretProblem) problems.push(secretProblem);
+  if (!process.env.connections__service_connection__settings__clientId || !process.env.connections__service_connection__settings__clientSecret) {
+    problems.push('the service connection (clientId/clientSecret) is not configured, so the agent identity cannot mint the background Graph token');
+  }
+  if (problems.length) {
+    console.error(`[startup] PORTAL_WEBHOOK_URL is set but the agent cannot run the portal trigger safely: ${problems.join('; ')}.`);
+    process.exit(1);
+  }
+}
 
 // Safety net: background activities (e.g. typing indicators, replies to system
 // notifications) can reject asynchronously. Without these guards a single 502 from
@@ -79,12 +107,13 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
     return;
   }
 
-  const expected = process.env.PORTAL_EVENT_SECRET || '';
-  if (!expected) {
-    console.error('[Proactive] PORTAL_EVENT_SECRET is not set in .env — refusing the request.');
-    res.status(500).json({ ok: false, reason: 'PORTAL_EVENT_SECRET not configured on the agent.' });
+  const secretProblem = portalSecretProblem();
+  if (secretProblem) {
+    console.error(`[Proactive] ${secretProblem} — refusing the request.`);
+    res.status(500).json({ ok: false, reason: 'PORTAL_EVENT_SECRET is not configured with a strong value on the agent.' });
     return;
   }
+  const expected = String(process.env.PORTAL_EVENT_SECRET).trim();
 
   const body = (req.body || {}) as any;
 
@@ -129,7 +158,7 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
  * and fire a proactive DM per affected user.
  */
 async function handleGraphNotification(body: { value: Array<{ resource?: string; clientState?: string; subscriptionId?: string; changeType?: string }> }): Promise<void> {
-  const { getSiteId, getListIdByName, getListItems } = await import('./graph-service');
+  const { getSiteId, getListIdByName, getListItems, getBackgroundGraphClient } = await import('./graph-service');
   const { SP_CONFIG } = await import('./career-coach-types');
 
   console.log(`[Proactive] Graph notification received — ${body.value.length} entries.`);
@@ -153,7 +182,18 @@ async function handleGraphNotification(body: { value: Array<{ resource?: string;
 
   let rows: Array<{ id: string; fields: Record<string, any> }>;
   try {
-    rows = await getListItems(siteId, listId);
+    // Read only recently-changed rows (server-side filter on LastUpdated); fall back to a full
+    // scan if the filter is rejected so a notification is never silently dropped.
+    const graph = getBackgroundGraphClient();
+    try {
+      const { getColumnMap } = await import('./sharepoint-column-map');
+      const colMap = await getColumnMap(graph, siteId, listId);
+      const lastUpdatedCol = colMap.displayToInternal['LastUpdated'] ?? 'LastUpdated';
+      rows = await getListItems(siteId, listId, { graph, filter: `fields/${lastUpdatedCol} ge '${cutoff.toISOString()}'` });
+    } catch (filterErr) {
+      console.warn('[Proactive] Filtered read failed, falling back to a full scan:', (filterErr as any)?.message ?? filterErr);
+      rows = await getListItems(siteId, listId, { graph });
+    }
   } catch (err) {
     console.error('[Proactive] Failed to read LearningPortalStatus rows:', (err as any)?.message ?? err);
     return;
@@ -209,8 +249,9 @@ server.listen(port, host, async () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
   // Real-time trigger for Feature 1: ensure a Microsoft Graph change-notification subscription
   // exists on the LearningPortalStatus list, pointing at our /api/portal-event endpoint.
-  // Best-effort — a failed subscription (bad tunnel URL, missing MSAL token, etc.) does NOT
-  // stop the agent; the manual POST path still works for testing.
+  // Best-effort — a failed attempt (agent identity not known until the first message, tunnel down)
+  // does NOT stop the agent: ensureSubscription retries with backoff, and the manual POST path
+  // still works for testing.
   try {
     const { ensureSubscription } = await import('./subscription-manager');
     await ensureSubscription();

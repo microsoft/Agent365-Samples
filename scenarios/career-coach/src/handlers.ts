@@ -27,7 +27,7 @@ import {
     recomputeGoalsAndOverall, applyQuizPass, applyQuizFail,
     diffPortalAgainstPlan, pickNextPendingQuiz,
     gradeMcqAnswer, summarizeGrading,
-    computeMilestoneAggregate,
+    computeMilestoneAggregate, portalMinutesForCourses,
     GradedAnswer, QuizQuestionWithKey,
     today, nowIso,
 } from './career-coach-service';
@@ -35,7 +35,7 @@ import {
     generateQuizQuestions, gradeShortAnswers, composeCompletionEmail, ShortGradeInput,
 } from './llm-tasks';
 import { getAgenticGraphClient, getMyManager, getMyProfile, sendMail } from './graph-service';
-import { getQuiz, getOrCreateQuiz, bumpAttempts, clearQuiz, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes } from './quiz-cache';
+import { getQuiz, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes } from './quiz-cache';
 import { withUserLock } from './user-lock';
 
 // ============================================================================
@@ -366,6 +366,8 @@ async function savePlanLocked(
         target = undefined;
     }
     await upsertUserState(graph, state, target);
+    // Quizzes cached for the previous plan must never be graded against (or credited to) this one.
+    clearAllQuizzes(input.userAADId);
     console.log(`[SavePlan] Saved "${state.TargetRole}" plan (${goals.length} goals, ${learning.length} courses).`);
 
     return { saved: true, card: buildProgressCardFromState(state) };
@@ -389,13 +391,13 @@ export async function handleSyncProgress(
         const portal = await readLearningPortalStatus(graph, userAADId);
         const { updatedState, newlyCompleted } = diffPortalAgainstPlan(userRecord.state, portal);
         await upsertUserState(graph, updatedState, userRecord);
-        return { updatedState, newlyCompleted, portal };
+        return { updatedState, newlyCompleted, portal, itemId: userRecord.itemId };
     });
     if (!synced) {
         await sendPlain(context, await noActiveGoalMessage(graph, userAADId));
         return;
     }
-    const { updatedState, newlyCompleted, portal } = synced;
+    const { updatedState, newlyCompleted, portal, itemId } = synced;
 
     // Any newly-completed course → build quiz + render.
     const nextPending = pickNextPendingQuiz(updatedState, portal);
@@ -415,10 +417,10 @@ export async function handleSyncProgress(
     // (Covers the case where a milestone was skipped or its email delivery failed and the
     // user is asking for a resend via "check my progress".)
     if (updatedState.OverallProgress >= 80 && !updatedState.Milestone80Fired) {
-        await fireMilestone80(context, authorization, userAADId, updatedState);
+        await fireMilestone80(context, authorization, userAADId, updatedState, itemId);
     }
     if (updatedState.OverallProgress === 100 && !updatedState.Completion100Fired) {
-        await fireCompletion100(context, authorization, userAADId, updatedState);
+        await fireCompletion100(context, authorization, userAADId, updatedState, itemId);
     }
 }
 
@@ -697,16 +699,14 @@ async function handleQuizSubmitInner(
         }
     }
     if (shortInputs.length > 0) {
-        try {
-            const shortResults = await gradeShortAnswers(shortInputs);
-            for (const r of shortResults) {
-                const idx = graded.findIndex((g) => g.id === r.id);
-                if (idx >= 0) {
-                    graded[idx] = { ...graded[idx], correct: r.correct, explanation: r.explanation };
-                }
+        // Not caught here: if grading fails or returns an incomplete result nothing is persisted and no
+        // attempt is counted. runDeferred tells the user and restores the quiz card with their answers.
+        const shortResults = await gradeShortAnswers(shortInputs);
+        for (const r of shortResults) {
+            const idx = graded.findIndex((g) => g.id === r.id);
+            if (idx >= 0) {
+                graded[idx] = { ...graded[idx], correct: r.correct, explanation: r.explanation };
             }
-        } catch (err) {
-            console.warn('[QuizSubmit] Short-answer grading failed; marking short answers wrong:', (err as any)?.message ?? err);
         }
     }
 
@@ -720,10 +720,13 @@ async function handleQuizSubmitInner(
         const catalog = await readLearningCatalog(graph, userRecord.siteId);
         const course = catalog.find((c) => c.CourseId === input.courseId);
         if (!course) return { ok: false as const, problem: `I couldn't find course ${input.courseId} in the catalog to record the quiz.` };
+        // A quiz only counts for a course on the CURRENT plan. A stale card from an earlier goal (or a
+        // crafted submit) must not raise skills, write audit rows or consume an attempt.
+        const lp = userRecord.state.LearningProgress.find((l) => l.courseId === input.courseId);
+        if (!lp) return { ok: false as const, problem: "That course isn't on your current plan, so I can't record a quiz for it. Say **check my progress** for your current quizzes." };
         // Counted only once the reads succeed, so a network failure above isn't an attempt.
         const attempts = bumpAttempts(input.userAADId, input.courseId) || 1;
-        const lp = userRecord.state.LearningProgress.find((l) => l.courseId === input.courseId);
-        const courseTitle = lp?.courseTitle ?? course.Title;
+        const courseTitle = lp.courseTitle || course.Title;
 
         const quizResult: UserLearningQuizSummary = {
             attemptDate: nowIso(),
@@ -764,6 +767,11 @@ async function handleQuizSubmitInner(
     }
     const { userRecord, course, courseTitle, previousOverall, nextState } = persisted;
 
+    // The result is saved: mark it graded and drop the queue entry BEFORE rendering, so a failure
+    // while sending the card can never leave a graded quiz open for a second (duplicate) submission.
+    markGraded(input.userAADId, input.courseId);
+    dequeueQuiz(input.userAADId, input.courseId);
+
     // Render the quizResult card.
     const feedbackCard = graded.map((g) => ({
         id: g.id, text: g.text, userAnswer: g.userAnswer, correct: g.correct,
@@ -785,20 +793,17 @@ async function handleQuizSubmitInner(
         footer,
     });
 
-    markGraded(input.userAADId, input.courseId);
-    dequeueQuiz(input.userAADId, input.courseId);
-
     let milestoneShown = false;
     if (summary.passed) {
         clearQuiz(input.userAADId, input.courseId);
 
         // POST-QUIZ CASCADE — 80% milestone + 100% completion.
         if (previousOverall < 80 && nextState.OverallProgress >= 80 && !nextState.Milestone80Fired) {
-            await fireMilestone80(context, authorization, input.userAADId, nextState);
+            await fireMilestone80(context, authorization, input.userAADId, nextState, userRecord.itemId);
             milestoneShown = true;
         }
         if (nextState.OverallProgress === 100 && !nextState.Completion100Fired) {
-            await fireCompletion100(context, authorization, input.userAADId, nextState);
+            await fireCompletion100(context, authorization, input.userAADId, nextState, userRecord.itemId);
             milestoneShown = true;
         }
     }
@@ -844,6 +849,7 @@ async function fireMilestone80(
     authorization: Authorization,
     userAADId: string,
     state: UserState,
+    itemId: string,
 ): Promise<void> {
     const graph = getAgenticGraphClient(context, authorization);
     const responses = await readAllQuizResponsesForUser(graph, userAADId);
@@ -856,10 +862,11 @@ async function fireMilestone80(
         areasToStrengthen: agg.areasToStrengthen,
         footer: `You're at ${state.OverallProgress}% — an incredible milestone. Keep the momentum going! 🚀`,
     });
-    // Persist the guard (re-read under the user lock so it can't clobber a concurrent update).
+    // Persist the guard (re-read under the user lock so it can't clobber a concurrent update), and only
+    // on the goal that reached the milestone — not on a goal that replaced it while the card was sent.
     await withUserLock(userAADId, async () => {
         const record = await readUserState(graph, userAADId);
-        if (record) {
+        if (record && record.itemId === itemId) {
             await upsertUserState(graph, { ...record.state, Milestone80Fired: true }, record);
         }
     });
@@ -869,22 +876,54 @@ async function fireMilestone80(
 // STAGE 7 — 100% completion + manager email (deterministic + LLM prose)
 // ============================================================================
 
+// In-process claim per user + goal row so overlapping syncs / submits send one completion email.
+const completionInFlight = new Set<string>();
+
 async function fireCompletion100(
     context: TurnContext,
     authorization: Authorization,
     userAADId: string,
-    state: UserState,
+    triggeredState: UserState,
+    itemId: string,
+): Promise<void> {
+    const claimKey = `${userAADId.toLowerCase()}:${itemId}`;
+    if (completionInFlight.has(claimKey)) {
+        console.log('[Completion100] Already in progress for this goal — skipping the duplicate trigger.');
+        return;
+    }
+    completionInFlight.add(claimKey);
+    try {
+        await sendCompletion(context, authorization, userAADId, triggeredState, itemId);
+    } finally {
+        // Released on every exit so a failed send can be retried by "check my progress".
+        completionInFlight.delete(claimKey);
+    }
+}
+
+async function sendCompletion(
+    context: TurnContext,
+    authorization: Authorization,
+    userAADId: string,
+    triggeredState: UserState,
+    itemId: string,
 ): Promise<void> {
     const graph = getAgenticGraphClient(context, authorization);
+
+    // Work from the freshest state of the goal that triggered this: another turn may already have
+    // completed it, or replaced it with a different goal while this one was queued.
+    const fresh = await readUserState(graph, userAADId);
+    if (!fresh || fresh.itemId !== itemId || fresh.state.Completion100Fired || fresh.state.OverallProgress !== 100) {
+        console.log('[Completion100] Goal is no longer the active, unfinished 100% goal — nothing to send.');
+        return;
+    }
+    const state = fresh.state;
 
     // Aggregate stats deterministically.
     const completedCourses = (state.LearningProgress ?? [])
         .filter((lp) => lp.status === 'Complete')
         .map((lp) => ({ title: lp.courseTitle, url: lp.url }));
     const portal = await readLearningPortalStatus(graph, userAADId);
-    const portalMinutes = portal
-        .filter((r) => r.Status === 'Complete')
-        .reduce((sum, r) => sum + Number(r.TimeSpentMinutes ?? 0), 0);
+    const portalMinutes = portalMinutesForCourses(portal, (state.LearningProgress ?? []).map((lp) => lp.courseId));
     const lpMinutes = (state.LearningProgress ?? [])
         .filter((lp) => lp.status === 'Complete')
         .reduce((sum, lp) => sum + Number(lp.timeSpentMinutes ?? 0), 0);
@@ -979,7 +1018,9 @@ async function fireCompletion100(
     if (sent) {
         await withUserLock(userAADId, async () => {
             const record = await readUserState(graph, userAADId);
-            if (record) {
+            // Close only the goal this email was sent for. If it was replaced while the email was going
+            // out, the new goal must stay Active.
+            if (record && record.itemId === itemId) {
                 await upsertUserState(graph, {
                     ...record.state,
                     Completion100Fired: true,

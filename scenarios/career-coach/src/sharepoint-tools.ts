@@ -21,7 +21,8 @@ import { Client as MsGraphClient } from '@microsoft/microsoft-graph-client';
 import { getAgenticGraphClient, getSiteId } from './graph-service';
 import { getColumnMap, toInternalFields, toDisplayFields, canonicalizeFields } from './sharepoint-column-map';
 import { SP_CONFIG, APP_MANAGED_USERSTATE_FIELDS, planStatusOf } from './career-coach-types';
-import { readUserState, readPreviousPlans, dropMissingLifecycleColumns } from './career-coach-service';
+import { readUserState, readPreviousPlans, readLearningCatalog, dropMissingLifecycleColumns, recomputeGoalsAndOverall } from './career-coach-service';
+import type { UserState } from './career-coach-types';
 import { withUserLock } from './user-lock';
 
 /**
@@ -32,6 +33,8 @@ import { withUserLock } from './user-lock';
 export interface RunCtx {
     turnContext: TurnContext;
     authorization: Authorization;
+    /** The sender's own message for this turn (not quoted email history); used by the mail recipient guard. */
+    userText?: string;
 }
 
 // The `tool()` helper's strict generics don't play well with untyped JSON schema — every
@@ -48,9 +51,10 @@ function makeTool(spec: {
             return await spec.execute(args, ctx);
         } catch (err: any) {
             // The Agents SDK hands tool errors back to the LLM silently; log them so failures are diagnosable.
+            // Errors that carry user-supplied values (Graph write failures) set `logSafe` to a redacted summary.
             const status = err?.statusCode ?? err?.status ?? '';
             const code = err?.code ?? '';
-            console.error(`[SharePointTools] ${spec.name} failed${status ? ` (status=${status})` : ''}${code ? ` [${code}]` : ''}: ${err?.message ?? err}`);
+            console.error(`[SharePointTools] ${spec.name} failed${status ? ` (status=${status})` : ''}${code ? ` [${code}]` : ''}: ${err?.logSafe ?? err?.message ?? err}`);
             throw err;
         }
     };
@@ -307,14 +311,15 @@ function findUnearnedProgress(
     if ('LearningProgress' in next) {
         const prev = parseJsonArray(stored?.LearningProgress);
         for (const lp of parseJsonArray(next.LearningProgress)) {
-            const courseId = String(lp?.courseId ?? '');
-            if (!courseId || courses.some((c) => c.courseId === courseId)) continue;
-            const alreadyValidated = prev.some((p) => p?.courseId === courseId &&
+            const courseId = String(lp?.courseId ?? '').trim();
+            // A record with no courseId can't be matched to a validated course, so it never gets a pass.
+            if (courseId && courses.some((c) => c.courseId === courseId)) continue;
+            const alreadyValidated = !!courseId && prev.some((p) => p?.courseId === courseId &&
                 String(p?.status ?? '').toLowerCase() === 'complete' && p?.quizResult?.passed === true);
             if (alreadyValidated) continue;
             const claimsComplete = String(lp?.status ?? '').toLowerCase() === 'complete';
             const claimsPassed = lp?.quizResult?.passed === true;
-            if (claimsComplete || claimsPassed) courses.push({ courseId, title: String(lp?.courseTitle ?? courseId) });
+            if (claimsComplete || claimsPassed) courses.push({ courseId: courseId || '(missing courseId)', title: String(lp?.courseTitle ?? (courseId || 'unknown course')) });
         }
     }
     const skills: string[] = [];
@@ -328,6 +333,104 @@ function findUnearnedProgress(
         }
     }
     return { courses, skills };
+}
+
+/**
+ * Every LearningProgress record the model writes must carry a courseId, and any course it ADDS to
+ * the plan must exist in the LearningCatalog (cached for 5 minutes). Fails closed: if the catalog
+ * can't be read the write is refused, so an invented id can never slip through a guard keyed on it.
+ */
+let catalogIdCache: { siteId: string; ids: Set<string>; at: number } | null = null;
+const CATALOG_TTL_MS = 5 * 60_000;
+
+async function catalogCourseIds(graph: MsGraphClient, siteId: string): Promise<Set<string>> {
+    if (catalogIdCache && catalogIdCache.siteId === siteId && Date.now() - catalogIdCache.at < CATALOG_TTL_MS) return catalogIdCache.ids;
+    const rows = await readLearningCatalog(graph, siteId);
+    const ids = new Set(rows.map((r) => String(r.CourseId ?? '').trim()).filter(Boolean));
+    catalogIdCache = { siteId, ids, at: Date.now() };
+    return ids;
+}
+
+async function requireCatalogCourses(
+    graph: MsGraphClient,
+    siteId: string,
+    next: Record<string, unknown>,
+    stored: Record<string, unknown> | null,
+): Promise<void> {
+    if (!('LearningProgress' in next)) return;
+    const known = new Set(parseJsonArray(stored?.LearningProgress).map((p) => String(p?.courseId ?? '').trim()).filter(Boolean));
+    const added: string[] = [];
+    for (const lp of parseJsonArray(next.LearningProgress)) {
+        const courseId = String(lp?.courseId ?? '').trim();
+        if (!courseId) {
+            throw new Error('BLOCKED — nothing was written. Every LearningProgress record needs the courseId of a LearningCatalog course (copy it from listListItems).');
+        }
+        if (!known.has(courseId)) added.push(courseId);
+    }
+    if (added.length === 0) return;
+    let ids: Set<string>;
+    try {
+        ids = await catalogCourseIds(graph, siteId);
+    } catch {
+        throw new Error('BLOCKED — nothing was written. The course catalog could not be read to verify the courses in this plan. Retry in a moment.');
+    }
+    const unknown = added.filter((id) => !ids.has(id));
+    if (unknown.length) {
+        throw new Error(`BLOCKED — nothing was written. These courseIds are not in the LearningCatalog: ${unknown.join(', ')}. Only recommend courses returned by listListItems on the catalog.`);
+    }
+}
+
+/**
+ * The model composes its write from an earlier read, so by the time it lands a quiz may have been
+ * passed. Merge the app-owned progress from the freshly read row into the write: passed courses stay
+ * Complete with their quiz result (or are re-added if dropped), skill levels never go down, and Goals /
+ * OverallProgress are recomputed from the merged courses rather than trusted from the model.
+ */
+function mergeServerOwnedProgress(next: Record<string, unknown>, stored: Record<string, unknown>): Record<string, unknown> {
+    const touchesLearning = 'LearningProgress' in next;
+    const touchesSkills = 'Skills' in next;
+    if (!touchesLearning && !touchesSkills && !('Goals' in next)) return next;
+    const out = { ...next };
+
+    const learning = touchesLearning ? [...parseJsonArray(next.LearningProgress)] : parseJsonArray(stored.LearningProgress);
+    if (touchesLearning) {
+        for (const earned of parseJsonArray(stored.LearningProgress)) {
+            const passed = String(earned?.status ?? '').toLowerCase() === 'complete' && earned?.quizResult?.passed === true;
+            if (!passed) continue;
+            const i = learning.findIndex((l) => l?.courseId === earned.courseId);
+            if (i >= 0) learning[i] = earned; else learning.push(earned);
+        }
+        out.LearningProgress = learning;
+    }
+    if (touchesSkills) {
+        const skills = [...parseJsonArray(next.Skills)];
+        for (const before of parseJsonArray(stored.Skills)) {
+            const i = skills.findIndex((s) => s?.competencyId === before?.competencyId);
+            if (i >= 0 && Number(skills[i]?.currentLevel) < Number(before?.currentLevel)) {
+                skills[i] = {
+                    ...skills[i],
+                    currentLevel: before.currentLevel, gap: before.gap, gapCategory: before.gapCategory,
+                    source: before.source, lastUpdated: before.lastUpdated,
+                };
+            }
+        }
+        out.Skills = skills;
+    }
+    const goals = 'Goals' in next ? parseJsonArray(next.Goals) : parseJsonArray(stored.Goals);
+    const recomputed = recomputeGoalsAndOverall({ Goals: goals, LearningProgress: learning } as unknown as UserState);
+    out.Goals = recomputed.Goals;
+    out.OverallProgress = recomputed.OverallProgress;
+    return out;
+}
+
+/** Redacted account of a failed Graph write for the log: operation, status, code and column NAMES only. */
+function writeFailureSummary(operation: string, err: any, fieldNames: string[]): string {
+    const body = err?.body ?? err?.response?.body;
+    let code = err?.code ?? '';
+    if (!code && body) {
+        try { code = (typeof body === 'string' ? JSON.parse(body) : body)?.code ?? ''; } catch { /* not JSON */ }
+    }
+    return `${operation} failed (status=${err?.statusCode ?? 'unknown'}${code ? `, code=${code}` : ''}) writing columns: ${fieldNames.join(', ') || '(none)'}`;
 }
 
 /**
@@ -514,6 +617,7 @@ const createListItemTool: FunctionTool<any, any, any> = makeTool({
             }
             displayFields = dropMissingLifecycleColumns({ ...withoutAppManagedFields(displayFields), PlanStatus: 'Active' }, colMap);
             guardUserStateWrite(ctx, displayFields, null);
+            await requireCatalogCourses(graph, siteId, displayFields, null);
             const internalFields = toInternalFields(displayFields, colMap);
             try {
                 const created = await graph.api(`/sites/${siteId}/lists/${listId}/items`).post({ fields: internalFields });
@@ -521,14 +625,10 @@ const createListItemTool: FunctionTool<any, any, any> = makeTool({
             } catch (err: any) {
                 const graphBody = err?.body ?? err?.response?.body;
                 const detail = graphBody ? (typeof graphBody === 'string' ? graphBody : JSON.stringify(graphBody)) : '';
-                const statusCode = err?.statusCode ?? err?.code;
-                console.error(`[createListItem] Graph POST failed (status=${statusCode}). Error: ${err?.message}`);
-                console.error(`[createListItem] Display fields sent by LLM:`, JSON.stringify(displayFields, null, 2));
-                console.error(`[createListItem] Internal fields after column-map translation:`, JSON.stringify(internalFields, null, 2));
-                console.error(`[createListItem] Known columns:`, Object.entries(colMap.kindByInternal).map(([k, v]) => `${k}(${v})`).join(', '));
-                console.error(`[createListItem] Display->internal map:`, JSON.stringify(colMap.displayToInternal));
-                if (detail) console.error(`[createListItem] Graph error body:`, detail);
-                throw new Error(`createListItem failed: ${err?.message ?? 'unknown'} — Graph body: ${detail || '(none)'}`);
+                const failure: any = new Error(`createListItem failed: ${err?.message ?? 'unknown'} — Graph body: ${detail || '(none)'}`);
+                // The message goes back to the model; the log gets only operation, status, code and column names.
+                failure.logSafe = writeFailureSummary('createListItem', err, Object.keys(internalFields));
+                throw failure;
             }
         });
     },
@@ -609,6 +709,8 @@ const updateListItemTool: FunctionTool<any, any, any> = makeTool({
                 );
             }
             guardUserStateWrite(ctx, displayFields, stored);
+            await requireCatalogCourses(graph, siteId, displayFields, stored);
+            displayFields = mergeServerOwnedProgress(displayFields, stored);
             const internalFields = toInternalFields(displayFields, colMap);
             try {
                 const updated = await graph.api(`/sites/${siteId}/lists/${listId}/items/${itemId}/fields`).update(internalFields);
@@ -616,12 +718,9 @@ const updateListItemTool: FunctionTool<any, any, any> = makeTool({
             } catch (err: any) {
                 const graphBody = err?.body ?? err?.response?.body;
                 const detail = graphBody ? (typeof graphBody === 'string' ? graphBody : JSON.stringify(graphBody)) : '';
-                const statusCode = err?.statusCode ?? err?.code;
-                console.error(`[updateListItem] Graph PATCH failed (status=${statusCode}). Error: ${err?.message}`);
-                console.error(`[updateListItem] Display fields sent by LLM:`, JSON.stringify(displayFields, null, 2));
-                console.error(`[updateListItem] Internal fields after column-map translation:`, JSON.stringify(internalFields, null, 2));
-                if (detail) console.error(`[updateListItem] Graph error body:`, detail);
-                throw new Error(`updateListItem failed: ${err?.message ?? 'unknown'} — Graph body: ${detail || '(none)'}`);
+                const failure: any = new Error(`updateListItem failed: ${err?.message ?? 'unknown'} — Graph body: ${detail || '(none)'}`);
+                failure.logSafe = writeFailureSummary('updateListItem', err, Object.keys(internalFields));
+                throw failure;
             }
         });
     },
@@ -664,8 +763,9 @@ export function makeSharePointTools(): FunctionTool<any, any, any>[] {
 }
 
 /**
- * Warm the siteId cache at server startup using the same MSAL device-code path used
- * by the setup scripts. This means proactive turns (like Feature 1's quiz card) work
+ * Warm the siteId cache at server startup using the background Graph client (the agent user's
+ * token once the agent identity is known, the developer device-code cache before that or in scripts).
+ * This means proactive turns (like Feature 1's quiz card) work
  * even before any user has done an interactive turn — otherwise the LLM sometimes
  * hallucinates a siteId (fake GUIDs after the hostname prefix) and the first tool
  * call fails with "Requested site could not be found".
@@ -675,7 +775,7 @@ export function makeSharePointTools(): FunctionTool<any, any, any>[] {
  */
 export async function warmSiteCache(): Promise<void> {
     try {
-        const { getSiteId, getGraphClient } = await import('./graph-service');
+        const { getSiteId, getBackgroundGraphClient } = await import('./graph-service');
         const siteId = await getSiteId();
         rememberSite(siteId);
         console.log(`[SharePointTools] Warmed siteId cache with "${siteId.slice(0, 80)}…"`);
@@ -684,7 +784,7 @@ export async function warmSiteCache(): Promise<void> {
         // The LLM often hallucinates listIds across turns; keeping this cache lets us
         // auto-translate list display names to real listIds (and detect hallucinations).
         try {
-            const graph = getGraphClient();
+            const graph = getBackgroundGraphClient();
             const res: any = await graph.api(`/sites/${siteId}/lists?$select=id,displayName,name`).get();
             const lists = (res?.value ?? []) as Array<any>;
             for (const l of lists) {

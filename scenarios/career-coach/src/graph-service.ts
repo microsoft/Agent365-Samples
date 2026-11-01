@@ -33,6 +33,7 @@ import {
 
 import { Client as MsGraphClient } from '@microsoft/microsoft-graph-client';
 import type { TurnContext, Authorization } from '@microsoft/agents-hosting';
+import { getAgentIdentity } from './agent-identity';
 
 const CACHE_FILE = path.resolve(process.cwd(), '.mstoken-cache.json');
 
@@ -211,15 +212,69 @@ export function getAgenticGraphClient(turnContext: TurnContext, authorization: A
     });
 }
 
+// -----------------------------------------------------------------------------
+// Background path (no user turn): the change subscription and the notification row scan.
+// The agent mints the agent user's Graph token with the hosting connection's
+// `getAgenticUserToken(tenant, agentInstanceId, agenticUserId, scopes)` — the same user_fic
+// exchange the per-turn auth handler performs — so background work runs as the agent identity
+// and never needs the developer's device-code sign-in. Scripts (no provider registered) and a
+// not-yet-known identity fall back to the developer cache.
+// -----------------------------------------------------------------------------
+
+export interface AgenticTokenProvider {
+    getAgenticUserToken(tenantId: string, agentAppInstanceId: string, agenticUserId: string, scopes: string[]): Promise<string>;
+}
+
+let backgroundProvider: AgenticTokenProvider | undefined;
+let warnedFallback = false;
+
+export function setBackgroundTokenProvider(provider: AgenticTokenProvider | undefined): void {
+    backgroundProvider = provider;
+}
+
+/** True when background Graph calls can run as the agent user (provider registered and identity known). */
+export function canUseAgentIdentityInBackground(): boolean {
+    return !!backgroundProvider && !!getAgentIdentity();
+}
+
+export async function getBackgroundGraphToken(): Promise<string> {
+    const identity = getAgentIdentity();
+    if (!backgroundProvider || !identity) {
+        if (backgroundProvider && !warnedFallback) {
+            warnedFallback = true;
+            console.warn('[graph] Agent identity not known yet — background Graph work is using the developer device-code cache until the first message arrives.');
+        }
+        return acquireTokenSilentForGraph();
+    }
+    const token = await backgroundProvider.getAgenticUserToken(
+        identity.tenantId, identity.agentInstanceId, identity.agenticUserId, AGENTIC_GRAPH_SCOPES,
+    );
+    if (!token) throw new Error('Agentic Graph token for background work was empty.');
+    return token;
+}
+
+/** Graph client for background work: the agent user when possible, the developer cache otherwise. */
+export function getBackgroundGraphClient(): MsGraphClient {
+    return MsGraphClient.init({
+        authProvider: async (done) => {
+            try {
+                done(null, await getBackgroundGraphToken());
+            } catch (e) {
+                done(e as Error, null);
+            }
+        },
+    });
+}
+
 /**
  * Resolves the SharePoint site id for the CareerCoach site (from SP_SITE_HOST + SP_SITE_PATH).
- * Runtime code passes the agentic Graph client; with no client it falls back to the developer's
- * device-code client, which is only meant for scripts and developer-authenticated background work.
+ * Runtime code passes the per-turn agentic client; without one it uses the background client
+ * (agent identity at runtime, developer cache in scripts).
  */
 export async function getSiteId(graph?: MsGraphClient): Promise<string> {
     const host = process.env.SP_SITE_HOST || 'contoso.sharepoint.com';
     const sitePath = (process.env.SP_SITE_PATH || '/sites/CareerCoach').replace(/^\//, '');
-    const g = graph ?? getGraphClient();
+    const g = graph ?? getBackgroundGraphClient();
     const site = await g.api(`/sites/${host}:/${sitePath}`).get();
     return site.id as string;
 }
@@ -322,7 +377,7 @@ export async function sendMail({ to, cc, subject, htmlBody, fromUserId, graph }:
 // -----------------------------------------------------------------------------
 
 export async function getListIdByName(siteId: string, listDisplayName: string, graphClient?: MsGraphClient): Promise<string | null> {
-    const graph = graphClient ?? getGraphClient();
+    const graph = graphClient ?? getBackgroundGraphClient();
     const escaped = listDisplayName.replace(/'/g, "''");
     const res = await graph
         .api(`/sites/${siteId}/lists?$filter=displayName eq '${escaped}'`)
@@ -332,22 +387,31 @@ export async function getListIdByName(siteId: string, listDisplayName: string, g
 }
 
 /**
- * Reads every item in a list, expanding the `fields` object so callers get column values
- * directly on `item.fields`. Used to enumerate `LearningPortalStatus` rows on notification.
+ * Reads items in a list, expanding the `fields` object so callers get column values directly on
+ * `item.fields`. Used to enumerate `LearningPortalStatus` rows on notification. With `filter`
+ * (an OData expression on `fields/...`) only matching rows are read — the filter may hit a
+ * non-indexed column, so the call sends the HonorNonIndexedQueries preference.
  */
-export async function getListItems(siteId: string, listId: string): Promise<Array<{ id: string; fields: Record<string, any> }>> {
-    const graph = getGraphClient();
+export async function getListItems(
+    siteId: string,
+    listId: string,
+    opts: { filter?: string; graph?: MsGraphClient } = {},
+): Promise<Array<{ id: string; fields: Record<string, any> }>> {
+    const graph = opts.graph ?? getBackgroundGraphClient();
     const rows: Array<{ id: string; fields: Record<string, any> }> = [];
-    let url: string | undefined = `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200`;
+    const filterPart = opts.filter ? `&$filter=${encodeURIComponent(opts.filter)}` : '';
+    let url: string | undefined = `/sites/${siteId}/lists/${listId}/items?$expand=fields&$top=200${filterPart}`;
     while (url) {
-        const page: any = await graph.api(url).get();
+        const request = graph.api(url);
+        if (opts.filter) request.header('Prefer', 'HonorNonIndexedQueriesWarningMayFailRandomly');
+        const page: any = await request.get();
         for (const item of page?.value ?? []) rows.push({ id: item.id, fields: item.fields ?? {} });
         url = page?.['@odata.nextLink'] ? String(page['@odata.nextLink']).replace('https://graph.microsoft.com/v1.0', '') : undefined;
     }
     return rows;
 }
 
-// --- Graph change-notification subscriptions ---
+// --- Graph change-notification subscriptions (background client: agent identity at runtime) ---
 
 export interface GraphSubscription {
     id: string;
@@ -360,7 +424,7 @@ export interface GraphSubscription {
 }
 
 export async function listSubscriptions(): Promise<GraphSubscription[]> {
-    const graph = getGraphClient();
+    const graph = getBackgroundGraphClient();
     const res = await graph.api('/subscriptions').get();
     return (res?.value ?? []) as GraphSubscription[];
 }
@@ -372,7 +436,7 @@ export async function createSubscription(input: {
     expirationMinutes?: number;     // default 60 (max ~4230 for lists, but we auto-renew)
     clientState?: string;
 }): Promise<GraphSubscription> {
-    const graph = getGraphClient();
+    const graph = getBackgroundGraphClient();
     const expiration = new Date(Date.now() + 60_000 * (input.expirationMinutes ?? 60)).toISOString();
     return await graph.api('/subscriptions').post({
         changeType: input.changeType ?? 'updated',
@@ -384,13 +448,13 @@ export async function createSubscription(input: {
 }
 
 export async function renewSubscription(subscriptionId: string, expirationMinutes = 60): Promise<GraphSubscription> {
-    const graph = getGraphClient();
+    const graph = getBackgroundGraphClient();
     const expiration = new Date(Date.now() + 60_000 * expirationMinutes).toISOString();
     return await graph.api(`/subscriptions/${subscriptionId}`).patch({ expirationDateTime: expiration });
 }
 
 export async function deleteSubscription(subscriptionId: string): Promise<void> {
-    const graph = getGraphClient();
+    const graph = getBackgroundGraphClient();
     try {
         await graph.api(`/subscriptions/${subscriptionId}`).delete();
     } catch (err: any) {

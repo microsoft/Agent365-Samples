@@ -106,6 +106,25 @@ export async function readLearningPortalStatus(graph: MsGraphClient, userAADId: 
         .filter((r) => String(r?.UserAADId ?? '').toLowerCase() === userAADId.toLowerCase());
 }
 
+/**
+ * Minutes spent on the given courses only. The portal list holds a user's rows for every plan they
+ * ever had, so the sum is restricted to the completing plan's courses, one row per course (the most
+ * recently updated), and to completed rows.
+ */
+export function portalMinutesForCourses(portal: LearningPortalStatusRow[], courseIds: string[]): number {
+    const wanted = new Set(courseIds.map((id) => id.toLowerCase()));
+    const latest = new Map<string, LearningPortalStatusRow>();
+    for (const row of portal) {
+        const id = String(row?.CourseId ?? '').toLowerCase();
+        if (!wanted.has(id) || row.Status !== 'Complete') continue;
+        const prior = latest.get(id);
+        if (!prior || Date.parse(row.LastUpdated ?? '') >= Date.parse(prior.LastUpdated ?? '')) latest.set(id, row);
+    }
+    let total = 0;
+    for (const row of latest.values()) total += Number(row.TimeSpentMinutes ?? 0) || 0;
+    return total;
+}
+
 /** Parse the JSON columns stored as strings back into objects. */
 function hydrateUserState(fields: any): UserState {
     const parseJson = (v: any, fallback: any) => {
@@ -331,7 +350,8 @@ export function matchCoursesForSkill(
  * LearningProgress course counts. This is the ONE truth for progress — no level ratios.
  */
 export function recomputeGoalsAndOverall(state: UserState): UserState {
-    const learning = state.LearningProgress ?? [];
+    // Records without a courseId can't be tied to a catalog course, so they never count toward progress.
+    const learning = (state.LearningProgress ?? []).filter((lp) => !!String(lp?.courseId ?? '').trim());
     const goals = (state.Goals ?? []).map((g) => {
         const total = learning.filter((lp) => lp.skillId === g.competencyId).length;
         const done = learning.filter((lp) => lp.skillId === g.competencyId && lp.status === 'Complete').length;

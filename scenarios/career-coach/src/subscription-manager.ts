@@ -18,6 +18,10 @@
  *
  * Requires PORTAL_WEBHOOK_URL to be set in .env — this must be a publicly reachable HTTPS
  * URL (dev tunnel works). Graph will POST validation + notifications to it.
+ *
+ * Identity: background Graph calls run as the agent user (see graph-service `getBackgroundGraphClient`).
+ * The agent's ids are learned from the first message, so a startup attempt before that retries with
+ * bounded backoff (30 s doubling to 10 min) and is re-tried immediately when the identity is captured.
  */
 
 import * as fs from 'fs';
@@ -33,10 +37,13 @@ import {
     type GraphSubscription,
 } from './graph-service';
 import { SP_CONFIG } from './career-coach-types';
+import { portalSecretProblem } from './portal-secret';
 
 const STATE_FILE = path.resolve(process.cwd(), '.sp-subscription.json');
 const EXPIRATION_MINUTES = 60;
 const RENEW_INTERVAL_MS = 30 * 60_000;
+const RETRY_INITIAL_MS = 30_000;
+const RETRY_MAX_MS = 10 * 60_000;
 
 interface PersistedSub {
     subscriptionId: string;
@@ -70,25 +77,66 @@ function writeState(sub: PersistedSub): void {
 }
 
 let renewTimer: ReturnType<typeof setInterval> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelayMs = RETRY_INITIAL_MS;
+let healthy = false;
+
+interface EnsureResult {
+    sub: GraphSubscription | null;
+    /** True for failures that can clear up on their own (identity not known yet, tunnel down, transient Graph error). */
+    retry: boolean;
+}
 
 /**
  * Ensures a Graph subscription exists for LearningPortalStatus targeting our notification URL.
- * Safe to call more than once (idempotent).
+ * Safe to call more than once (idempotent). A retryable failure (the agent identity is not known
+ * yet, the tunnel is down, a transient Graph error) schedules a bounded-backoff retry
+ * (30 s doubling to 10 min); configuration problems are reported once and not retried.
  */
 export async function ensureSubscription(): Promise<GraphSubscription | null> {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    let result: EnsureResult;
+    try {
+        result = await ensureOnce();
+    } catch (err) {
+        console.warn('[sub-mgr] Ensuring the subscription failed:', (err as any)?.message ?? err);
+        result = { sub: null, retry: true };
+    }
+    healthy = !!result.sub;
+    if (result.sub) {
+        retryDelayMs = RETRY_INITIAL_MS;
+    } else if (result.retry) {
+        const delay = retryDelayMs;
+        retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_MS);
+        console.log(`[sub-mgr] Will retry creating the subscription in ${Math.round(delay / 1000)}s.`);
+        retryTimer = setTimeout(() => { retryTimer = null; void ensureSubscription(); }, delay);
+        retryTimer.unref?.();
+    }
+    return result.sub;
+}
+
+/** Called when the agent identity becomes known: try right away if there is no healthy subscription yet. */
+export function retrySubscriptionNow(): void {
+    if (healthy) return;
+    retryDelayMs = RETRY_INITIAL_MS;
+    void ensureSubscription();
+}
+
+async function ensureOnce(): Promise<EnsureResult> {
     const notificationUrl = (process.env.PORTAL_WEBHOOK_URL || '').trim();
     const clientState = (process.env.PORTAL_EVENT_SECRET || '').trim();
     if (!notificationUrl) {
         console.warn('[sub-mgr] PORTAL_WEBHOOK_URL is empty in .env — skipping subscription. The manual POST path still works for testing.');
-        return null;
+        return { sub: null, retry: false };
     }
-    if (!clientState) {
-        console.warn('[sub-mgr] PORTAL_EVENT_SECRET is empty in .env — refusing to create a subscription without a clientState guard.');
-        return null;
+    const secretProblem = portalSecretProblem(clientState);
+    if (secretProblem) {
+        console.warn(`[sub-mgr] ${secretProblem} — refusing to create a subscription without a strong clientState guard.`);
+        return { sub: null, retry: false };
     }
     if (!notificationUrl.startsWith('https://')) {
         console.warn(`[sub-mgr] PORTAL_WEBHOOK_URL must be https (got: ${notificationUrl}). Graph rejects http.`);
-        return null;
+        return { sub: null, retry: false };
     }
 
     // Resolve site + list ids.
@@ -97,7 +145,7 @@ export async function ensureSubscription(): Promise<GraphSubscription | null> {
     const listId = await getListIdByName(siteId, listName);
     if (!listId) {
         console.warn(`[sub-mgr] LearningPortalStatus list not found on the site (name="${listName}"). Run "npm run setup:sharepoint" first.`);
-        return null;
+        return { sub: null, retry: false };
     }
     const resource = `sites/${siteId}/lists/${listId}`;
 
@@ -130,7 +178,7 @@ export async function ensureSubscription(): Promise<GraphSubscription | null> {
             });
             console.log(`[sub-mgr] Renewed existing subscription (id=${renewed.id}), expires ${renewed.expirationDateTime}`);
             startRenewTimer();
-            return renewed;
+            return { sub: renewed, retry: false };
         } catch (err: any) {
             const code = err?.statusCode ?? err?.code ?? '';
             console.warn(`[sub-mgr] Renew failed (${code}). Will create a fresh subscription. Detail: ${err?.message ?? err}`);
@@ -175,12 +223,12 @@ export async function ensureSubscription(): Promise<GraphSubscription | null> {
         });
         console.log(`[sub-mgr] ✓ Subscription created (id=${fresh.id}), expires ${fresh.expirationDateTime}`);
         startRenewTimer();
-        return fresh;
+        return { sub: fresh, retry: false };
     } catch (err: any) {
         const msg = err?.message ?? String(err);
         console.error(`[sub-mgr] ✗ Failed to create subscription: ${msg}`);
         console.error('[sub-mgr]   Hint: make sure PORTAL_WEBHOOK_URL is reachable from the internet and the /api/portal-event route is running (Graph validates it during CREATE).');
-        return null;
+        return { sub: null, retry: true };
     }
 }
 

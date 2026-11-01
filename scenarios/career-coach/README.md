@@ -161,7 +161,10 @@ The agent never blocks on WorkIQ: if an MCP server can't be reached it logs `[Wo
 | Variable | Value |
 |---|---|
 | `PORTAL_WEBHOOK_URL` | Your dev-tunnel URL + `/api/portal-event` (see §5) |
-| `PORTAL_EVENT_SECRET` | Any random string (used for a manual POST test path) |
+| `PORTAL_EVENT_SECRET` | A random secret of at least 16 characters (empty or placeholder values are rejected). It is the Graph subscription `clientState` **and** the `X-Portal-Secret` header for manual tests, and `/api/portal-event` sits in front of the JWT check — so treat it as a real secret. Changing it replaces the Graph subscription on the next start. |
+| `AGENT_INSTANCE_ID`, `AGENT_USER_ID` | Optional. The agent's own ids, so the background subscription can start before anyone has messaged the agent. Normally leave empty: they are learned from the first message and saved to `.agent-identity.json`. |
+
+With `NODE_ENV=production` and `PORTAL_WEBHOOK_URL` set, the agent **refuses to start** unless `PORTAL_EVENT_SECRET` is valid and the service connection (`connections__service_connection__settings__clientId` / `clientSecret`) is configured — the background Graph work runs as the agent identity and must not silently fall back to a developer sign-in.
 
 > **Security note** — never check `.env` or `a365.generated.config.json` into git (they hold secrets). The shipped `.env.template` has no secrets.
 
@@ -171,7 +174,7 @@ The agent never blocks on WorkIQ: if an MCP server can't be reached it logs `[Wo
 
 **Step 4.1 — MSAL device-code sign-in** (one-time, per developer machine)
 
-The setup scripts use MSAL delegated auth (device-code flow) as a developer signed in with **Sites.Manage.All** or a Site Collection Admin. When you run any `setup:*` / `seed:*` / `mark:*` script the first time, you'll see:
+The setup scripts use MSAL delegated auth (device-code flow) as a developer signed in with **Sites.Manage.All** or a Site Collection Admin. When you run any `setup:*` / `seed:*` / `mark:*` / `reset:*` / `backup:*` script the first time, you'll see:
 
 ```
 To sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code XXXXXXX to authenticate.
@@ -204,7 +207,7 @@ Reads the two CSVs from `SharePoint Data\` (project-local, ships with the repo) 
 
 **Step 4.4 — Give the agent user access to the site** (required)
 
-At runtime the agent reads/writes the lists as its **own agent user** (e.g. `CareerCoach@<tenant>.onmicrosoft.com`, created when the agent instance is approved), not as the developer who ran the setup scripts. Add that agent user as a **Member** of the site (SharePoint → site → *Settings* → *Site permissions*, or the site's Microsoft 365 group). Without it, every SharePoint tool call fails and the agent replies that it is "having trouble accessing your progress". Membership can take a few minutes to propagate.
+At runtime the agent reads/writes the lists as its **own agent user** (e.g. `CareerCoach@<tenant>.onmicrosoft.com`, created when the agent instance is approved), not as the developer who ran the setup scripts. Add that agent user as a **Member** of the site (SharePoint → site → *Settings* → *Site permissions*, or the site's Microsoft 365 group). Without it, every SharePoint tool call fails and the agent replies that it is "having trouble accessing your progress". Membership can take a few minutes to propagate. This covers the background work too — the change subscription and the notification row scan use the same agent user, not the developer's sign-in.
 
 ---
 
@@ -233,7 +236,9 @@ PORTAL_WEBHOOK_URL=https://spiffy-dog-h50g1wc-3978.inc1.devtunnels.ms/api/portal
 
 **Step 5.3 — Subscription is created automatically on server startup.**
 
-When you `npm run dev` (see §6), the server calls Graph `POST /subscriptions` pointing at `PORTAL_WEBHOOK_URL`. Graph validates by POSTing `?validationToken=X` — your server must echo it back within ~10s (already handled). The subscription auto-renews every 30 minutes.
+When you `npm run dev` (see §6), the server calls Graph `POST /subscriptions` pointing at `PORTAL_WEBHOOK_URL`, as the **agent user** (the same agentic-user token the per-turn auth uses, minted from the hosting connection — no developer sign-in). Graph validates by POSTing `?validationToken=X` — your server must echo it back within ~10s (already handled). The subscription auto-renews every 30 minutes.
+
+The agent's tenant / instance / user ids are learned from the first message it receives (saved to `.agent-identity.json`, or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`). Until then the startup attempt falls back to the developer device-code cache if there is one, otherwise it retries with backoff (30 s doubling to 10 min) and tries again immediately when the first message arrives. When a change notification arrives, only rows updated in the last 10 minutes are read (server-side `LastUpdated` filter, with a full-scan fallback).
 
 ---
 
@@ -293,7 +298,7 @@ Pick any two users from **your own M365 tenant** to test with. For a realistic F
 
 You'll need each test user's **UPN** and **AAD Object ID** (Entra ID → Users → select the user → *Object ID*).
 
-> **Set the default user for scripts:** every helper script (`mark:complete`, `reset:milestones`, `backup:user`) accepts a user AAD ID. To avoid retyping it, set env vars **once** per terminal session:
+> **Set the default user for scripts:** `mark:complete` needs `TEST_USER_AAD_ID` (it stops if it is unset); `reset:milestones` and `backup:user` use `TEST_USER_AAD_ID` / `TEST_USER_NAME` when you don't pass a user on the command line. To avoid retyping, set them in `.env` or once per terminal session:
 >
 > ```powershell
 > $env:TEST_USER_AAD_ID = '<your-test-user-object-id>'
@@ -470,11 +475,12 @@ Email (A365 ─────┘     ├─ 🚦 Card + message + email router
 - **SharePoint lists** own state — `UserState` (one row per goal — the active plan plus finished goals as history), `LearningPortalStatus` (course telemetry), `QuizResponses` (attempt log), plus two read-only reference lists.
 - **Microsoft Graph** delivers change notifications when the portal updates + sends the completion email on `/me/sendMail`.
 - **WorkIQ MCP tools** (Mail, Calendar, plus SharePoint if the gateway attaches it) give the LLM M365 actions the user explicitly asks for ("email me my plan"). The WorkIQ SharePoint server is **read-only**: `client.ts` hides its write tools, so every list write goes through the guarded tools in `sharepoint-tools.ts`. Emails *sent to* the agent are still received by the A365 email notification handler in `agent.ts`. WorkIQ doesn't replace that handler. MCP servers are attached per turn and never block it — a server that can't connect is skipped.
-- **Email conversations** keep their history per email thread (keyed on the stable `emailNotification.conversationId`). If the agent has no history for a thread (e.g. after a restart), the quoted reply history in the email is passed to the LLM as context. Replying **"Save it"** saves the plan from the thread's latest plan-review card using the same code as the Teams **Save my plan** button (pending plans are kept in `.email-plans.json`). Quizzes still need Teams.
-- **Guarded writes** — `sharepoint-tools.ts` stops the LLM from marking a course Complete or raising a skill level without a passed quiz (`[ProgressGuard]`), enforces the goal lifecycle (§8.7), limits chat writes to `UserState`, scopes every personal list to the caller's own rows, and verifies row ownership before an update. Every `UserState` read-modify-write runs under a per-user lock (`user-lock.ts`).
+- **Email conversations** keep their history per email thread (keyed on the agent instance, the verified sender and the stable `emailNotification.conversationId`, so two members in one thread never share a conversation or pending plan). If the agent has no history for a thread (e.g. after a restart), the quoted reply history in the email is passed to the LLM as context. The email text and quoted history are passed inside `<untrusted_email>` fences (delimiter tags inside them are neutralised) and the model is told never to follow instructions in them. Replying **"Save it"** saves the plan from the thread's latest plan-review card using the same code as the Teams **Save my plan** button (pending plans are kept in `.email-plans.json`). Quizzes still need Teams.
+- **Mail / Calendar recipients are enforced in code** — `mail-guard.ts` wraps the WorkIQ Mail and Calendar servers: any write-like call (send, create, update, draft, invite…) is refused unless every address in its arguments belongs to the sender, or to the sender's manager when the sender's own message asks for the manager. Forward / reply tools and recipient fields that can't be verified are refused too, and the check fails closed if the sender's addresses can't be resolved.
+- **Guarded writes** — `sharepoint-tools.ts` stops the LLM from marking a course Complete or raising a skill level without a passed quiz (`[ProgressGuard]`), requires every plan course to carry a `courseId` that exists in the catalog, merges quiz-earned progress from the freshly read row into stale writes (passed courses stay Complete, skill levels never go down, goals/overall are recomputed), enforces the goal lifecycle (§8.7), limits chat writes to `UserState`, scopes every personal list to the caller's own rows, and verifies row ownership before an update. Every `UserState` read-modify-write runs under a per-user lock (`user-lock.ts`). A quiz only counts for a course on the current plan, a grading outage never records a failed attempt, and the completion email is sent once per goal.
 - **Resilient card actions** — button steps run after the invoke returns; on failure `runDeferred` in `agent.ts` tells the user, and unlocks the card when it is safe to retry.
 - **Observability** — `telemetry.ts` initialises `@microsoft/opentelemetry` (A365 exporter on the S2S route). `observability/app-token-resolver.ts` does the 3-hop FMI token exchange for the runtime agent identity; every turn (LLM, card action, email) is wrapped in `invoke_agent` / `chat` / `execute_tool` spans. `observability/conversation-id.ts` groups an email thread into one conversation.
-- **Agentic auth** — the A365 platform hands the agent its own agentic-user Graph token per turn, so `/me` is the Career Coach agent user (its own mailbox). No manual token refreshes.
+- **Agentic auth** — the A365 platform hands the agent its own agentic-user Graph token per turn, so `/me` is the Career Coach agent user (its own mailbox). No manual token refreshes. Background work with no turn (the change subscription, the notification row scan, startup warm-up) mints the same agent user's token from the hosting connection (`getAgenticUserToken`, using the ids captured from the first message).
 
 Source layout:
 
@@ -489,7 +495,7 @@ src/
 ├── handlers.ts               Deterministic card handlers (skill ratings, save, quiz, sync, milestone, completion email)
 ├── career-coach-service.ts   Pure business logic + typed SP CRUD (active vs previous goals)
 ├── llm-tasks.ts              3 focused LLM sub-calls (Q gen, short-answer grade, email prose)
-├── graph-service.ts          MSAL device-code + agentic Graph clients + sendMail + subscriptions
+├── graph-service.ts          MSAL device-code (scripts) + per-turn agentic and background agent-user Graph clients + sendMail + subscriptions
 ├── sharepoint-tools.ts       OpenAI Agents function tools incl. listPreviousGoals + write guards (LLM path only)
 ├── sharepoint-column-map.ts  Display-name ↔ internal-name translation
 ├── career-coach-types.ts     Shared types + SP_CONFIG + goal lifecycle (PlanStatus)
@@ -516,8 +522,9 @@ src/
 | Quiz questions all show `Q1.` numbering wrong (`1. 1. 1.`) | Old cards.ts | Should be fixed in this build. If it recurs, verify `cards.ts` uses `Q${qNum}.` not `${qNum}.`. |
 | Feature 4 email "Access is denied" | `sendMail` using `/users/{id}/sendMail` on a delegated token | Should be fixed — `graph-service.ts` uses `/me/sendMail` whenever a graph client is passed in. |
 | `Failed to acquire token silently` on script start | Cached MSAL token expired (60 days) or was for a different tenant | Delete `.mstoken-cache.json` and re-run — a fresh device-code prompt will appear. |
-| SharePoint 500 on write with no error detail | Column-name mismatch between display and internal | Check the `[createListItem] Known columns:` log line — the field you sent must be in there. |
-| Graph subscription creation fails with "Notification URL invalid" | `PORTAL_WEBHOOK_URL` isn't reachable | Verify the dev tunnel is running and the URL in `.env` matches; test with `curl <URL>?validationToken=hi` (should echo `hi`). |
+| SharePoint 500 on write with no error detail | Column-name mismatch between display and internal | The log line `[SharePointTools] createListItem failed (status=…) writing columns: …` lists the column names sent (values are never logged); each must be a real column of the list. |
+| Graph subscription creation fails with "Notification URL invalid" | `PORTAL_WEBHOOK_URL` isn't reachable | Verify the dev tunnel is running and the URL in `.env` matches; test it with `Invoke-RestMethod -Method Post "<URL>?validationToken=hi"` (the handshake is a POST; it should echo `hi`). The agent retries with backoff (`[sub-mgr] Will retry …`). |
+| `[sub-mgr]` keeps retrying right after startup | The agent doesn't know its own ids yet and there is no developer sign-in cached | Send the agent one message (it saves its ids to `.agent-identity.json` and retries immediately), or set `AGENT_INSTANCE_ID` + `AGENT_USER_ID`. |
 | Costs pile up on Azure OpenAI | Every user turn hits GPT-4o | Only Stage 1 (role elicit) + short-answer grading + email body call the LLM. Card submits are deterministic. Verify your logs show `[Sync] Deterministic sync…` not full LLM turns. |
 | Agent says it is "having trouble accessing your progress" | The agent user isn't a member of the SharePoint site | Add the agent user as a Member of the site (§4.4); allow a few minutes. |
 | Agent goes quiet after "Got it…" / "Saving your plan…" | Network/DNS drop to Graph or SharePoint (`fetch failed`) | The agent now tells you and unlocks the card (keeps your answers) — click the button again. Check `dev.log` for `Deferred step failed (network)`. If you get no message at all, the outage also blocked the reply: restart the agent and retry. |
@@ -537,8 +544,9 @@ For anything else, grep `dev.log` — every subsystem prefixes its logs (`[Proac
 Three separate credentials, each used for one job:
 
 - **Runtime workload (the agent in Teams and email)** uses **agentic authentication**. The Agent 365 platform hands the agent a delegated Microsoft Graph token for its **own agentic user** on each turn, so `/me` is the Career Coach agent user (its own mailbox) — not the person chatting. SharePoint reads/writes, the completion email and WorkIQ MCP calls all use this identity. Configured via the `agentic_*` and `connections__service_connection__*` values in `.env` (stamped by `a365 setup all`). The person chatting is identified from the turn (`activity.from.aadObjectId`), and every SharePoint tool is scoped to that user's own rows.
+- **Background work (no user turn)** — the Graph change subscription, the notification row scan and startup warm-up — runs as the **same agent user**: `graph-service.ts` calls the hosting connection's `getAgenticUserToken(tenant, agentInstanceId, agenticUserId, …)` with the ids taken from the first message the agent receives (saved to `.agent-identity.json`, or `AGENT_INSTANCE_ID` / `AGENT_USER_ID`). The developer device-code cache is only a local fallback for scripts and for the moments before the agent has seen its own ids; with `NODE_ENV=production` the agent refuses to start the portal trigger without a valid service connection and secret.
 - **Telemetry export** uses an **app-only** token for the runtime agent identity, exported over the S2S route (`src/observability/app-token-resolver.ts`): the blueprint credential issues an FMI assertion for the agent identity, which exchanges it for an Observability API token. The token is validated (no `scp`, matching client/tenant/audience) and never logged. `gen_ai.agent.id` is the runtime agent identity read from each turn (`activity.recipient.agenticAppId`); the Blueprint ID travels only as blueprint metadata.
-- **Setup / seed scripts** use the **MSAL device-code** flow with delegated scopes (`Sites.Manage.All`, `Sites.ReadWrite.All`, `User.Read.All`, `Mail.Send`, `offline_access`), cached in `.mstoken-cache.json`.
+- **Setup / seed / helper scripts** use the **MSAL device-code** flow with delegated scopes (`Sites.Manage.All`, `Sites.ReadWrite.All`, `User.Read.All`, `Mail.Send`, `offline_access`), cached in `.mstoken-cache.json`. This is developer tooling only — the running agent does not use it.
 
 > **Admin consent required.** `Sites.Manage.All` and `User.Read.All` are **admin-restricted** delegated permissions, so the one-time device-code sign-in for the setup scripts must be performed — or pre-consented — by a **tenant / SharePoint administrator**. The blueprint's `Sites.ReadWrite.All` grant (§1) and the WorkIQ MCP grants (`a365 setup permissions mcp`) also need a Global Administrator.
 
@@ -579,7 +587,7 @@ Set the cloud env vars (Azure OpenAI, agentic auth, observability, SharePoint) a
 | `.env.template` | Template for the runtime config. Copy to `.env` and fill in the values. |
 | `package.json` / `tsconfig.json` | Standard Node/TS build config. |
 
-**Regenerated / never committed:** `.env`, `a365.config.json`, `a365.generated.config.json`, `.a365-workspace-detection.local.json`, `node_modules/`, `dist/`, `*.log`, `.mstoken-cache.json`, `.proactive-storage.json`, `.proactive-refs.json`, `.sp-subscription.json`, `.email-plans.json`, `backups/`, `manifest/manifest.zip`.
+**Regenerated / never committed:** `.env`, `a365.config.json`, `a365.generated.config.json`, `.a365-workspace-detection.local.json`, `node_modules/`, `dist/`, `*.log`, `.mstoken-cache.json`, `.proactive-storage.json`, `.proactive-refs.json`, `.sp-subscription.json`, `.email-plans.json`, `.agent-identity.json`, `backups/`, `manifest/manifest.zip`.
 
 ---
 

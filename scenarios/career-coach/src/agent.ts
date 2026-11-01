@@ -19,6 +19,7 @@ import { AgentNotificationActivity, NotificationType, createEmailResponseActivit
 import { Client, getClient, hasClient } from './client';
 import { extractCards, buildMessageCard, defaultWelcomeAttachment, CardPayload, renderCard } from './cards';
 import { getAgenticGraphClient } from './graph-service';
+import { rememberAgentIdentity } from './agent-identity';
 import * as proactiveRefs from './proactive-refs';
 import { FileStorage } from './file-storage';
 import { handleSkillRatingsSubmit, handleSavePlanSubmit, savePlan, savePlanInputFromReview, handleQuizSubmit, handleSyncProgress, emitQuizFor, queueReportedCourses, savedPlanReviewCard, handleCompletedAllCourses, findReportedCourses, handleReportedCompletions, validateBlockedCourses, SkillRatingInput } from './handlers';
@@ -538,7 +539,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // cascade automatically when the user's plan crosses the thresholds.
     const aadObjectId = from?.aadObjectId;
     if (aadObjectId && isSyncIntent(effectiveUserMessage)) {
-      console.log(`[Sync] Deterministic sync triggered by user text: "${effectiveUserMessage}"`);
+      console.log('[Sync] Deterministic sync triggered by user text.');
       try {
         await this.runObserved(turnContext, effectiveUserMessage,
           { name: 'sync_progress', description: 'Sync learning progress from the learning portal and show the progress card' },
@@ -625,7 +626,7 @@ export class MyAgent extends AgentApplication<TurnState> {
         try {
           await invokeScope.withActiveSpanAsync(async () => {
             const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, turnContext, displayName);
-            const response = await client.invokeAgentWithScope(effectiveUserMessage, { turnContext, authorization: this.authorization });
+            const response = await client.invokeAgentWithScope(effectiveUserMessage, { turnContext, authorization: this.authorization, userText: effectiveUserMessage });
             invokeScope.recordOutputMessages([response]);
             // New-user welcome: the model emits a ::welcome:: control token; we render the
             // designed welcome card here (with the real display name) instead of prose.
@@ -754,6 +755,7 @@ export class MyAgent extends AgentApplication<TurnState> {
    * every user message so any user who has ever talked to the agent is reachable proactively.
    */
   private async rememberConversationForProactive(turnContext: TurnContext): Promise<void> {
+    rememberAgentIdentity(turnContext.activity);
     const aad = turnContext.activity?.from?.aadObjectId;
     if (!aad) return;
     const convId = await this.proactive.storeConversation(turnContext);
@@ -991,6 +993,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // email the agent, so unknown / external / guest senders are ignored (no reply, no data).
     const from = context.activity.from as any;
     const recipient = context.activity.recipient as any;
+    rememberAgentIdentity(context.activity);
     const senderAddress = String(from?.id ?? '').trim();
     if (!senderAddress || senderAddress.toLowerCase() === String(recipient?.id ?? '').toLowerCase()) return;
     let sender: { id?: string; displayName?: string; userType?: string } | null = null;
@@ -1015,8 +1018,10 @@ export class MyAgent extends AgentApplication<TurnState> {
     }
     console.log(`[Email] Conversation turn from '${displayName}' (${emailText.length} chars).`);
 
-    // The activity conversation id changes with every email; the email thread id is stable.
-    const threadKey = `email:${emailNotification?.conversationId || context.activity.conversation?.id || ''}`;
+    // The activity conversation id changes with every email; the email thread id is stable. The key
+    // also carries the agent instance and the verified sender, so a second member replying in the
+    // same thread never reuses another member's client, history or pending plan.
+    const threadKey = `email:${(recipient?.agenticAppId ?? recipient?.id ?? '')}:${sender.id}:${emailNotification?.conversationId || context.activity.conversation?.id || ''}`;
 
     // "Save it" → save the plan proposed earlier in this thread with the same code as the Teams Save button.
     if (isSavePlanIntent(emailText)) {
@@ -1046,7 +1051,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       const quotedHistory = hasClient(threadKey) ? '' : extractQuotedHistory(context.activity.text, emailNotification?.htmlBody);
       if (quotedHistory) console.log(`[Email] No history for this thread — using ${quotedHistory.length} chars of quoted email history.`);
       const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, context, displayName, threadKey);
-      const response = await client.invokeAgentWithScope(emailTurnPrompt(emailText, quotedHistory), { turnContext: context, authorization: this.authorization });
+      const response = await client.invokeAgentWithScope(emailTurnPrompt(emailText, quotedHistory), { turnContext: context, authorization: this.authorization, userText: emailText });
       const plan = findPlanReview(response);
       if (plan) await putPendingPlan(threadKey, sender.id, plan);
       let html = llmResponseToEmailHtml(response, displayName);

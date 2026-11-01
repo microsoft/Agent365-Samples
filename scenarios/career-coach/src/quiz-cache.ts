@@ -79,6 +79,17 @@ export function clearQuiz(userAADId: string, courseId: string): void {
     cache.delete(keyOf(userAADId, courseId));
 }
 
+/**
+ * Drops every cached quiz, graded marker and queued quiz for the user. Called when a goal is saved
+ * or replaced: questions cached for the previous plan must never be graded against the new one.
+ */
+export function clearAllQuizzes(userAADId: string): void {
+    const prefix = `${userAADId.toLowerCase()}::`;
+    for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key);
+    for (const key of [...graded]) if (key.startsWith(prefix)) graded.delete(key);
+    pending.delete(userAADId.toLowerCase());
+}
+
 // ----------------------------------------------------------------------------
 // Graded markers — lets the submit handler recognise a resubmit of an already-graded card.
 // ----------------------------------------------------------------------------

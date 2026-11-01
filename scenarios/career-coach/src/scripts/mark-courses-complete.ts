@@ -31,7 +31,8 @@ import { SP_CONFIG } from '../career-coach-types';
 import { getColumnMap, toInternalFields } from '../sharepoint-column-map';
 
 const DEFAULT_COURSE_IDS = ['CS007560', 'CS002198', 'CS003021'];
-const USER_AAD_ID = process.env.TEST_USER_AAD_ID || '00000000-0000-0000-0000-000000000000';
+const ZERO_GUID = '00000000-0000-0000-0000-000000000000';
+const USER_AAD_ID = (process.env.TEST_USER_AAD_ID || '').trim();
 const USER_DISPLAY_NAME = process.env.TEST_USER_NAME || 'Test User';
 
 // Minutes spent on each course when we synthesize a completion. Values chosen so
@@ -53,6 +54,11 @@ async function findCatalogTitle(graph: any, siteId: string, courseId: string): P
 }
 
 async function main(): Promise<void> {
+    // Fail fast: rows written for a placeholder user would never reach anyone's plan.
+    if (!USER_AAD_ID || USER_AAD_ID === ZERO_GUID) {
+        console.error('[mark-complete] TEST_USER_AAD_ID is not set (or is the zero GUID). Set it in .env or pass it for this run: $env:TEST_USER_AAD_ID = "<guid>"');
+        process.exit(2);
+    }
     const courseIds = process.argv.slice(2).filter((a) => a.trim().length > 0);
     const targets = courseIds.length > 0 ? courseIds : DEFAULT_COURSE_IDS;
 

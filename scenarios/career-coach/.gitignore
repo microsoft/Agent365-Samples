@@ -24,6 +24,7 @@ a365.generated.config.json
 .proactive-refs.json
 .sp-subscription.json
 .email-plans.json
+.agent-identity.json
 backups/
 
 # dev logs

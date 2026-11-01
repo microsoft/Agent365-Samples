@@ -37,8 +37,11 @@ src/
 ├── user-lock.ts              Per-user async mutex around every UserState read-modify-write
 ├── email-conversation.ts     Email text extraction, email prompt, card → HTML
 ├── email-plan-store.ts       Disk-backed "plan proposed by email, awaiting Save it"
-├── graph-service.ts          Graph clients (agentic at runtime; MSAL device-code for scripts and background jobs), sendMail, subscriptions
-├── subscription-manager.ts   Create / renew / re-create the Graph change subscription (replaced when the notification secret rotates)
+├── graph-service.ts          Graph clients (per-turn agentic; background agent user via getAgenticUserToken; MSAL device-code for scripts), sendMail, subscriptions
+├── subscription-manager.ts   Create / renew / re-create the Graph change subscription (replaced when the notification secret rotates; bounded-backoff retry)
+├── agent-identity.ts         The agent's own tenant / instance / agentic-user ids, captured from turns (or env) for background Graph tokens
+├── portal-secret.ts          Rejects empty / placeholder / short PORTAL_EVENT_SECRET values
+├── mail-guard.ts             Code-level recipient allowlist for the WorkIQ Mail and Calendar MCP servers
 ├── sharepoint-column-map.ts  Display-name ↔ internal-column-name translation
 ├── file-storage.ts           Disk-backed SDK Storage (proactive subsystem)
 ├── proactive-refs.ts         AAD object id → conversation id map (disk)
@@ -56,14 +59,14 @@ Order matters:
 
 1. `configDotenv()` first, so every module sees the environment.
 2. `import './telemetry'` **before** the agent or LLM modules load. The OpenTelemetry distro must patch `@openai/agents` before it is imported, otherwise the LLM calls would not be traced.
-3. `setObservabilityConnection(...)` hands the adapter's default (blueprint) connection to the token resolver, which needs it lazily because the adapter is created after telemetry initialises.
+3. `setObservabilityConnection(...)` hands the adapter's default (blueprint) connection to the token resolver, which needs it lazily because the adapter is created after telemetry initialises. `setBackgroundTokenProvider(...)` hands the same connection to `graph-service.ts`, so background Graph work (no user turn) can mint the agent user's token with `getAgenticUserToken`, using the ids `agent-identity.ts` captured from the first message. When production is configured with `PORTAL_WEBHOOK_URL`, startup exits unless the secret is valid and the service connection is set.
 4. Safety nets: an `unhandledRejection` handler logs and keeps the process up (a single failed typing indicator must not crash the agent); `uncaughtException` exits.
 5. Auth: `NODE_ENV=development` **disables** inbound auth (Playground only). Anything else loads auth config from the environment and requires a valid token.
 6. Routes, in this order:
    - `GET /api/health` — before auth.
    - `POST /api/portal-event` — before auth, because Graph and manual callers don't carry an agent token. Three shapes: Graph validation handshake (echo `validationToken`), Graph change notification (`clientState` must equal `PORTAL_EVENT_SECRET`; answered `202` immediately, work done async), and a manual test call (`X-Portal-Secret` header).
    - `authorizeJWT(...)`, then `POST /api/messages` → `adapter.process` → `agentApplication.run`.
-7. On listen: `ensureSubscription()` (best-effort) creates/renews the Graph subscription on the `LearningPortalStatus` list, and the SharePoint site/list caches are warmed so the LLM can't guess IDs.
+7. On listen: `ensureSubscription()` (best-effort) creates/renews the Graph subscription on the `LearningPortalStatus` list — retried with backoff, and immediately when the agent first learns its own ids — and the SharePoint site/list caches are warmed so the LLM can't guess IDs. A Graph change notification reads only rows updated in the last 10 minutes (server-side filter, full-scan fallback).
 
 ## 4. Routing — `MyAgent` constructor (`agent.ts`)
 
@@ -131,9 +134,11 @@ Teams gives an `Action.Execute` about 10 seconds. Reads/writes to SharePoint plu
 
 1. A per-user/course in-flight claim ignores a double-click.
 2. Already-graded or missing-cache submissions get a clear message (a restart empties the cache: "say *check my progress* and I'll regenerate it").
-3. Multiple choice is a letter match (`gradeMcqAnswer`). Short answers are graded by one focused LLM call (`gradeShortAnswers`); if that fails they are marked wrong, never silently passed.
-4. Pass = 4 of 5. The attempt is appended to `QuizResponses`, then `applyQuizPass` / `applyQuizFail` updates `UserState`. A pass marks the course Complete, raises the skill level to the course's `ToLevel`, and recomputes goal and overall progress.
-5. The quiz-result card is sent, then the **cascade**: 80% milestone, 100% completion, and the next queued quiz — so the user is never left waiting after a result.
+3. Multiple choice is a letter match (`gradeMcqAnswer`). Short answers are graded by one focused LLM call (`gradeShortAnswers`); if that fails or returns an incomplete result, nothing is recorded and no attempt is counted — `runDeferred` tells the user and restores the card with their answers. An outage is never graded as wrong and never silently passed.
+4. Under the user lock the course must be on the **current plan** (otherwise the submit is refused before any write). Pass = 4 of 5. The attempt is appended to `QuizResponses`, then `applyQuizPass` / `applyQuizFail` updates `UserState`. A pass marks the course Complete, raises the skill level to the course's `ToLevel`, and recomputes goal and overall progress.
+5. The result is marked graded **before** the quiz-result card is sent, so a send failure can't leave a graded quiz open for a duplicate submit. Then the **cascade**: 80% milestone, 100% completion, and the next queued quiz — so the user is never left waiting after a result.
+
+Saving or replacing a goal clears every cached quiz, graded marker and queued quiz for the user (`clearAllQuizzes`), so questions from the previous plan can never be graded against the new one.
 
 Attempts are counted only after the SharePoint reads succeed, so a network failure isn't counted as an attempt.
 
@@ -152,7 +157,7 @@ Attempts are counted only after the SharePoint reads succeed, so a network failu
 | `readUserState` | Returns only the **Active** goal (newest first), so every deterministic handler automatically ignores finished goals |
 | `readPreviousPlans` | Completed + Replaced goals, newest first |
 | `savePlan` | Active goal with no progress → updated in place. Active goal **with** progress → marked `Replaced` (kept), new row created. Same role with progress → refused, nothing overwritten |
-| `fireCompletion100` | Sends the completion email, then marks the goal `Completed` + date. If sending fails the goal stays Active so "check my progress" can retry |
+| `fireCompletion100` | Claims the goal in-process (one email per goal), re-reads the goal and proceeds only if it is still the active, unfinished, 100% goal it was triggered for; minutes are summed from the portal rows for that plan's courses only. Sends the completion email, then marks **that** goal `Completed` + date (never a goal that replaced it meanwhile). If sending fails the goal stays Active and the claim is released so "check my progress" can retry |
 | `noActiveGoalMessage` | Explains "your *X* goal is complete — name your next role" instead of "no plan" |
 
 `dropMissingLifecycleColumns` lets the agent keep working (with a warning) on a list that hasn't had `npm run setup:sharepoint` re-run.
@@ -174,7 +179,9 @@ These make wrong LLM behaviour impossible rather than merely discouraged:
 | **Site + list allowlist** | The data tools (`listListItems`, `createListItem`, `updateListItem`) only operate on the configured Career Coach site, and only read the five Career Coach lists. Chat **writes are limited to `UserState`** — reference data, portal completions and quiz audit rows are written only by provisioning, the portal and the deterministic quiz grader |
 | **Owner scoping** | Personal lists (`UserState`, `LearningPortalStatus`, `QuizResponses`) return only the caller's own rows (`activity.from.aadObjectId`), whatever filter the model asks for. A new plan is always created for the caller (a different `UserAADId` is rejected and the caller's id is persisted). An update first reads the row **fail-closed** — unreadable or someone else's rows are refused — and `UserAADId` can never be changed. With no authenticated user, personal data is refused |
 | **Column-name canonicalization** | Every model write is rewritten to display names first (case-insensitive, internal `field_N` names included), so no guard can be bypassed through an alias; two keys for the same column are rejected |
-| **Progress guard** (`guardUserStateWrite`) | A write that would mark a course Complete, record a passed quiz, or raise a skill level is rejected with `BLOCKED …`; the courses are remembered for the turn so the app can start their quizzes |
+| **Progress guard** (`guardUserStateWrite`) | A write that would mark a course Complete, record a passed quiz, or raise a skill level is rejected with `BLOCKED …` (a record with no `courseId` counts too); the courses are remembered for the turn so the app can start their quizzes |
+| **Catalog check** (`requireCatalogCourses`) | Every `LearningProgress` record needs a `courseId`, and any course the model adds must exist in the `LearningCatalog` (cached 5 min; fails closed if the catalog can't be read) |
+| **Server-owned progress merge** (`mergeServerOwnedProgress`) | The model composes a write from an earlier read, so passed courses (Complete + passed quiz) from the freshly read row are merged back in, skill levels never go down, and `Goals` / `OverallProgress` are recomputed from the merged courses — a stale write can't undo a quiz result |
 | **App-managed fields** | `PlanStatus`, `PlanCompletedDate`, `Completion100Fired`, `ManagerName` and `ManagerEmail` are stripped from LLM writes. The manager comes only from the directory, so the model can't redirect the completion email |
 | **Finished goals** | Update of a Completed/Replaced row is rejected |
 | **One active goal** | `createListItem` on `UserState` is rejected when an active goal already exists |
@@ -191,9 +198,9 @@ These make wrong LLM behaviour impossible rather than merely discouraged:
 
 1. Bounce / non-delivery mails are ignored (`isBounceEmail`).
 2. The sender is looked up in Graph; only organisation **Members** get a reply (guests / external ignored). The sender's object id is put on the activity so the conversation is scoped to their plan.
-3. The thread key is `email:<emailNotification.conversationId>` — stable across a thread, unlike the per-message activity id.
+3. The thread key is `email:<agent instance>:<sender id>:<emailNotification.conversationId>` — stable across a thread (unlike the per-message activity id) and unique per member, so two people replying in the same thread never share a client, history or pending plan.
 4. **"Save it"** (`isSavePlanIntent`) with a pending plan for this thread → `savePlan` (same code as the Teams button), reply with the progress table.
-5. Otherwise the LLM runs with an email-specific prompt. If there is no history for the thread (first email, or after a restart) the **quoted reply history** is passed as context only (`extractQuotedHistory`).
+5. Otherwise the LLM runs with an email-specific prompt. The email text — and, if there is no history for the thread (first email, or after a restart), the **quoted reply history** (`extractQuotedHistory`) — goes in `<untrusted_email>` fences with any delimiter tags inside neutralised, and the model is told never to follow instructions in them. Mail / Calendar writes are checked in code by `mail-guard.ts`: every address must be the sender (or their manager, only when the sender's own message asks for the manager); forward / reply tools and unverifiable recipients are refused.
 6. If the reply contains a `planReview` card it is stored in `email-plan-store.ts` (disk, 14-day expiry, tied to thread + user). The card is rendered as an HTML table with "Reply **Save it**"; quizzes point to Teams.
 
 **Outbound** — two separate things:
