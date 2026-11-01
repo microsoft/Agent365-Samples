@@ -57,6 +57,8 @@ OpenTelemetry's Node SDK is pinned through an override to patched 0.217.x for [G
 
 Its optional Jaeger propagator is overridden to 2.9.0+ for [GHSA-45rx-2jwx-cxfr](https://github.com/advisories/GHSA-45rx-2jwx-cxfr). This does not enable Jaeger propagation; it keeps the installed dependency safe if explicitly selected.
 
+Until the package feed serves `follow-redirects` 1.16.2, the package pins the official MIT-licensed release at immutable Git commit `7130c835c45e71dcce25fcc999febe14c97ef64d` and shares that version with Axios. A loopback-only regression test verifies normal and cross-realm sensitive-header arrays. Replace the Git source with the patched registry release once it is available; do not downgrade Axios or suppress [GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p).
+
 ## Quick start — mock mode (no external services)
 
 Uses the built-in mock Jira sprint in [`src/mock/jira-mock.ts`](src/mock/jira-mock.ts) and an in-memory roster/standup path. This exercises local card interactions, not real Teams delivery or SharePoint persistence.

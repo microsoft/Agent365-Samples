@@ -46,6 +46,7 @@
     "axios": "^1.18.1",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "follow-redirects": "git+https://github.com/follow-redirects/follow-redirects.git#7130c835c45e71dcce25fcc999febe14c97ef64d",
     "openai": "^6.26.0",
     "@azure/msal-node": "^2.16.2",
     "@microsoft/microsoft-graph-client": "^3.0.7",
@@ -68,6 +69,7 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
+    "follow-redirects": "$follow-redirects",
     "@opentelemetry/propagator-jaeger": "^2.9.0",
     "@opentelemetry/sdk-node": "^0.217.0",
     "@microsoft/agents-hosting": {
