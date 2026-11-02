@@ -207,7 +207,13 @@ export async function bookMeetingAsync(
     }
     if (b.State !== 'open' || b.MeetingEventId) {
         await sendProactive(ref, async ctx => {
-            await ctx.sendActivity(`Blocker ${issueKey} is already ${b.State}; no additional meeting was created.`);
+            const eventId = b.MeetingEventId?.trim();
+            const encodedId = eventId ? encodeURIComponent(eventId).replace(/[!'()*]/g,
+                char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`) : '';
+            const existing = encodedId
+                ? ` [Open existing event in Outlook](https://outlook.office.com/calendar/item/${encodedId})`
+                : '';
+            await ctx.sendActivity(`Blocker ${issueKey} is already ${b.State}; no additional meeting was created.${existing}`);
         });
         return;
     }

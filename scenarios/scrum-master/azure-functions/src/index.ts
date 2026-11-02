@@ -37,7 +37,7 @@ function headers(): Record<string, string> {
 // NCRONTAB is 6-field including seconds.
 app.timer('StandupTimer', {
     schedule: '0 30 3 * * 1-5',
-    retry: { strategy: 'fixedDelay', maxRetryCount: 3, delayInterval: { seconds: 30 } },
+    retry: { strategy: 'fixedDelay', maxRetryCount: 3, delayInterval: { seconds: 90 } },
     handler: async (myTimer: Timer, context: InvocationContext) => {
         context.log('[StandupTimer] tick', { pastDue: myTimer.isPastDue });
         try {
@@ -55,7 +55,7 @@ app.timer('StandupTimer', {
 // 00:30 Asia/Kolkata daily = 19:00 UTC daily.
 app.timer('NightlyTimer', {
     schedule: '0 0 19 * * *',
-    retry: { strategy: 'fixedDelay', maxRetryCount: 3, delayInterval: { seconds: 30 } },
+    retry: { strategy: 'fixedDelay', maxRetryCount: 3, delayInterval: { seconds: 150 } },
     handler: async (myTimer: Timer, context: InvocationContext) => {
         context.log('[NightlyTimer] tick', { pastDue: myTimer.isPastDue });
         try {

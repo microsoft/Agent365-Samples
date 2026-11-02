@@ -11,7 +11,7 @@ Two timer-triggered functions that drive the SMA scheduled ceremonies. The agent
 
 The agent runs Express on `:3978` behind a dev tunnel (dev) or App Service / Container Apps (prod). It exposes three internal endpoints guarded by an `x-internal-token` header when a token is configured; these timers call the standup and nightly endpoints. Each Function timer wakes on schedule, POSTs to its endpoint, and passes the token through. The nightly route runs Warn, sprint-close and mid-sprint summary logic, each subject to its eligibility gate. The agent does the actual work (Jira REST, SharePoint writes, Adaptive Card sends).
 
-- Both schedulers evaluate these expressions in **UTC**, independently of the agent's `TIMEZONE`. Use **one scheduler only**: daily standup deduplication is in-memory per agent process, not restart-safe or cross-process safe.
+- Both schedulers evaluate these expressions in **UTC**, independently of the agent's `TIMEZONE`. Use **one scheduler only**: live standup creation uses a unique SharePoint `RunKey` (migrate existing lists before upgrading), but response fan-in/cutoff timers remain process-local and are not restored on restart. Mock deduplication is process-local.
 - **Local dev** typically uses `LOCAL_CRON=true` alone and never deploys these functions.
 - **Production** sets `LOCAL_CRON=false`, `NODE_ENV=production`, `HOST=0.0.0.0` and a nonempty `INTERNAL_TRIGGER_TOKEN` in the agent host's application settings. Do not copy local development `.env` settings into Azure.
 
@@ -91,8 +91,11 @@ Leave `WEBSITE_TIME_ZONE` **unset**. Where supported, setting it changes how Fun
 
 The Functions module fails startup if `WEBSITE_TIME_ZONE` is a non-UTC value
 (only unset, `UTC` or `Etc/UTC` are accepted). Prefer leaving it unset.
-Both timers retry a failed invocation up to three times with a fixed
-30-second delay. A successful HTTP response does not itself prove a ceremony
+Both timers retry a failed invocation up to three times with a fixed delay:
+**90 seconds** for StandupTimer (60-second HTTP timeout) and **150 seconds**
+for NightlyTimer (120-second HTTP timeout). Each delay exceeds its callback
+timeout; a timed-out server-side request may still be running, so durable
+creation/delivery claims remain necessary. A successful HTTP response does not itself prove a ceremony
 was delivered: inspect the response/logs and the agent's delivery records.
 The nightly endpoint returns HTTP 500 with `ok: false` if any check throws,
 so those failures engage this retry policy. Previously successful checks

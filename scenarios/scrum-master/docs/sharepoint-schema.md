@@ -66,13 +66,24 @@ summarise" state machine.
 
 | Column | Type | Description |
 |---|---|---|
-| `Title` | text | `<sprintId>#<yyyy-mm-dd>` — idempotency key |
+| `Title` | text | `<sprintId>#<UTC yyyy-mm-dd>` — human-readable run identifier |
+| `RunKey` | text, indexed, unique | Same daily value as `Title`; atomic creation claim across live workers |
 | `SprintId` | text | Jira sprint id (as string) |
 | `StartedUtc` | dateTime | When the DMs went out |
 | `CutoffUtc` | dateTime | `StartedUtc + STANDUP_CUTOFF_HOURS` |
-| `State` | text | `pending` \| `summarized` |
+| `State` | text | `open` \| `summarized` \| `archived` |
 | `ExpectedResponders` | note | JSON array of AAD ids the DMs were sent to |
 | `InitiatedByAadId` | text | Who triggered the standup (SM or timer identity) |
+
+**Existing-list migration:** pause all agent workers, then run
+`npm run setup:sharepoint` against the intended live site. Before changing
+records, the script rejects duplicate/empty Titles or existing RunKeys that
+disagree with Title. Reconcile such records manually; the script never deletes
+history. It adds RunKey when absent, backfills all pages of legacy rows, then
+enables indexed uniqueness. Rerunning after a partial migration is safe with
+workers still paused. Resume only after success; a build/test does not migrate
+the live schema. Creation failures (including an unmigrated schema) stop fan-out.
+The claim is not a distributed response store or a mechanism to resume crashed runs.
 
 ### `SMA_StandupResponses`
 
@@ -140,7 +151,8 @@ off-channel.
 
 ## Provisioning
 
-Provisioning is idempotent — running the setup script twice is a no-op:
+Provisioning is idempotent — missing lists and supported column migrations
+are applied without deleting existing history:
 
 ```powershell
 npm run setup:sharepoint
@@ -148,9 +160,10 @@ npm run setup:sharepoint
 
 For every list, the script first queries
 `GET /sites/{siteId}/lists?$filter=displayName eq '<name>'`; only missing lists are
-created. Column schemas are not migrated after creation — if you change
-`LIST_SCHEMAS`, delete the affected list in SharePoint before re-running the
-script (or add a migration step to `setup-sharepoint.ts`).
+created. Existing standup lists receive the RunKey migration described above;
+existing risk lists receive missing delivery-state columns. Other schema
+changes require an explicit migration. Do not delete operational lists to
+bypass delivery or creation claims.
 
 ## Permissions required
 

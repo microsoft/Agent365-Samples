@@ -6,7 +6,8 @@
  *
  * Signs in the developer via device-code, creates all SMA_* lists with the
  * schemas declared in `services/sharepoint.ts`, and creates the SprintReports
- * document library. Also adds missing risk-delivery columns on existing lists.
+ * document library. Also migrates standup run keys and missing risk-delivery
+ * columns on existing lists. Pause all agent workers before migration.
  *
  * Usage: `npm run setup:sharepoint`
  */
@@ -36,7 +37,47 @@ const COLUMN_TYPE_MAP: Record<string, object> = {
     boolean: { boolean: {} },
 };
 
-async function main() {
+export async function migrateStandupRunKeys(
+    graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
+): Promise<void> {
+    const listPath = `/sites/${siteId}/lists/${listId}`;
+    const columns: Array<{ id: string; name: string; indexed?: boolean; enforceUniqueValues?: boolean }> = [];
+    let next: string | undefined = `${listPath}/columns`;
+    while (next) {
+        const page = await graph.api(next).get();
+        columns.push(...(page.value ?? []));
+        next = page['@odata.nextLink'];
+    }
+    const rows: Array<{ id: string; fields: { Title?: string; RunKey?: string } }> = [];
+    next = `${listPath}/items?$expand=fields`;
+    while (next) {
+        const page = await graph.api(next).get();
+        rows.push(...(page.value ?? []));
+        next = page['@odata.nextLink'];
+    }
+    const keys = new Set<string>();
+    for (const row of rows) {
+        const title = row.fields.Title;
+        if (!title || keys.has(title) || (row.fields.RunKey && row.fields.RunKey !== title)) {
+            throw new Error('Standup RunKey migration requires distinct nonempty Titles and matching existing RunKeys. Review legacy records with all workers paused; no records were changed.');
+        }
+        keys.add(title);
+    }
+    let column = columns.find(c => c.name === 'RunKey');
+    if (!column) {
+        column = await graph.api(`${listPath}/columns`).post({ name: 'RunKey', text: {}, indexed: true });
+    }
+    for (const row of rows.filter(r => r.fields.RunKey !== r.fields.Title)) {
+        await graph.api(`${listPath}/items/${row.id}/fields`).update({ RunKey: row.fields.Title });
+    }
+    if (!column?.id) throw new Error('SharePoint did not return the RunKey column id; migration cannot enforce uniqueness.');
+    if (!column.indexed || !column.enforceUniqueValues) {
+        await graph.api(`${listPath}/columns/${column.id}`).update({ indexed: true, enforceUniqueValues: true });
+    }
+    console.log('[setup] Standup RunKeys backfilled and uniqueness enforced.');
+}
+
+export async function provisionSharePoint(): Promise<void> {
     console.log('[setup] Starting SharePoint provisioning...');
 
     // Interactive sign-in — this populates the MSAL cache used by every runtime call.
@@ -60,6 +101,9 @@ async function main() {
             .catch(() => ({ value: [] }));
 
         if ((existing.value ?? []).length > 0) {
+            if (key === 'standupSessions') {
+                await migrateStandupRunKeys(graph, siteId, existing.value[0].id);
+            }
             if (key === 'sprintRisks') {
                 const listId = existing.value[0].id;
                 const columnsPath = `/sites/${siteId}/lists/${listId}/columns`;
@@ -112,7 +156,9 @@ async function main() {
     console.log('[setup] Done. You can now run `npm run seed` and then `npm run dev`.');
 }
 
-main().catch((err) => {
-    console.error('[setup] Failed:', err?.message ?? err);
-    process.exit(1);
-});
+if (require.main === module) {
+    provisionSharePoint().catch((err) => {
+        console.error('[setup] Failed:', err?.message ?? err);
+        process.exit(1);
+    });
+}

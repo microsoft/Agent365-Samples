@@ -28,6 +28,7 @@ import { DateTime } from 'luxon';
 
 import {
     createItem,
+    claimStandupSession,
     findByField,
     findByTitle,
     updateItem,
@@ -216,8 +217,8 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     const nowUtc = new Date();
     const cutoffUtc = new Date(nowUtc.getTime() + schedule.cutoffHours * 3600_000);
 
-    // Persist the session row (idempotent per Title key).
-    await createItem<StandupSessionFields>('standupSessions', {
+    // The unique daily RunKey insert is the cross-worker claim before fan-out.
+    const claimed = await claimStandupSession<StandupSessionFields>({
         Title: standupId,
         SprintId: String(sprint.id),
         StartedUtc: nowUtc.toISOString(),
@@ -226,6 +227,11 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
         ExpectedResponders: JSON.stringify(Array.from(expectedResponders)),
         InitiatedByAadId: opts.initiatedByAadId ?? '',
     });
+    if (!claimed) {
+        const note = `Standup ${standupId} has already been started or completed today.`;
+        if (opts.turnContext) await opts.turnContext.sendActivity(note);
+        return { standupId, sentTo: 0, skipped: 0, note };
+    }
 
     // Build session in memory.
     const session: StandupSession = {

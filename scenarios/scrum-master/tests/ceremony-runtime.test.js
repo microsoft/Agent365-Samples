@@ -37,7 +37,8 @@ function reportFixture(overrides = {}) {
         '../config': { getScheduleConfig: () => ({ timezone: 'UTC' }) },
         '../services/sharepoint': {
             listItems: async () => [],
-            findByField: async () => [{ fields: { ConversationRef: '{"target":"channel"}' } }],
+            findByField: async key => key === 'teamsConfig'
+                ? [{ fields: { ConversationRef: '{"target":"channel"}' } }] : [],
             claimSprintReport: async () => {
                 if (claimed) return null;
                 claimed = true;
@@ -245,8 +246,11 @@ test('Functions timers declare explicit retries and reject non-UTC host timezone
     try {
         load('azure-functions\\src\\index.ts', mocks);
         assert.equal(timers.length, 2);
-        for (const [, options] of timers) {
-            assert.deepEqual(options.retry, { strategy: 'fixedDelay', maxRetryCount: 3, delayInterval: { seconds: 30 } });
+        for (const [name, options] of timers) {
+            assert.deepEqual(options.retry, {
+                strategy: 'fixedDelay', maxRetryCount: 3,
+                delayInterval: { seconds: name === 'StandupTimer' ? 90 : 150 },
+            });
         }
         process.env.WEBSITE_TIME_ZONE = 'India Standard Time';
         assert.throws(() => load('azure-functions\\src\\index.ts', mocks), /UTC/);

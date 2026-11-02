@@ -212,7 +212,7 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
             };
         },
     };
-    load('src\\scripts\\setup-sharepoint.ts', {
+    const { provisionSharePoint } = load('src\\scripts\\setup-sharepoint.ts', {
         dotenv: { configDotenv() {} },
         'isomorphic-fetch': {},
         '../services/graph': {
@@ -221,7 +221,7 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
         },
         '../services/sharepoint': {
             DOC_LIBRARY_NAME: 'SprintReports',
-            LIST_NAMES: { sprintRisks: 'SprintRisks', standupSessions: 'StandupSessions' },
+            LIST_NAMES: { sprintRisks: 'SprintRisks' },
             LIST_SCHEMAS: {
                 sprintRisks: { columns: [
                     { name: 'Payload', type: 'note' },
@@ -234,7 +234,7 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
         },
         '../config': { getSharePointConfig: () => ({ siteUrl: 'https://example.test', listsPrefix: 'SMA_' }) },
     });
-    await new Promise(resolve => setImmediate(resolve));
+    await provisionSharePoint();
     assert.deepEqual(writes, [{
         url: '/sites/site/lists/existing-list/columns',
         body: { name: 'State', text: {} },

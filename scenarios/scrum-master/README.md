@@ -277,6 +277,10 @@ If any check throws, the response is HTTP 500 with `ok: false`, allowing the
 Functions retry policy to engage. Checks that already succeeded are not
 rolled back. The T-2 summary has no durable delivery guard, so retrying the
 nightly call can repeat its output even when another check caused the failure.
+Both report results preserve failed connector messages in `error` and `note`
+with `uploaded: false`, and log failed sends before/after the SM fallback.
+A returned delivery failure is not an exception and does not by itself cause
+the nightly route to return HTTP 500; inspect each report result.
 
 Query params:
 - `force=warn` — Warn only
@@ -332,18 +336,35 @@ For Jira REST diagnostics, set `LOG_HTTP=true` in `.env` and restart. Instrument
 Live operations claim SharePoint records before sending external side effects.
 Do not delete or reset a claim merely because a timer/card action was retried.
 
+- **Standup creation:** `SMA_StandupSessions.RunKey` is indexed and unique
+  (`<sprintId>#<UTC yyyy-mm-dd>`). Only the worker that inserts it starts fan-out.
+  Existing runs, including completed runs, block new daily fan-out. A crash after
+  insertion can leave a partially delivered run: inspect records/delivery logs
+  rather than deleting the claim or assuming another worker resumes it.
+  Before upgrading an existing deployment, pause **all** agent workers and run
+  `npm run setup:sharepoint` with the live site's configuration. The script
+  validates distinct nonempty legacy Titles, backfills `RunKey` from `Title`,
+  then enforces indexed uniqueness. Duplicate/mismatched legacy keys fail
+  migration without modifying records; review and reconcile them manually.
+  Resume workers only after successful migration. No live setup is implied by
+  building or testing this sample.
 - **Sprint close:** `SMA_SprintReportsDelivery.DeliveryKey` is unique and indexed
   (`sprint-close:<sprintId>`). `sent` blocks another report; `failed` permits a
   later retry. A crash or uncertain send can leave `claimed` indefinitely.
   An operator must inspect Teams and delivery logs first. Confirm a delivered
   report as `sent`; only after establishing that nothing was delivered should
   an authorized operator mark the record `failed` and retry.
+  Automatic selection skips already delivered/claimed ended sprints and selects
+  the newest remaining unreported (or explicitly failed) ended sprint, including
+  closed sprints, so an already reported newer sprint cannot starve the backlog.
 - **Meeting booking:** `SMA_Blockers.State` is conditionally claimed from `open`
   to `booking`, then set to `booked` after a confirmed booking. An uncertain
   Calendar result may retain `booking` (or mark `booked` when verification
   output is malformed). Check Outlook, event details and invitees before
   recovery. Record an existing event as booked; reset to `open` for a new
   proposal only after verifying that no event/invitations were created.
+  Repeating a booked card returns an Outlook link built from the stored event ID,
+  without creating another event; when no ID was recorded, inspect Outlook.
 - **Standup finalization:** an ambiguous failure can leave `summarizing`.
   Preliminary roster lookup failures leave the session open and retryable.
   Finalization waits for already accepted response writes before snapshotting,
@@ -386,7 +407,7 @@ Set `AGENT_CALLBACK_URL=https://<your-agent-host>` (base URL, without `/api/mess
 - **`GRAPH_CLIENT_ID` defaults to the well-known "Microsoft Graph Command Line Tools" public client** when blank/unset. This avoids creating an app for local sign-in, not tenant policy or admin consent. Register your own public client for a real deployment.
 - **Single-team by design.** The sample assumes one scrum team per process (single project key, single board, single channel). Multi-team support (per-team config, isolated Jira credentials, sharded timers) is called out as future work in [`docs/design.md#12-known-limitations--hardening-roadmap`](docs/design.md#12-known-limitations--hardening-roadmap).
 - **Proactive DMs require prior interaction.** Every squad member must have said "hi" to the agent at least once so their conversation reference is captured in `SMA_TeamMembers`.
-- **Use one scheduler and one agent process for standups.** Completed daily standup records stay in-memory for that process only. A restart loses this local guard, and replicas have independent guards; SharePoint standup records are not a cross-process locking mechanism. Set `LOCAL_CRON=false` once the Function is deployed.
+- **Use one scheduler and one agent process for standups.** Live daily creation uses the unique SharePoint `RunKey` after schema migration; mock guards remain process-local. Active response fan-in and cutoff timers are still in-memory, are not rebuilt after a restart, and are not shared by replicas. The creation claim prevents duplicate fan-out, not distributed standup processing. Set `LOCAL_CRON=false` once the Function is deployed.
 - **Sprint-close delivery claims are separate from standup state.** Live mode uses `SMA_SprintReportsDelivery` with a unique per-sprint key. A crash or uncertain send leaves a `claimed` record requiring operator verification; it is not automatically retried. A confirmed delivery failure can be retried. `force=report` does not bypass this guard.
 
 ## Support

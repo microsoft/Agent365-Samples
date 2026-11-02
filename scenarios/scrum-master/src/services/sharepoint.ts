@@ -87,9 +87,11 @@ export async function createItem<T extends object>(
 ): Promise<ListItem<T>> {
     if (getJiraMode() === 'mock') {
         const rows = mockList(key);
-        if (key === 'sprintReportsDelivery' &&
-            [...rows.values()].some(r => r.fields.DeliveryKey === (fields as any).DeliveryKey)) {
-            throw Object.assign(new Error('Duplicate delivery key'), { statusCode: 409 });
+        for (const column of LIST_SCHEMAS[key].columns.filter(c => c.unique)) {
+            const value = (fields as any)[column.name];
+            if (value != null && [...rows.values()].some(r => r.fields[column.name] === value)) {
+                throw Object.assign(new Error(`Duplicate ${column.name}`), { statusCode: 409 });
+            }
         }
         const row = { id: String(++mockSequence), fields: copy(fields) };
         rows.set(row.id, row);
@@ -212,6 +214,19 @@ export async function claimItemState(
     }
 }
 
+export async function claimStandupSession<T extends object>(
+    fields: T & { Title: string },
+): Promise<ListItem<T & { RunKey: string }> | null> {
+    // The title check also protects records created before RunKey was introduced.
+    if (await findByTitle('standupSessions', fields.Title)) return null;
+    try {
+        return await createItem('standupSessions', { ...fields, RunKey: fields.Title });
+    } catch (error) {
+        if ((await findByField('standupSessions', 'RunKey', fields.Title)).length) return null;
+        throw error;
+    }
+}
+
 export async function claimSprintReport(sprintId: number): Promise<string | null> {
     const deliveryKey = `sprint-close:${sprintId}`;
     const existing = (await findByField<{ State: string }>(
@@ -294,6 +309,7 @@ export const LIST_SCHEMAS: Record<ListKey, {
     },
     standupSessions: {
         columns: [
+            { name: 'RunKey', type: 'text', unique: true },
             { name: 'SprintId', type: 'text' },
             { name: 'StartedUtc', type: 'dateTime' },
             { name: 'CutoffUtc', type: 'dateTime' },

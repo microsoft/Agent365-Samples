@@ -170,6 +170,9 @@ are process-local. SharePoint records do not make those maps a distributed
 lock or reconstruct them after restart. Sprint-close delivery has a separate
 durable per-sprint claim in live mode; `force` bypasses timing, not that guard.
 Mock services and their changes are in-memory and reset with the process.
-Live standup startup checks existing SharePoint session records before
-fanout, but that check is not atomic across processes. Ambiguous failed
+Live standup startup checks existing SharePoint session records, then inserts
+an indexed unique `RunKey` before fan-out; only the creation-claim winner sends
+cards. Existing sites must pause workers and migrate/backfill RunKey through
+`npm run setup:sharepoint` before upgrading. The claim does not distribute
+response fan-in or resume a crashed session. Ambiguous failed
 finalization remains `summarizing` for operator review, not automatic retry.

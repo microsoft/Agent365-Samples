@@ -219,8 +219,9 @@ sequenceDiagram
 
 Standup id = `<sprintId>#<UTC yyyy-mm-dd>`. Completed daily records remain
 in-memory in the agent process, preventing a later trigger there from
-re-sending the day's cards. This is not a cross-process lock or a guarantee
-that a restarted process can resume its fan-in/cutoff state. Mock mode uses
+re-sending the day's cards. Live startup also atomically claims the unique
+SharePoint `RunKey` before fan-out, after existing-list migration. This does
+not let a restarted process resume its fan-in/cutoff state. Mock mode uses
 an in-memory roster and binds the first personal Playground caller to Alex;
 it needs no SharePoint or LLM credentials for `/standup`.
 Mock triggers without an initiating turn context (cron/HTTP) skip before
@@ -376,6 +377,11 @@ recording success requires operator review rather than assuming exactly-once
 delivery. An ambiguous/crashed claim stays `claimed` without automatic expiry;
 an explicit delivery failure is marked `failed` and may be retried. Mock
 mode's delivery records are in-memory.
+Automatic selection checks ended active and closed sprints newest-first,
+skipping existing `sent`/`claimed` records before choosing an unreported or
+explicitly failed candidate. The selected candidate must still acquire the
+durable delivery claim before sending. Both report handlers return failed send
+details in `error`/`note`, log them and retain `uploaded: false` if fallback fails.
 
 ## 6. Data model
 
@@ -449,11 +455,16 @@ depends on model output. Everything else is TypeScript.
   repeat its T-2 output.
 - **Use one scheduler and one standup agent process.** Set `LOCAL_CRON=false`
   when Functions are deployed. Multiple schedulers/replicas are not made
-  safe by the process-local standup guard.
+  safe for response aggregation by the creation guard: active fan-in remains
+  process-local even though live creation is atomically claimed in SharePoint.
 - **Session state** in `session-store.ts` is in-memory. A restart drops
   pending fan-in and cutoff timers; a persisted SharePoint row does not
   rebuild them. Live triggers check existing SharePoint records before new
-  fanout, but this check is not atomic across processes. A thrown failure
+  fanout, then atomically insert an indexed unique `RunKey`; a competing worker
+  cannot create the same daily run. Existing deployments must pause workers and
+  migrate/backfill this key with the setup script before upgrading (see
+  `sharepoint-schema.md`). A creation claim does not resume a crashed run.
+  Mock mode enforces the same key within its in-memory store only. A thrown failure
   after finalization is claimed can leave the in-memory state `summarizing`; SharePoint
   stores `open` or `summarized`, not `summarizing`. Explicitly failed summary
   delivery leaves the session `open` and does not mark it completed. In the

@@ -295,7 +295,7 @@ function buildActionItems(
 // --- entry point --------------------------------------------------------
 
 export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: number }):
-    Promise<{ uploaded: boolean; url?: string; note?: string; counts?: { stories: number; tasksDone: number; deployments: number; bugs: number } }> {
+    Promise<{ uploaded: boolean; url?: string; note?: string; error?: string; counts?: { stories: number; tasksDone: number; deployments: number; bugs: number } }> {
     const jira = getJiraClient();
     const tz = getScheduleConfig().timezone;
 
@@ -306,7 +306,16 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
         const [active, closed] = await Promise.all([jira.getSprints('active'), jira.getSprints('closed')]);
         const ended = [...active, ...closed].filter(s => s.endDate && Date.parse(s.endDate) < Date.now())
             .sort((a, b) => Date.parse(b.endDate!) - Date.parse(a.endDate!));
-        sprint = ended[0] ?? (opts?.force ? active[0] : null) ?? null;
+        for (const candidate of ended) {
+            const delivery = (await findByField<{ State: string }>(
+                'sprintReportsDelivery', 'DeliveryKey', `sprint-close:${candidate.id}`,
+            ))[0];
+            if (!delivery || delivery.fields.State === 'failed') {
+                sprint = candidate;
+                break;
+            }
+        }
+        sprint ??= opts?.force ? active[0] ?? null : null;
     } else sprint = await jira.getActiveSprint(); // Seeded offline client.
     if (!sprint) return { uploaded: false, note: 'No sprint found.' };
 
@@ -339,13 +348,19 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
     if (!claimId) return { uploaded: false, note: `Sprint ${sprint.name} report already delivered or claimed; no duplicate sent.` };
 
     let delivered = false;
+    const deliveryErrors: string[] = [];
     if (channelRefRaw) {
         try {
             const ref = JSON.parse(channelRefRaw);
             const result = await sendProactive(ref, async ctx => { await ctx.sendActivity(markdown); });
             delivered = result.ok;
             if (delivered) console.log(`[report] Posted Sprint Close Report inline for ${sprint.name}`);
+            else {
+                deliveryErrors.push(`Channel: ${result.error ?? 'send failed'}`);
+                console.warn('[report] Channel delivery failed; trying SM DM:', result.error ?? 'send failed');
+            }
         } catch (e) {
+            deliveryErrors.push(`Channel: ${(e as Error).message}`);
             console.warn('[report] Bad TeamsConfig ref — falling back to SM DM:', (e as Error).message);
         }
     }
@@ -356,8 +371,13 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
                 const result = await sendProactive(sm.conversationReference, async ctx => { await ctx.sendActivity(markdown); });
                 delivered = result.ok;
                 if (delivered) console.log('[report] Posted Sprint Close Report to SM DM (channel unavailable)');
+                else {
+                    deliveryErrors.push(`SM DM: ${result.error ?? 'send failed'}`);
+                    console.warn('[report] SM delivery failed:', result.error ?? 'send failed');
+                }
             }
         } catch (e) {
+            deliveryErrors.push(`SM DM: ${(e as Error).message}`);
             console.warn('[report] SM delivery failed:', (e as Error).message);
         }
     }
@@ -371,9 +391,11 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
     const doneBugs = stories.filter(i => i.issueType === 'Bug' && i.status === 'Done').length;
     const deployments = allTasks.filter(t => t.status === 'Done' && RX_DEPLOYMENT.test(t.summary)).length;
 
+    const error = delivered ? undefined : deliveryErrors.join('; ') || 'No Teams channel or SM destination is configured.';
     return {
         uploaded: delivered,
+        error,
         counts: { stories: doneStories, tasksDone, deployments, bugs: doneBugs },
-        note: delivered ? undefined : 'Report delivery failed or no delivery target is configured; the sprint claim is retryable.',
+        note: delivered ? undefined : `Report was not delivered: ${error} The sprint claim is retryable.`,
     };
 }

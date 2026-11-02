@@ -140,6 +140,12 @@ test('standup expands inherited subtasks, coalesces triggers, and finalizes once
             findByTitle: async (_list, title) => records.get(title) ?? null,
             findByField: async () => [],
             createItem: async (_list, fields) => { records.set(fields.Title, { id: fields.Title, fields }); },
+            claimStandupSession: async fields => {
+                if (records.has(fields.Title)) return null;
+                const row = { id: fields.Title, fields: { ...fields, RunKey: fields.Title } };
+                records.set(fields.Title, row);
+                return row;
+            },
             updateItem: async (_list, id, fields) => Object.assign(records.get(id).fields, fields),
         },
         '../services/jira': { getJiraClient: () => ({
@@ -210,6 +216,7 @@ test('mock standup sends directly to the Playground caller without proactive cre
         '../services/sharepoint': {
             findByTitle: async () => null,
             createItem: async () => ({}),
+            claimStandupSession: async fields => ({ id: fields.Title, fields }),
         },
         '../services/jira': { getJiraClient: () => ({
             getActiveSprint: async () => ({ id: 778901, name: 'Offline sprint' }),

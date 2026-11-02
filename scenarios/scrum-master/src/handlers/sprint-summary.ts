@@ -248,7 +248,7 @@ function trim(s: string, n: number): string {
 export async function runSprintSummary(opts?: {
     force?: boolean;
     sprintId?: number;
-}): Promise<{ uploaded: boolean; url?: string; note?: string; counts?: { total: number; pending: number; red: number; amber: number } }> {
+}): Promise<{ uploaded: boolean; url?: string; note?: string; error?: string; counts?: { total: number; pending: number; red: number; amber: number } }> {
     const jira = getJiraClient();
     const tz = getScheduleConfig().timezone;
 
@@ -299,6 +299,7 @@ export async function runSprintSummary(opts?: {
     const ambers = pending.filter(t => t.rag === 'Amber');
 
     let delivered = false;
+    const deliveryErrors: string[] = [];
     if (channelRefRaw) {
         try {
             const ref = JSON.parse(channelRefRaw);
@@ -307,26 +308,38 @@ export async function runSprintSummary(opts?: {
             if (delivered) {
                 console.log(`[sprint-summary] Posted to configured channel (${classified.length} tasks, ${reds.length} red / ${ambers.length} amber)`);
             } else {
+                deliveryErrors.push(`Channel: ${result.error ?? 'send failed'}`);
                 console.warn('[sprint-summary] Channel delivery failed; trying SM DM:', result.error);
             }
         } catch (e) {
+            deliveryErrors.push(`Channel: ${(e as Error).message}`);
             console.warn('[sprint-summary] Bad TeamsConfig ref — falling back to SM DM:', (e as Error).message);
         }
     }
     if (!delivered) {
-        const members = await listTeamMembers();
-        const sm = members.find(m => m.Role === 'SM');
-        if (sm?.conversationReference) {
-            const result = await sendProactive(sm.conversationReference, async ctx => { await ctx.sendActivity(markdown); });
-            delivered = result.ok;
-            if (delivered) console.log('[sprint-summary] Posted to SM DM (channel unavailable)');
-            else console.warn('[sprint-summary] SM DM delivery failed:', result.error);
+        try {
+            const members = await listTeamMembers();
+            const sm = members.find(m => m.Role === 'SM');
+            if (sm?.conversationReference) {
+                const result = await sendProactive(sm.conversationReference, async ctx => { await ctx.sendActivity(markdown); });
+                delivered = result.ok;
+                if (delivered) console.log('[sprint-summary] Posted to SM DM (channel unavailable)');
+                else {
+                    deliveryErrors.push(`SM DM: ${result.error ?? 'send failed'}`);
+                    console.warn('[sprint-summary] SM DM delivery failed:', result.error ?? 'send failed');
+                }
+            }
+        } catch (e) {
+            deliveryErrors.push(`SM DM: ${(e as Error).message}`);
+            console.warn('[sprint-summary] SM DM delivery failed:', (e as Error).message);
         }
     }
 
+    const error = delivered ? undefined : deliveryErrors.join('; ') || 'No Teams channel or SM destination is configured.';
     return {
         uploaded: delivered,
+        error,
         counts: { total: classified.length, pending: pending.length, red: reds.length, amber: ambers.length },
-        note: delivered ? undefined : 'Report was not delivered: delivery failed or no Teams channel/SM destination is configured.',
+        note: delivered ? undefined : `Report was not delivered: ${error}`,
     };
 }

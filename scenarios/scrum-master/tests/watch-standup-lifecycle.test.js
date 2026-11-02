@@ -50,6 +50,7 @@ async function withStandup(overrides, run) {
         },
         '../services/sharepoint': {
             createItem: async () => ({ id: 'response' }),
+            claimStandupSession: async fields => ({ id: 'session', fields }),
             findByTitle: async () => null,
             findByField: async () => [{ fields: { ConversationRef: '{}' } }],
             updateItem: async () => {},
