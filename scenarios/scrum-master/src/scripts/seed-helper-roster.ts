@@ -49,7 +49,7 @@ const SEEDS: HelperRosterFields[] = [
     },
     {
         Title: 'Security / Compliance',
-        Keywords: 'security, credentials, secret, token, threat model, pen test, audit, compliance, vulnerability, cve, review',
+        Keywords: 'security, credentials, secret, token, threat model, pen test, audit, compliance, vulnerability, cve, security review',
         HelperEmail: 'sam@contoso.com',
         HelperDisplayName: 'Sam (Security)',
         IsActive: true,

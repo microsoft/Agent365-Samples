@@ -57,6 +57,8 @@ OpenTelemetry's Node SDK is pinned through an override to patched 0.217.x for [G
 
 Its optional Jaeger propagator is overridden to 2.9.0+ for [GHSA-45rx-2jwx-cxfr](https://github.com/advisories/GHSA-45rx-2jwx-cxfr). This does not enable Jaeger propagation; it keeps the installed dependency safe if explicitly selected.
 
+The 0.217.x OTLP transformer's protobuf runtime is overridden to 8.6.6+ to avoid the affected 8.0.1 release. Offline tests serialize real A365 spans through that patched runtime; older 7.x consumers retain their own compatible version.
+
 Until the package feed serves `follow-redirects` 1.16.2, the package pins the official MIT-licensed release at immutable Git commit `7130c835c45e71dcce25fcc999febe14c97ef64d` and shares that version with Axios. A loopback-only regression test verifies normal and cross-realm sensitive-header arrays. Replace the Git source with the patched registry release once it is available; do not downgrade Axios or suppress [GHSA-mrwp-f3q8-3g9p](https://github.com/advisories/GHSA-mrwp-f3q8-3g9p).
 
 ## Quick start — mock mode (no external services)
@@ -82,6 +84,8 @@ npm run test-tool     # opens the Agents Playground
 ```
 
 In a personal Playground conversation, DM the agent `/standup`. The first caller is bound to the mock Alex (Scrum Master) roster entry and receives Alex's tasks. Other mock assignees are unreachable until they interact in their own conversations; this is not a four-member delivery proof. Fill in an update and click **Submit**. The summary waits for expected responses or the cutoff. Then try:
+
+Mock standups require that initiating Playground turn. Cron and HTTP triggers without a turn context explicitly skip before creating a daily session; they never fall through to the live proactive adapter.
 
 - `What's the status of Task-1?` — grounded Q&A over the mock board (requires LLM credentials)
 - Submit an update first, then ask for that task's latest comments — the mock starts without standup comments or seeded blockers
@@ -339,6 +343,9 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   recovery. Record an existing event as booked; reset to `open` for a new
   proposal only after verifying that no event/invitations were created.
 - **Standup finalization:** an ambiguous failure can leave `summarizing`.
+  Preliminary roster lookup failures leave the session open and retryable.
+  Finalization waits for already accepted response writes before snapshotting,
+  and rejects new submissions once claimed.
   Inspect channel/DM delivery and persisted responses before recovery;
   restarting does not rebuild response fan-in or cutoff timers.
 

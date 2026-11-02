@@ -69,6 +69,9 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
+    "@opentelemetry/otlp-transformer@0.217.0": {
+      "protobufjs": "^8.6.6"
+    },
     "follow-redirects": "$follow-redirects",
     "@opentelemetry/propagator-jaeger": "^2.9.0",
     "@opentelemetry/sdk-node": "^0.217.0",

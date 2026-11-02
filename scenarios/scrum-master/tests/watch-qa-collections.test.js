@@ -18,7 +18,9 @@ function load(file, mocks = {}) {
 }
 
 function issue(key, parentKey) {
-    return { id: key, key, fields: { summary: `${key} content`, ...(parentKey ? { parent: { key: parentKey } } : {}) } };
+    return { id: key, key, fields: { summary: `${key} content`,
+        issuetype: { name: parentKey ? 'Sub-task' : 'Story', subtask: !!parentKey },
+        ...(parentKey ? { parent: { key: parentKey } } : {}) } };
 }
 
 function fixture(mode = 'live') {

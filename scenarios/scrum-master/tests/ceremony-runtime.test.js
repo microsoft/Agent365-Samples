@@ -190,7 +190,7 @@ test('Jira reads all sprint, issue and token-based subtask pages', async () => {
     const calls = [];
     const raw = n => ({ id: String(n), key: `T-${n}`, fields: {
         summary: `Issue ${n}`, status: { name: 'Done' }, project: { key: 'T' },
-        issuetype: { name: n >= 3 ? 'Sub-task' : 'Task' },
+        issuetype: { name: n >= 3 ? 'Sub-task' : 'Task', subtask: n >= 3 },
         ...(n >= 3 ? { parent: { key: 'T-1' } } : {}),
     } });
     const http = {

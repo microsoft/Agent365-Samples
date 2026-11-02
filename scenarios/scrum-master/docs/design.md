@@ -223,6 +223,11 @@ re-sending the day's cards. This is not a cross-process lock or a guarantee
 that a restarted process can resume its fan-in/cutoff state. Mock mode uses
 an in-memory roster and binds the first personal Playground caller to Alex;
 it needs no SharePoint or LLM credentials for `/standup`.
+Mock triggers without an initiating turn context (cron/HTTP) skip before
+creating the daily session; mock delivery never uses live hosting credentials.
+Jira Story-to-Epic relationships do not count as subtask parents: `parentKey`
+is populated only when Jira's `issuetype.subtask` is true, so inherited
+subtasks of epic-backed Stories remain eligible for standup fan-out.
 
 ### 5.2 Reconcile (MVP 2)
 
@@ -449,12 +454,16 @@ depends on model output. Everything else is TypeScript.
   pending fan-in and cutoff timers; a persisted SharePoint row does not
   rebuild them. Live triggers check existing SharePoint records before new
   fanout, but this check is not atomic across processes. A thrown failure
-  before delivery can leave the in-memory state `summarizing`; SharePoint
+  after finalization is claimed can leave the in-memory state `summarizing`; SharePoint
   stores `open` or `summarized`, not `summarizing`. Explicitly failed summary
   delivery leaves the session `open` and does not mark it completed. In the
   same process, retry `/standup` after cutoff or when all responses are
   collected to resend the summary without repeating fan-out. After a restart,
   inspect existing records before manually recovering a run.
+  Roster lookup occurs before the finalization claim, so a failed lookup
+  leaves the session retryable. Accepted response writes reserve the session
+  before their first persistence await; finalization drains them before
+  reconciliation and summary generation while rejecting new submissions.
 
 Warn risk detection and notification delivery are separate: `SMA_SprintRisks`
 rows stay `pending` until the Scrum Master DM succeeds, then become `delivered`

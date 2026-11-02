@@ -51,6 +51,16 @@ test('patched OpenTelemetry SDK preserves A365 scope initialization and export p
         const semantic = captured.filter(span => span.attributes['gen_ai.operation.name']);
         assert.deepEqual(semantic.map(span => span.attributes['gen_ai.operation.name']).sort(), ['execute_tool', 'invoke_agent']);
         assert.ok(semantic.every(span => span.attributes['gen_ai.agent.id'] === context.activity.recipient.agenticAppId));
+        const { createRequire } = require('node:module');
+        const sdkRequire = createRequire(require.resolve('@opentelemetry/sdk-node'));
+        const transformerRequire = createRequire(sdkRequire.resolve('@opentelemetry/otlp-transformer'));
+        const [major, minor, patch] = transformerRequire('protobufjs/package.json').version.split('.').map(Number);
+        assert.ok(major > 8 || (major === 8 && (minor > 6 || (minor === 6 && patch >= 6))));
+        const { ProtobufTraceSerializer } = sdkRequire('@opentelemetry/otlp-transformer');
+        const serialized = ProtobufTraceSerializer.serializeRequest(semantic);
+        assert.ok(serialized instanceof Uint8Array);
+        assert.ok(serialized.length > 0);
+        assert.equal(ProtobufTraceSerializer.deserializeResponse(new Uint8Array()).partialSuccess, undefined);
     } finally {
         await manager.shutdown();
         exporter.mock.restore();

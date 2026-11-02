@@ -300,7 +300,7 @@ function mapIssue(raw: any, baseUrl: string, sprintId: number | null): JiraIssue
         url: `${baseUrl.replace(/\/$/, '')}/browse/${raw.key}`,
         sprintId,
         dueDate: (typeof f.duedate === 'string' && f.duedate.length > 0) ? f.duedate : null,
-        parentKey: f.parent?.key ?? null,
+        parentKey: f.issuetype?.subtask === true ? (f.parent?.key ?? null) : null,
         issueType: f.issuetype?.name ?? 'Unknown',
     };
 }

@@ -53,12 +53,31 @@ export interface StandupSession {
 
 const sessions = new Map<string, StandupSession>();
 const completed = new Map<string, { sentTo: number }>();
+const pendingSubmissions = new WeakMap<StandupSession, Set<Promise<void>>>();
+
+/** Reserve synchronously so cutoff finalization includes every accepted write. */
+export function reserveSessionSubmission(session: StandupSession): (() => void) | undefined {
+    if (session.state !== 'open') return undefined;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const writes = pendingSubmissions.get(session) ?? new Set<Promise<void>>();
+    writes.add(pending);
+    pendingSubmissions.set(session, writes);
+    return () => {
+        writes.delete(pending);
+        release();
+    };
+}
+
+export async function waitForSessionSubmissions(session: StandupSession): Promise<void> {
+    await Promise.all(pendingSubmissions.get(session) ?? []);
+}
 
 export function getCompletedSession(standupId: string): { sentTo: number } | undefined {
     return completed.get(standupId);
 }
 
-/** Claim before any await so final replies and the cutoff cannot both finalize. */
+/** Claim synchronously after prerequisites so concurrent finalizers cannot both run. */
 export function claimSessionFinalization(session: StandupSession): boolean {
     if (session.state !== 'open') return false;
     session.state = 'summarizing';

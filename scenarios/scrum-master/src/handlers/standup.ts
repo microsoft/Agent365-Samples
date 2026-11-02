@@ -50,6 +50,8 @@ import {
     completeSession,
     getCompletedSession,
     claimSessionFinalization,
+    reserveSessionSubmission,
+    waitForSessionSubmissions,
     allExpectedResponded,
 } from '../services/session-store';
 import { getJiraMode, getScheduleConfig } from '../config';
@@ -116,10 +118,18 @@ async function deliverStandup(
             return { ok: false, error: message };
         }
     }
+    if (getJiraMode() === 'mock') {
+        return { ok: false, error: 'Mock standup delivery requires a matching local turn context.' };
+    }
     return sendProactive(reference, logic);
 }
 
 export function triggerStandup(opts: StandupTriggerOptions): Promise<StandupTriggerResult> {
+    if (getJiraMode() === 'mock' && !opts.turnContext) {
+        const note = 'Mock standup skipped: scheduled/HTTP triggers require a local turn context. Use /standup in Agents Playground.';
+        console.log(`[standup] ${note}`);
+        return Promise.resolve({ standupId: '', sentTo: 0, skipped: 0, note });
+    }
     // Reserve the entire async initialization, before roster and persistence awaits.
     if (pendingTrigger) return pendingTrigger;
     pendingTrigger = startStandup(opts).finally(() => { pendingTrigger = undefined; });
@@ -312,7 +322,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     }
 
     const session = getSession(standupId);
-    if (session && session.state !== 'open') {
+    if ((session && session.state !== 'open') || getCompletedSession(standupId)) {
         await context.sendActivity(`Standup ${standupId} is already being summarized — no further updates were recorded.`);
         return;
     }
@@ -356,32 +366,42 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         items,
     };
 
-    // Persist the response row.
-    await createItem<StandupResponseFields>('standupResponses', {
-        Title: `${standupId}#${response.userAadId}`,
-        StandupId: standupId,
-        UserAadId: response.userAadId,
-        SubmittedUtc: response.submittedUtc,
-        Items: JSON.stringify(items),
-    }).catch(err => {
-        console.warn(`[standup] StandupResponses insert warning: ${(err as Error).message}`);
-    });
-
-    // Persist / update Blocker rows for any hasBlocker=true items.
-    for (const item of items) {
-        if (!item.hasBlocker) continue;
-        const blockerTitle = item.issueKey;
-        const existing = await findByTitle<BlockerFields>('blockers', blockerTitle).catch(() => null);
-        const fields = {
-            Title: blockerTitle,
+    const releaseSubmission = session ? reserveSessionSubmission(session) : undefined;
+    if (session && !releaseSubmission) {
+        await context.sendActivity(`Standup ${standupId} is already being summarized — no further updates were recorded.`);
+        return;
+    }
+    try {
+        // Persist the response row.
+        await createItem<StandupResponseFields>('standupResponses', {
+            Title: `${standupId}#${response.userAadId}`,
             StandupId: standupId,
-            ReporterAadId: response.userAadId,
-            OwnerAadId: response.userAadId,      // owner = reporter unless we learn otherwise
-            BlockerText: item.blockerText ?? '',
-            State: 'open',
-        };
-        if (existing) await updateItem<BlockerFields>('blockers', existing.id, fields);
-        else await createItem<BlockerFields>('blockers', fields);
+            UserAadId: response.userAadId,
+            SubmittedUtc: response.submittedUtc,
+            Items: JSON.stringify(items),
+        }).catch(err => {
+            console.warn(`[standup] StandupResponses insert warning: ${(err as Error).message}`);
+        });
+        if (session) session.responses.set(response.userAadId, response);
+
+        // Persist / update Blocker rows for any hasBlocker=true items.
+        for (const item of items) {
+            if (!item.hasBlocker) continue;
+            const blockerTitle = item.issueKey;
+            const existing = await findByTitle<BlockerFields>('blockers', blockerTitle).catch(() => null);
+            const fields = {
+                Title: blockerTitle,
+                StandupId: standupId,
+                ReporterAadId: response.userAadId,
+                OwnerAadId: response.userAadId,      // owner = reporter unless we learn otherwise
+                BlockerText: item.blockerText ?? '',
+                State: 'open',
+            };
+            if (existing) await updateItem<BlockerFields>('blockers', existing.id, fields);
+            else await createItem<BlockerFields>('blockers', fields);
+        }
+    } finally {
+        releaseSubmission?.();
     }
 
     // Push the raw update + blocker text back to Jira as a comment on each issue.
@@ -409,10 +429,6 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
             }
         }
     });
-
-    if (session) {
-        session.responses.set(response.userAadId, response);
-    }
 
     // Ack the user.
     const submittedAtLocal = formatLocal(nowUtc, getScheduleConfig().timezone);
@@ -446,10 +462,24 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
 // --- summarizeStandup ----------------------------------------------------
 
 export async function summarizeStandup(session: StandupSession): Promise<void> {
-    if (!claimSessionFinalization(session)) return;
+    if (session.state !== 'open') return;
 
-    // Load roster once for display names.
+    // Resolve prerequisites before claiming; a transient roster failure remains retryable.
     const members = await listTeamMembers();
+    if (!claimSessionFinalization(session)) return;
+    try {
+        await finalizeStandup(session, members);
+    } finally {
+        releaseSessionFinalization(session);
+    }
+}
+
+function releaseSessionFinalization(session: StandupSession): void {
+    if (session.state === 'summarizing') session.state = 'open';
+}
+
+async function finalizeStandup(session: StandupSession, members: TeamMember[]): Promise<void> {
+    await waitForSessionSubmissions(session);
     const memberByAadId = new Map(members.map(m => [m.AadObjectId, m]));
     const smMember = members.find(m => m.Role === 'SM') ?? null;
 
