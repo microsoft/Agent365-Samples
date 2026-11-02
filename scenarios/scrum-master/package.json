@@ -69,6 +69,7 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
+    "zod": "$zod",
     "@opentelemetry/otlp-transformer@0.217.0": {
       "protobufjs": "^8.6.6"
     },

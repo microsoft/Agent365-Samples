@@ -51,6 +51,8 @@ Fast path (mock standup): **Node.js and npm are required.** Jira and roster data
 
 The agent uses OpenAI Agents SDK 0.7.x to match the Agent 365 OpenAI adapters, OpenAI 6.x, and Zod 4.6.6 or later. Keep these dependencies compatible when upgrading; older Zod releases are affected by [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
 
+The Zod override applies to SDK transitive consumers too, removing their vulnerable nested 3.25.75 copy. Offline tests exercise the real hosting/activity message, card, semantic-action and feedback schemas, including invalid input rejection, in addition to the OpenAI tool/output schemas.
+
 The hosting package's MSAL dependency is overridden to patched 7.1.2+ for [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5), because hosting 1.9.1 pins affected MSAL 5.6.0. The separate Graph device-code MSAL dependency is unchanged. Offline compatibility tests cover hosting client-credentials and OBO calls.
 
 OpenTelemetry's Node SDK is pinned through an override to patched 0.217.x for [GHSA-q7rr-3cgh-j5r3](https://github.com/advisories/GHSA-q7rr-3cgh-j5r3); this also selects its patched Prometheus exporter without changing the agent's exporter configuration.
