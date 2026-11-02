@@ -7,7 +7,7 @@ const Module = require('node:module');
 const path = require('node:path');
 
 function load(file, mocks) {
-    const filename = path.resolve(__dirname, '..', file);
+    const filename = path.resolve(__dirname, '..', ...file.split(/[\\/]+/));
     const original = Module._load;
     delete require.cache[filename];
     Module._load = function (request, parent, ...args) {
