@@ -17,7 +17,8 @@ import { portalSecretProblem } from './portal-secret';
 import { setBackgroundTokenProvider } from './graph-service';
 import { onAgentIdentityChange } from './agent-identity';
 import { retrySubscriptionNow } from './subscription-manager';
-import { selectUsersToNotify } from './portal-notifications';
+import { PortalQueue } from './portal-notifications';
+import * as path from 'path';
 
 // The observability token resolver mints app-only export tokens from the hosting connection
 // (the blueprint credential), so hand it the adapter's default connection.
@@ -128,11 +129,13 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
       res.status(401).json({ ok: false, reason: 'clientState mismatch.' });
       return;
     }
-    // Ack Graph FAST — it retries hard if we take too long. Do the real work async.
+    // Record the work durably BEFORE acknowledging: Graph treats the 202 as delivered and won't resend,
+    // so from here the queue (with its own retry) owns the notification.
+    portalQueue.enqueue();
     res.status(202).json({ ok: true });
-    // Fire-and-forget: read recently-changed rows and DM affected users.
-    void handleGraphNotification(body).catch((err) => {
-      console.error('[Proactive] Async Graph notification handling failed:', (err as any)?.message ?? err);
+    console.log(`[Proactive] Graph notification received — ${body.value.length} entries.`);
+    void portalQueue.kick().catch((err) => {
+      console.error('[Proactive] Processing the portal notification queue failed:', (err as any)?.message ?? err);
     });
     return;
   }
@@ -154,83 +157,42 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
 });
 
 /**
- * Handles a Microsoft Graph change-notification batch. Since list subscriptions only tell us
- * "something changed" without which item, we read recently-updated LearningPortalStatus rows
- * and fire a proactive DM per affected user — once per change (see `lastNotified`).
+ * Graph change notifications are queued durably BEFORE they are acknowledged and processed with bounded
+ * retry (see portal-notifications.ts), so a Graph / Teams outage right after the 202 can't lose the
+ * final course-completion update. Each pass reads the recently-updated LearningPortalStatus rows
+ * (list subscriptions only say "something changed") and DMs each affected user once per change.
  */
-// Per user: LastUpdated (ms) of the newest portal row already turned into a DM. In memory, which is enough
-// because it only has to cover the 10-minute scan window; after a restart a row still in the window is
-// handled once more.
-const lastNotified = new Map<string, number>();
-
-async function handleGraphNotification(body: { value: Array<{ resource?: string; clientState?: string; subscriptionId?: string; changeType?: string }> }): Promise<void> {
+async function readRecentPortalRows(cutoffMs: number): Promise<Array<{ id: string; fields: Record<string, any> }>> {
   const { getSiteId, getListIdByName, getListItems, getBackgroundGraphClient } = await import('./graph-service');
   const { SP_CONFIG } = await import('./career-coach-types');
-
-  console.log(`[Proactive] Graph notification received — ${body.value.length} entries.`);
-  // Compute the "recently updated" window: the last 10 minutes covers Graph's typical latency
-  // plus a safety margin; rows already handled are skipped below, so overlap never re-sends a DM.
-  const cutoff = new Date(Date.now() - 10 * 60_000);
-
   const graph = getBackgroundGraphClient();
-  let siteId: string;
-  let listId: string | null;
+  const siteId = await getSiteId(graph);
+  const listId = await getListIdByName(siteId, SP_CONFIG.lists.learningPortalStatus, graph);
+  if (!listId) throw new Error('LearningPortalStatus list not found — cannot process the notification.');
+  // Read only recently-changed rows (server-side filter on LastUpdated); fall back to a full
+  // scan if the filter is rejected so a notification is never silently dropped.
   try {
-    siteId = await getSiteId(graph);
-    listId = await getListIdByName(siteId, SP_CONFIG.lists.learningPortalStatus, graph);
-    if (!listId) {
-      console.warn('[Proactive] LearningPortalStatus list not found — cannot process notification.');
-      return;
-    }
-  } catch (err) {
-    console.error('[Proactive] Failed to resolve site/list for notification:', (err as any)?.message ?? err);
-    return;
+    const { getColumnMap } = await import('./sharepoint-column-map');
+    const colMap = await getColumnMap(graph, siteId, listId);
+    const lastUpdatedCol = colMap.displayToInternal['LastUpdated'] ?? 'LastUpdated';
+    return await getListItems(siteId, listId, { graph, filter: `fields/${lastUpdatedCol} ge '${new Date(cutoffMs).toISOString()}'` });
+  } catch (filterErr) {
+    console.warn('[Proactive] Filtered read failed, falling back to a full scan:', (filterErr as any)?.message ?? filterErr);
+    return await getListItems(siteId, listId, { graph });
   }
-
-  let rows: Array<{ id: string; fields: Record<string, any> }>;
-  try {
-    // Read only recently-changed rows (server-side filter on LastUpdated); fall back to a full
-    // scan if the filter is rejected so a notification is never silently dropped.
-    try {
-      const { getColumnMap } = await import('./sharepoint-column-map');
-      const colMap = await getColumnMap(graph, siteId, listId);
-      const lastUpdatedCol = colMap.displayToInternal['LastUpdated'] ?? 'LastUpdated';
-      rows = await getListItems(siteId, listId, { graph, filter: `fields/${lastUpdatedCol} ge '${cutoff.toISOString()}'` });
-    } catch (filterErr) {
-      console.warn('[Proactive] Filtered read failed, falling back to a full scan:', (filterErr as any)?.message ?? filterErr);
-      rows = await getListItems(siteId, listId, { graph });
-    }
-  } catch (err) {
-    console.error('[Proactive] Failed to read LearningPortalStatus rows:', (err as any)?.message ?? err);
-    return;
-  }
-
-  const usersToNotify = selectUsersToNotify(rows, cutoff.getTime(), lastNotified);
-
-  if (usersToNotify.size === 0) {
-    console.log('[Proactive] No new portal changes since the last notification — nothing to DM.');
-    return;
-  }
-  console.log(`[Proactive] Firing proactive DM for ${usersToNotify.size} user(s): ${Array.from(usersToNotify.keys()).join(', ')}`);
-  for (const [aad, { fields, updatedAt }] of usersToNotify.entries()) {
-    try {
-      const result = await agentApplication.handleProactivePortalEvent(aad, {
-        UserAADId: aad,
-        CourseId: fields.CourseId,
-        Status: fields.Status,
-        PercentComplete: fields.PercentComplete,
-        TimeSpentMinutes: fields.TimeSpentMinutes,
-      });
-      // The checkpoint advances only after the DM was actually handled, so an undeliverable one is retried.
-      if (result.ok) lastNotified.set(aad.toLowerCase(), updatedAt);
-      else console.warn(`[Proactive]   -> ${aad}: ${result.reason}`);
-    } catch (err) {
-      console.error(`[Proactive]   -> ${aad}: threw`, (err as any)?.message ?? err);
-    }
-  }
-  // Entries older than the scan window can never match a row again.
-  for (const [key, at] of lastNotified) if (at < cutoff.getTime()) lastNotified.delete(key);
 }
+
+const portalQueue = new PortalQueue({
+  filePath: path.resolve(process.cwd(), '.portal-queue.json'),
+  scan: readRecentPortalRows,
+  deliver: (aad, fields) => agentApplication.handleProactivePortalEvent(aad, {
+    UserAADId: aad,
+    CourseId: fields.CourseId,
+    Status: fields.Status,
+    PercentComplete: fields.PercentComplete,
+    TimeSpentMinutes: fields.TimeSpentMinutes,
+  }),
+});
 
 server.use(authorizeJWT(authConfig))
 
@@ -246,6 +208,11 @@ const port = Number(process.env.PORT) || 3978
 const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
 server.listen(port, host, async () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
+  // A notification that was acknowledged but not fully processed before a restart is picked up again.
+  if (portalQueue.hasPending()) {
+    console.log('[startup] Resuming portal notifications that were still pending.');
+    void portalQueue.kick().catch((err) => console.error('[startup] Resuming portal notifications failed:', (err as any)?.message ?? err));
+  }
   // Real-time trigger for Feature 1: ensure a Microsoft Graph change-notification subscription
   // exists on the LearningPortalStatus list, pointing at our /api/portal-event endpoint.
   // Best-effort — a failed attempt (agent identity not known until the first message, tunnel down)

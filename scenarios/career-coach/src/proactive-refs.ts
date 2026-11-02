@@ -56,6 +56,21 @@ export function setRef(aadObjectId: string, conversationId: string): void {
        console.log(`[proactive-refs] Stored conversationId for aadObjectId=${aadObjectId}`);
 }
 
+/** Only a personal (1:1) conversation is private to the employee; group chats and channels are not. */
+export function isPersonalConversation(activity: { conversation?: any } | undefined): boolean {
+    const conversation = activity?.conversation;
+    return !!conversation && conversation.conversationType === 'personal' && conversation.isGroup !== true;
+}
+
+export function removeRef(aadObjectId: string): void {
+    const c = load();
+    const key = aadObjectId.toLowerCase();
+    if (!(key in c)) return;
+    delete c[key];
+    persist();
+    console.log(`[proactive-refs] Removed the stored conversation for aadObjectId=${aadObjectId}`);
+}
+
 export function getRef(aadObjectId: string): string | undefined {
     return load()[aadObjectId.toLowerCase()];
 }

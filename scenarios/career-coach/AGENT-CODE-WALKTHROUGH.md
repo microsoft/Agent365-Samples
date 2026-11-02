@@ -44,7 +44,8 @@ src/
 ├── mail-guard.ts             Code-level recipient allowlist for the WorkIQ Mail and Calendar MCP servers
 ├── sharepoint-column-map.ts  Display-name ↔ internal-column-name translation
 ├── file-storage.ts           Disk-backed SDK Storage (proactive subsystem)
-├── proactive-refs.ts         AAD object id → conversation id map (disk)
+├── proactive-refs.ts         AAD object id → personal (1:1) conversation id map (disk); group chats and channels are never stored
+├── portal-notifications.ts   Durable queue for portal notifications: recorded before the 202, bounded-backoff retry, per-user checkpoint (dedupe)
 ├── observability/
 │   ├── app-token-resolver.ts App-only token for the exporter (3-hop FMI exchange)
 │   └── conversation-id.ts    Stable conversation id for spans (email threads)
@@ -66,7 +67,7 @@ Order matters:
    - `GET /api/health` — before auth.
    - `POST /api/portal-event` — before auth, because Graph and manual callers don't carry an agent token. Three shapes: Graph validation handshake (echo `validationToken`), Graph change notification (`clientState` must equal `PORTAL_EVENT_SECRET`; answered `202` immediately, work done async), and a manual test call (`X-Portal-Secret` header).
    - `authorizeJWT(...)`, then `POST /api/messages` → `adapter.process` → `agentApplication.run`.
-7. On listen: `ensureSubscription()` (best-effort, single-flight) creates/renews the Graph subscription on the `LearningPortalStatus` list — retried with backoff, and immediately when the agent first learns its own ids. A subscription made with the developer fallback (non-production only) is replaced by an agent-user one at that point. The SharePoint site/list caches are warmed so the LLM can't guess IDs. A Graph change notification reads only rows updated in the last 10 minutes (server-side filter, full-scan fallback) and DMs each user once per change (`lastNotified`).
+7. On listen: `ensureSubscription()` (best-effort, single-flight) creates/renews the Graph subscription on the `LearningPortalStatus` list — retried with backoff, and immediately when the agent first learns its own ids. A subscription made with the developer fallback (non-production only) is replaced by an agent-user one at that point. The SharePoint site/list caches are warmed so the LLM can't guess IDs. A Graph change notification is recorded durably before it is acknowledged, then reads only rows updated in the last 10 minutes (server-side filter, full-scan fallback) and DMs each user once per change, retrying failures with bounded backoff (`PortalQueue`).
 
 ## 4. Routing — `MyAgent` constructor (`agent.ts`)
 
@@ -168,7 +169,8 @@ Attempts are counted only after the SharePoint reads succeed, so a network failu
 - **Tools** (`makeSharePointTools`): `getSiteByPath`, `listLists`, `listListItems`, `createListItem`, `updateListItem`, `listPreviousGoals`. `modelSettings.toolChoice = 'required'` forces a tool call on the first step so the model can't answer from memory.
 - **History**: one client per conversation id (`clientCache`); email turns pass the email thread id instead. `hasClient(key)` tells the email handler whether history exists.
 - **WorkIQ**: `attachWorkIqTools` registers the MCP servers each turn (tokens are per turn), connects each independently, skips any that time out, and closes them afterwards. The SharePoint MCP server gets a `toolFilter` that only exposes read-verb tools (`get…`, `list…`, `search…`), so list writes can only go through our guarded tools.
-- **Retries**: a transient network error (`fetch failed`, timeouts, DNS) is retried up to 3 times with backoff; if it still fails the unanswered message is rolled back out of history so the next turn is consistent.
+- **Retries**: a transient network error (`fetch failed`, timeouts, DNS) is retried up to 3 times with backoff, **unless** a Mail or Calendar write was already attempted in that run — replaying it would send a second email or duplicate invite, so the run stops, the user is told to check their inbox/calendar, and the exchange is kept in history. If it fails with nothing external done, the unanswered message is rolled back out of history (by reference) so the next turn is consistent.
+- **One run at a time**: `invokeAgentWithScope` queues behind the previous run of the same cached client, so history, the MCP server list and the rollback are never touched by two runs at once. (Separate from the per-user `UserState` lock.)
 
 ## 11. The write guards — `sharepoint-tools.ts`
 
@@ -200,16 +202,16 @@ These make wrong LLM behaviour impossible rather than merely discouraged:
 2. The sender is looked up in Graph; only organisation **Members** get a reply (guests / external ignored). The sender's object id is put on the activity so the conversation is scoped to their plan.
 3. The thread key is `email:<agent instance>:<sender id>:<emailNotification.conversationId>` — stable across a thread (unlike the per-message activity id) and unique per member, so two people replying in the same thread never share a client, history or pending plan.
 4. **"Save it"** (`isSavePlanIntent`) with a pending plan for this thread → `savePlan` (same code as the Teams button), reply with the progress table.
-5. Otherwise the LLM runs with an email-specific prompt. The email text — and, if there is no history for the thread (first email, or after a restart), the **quoted reply history** (`extractQuotedHistory`) — goes in `<untrusted_email>` fences with any delimiter tags inside neutralised, and the model is told never to follow instructions in them. Mail / Calendar writes are checked in code by `mail-guard.ts`: every address must be the sender (or their manager, only when the sender's own message asks for the manager); forward / reply tools and unverifiable recipients are refused.
+5. Otherwise the LLM runs with an email-specific prompt. The email text — and, if there is no history for the thread (first email, or after a restart), the **quoted reply history** (`extractQuotedHistory`) — goes in `<untrusted_email>` fences with any delimiter tags inside neutralised, and the model is told never to follow instructions in them. Mail / Calendar tools are checked in code by `mail-guard.ts`: the Career Coach mailbox is shared by every employee, so the Mail server is **send-only** (reading, searching, replying, forwarding, updating and deleting are hidden and refused); every address in a send or invite must be the sender (or their manager, only when the sender's own message asks for the manager); Calendar reads must name a verified address; unverifiable recipients are refused.
 6. If the reply contains a `planReview` card it is stored in `email-plan-store.ts` (disk, 14-day expiry, tied to thread + user). The card is rendered as an HTML table with "Reply **Save it**"; quizzes point to Teams.
 
 **Outbound** — two separate things:
-- The **completion email** is always sent by `fireCompletion100` (Graph `sendMail`, To: user, Cc: manager). The LLM is told never to send it.
-- Emails the **user asks for** ("email me my plan") are sent by the model through the WorkIQ Mail tools, from the agent's own mailbox.
+- The **completion email** is always sent by `fireCompletion100` (Graph `sendMail`, To: the employee, Cc: the manager looked up at send time). If the employee's own address can't be resolved nothing is sent and the goal stays Active for a retry. The goal is recorded as Completed before the summary card is rendered. The LLM is told never to send it.
+- Emails the **user asks for** ("email me my plan") are sent by the model through the WorkIQ Mail tools, from the agent's own mailbox. If a transient failure happens after such a send, the run is not replayed.
 
 ## 13. Proactive flow (learning-portal updates)
 
-A row changes in `LearningPortalStatus` → Graph change notification → `POST /api/portal-event` → `handleGraphNotification` finds rows updated in the last 10 minutes → `agentApplication.handleProactivePortalEvent(aadId, …)` → `proactive.continueConversation(...)` (the user must have chatted once, so their conversation id is in `.proactive-refs.json`) → inside that turn `handleSyncProgress` runs under `runObserved` with a short preface message → the user gets a quiz DM for any newly finished course.
+A row changes in `LearningPortalStatus` → Graph change notification → `POST /api/portal-event` → the work is **recorded on disk** (`.portal-queue.json`) → `202` → `PortalQueue` finds rows updated in the last 10 minutes that haven't been handled yet → `agentApplication.handleProactivePortalEvent(aadId, …)` → `proactive.continueConversation(...)` → inside that turn `handleSyncProgress` runs under `runObserved` with a short preface message → the user gets a quiz DM for any newly finished course. Failed reads or deliveries are retried with bounded backoff (and resumed after a restart); the per-user checkpoint stops a retry or someone else's update from re-sending a DM. The destination is the employee's stored **personal (1:1)** conversation (`.proactive-refs.json`): only a personal chat is ever stored, so a group chat or channel never receives a private update. If there is no private chat yet, nothing is sent until the user messages the agent once.
 
 ## 14. Observability
 

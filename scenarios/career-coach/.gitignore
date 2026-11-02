@@ -25,6 +25,7 @@ a365.generated.config.json
 .sp-subscription.json
 .email-plans.json
 .agent-identity.json
+.portal-queue.json
 backups/
 
 # dev logs

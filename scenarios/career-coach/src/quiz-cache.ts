@@ -11,7 +11,7 @@
  * click the "retake" flow). Acceptable for a dev/demo setup.
  */
 
-import { QuizQuestionWithKey } from './career-coach-service';
+import { QuizQuestionWithKey, GradedAnswer } from './career-coach-service';
 
 interface QuizCacheEntry {
     questions: QuizQuestionWithKey[];
@@ -33,6 +33,40 @@ export function putQuiz(userAADId: string, courseId: string, questions: QuizQues
         createdAt: Date.now(),
         attempts: (prior?.attempts ?? 0),
     });
+    // New questions mean any half-finished submission belonged to the old ones.
+    submissions.delete(key);
+}
+
+// ----------------------------------------------------------------------------
+// Submissions — the recorded outcome of one graded submission, kept until it has been fully applied
+// (audit row written AND the plan updated). If the plan update fails after the audit row was written,
+// the restored card is resubmitted with the same answers; that retry reuses this record (same grading,
+// same attempt number, no second audit row) instead of grading and appending again.
+// ----------------------------------------------------------------------------
+
+export interface PendingSubmission {
+    /** Hash of the submitted answers; a retry with different answers is a new submission. */
+    fingerprint: string;
+    graded: GradedAnswer[];
+    attempts: number;
+    attemptDate: string;
+    /** True once the QuizResponses audit row for this submission exists. */
+    auditWritten: boolean;
+}
+
+const submissions = new Map<string, PendingSubmission>();
+
+export function getSubmission(userAADId: string, courseId: string, fingerprint: string): PendingSubmission | null {
+    const found = submissions.get(keyOf(userAADId, courseId));
+    return found && found.fingerprint === fingerprint ? found : null;
+}
+
+export function saveSubmission(userAADId: string, courseId: string, submission: PendingSubmission): void {
+    submissions.set(keyOf(userAADId, courseId), submission);
+}
+
+export function clearSubmission(userAADId: string, courseId: string): void {
+    submissions.delete(keyOf(userAADId, courseId));
 }
 
 // One generation per user/course at a time: overlapping sync / portal turns that both find the cache
@@ -77,6 +111,7 @@ export function bumpAttempts(userAADId: string, courseId: string): number {
 
 export function clearQuiz(userAADId: string, courseId: string): void {
     cache.delete(keyOf(userAADId, courseId));
+    submissions.delete(keyOf(userAADId, courseId));
 }
 
 /**
@@ -86,6 +121,7 @@ export function clearQuiz(userAADId: string, courseId: string): void {
 export function clearAllQuizzes(userAADId: string): void {
     const prefix = `${userAADId.toLowerCase()}::`;
     for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key);
+    for (const key of [...submissions.keys()]) if (key.startsWith(prefix)) submissions.delete(key);
     for (const key of [...graded]) if (key.startsWith(prefix)) graded.delete(key);
     pending.delete(userAADId.toLowerCase());
 }

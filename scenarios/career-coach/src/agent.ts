@@ -21,6 +21,10 @@ import { extractCards, buildMessageCard, defaultWelcomeAttachment, CardPayload, 
 import { getAgenticGraphClient } from './graph-service';
 import { rememberAgentIdentity } from './agent-identity';
 import * as proactiveRefs from './proactive-refs';
+import { isPersonalConversation } from './proactive-refs';
+
+/** Outcome of a proactive portal DM. `retryable` is true for failures that can clear up (Teams / Graph outage). */
+export interface ProactiveResult { ok: boolean; reason?: string; retryable?: boolean }
 import { FileStorage } from './file-storage';
 import { handleSkillRatingsSubmit, handleSavePlanSubmit, savePlan, savePlanInputFromReview, handleQuizSubmit, handleSyncProgress, emitQuizFor, queueReportedCourses, savedPlanReviewCard, handleCompletedAllCourses, findReportedCourses, handleReportedCompletions, validateBlockedCourses, SkillRatingInput } from './handlers';
 import { getQuiz, queueQuizzes, wasGraded } from './quiz-cache';
@@ -758,6 +762,10 @@ export class MyAgent extends AgentApplication<TurnState> {
     rememberAgentIdentity(turnContext.activity);
     const aad = turnContext.activity?.from?.aadObjectId;
     if (!aad) return;
+    // Portal updates DM the employee's career progress, so only a personal (1:1) conversation may become
+    // their proactive destination. A group chat or channel is never stored, and never replaces an
+    // existing 1:1 reference — otherwise the next update would post their progress to everyone there.
+    if (!isPersonalConversation(turnContext.activity)) return;
     const convId = await this.proactive.storeConversation(turnContext);
     proactiveRefs.setRef(aad, convId);
   }
@@ -775,14 +783,29 @@ export class MyAgent extends AgentApplication<TurnState> {
    *
    * Returns a small ack object the HTTP handler can serialize to JSON.
    */
-  async handleProactivePortalEvent(aadObjectId: string, payload: any): Promise<{ ok: boolean; reason?: string }> {
-    if (!aadObjectId) return { ok: false, reason: 'aadObjectId is required in the request body.' };
+  async handleProactivePortalEvent(aadObjectId: string, payload: any): Promise<ProactiveResult> {
+    if (!aadObjectId) return { ok: false, reason: 'aadObjectId is required in the request body.', retryable: false };
 
     const convId = proactiveRefs.getRef(aadObjectId);
     if (!convId) {
-      const reason = `No cached conversation for aadObjectId=${aadObjectId}. Ask the user to open the agent in Teams once, then re-fire the trigger.`;
+      const reason = `No private (1:1) conversation is stored for aadObjectId=${aadObjectId}. Ask the user to message the agent in a personal chat once, then re-fire the trigger.`;
       console.warn('[Proactive] ' + reason);
-      return { ok: false, reason };
+      return { ok: false, reason, retryable: false };
+    }
+
+    // A reference saved before group conversations were excluded may still point at a group chat or
+    // channel. Never post a private progress update there: drop it and wait for a 1:1 message.
+    try {
+      const stored = await this.proactive.getConversation(convId);
+      if (stored && !isPersonalConversation({ conversation: (stored.reference as any)?.conversation })) {
+        proactiveRefs.removeRef(aadObjectId);
+        const reason = `The stored conversation for aadObjectId=${aadObjectId} is not a personal chat — not sending a private update there.`;
+        console.warn('[Proactive] ' + reason);
+        return { ok: false, reason, retryable: false };
+      }
+    } catch (err) {
+      console.warn('[Proactive] Could not verify the stored conversation type:', (err as any)?.message ?? err);
+      return { ok: false, reason: 'Could not verify that the stored conversation is private.', retryable: true };
     }
 
     // Optional heads-up prose we thread into the LLM turn — nudges the model to explain what
@@ -826,7 +849,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     } catch (err) {
       const msg = (err as any)?.message ?? String(err);
       console.error('[Proactive] continueConversation failed:', msg);
-      return { ok: false, reason: msg };
+      return { ok: false, reason: msg, retryable: true };
     }
   }
 

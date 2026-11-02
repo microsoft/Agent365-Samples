@@ -35,7 +35,8 @@ import {
     generateQuizQuestions, gradeShortAnswers, composeCompletionEmail, ShortGradeInput,
 } from './llm-tasks';
 import { getAgenticGraphClient, getMyManager, getMyProfile, sendMail } from './graph-service';
-import { getQuiz, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes } from './quiz-cache';
+import { getQuiz, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes, getSubmission, saveSubmission, clearSubmission } from './quiz-cache';
+import { createHash } from 'crypto';
 import { withUserLock } from './user-lock';
 
 // ============================================================================
@@ -705,24 +706,36 @@ async function handleQuizSubmitInner(
         return;
     }
 
+    // A resubmission with the SAME answers after a failed plan update is the same logical submission:
+    // reuse its recorded grading, attempt number and audit row rather than grading and appending again.
+    const fingerprint = createHash('sha256')
+        .update(JSON.stringify(cached.map((q) => [q.id, String(input.answersByQuestionId[q.id] ?? '').trim()])))
+        .digest('hex');
+    const recorded = getSubmission(input.userAADId, input.courseId, fingerprint);
+
     // Grade every question.
-    const graded: GradedAnswer[] = [];
+    let graded: GradedAnswer[] = [];
     const shortInputs: ShortGradeInput[] = [];
-    for (const q of cached) {
-        const userAns = String(input.answersByQuestionId[q.id] ?? '').trim();
-        if (q.type === 'mcq') {
-            graded.push(gradeMcqAnswer(q, userAns));
-        } else {
-            // Placeholder — will fill in after the LLM sub-call returns.
-            graded.push({
-                id: q.id, type: 'short', text: q.text, correctAnswer: q.correctAnswer,
-                userAnswer: userAns, correct: false, topicTag: q.topicTag,
-                explanation: undefined,
-            });
-            shortInputs.push({
-                id: q.id, questionText: q.text, correctIdea: q.correctAnswer,
-                userAnswer: userAns, topicTag: q.topicTag,
-            });
+    if (recorded) {
+        console.log('[QuizSubmit] Retrying a recorded submission — reusing its grading and attempt.');
+        graded = recorded.graded;
+    } else {
+        for (const q of cached) {
+            const userAns = String(input.answersByQuestionId[q.id] ?? '').trim();
+            if (q.type === 'mcq') {
+                graded.push(gradeMcqAnswer(q, userAns));
+            } else {
+                // Placeholder — will fill in after the LLM sub-call returns.
+                graded.push({
+                    id: q.id, type: 'short', text: q.text, correctAnswer: q.correctAnswer,
+                    userAnswer: userAns, correct: false, topicTag: q.topicTag,
+                    explanation: undefined,
+                });
+                shortInputs.push({
+                    id: q.id, questionText: q.text, correctIdea: q.correctAnswer,
+                    userAnswer: userAns, topicTag: q.topicTag,
+                });
+            }
         }
     }
     if (shortInputs.length > 0) {
@@ -751,36 +764,49 @@ async function handleQuizSubmitInner(
         // crafted submit) must not raise skills, write audit rows or consume an attempt.
         const lp = userRecord.state.LearningProgress.find((l) => l.courseId === input.courseId);
         if (!lp) return { ok: false as const, problem: "That course isn't on your current plan, so I can't record a quiz for it. Say **check my progress** for your current quizzes." };
-        // Counted only once the reads succeed, so a network failure above isn't an attempt.
-        const attempts = bumpAttempts(input.userAADId, input.courseId) || 1;
+        // Counted only once the reads succeed, so a network failure above isn't an attempt. A retry of a
+        // recorded submission keeps its original attempt number and date.
+        const submission = recorded ?? {
+            fingerprint,
+            graded,
+            attempts: bumpAttempts(input.userAADId, input.courseId) || 1,
+            attemptDate: nowIso(),
+            auditWritten: false,
+        };
+        saveSubmission(input.userAADId, input.courseId, submission);
+        const attempts = submission.attempts;
         const courseTitle = lp.courseTitle || course.Title;
 
         const quizResult: UserLearningQuizSummary = {
-            attemptDate: nowIso(),
+            attemptDate: submission.attemptDate,
             score: summary.score,
             passed: summary.passed,
             topicTagsWrong: summary.topicTagsWrong,
             attempts,
         };
 
-        // WRITE #1 — QuizResponses row.
-        try {
-            await appendQuizResponse(graph, {
-                userAADId: input.userAADId,
-                courseId: input.courseId,
-                courseTitle,
-                skillId: input.skillId || (String(course.SkillIds ?? '').split(';')[0] ?? ''),
-                attemptDate: quizResult.attemptDate,
-                score: summary.score,
-                passed: summary.passed,
-                attempts,
-                feedback: graded,
-            }, userRecord.siteId);
-        } catch (err) {
-            console.warn('[QuizSubmit] appendQuizResponse failed (non-fatal):', (err as any)?.message ?? err);
+        // WRITE #1 — QuizResponses row, once per submission: after it succeeds, a retry of the plan
+        // update below never appends it again.
+        if (!submission.auditWritten) {
+            try {
+                await appendQuizResponse(graph, {
+                    userAADId: input.userAADId,
+                    courseId: input.courseId,
+                    courseTitle,
+                    skillId: input.skillId || (String(course.SkillIds ?? '').split(';')[0] ?? ''),
+                    attemptDate: quizResult.attemptDate,
+                    score: summary.score,
+                    passed: summary.passed,
+                    attempts,
+                    feedback: graded,
+                }, userRecord.siteId);
+                submission.auditWritten = true;
+            } catch (err) {
+                console.warn('[QuizSubmit] appendQuizResponse failed (non-fatal):', (err as any)?.message ?? err);
+            }
         }
 
-        // WRITE #2 — UserState update.
+        // WRITE #2 — UserState update. If this throws, the submission record stays so the retry resumes here.
         const previousOverall = userRecord.state.OverallProgress;
         const nextState = summary.passed
             ? applyQuizPass(userRecord.state, input.courseId, quizResult, course)
@@ -798,6 +824,7 @@ async function handleQuizSubmitInner(
     // while sending the card can never leave a graded quiz open for a second (duplicate) submission.
     markGraded(input.userAADId, input.courseId);
     dequeueQuiz(input.userAADId, input.courseId);
+    clearSubmission(input.userAADId, input.courseId);
 
     // Render the quizResult card.
     const feedbackCard = graded.map((g) => ({
@@ -992,12 +1019,18 @@ async function sendCompletion(
         console.warn('[Completion100] composeCompletionEmail failed; using fallback body:', (err as any)?.message ?? err);
     }
 
-    // Get user's own email to include as the primary To recipient.
+    // The employee's own address is required: the wrap-up is addressed to them. If it can't be resolved
+    // (after one retry for a transient lookup failure) nothing is sent and the goal stays Active, so
+    // "check my progress" tries again — the manager is never made the sole recipient.
     let userEmail: string | undefined;
-    try {
-        const profile = await getMyProfile(graph, userAADId);
-        userEmail = profile.mail || profile.userPrincipalName;
-    } catch { /* best-effort */ }
+    for (let attempt = 1; attempt <= 2 && !userEmail; attempt++) {
+        try {
+            const profile = await getMyProfile(graph, userAADId);
+            userEmail = profile.mail || profile.userPrincipalName || undefined;
+        } catch (err) {
+            if (attempt === 2) console.warn('[Completion100] Could not resolve the employee address:', (err as any)?.message ?? err);
+        }
+    }
 
     // Send the email deterministically. Convention:
     //   To: the user (they see the celebration too + a copy lands in their Sent Items).
@@ -1007,24 +1040,21 @@ async function sendCompletion(
     const to: string[] = [];
     const cc: string[] = [];
     if (userEmail) to.push(userEmail);
-    if (managerEmail && managerEmail.toLowerCase() !== (userEmail ?? '').toLowerCase()) cc.push(managerEmail);
-    // Fallback: if we somehow lack a userEmail, still send to the manager only.
-    if (to.length === 0 && cc.length > 0) { to.push(cc[0]); cc.length = 0; }
+    if (userEmail && managerEmail && managerEmail.toLowerCase() !== userEmail.toLowerCase()) cc.push(managerEmail);
 
     if (to.length === 0) {
-        note = 'No manager or user email found — the email was drafted but not sent.';
+        note = "I couldn't look up your email address just now, so nothing was sent. Say \"check my progress\" in a moment and I'll try again.";
     } else {
         try {
             await sendMail({ to, cc, subject, htmlBody, fromUserId: userAADId, graph });
             sent = true;
-            console.log(`[Completion100] Email sent. To=${to.join(', ')} Cc=${cc.join(', ') || '(none)'}`);
+            console.log(`[Completion100] Email sent. To=${to.length} Cc=${cc.length}`);
         } catch (err) {
             note = `Email send failed: ${(err as any)?.message ?? err}`;
         }
     }
 
-    const managerMailed = sent && !!managerEmail && [...to, ...cc].some((a) => a.toLowerCase() === managerEmail!.toLowerCase());
-    const copiedManager = managerMailed;
+    const copiedManager = sent && cc.length > 0;
 
     // Record the send BEFORE rendering the summary card: once the email is out, a card-delivery failure
     // must not leave the goal retryable (the next sync would mail the employee and manager again).
@@ -1067,7 +1097,7 @@ async function sendCompletion(
         sent,
         note,
         footer: sent
-            ? `Congratulations! ${!copiedManager ? 'An email with your career plan wrap-up has been sent to you.' : userEmail ? 'An email with your career plan wrap-up has been sent to you, with your manager copied.' : 'An email with your career plan wrap-up has been sent to your manager.'} 🎉 This goal is now complete — say "hi" whenever you're ready to set your next one.`
+            ? `Congratulations! ${copiedManager ? 'An email with your career plan wrap-up has been sent to you, with your manager copied.' : 'An email with your career plan wrap-up has been sent to you.'} 🎉 This goal is now complete — say "hi" whenever you're ready to set your next one.`
             : `Your plan is 100% complete. ${note ?? ''}`,
     });
 }
