@@ -7,7 +7,8 @@
 # deleted by this script).
 #
 # Requires:
-#   - az CLI installed and logged into the target tenant with an admin account
+#   - az CLI installed; an admin account for the target tenant (interactive
+#     login renewal is attempted once when its cached session has expired)
 #   - PowerShell 7+
 #
 # What it does:
@@ -27,7 +28,10 @@
 
 param(
   # Append a new client secret even if an unexpired one already exists.
-  [switch]$RotateSecret
+  [switch]$RotateSecret,
+  # Skips the tenant prompt when no cached account identifies the tenant.
+  [string]$TenantId,
+  [switch]$UseDeviceCode
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,11 +56,24 @@ $APP_ROLE_NAMES = @(
 function Invoke-Az {
   # Runs az with the given arguments and fails loudly on a non-zero exit.
   param([Parameter(Mandatory)][string[]]$Arguments)
-  $output = & az @Arguments
-  if ($LASTEXITCODE -ne 0) {
-    throw "az $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+  Get-Command az -ErrorAction Stop | Out-Null
+  # Handle the exit ourselves so callers can add actionable recovery guidance.
+  $PSNativeCommandUseErrorActionPreference = $false
+  $ErrorActionPreference = 'Continue'
+  $output = @(& az @Arguments 2>&1)
+  $exitCode = $LASTEXITCODE
+  $stderr = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+  foreach ($line in $stderr) { [Console]::Error.WriteLine($line.ToString()) }
+  if ($exitCode -ne 0) {
+    $failure = [System.InvalidOperationException]::new("az $($Arguments -join ' ') failed with exit code $exitCode")
+    $errorText = $output -join "`n"
+    $missingAccount = $Arguments[0] -eq 'account' -and $Arguments[1] -eq 'show' -and
+      $errorText -match 'No subscriptions? found'
+    $failure.Data['RequiresLogin'] = $missingAccount -or
+      $errorText -match 'invalid_grant|AADSTS50173|AADSTS700082|AADSTS70043|InteractionRequired|Please run.*az login'
+    throw $failure
   }
-  return $output
+  return $output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
 }
 
 function Invoke-AzJson {
@@ -67,17 +84,67 @@ function Invoke-AzJson {
 }
 
 Write-Host '=== 0. Confirming az login ==='
-$acct = Invoke-AzJson @('account', 'show')
+$acct = $null
+try {
+  $expectedTenant = $TenantId
+  for ($loginAttempt = 0; $loginAttempt -le 1; $loginAttempt++) {
+    try {
+      $acct = Invoke-AzJson @('account', 'show')
+      if (-not $acct.tenantId) {
+        $missingAccount = [System.InvalidOperationException]::new('Azure CLI has no selected account or tenant.')
+        $missingAccount.Data['RequiresLogin'] = $true
+        throw $missingAccount
+      }
+      if ($expectedTenant -and $acct.tenantId -ne $expectedTenant) {
+        throw "Azure CLI selected a different tenant. Sign in to tenant '$expectedTenant' before provisioning."
+      }
+      # account show reads cached metadata, even when its refresh token is revoked.
+      $appMatches = @(
+        Invoke-AzJson @('ad', 'app', 'list', '--filter', "displayName eq '$APP_NAME'") |
+          Where-Object { $_.displayName -eq $APP_NAME }
+      )
+      break
+    } catch {
+      $loginTenant = if ($expectedTenant) { $expectedTenant } else { $acct.tenantId }
+      if (-not $_.Exception.Data['RequiresLogin'] -or $loginAttempt -gt 0) { throw }
+      if (-not $loginTenant) {
+        Write-Host 'No selected Azure CLI account identifies the target tenant.'
+        $loginTenant = [string](Read-Host 'Enter the target tenant GUID (leave blank to cancel)')
+        $parsedTenant = [guid]::Empty
+        if (-not [guid]::TryParse($loginTenant.Trim(), [ref]$parsedTenant) -or $parsedTenant -eq [guid]::Empty) {
+          throw 'A valid target tenant GUID is required for sign-in. No provisioning changes were made.'
+        }
+        $loginTenant = $parsedTenant.ToString()
+      }
+      $expectedTenant = $loginTenant
+      Write-Host 'Azure CLI authentication needs renewal. Starting sign-in; complete the browser/device-code prompt and any MFA.'
+      $loginArguments = @('login', '--tenant', $loginTenant, '--allow-no-subscriptions', '--scope', 'https://graph.microsoft.com/.default', '--output', 'none')
+      if ($UseDeviceCode) { $loginArguments += '--use-device-code' }
+      # Stream login prompts immediately instead of buffering them in Invoke-Az.
+      $PSNativeCommandUseErrorActionPreference = $false
+      & az @loginArguments | Out-Host
+      if ($LASTEXITCODE -ne 0) { throw 'Azure CLI sign-in failed or was cancelled. No provisioning changes were made.' }
+      Write-Host 'Sign-in completed. Retrying the live Graph check.'
+    }
+  }
+} catch {
+  $recoveryTenant = if ($expectedTenant) { $expectedTenant } else { $acct.tenantId }
+  $tenantArgument = if ($recoveryTenant) { " --tenant `"$recoveryTenant`"" } else { ' --tenant "<target-tenant-id>"' }
+  Write-Host ''
+  Write-Host 'Could not verify live Microsoft Graph access. No app, permission, or secret was changed.'
+  Write-Host 'If Azure CLI reports invalid_grant / AADSTS50173, its cached login was revoked.'
+  Write-Host '"No subscription found" means no usable CLI account is selected; sign in with --allow-no-subscriptions.'
+  Write-Host 'Sign in again as an administrator in the target tenant, then rerun this script:'
+  Write-Host "  az login$tenantArgument --allow-no-subscriptions --scope `"https://graph.microsoft.com/.default`""
+  Write-Host 'If browser sign-in is unavailable, add --use-device-code (if allowed by your tenant).'
+  throw
+}
 Write-Host "  tenant: $($acct.tenantId)"
 Write-Host "  user  : $($acct.user.name)"
 
 Write-Host ''
 Write-Host "=== 1. Ensuring app registration '$APP_NAME' exists ==="
-# Exact match only: --display-name is a prefix match and names aren't unique.
-$appMatches = @(
-  Invoke-AzJson @('ad', 'app', 'list', '--filter', "displayName eq '$APP_NAME'") |
-    Where-Object { $_.displayName -eq $APP_NAME }
-)
+# Exact matches were read during the live-login preflight above.
 if ($appMatches.Count -gt 1) {
   throw "Refusing to continue: $($appMatches.Count) Entra apps are named '$APP_NAME'. Rename or delete the extras before admin-consent or credential changes."
 }

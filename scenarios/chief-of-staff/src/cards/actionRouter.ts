@@ -611,6 +611,13 @@ export async function handleCardActionIfAny(
       : undefined
     : resolveTargetFollowup(intent.data, senderAad);
 
+  // A substantive free-text blocker without a check-in belongs to the
+  // conversational unblock flow. Explicit card actions stay authorized here.
+  if (intent.verb === 'blocked' && !followup && !context.activity.value) {
+    const text = context.activity.text?.trim() ?? '';
+    if (!/^(?:blocked|i'm blocked|im blocked|stuck)[.!?]*$/i.test(text)) return { handled: false };
+  }
+
   // Global per-activity dedupe. Teams reuses activity.id on invoke retries,
   // so if we've seen this exact click in the last 60 s we no-op — protects
   // every verb / every card from double-firing.

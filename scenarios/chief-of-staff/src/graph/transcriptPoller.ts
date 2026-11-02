@@ -342,6 +342,16 @@ async function advanceCapture(
       cap.ownerUpn,
       cap.meetingId
     );
+    const ambiguous = hasOverlappingOccurrence(cap, sameMeetingNeighbors(cap));
+    if (!transcripts || ambiguous) {
+      log.warn('capturePoller', `${eventRef(cap.eventId)}: ${ambiguous ? 'overlapping occurrences make attribution ambiguous' : 'transcript discovery failed'} — cached artifacts are not ready`);
+      if (now > cap.giveUpAfter) markCaptureGaveUp(cap.eventId);
+      else {
+        const delayMin = pickNextRetryDelayMinutes(cap.attempts, cap.waitBudgetMinutes);
+        updateCapture(cap.eventId, { nextCheckAt: now + delayMin * 60 * 1000 });
+      }
+      return undefined;
+    }
     const matches = selectTranscriptsForOccurrence(transcripts, cap, now);
     const match = matches[0];
     if (match) {
@@ -513,6 +523,10 @@ function occurrenceStart(o: OccurrenceSpan): number {
   return o.startTime ?? o.endTime - o.durationMinutes * 60 * 1000;
 }
 
+function hasOverlappingOccurrence(cap: OccurrenceSpan, neighbors: OccurrenceSpan[]): boolean {
+  return neighbors.some((n) => occurrenceStart(n) < cap.endTime && n.endTime > occurrenceStart(cap));
+}
+
 /**
  * Other occurrences of the same online meeting: tracked captures plus every
  * occurrence discovery saw on the same join URL — including ones the CoS is
@@ -553,6 +567,9 @@ export function selectTranscriptsForOccurrence(
   neighbors: OccurrenceSpan[] = sameMeetingNeighbors(cap)
 ): TranscriptSummary[] {
   const start = occurrenceStart(cap);
+  // Timestamps cannot distinguish calls sharing an overlapping join URL.
+  // Reject even unclaimed records rather than extract an uninvited call.
+  if (hasOverlappingOccurrence(cap, neighbors)) return [];
   let windowStart = start - OCCURRENCE_EARLY_SLACK_MS;
   let windowEnd = cap.endTime + OCCURRENCE_LATE_SLACK_MS;
   let endExclusive = false;

@@ -490,7 +490,9 @@ async function fireInAuthedContext(
             deps.authHandlerName,
             ctx,
             'CoS Scheduler',
-            { humanInitiated: false }
+            // Scheduled jobs use direct Graph helpers. Capture registers its
+            // WorkIQ connection only when posting the summary, after writes.
+            { humanInitiated: false, extractionOnly: true }
           );
           await work(ctx, state, client);
         },

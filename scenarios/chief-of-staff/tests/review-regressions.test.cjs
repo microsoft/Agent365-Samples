@@ -1131,6 +1131,175 @@ test('patched MSAL supports the Graph worker client-credentials flow and rejects
   }
 });
 
+test('overlapping occurrences fail closed, while back-to-back boundaries remain attributable', () => {
+  const start = Date.parse('2099-01-01T09:00:00Z');
+  const cap = { eventId: 'overlap-a', meetingId: 'shared-url', startTime: start, endTime: start + 60 * 60000, durationMinutes: 60 };
+  const transcripts = [
+    { transcriptId: 'early-a', createdDateTime: new Date(start + 60000).toISOString() },
+    { transcriptId: 'uninvited-b', createdDateTime: new Date(start + 31 * 60000).toISOString() },
+    { transcriptId: 'boundary', createdDateTime: new Date(cap.endTime).toISOString() },
+  ];
+  assert.deepEqual(selectTranscriptsForOccurrence(transcripts, cap, cap.endTime, [
+    { startTime: start + 30 * 60000, endTime: start + 90 * 60000, durationMinutes: 60 },
+  ]), []);
+  assert.deepEqual(selectTranscriptsForOccurrence(transcripts, cap, cap.endTime, [
+    { startTime: start - 30 * 60000, endTime: start + 30 * 60000, durationMinutes: 60 },
+  ]), []);
+  assert.deepEqual(selectTranscriptsForOccurrence(transcripts, cap, cap.endTime, [
+    { startTime: cap.endTime, endTime: cap.endTime + 60 * 60000, durationMinutes: 60 },
+  ]).map((record) => record.transcriptId), ['early-a', 'uninvited-b']);
+});
+
+test('failed transcript listings differ from successful empty discovery', async (t) => {
+  const opts = { authorization: {}, context: {}, authHandlerName: 'agentic' };
+  t.mock.method(axios, 'get', async () => ({ data: { value: [] } }));
+  assert.deepEqual(await insights.fetchTranscriptsForMeeting(opts, ctx.leaderAad, 'listing'), []);
+  t.mock.method(axios, 'get', async () => { throw Object.assign(new Error('Unavailable'), { response: { status: 503 } }); });
+  assert.equal(await insights.fetchTranscriptsForMeeting(opts, ctx.leaderAad, 'listing'), undefined);
+});
+
+test('an uninvited overlapping neighbor prevents cached capture artifacts from becoming ready', async (t) => {
+  const watcher = require('../dist/graph/meetingWatcher');
+  const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+  const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER'];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com', CAPTURE_GRAPH_OWNER: 'leader' });
+  const now = Date.now(), start = now - 90 * 60000;
+  const id = 'invited-overlap', url = 'https://example.test/overlapping';
+  captures.createPendingCapture({ eventId: id, meetingId: 'overlapping-call', joinWebUrl: url, subject: 'Invited',
+    ownerUpn: 'leader@example.com', startTime: start, endTime: start + 60 * 60000, durationMinutes: 60,
+    waitBudgetMinutes: 3, giveUpAfter: now + 3600000, transcriptId: 'cached-overlap',
+    transcriptContent: 'WEBVTT\ncached', insightsFetched: true });
+  t.mock.method(watcher, 'discoverQualifyingMeetings', async (_opts, observed) => {
+    observed.push({ eventId: id, joinWebUrl: url, startTime: start, endTime: start + 60 * 60000, durationMinutes: 60 },
+      { eventId: 'uninvited-overlap', joinWebUrl: url, startTime: start + 30 * 60000, endTime: start + 90 * 60000, durationMinutes: 60 });
+    return [];
+  });
+  t.mock.method(watcher, 'checkEventParticipation', async () => 'qualified');
+  t.mock.method(insights, 'fetchTranscriptsForMeeting', async () => [
+    { transcriptId: 'neighbor-transcript', createdDateTime: new Date(start + 31 * 60000).toISOString() },
+  ]);
+  let fetchedBodies = 0;
+  t.mock.method(insights, 'fetchTranscriptContent', async () => { fetchedBodies++; return 'UNINVITED'; });
+  try {
+    captures.updateCapture(id, { nextCheckAt: 0 });
+    assert.ok(!(await pollForNewTranscripts({ authorization: {}, context: {}, authHandlerName: 'agentic' })).some((r) => r.eventId === id));
+    assert.equal(fetchedBodies, 0);
+    assert.equal(captures.getCapture('uninvited-overlap'), undefined);
+    assert.equal(captures.getCapture(id).status, 'pending');
+    assert.equal(captures.getCapture(id).transcriptContent, 'WEBVTT\ncached');
+    captures.markCaptureComplete(id);
+  } finally {
+    for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+  }
+});
+
+test('failed refresh preserves cached segments without readiness, then recovers all segments or expires', async (t) => {
+  const watcher = require('../dist/graph/meetingWatcher');
+  const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+  const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER', 'CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY'];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com',
+    CAPTURE_GRAPH_OWNER: 'leader', CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY: '2' });
+  const now = Date.now(), start = now - 60 * 60000, end = now - 30 * 60000;
+  const id = 'failed-refresh-capture';
+  captures.createPendingCapture({ eventId: id, meetingId: 'failed-refresh-meeting', subject: 'Meeting',
+    ownerUpn: 'leader@example.com', startTime: start, endTime: end, durationMinutes: 30,
+    waitBudgetMinutes: 3, giveUpAfter: now + 3600000, attempts: 1,
+    transcriptId: 'cached-a', transcriptFetchedAt: now - 600000,
+    transcriptContent: 'WEBVTT\ncached A',
+    transcriptSegments: [{ transcriptId: 'cached-a', content: 'WEBVTT\ncached A' }],
+  });
+  t.mock.method(watcher, 'discoverQualifyingMeetings', async () => []);
+  t.mock.method(watcher, 'checkEventParticipation', async () => 'qualified');
+  let available = false;
+  t.mock.method(insights, 'fetchTranscriptsForMeeting', async () => available ? [
+    { transcriptId: 'cached-a', createdDateTime: new Date(start + 60000).toISOString() },
+    { transcriptId: 'new-b', createdDateTime: new Date(start + 10 * 60000).toISOString() },
+  ] : undefined);
+  t.mock.method(insights, 'fetchTranscriptContent', async () => 'WEBVTT\nnew B');
+  t.mock.method(insights, 'fetchAiInsightsForMeeting', async () => ({ available: false }));
+  const opts = { authorization: {}, context: {}, authHandlerName: 'agentic' };
+  try {
+    captures.updateCapture(id, { nextCheckAt: 0, attempts: 1 });
+    assert.ok(!(await pollForNewTranscripts(opts)).some((r) => r.eventId === id));
+    const pending = captures.getCapture(id);
+    assert.equal(pending.status, 'pending');
+    assert.equal(pending.transcriptContent, 'WEBVTT\ncached A');
+    assert.ok(pending.nextCheckAt > now);
+    available = true;
+    captures.updateCapture(id, { nextCheckAt: 0 });
+    const ready = (await pollForNewTranscripts(opts)).find((r) => r.eventId === id);
+    assert.ok(ready.transcriptContent.includes('cached A'));
+    assert.ok(ready.transcriptContent.includes('new B'));
+    captures.markCaptureComplete(id);
+    const expired = 'failed-refresh-expired';
+    captures.createPendingCapture({ eventId: expired, meetingId: 'expired-meeting', subject: 'Expired',
+      ownerUpn: 'leader@example.com', startTime: start, endTime: end, durationMinutes: 30,
+      waitBudgetMinutes: 3, giveUpAfter: now - 1, transcriptId: 'old-cached',
+      transcriptContent: 'WEBVTT\nold cached' });
+    available = false;
+    captures.updateCapture(expired, { nextCheckAt: 0 });
+    assert.ok(!(await pollForNewTranscripts(opts)).some((r) => r.eventId === expired));
+    assert.equal(captures.getCapture(expired).status, 'gave-up');
+  } finally {
+    for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+  }
+});
+
+for (const version of ['v1.0', 'beta']) {
+  test(`${version} matched insight metadata is fetched as detail before normalization`, async (t) => {
+    const urls = [];
+    t.mock.method(axios, 'get', async (url) => {
+      urls.push(url);
+      if (version === 'beta' && url.includes('/v1.0/')) throw Object.assign(new Error('Not Found'), { response: { status: 404 } });
+      if (url.endsWith('/aiInsights')) return { data: { value: [
+        { id: 'selected/id', callId: 'selected-call' }, { id: 'other', callId: 'other-call' },
+      ] } };
+      if (url.endsWith('/aiInsights/selected%2Fid')) return { data: {
+        id: 'selected/id', actionItems: [{ title: 'Send draft', owner: { displayName: 'Owner' } }],
+        meetingNotes: [{ title: 'Decision', content: 'Approved' }],
+      } };
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const result = await insights.fetchAiInsightsForMeeting({}, ctx.leaderAad, 'meeting', { callId: 'selected-call', windowStart: 0 });
+    assert.equal(result.available, true);
+    assert.equal(result.actionItems[0].title, 'Send draft');
+    assert.equal(result.meetingNotes[0].content, 'Approved');
+    assert.ok(urls.some((url) => url.includes(`/${version}/`) && url.endsWith('/aiInsights/selected%2Fid')));
+    assert.ok(!urls.some((url) => url.endsWith('/other')));
+  });
+}
+
+test('failed insight detail fetching remains retryable instead of caching partial enrichment', async (t) => {
+  t.mock.method(axios, 'get', async (url) => {
+    if (url.endsWith('/aiInsights')) return { data: { value: [{ id: 'pending', callId: 'call' }] } };
+    throw Object.assign(new Error('Not ready'), { response: { status: 503 } });
+  });
+  assert.deepEqual(await insights.fetchAiInsightsForMeeting({}, ctx.leaderAad, 'meeting', { callId: 'call', windowStart: 0 }), { available: false });
+});
+
+test('substantive blocker messages without a follow-up reach conversational handling', async () => {
+  for (const text of ["I'm blocked by Finance; book a meeting with Bob", 'blocked on the release; please help', 'stuck waiting for approval']) {
+    const messages = [];
+    const result = await router.handleCardActionIfAny({
+      activity: { id: `free-text-${text}`, text, from: { aadObjectId: 'untracked-owner' } },
+      sendActivity: async (message) => messages.push(message),
+    }, {}, ctx.leaderAad);
+    assert.equal(result.handled, false, text);
+    assert.deepEqual(messages, []);
+  }
+  for (const text of ["I'm blocked", 'blocked', 'stuck']) {
+    const messages = [];
+    const result = await router.handleCardActionIfAny({
+      activity: { id: `bare-${text}`, text, from: { aadObjectId: 'untracked-owner' } },
+      sendActivity: async (message) => messages.push(message),
+    }, {}, ctx.leaderAad);
+    assert.equal(result.handled, true);
+    assert.equal(messages.length, 1);
+  }
+});
+
 test('environment template keeps observability export disabled by default', () => {
   const template = fs.readFileSync(path.join(__dirname, '..', '.env.template'), 'utf8');
   assert.match(template, /^ENABLE_A365_OBSERVABILITY_EXPORTER=false$/m);

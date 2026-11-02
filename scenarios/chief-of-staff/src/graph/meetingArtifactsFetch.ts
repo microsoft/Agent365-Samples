@@ -56,14 +56,14 @@ export interface TranscriptSummary {
 }
 
 /**
- * List transcripts for a specific meeting. Returns [] if none yet or on any
- * error (never throws — the caller retries).
+ * List transcripts for a specific meeting. An empty array means discovery
+ * succeeded with no records; undefined means it failed and must be retried.
  */
 export async function fetchTranscriptsForMeeting(
   opts: GraphOpts,
   userUpn: string,
   meetingId: string
-): Promise<TranscriptSummary[]> {
+): Promise<TranscriptSummary[] | undefined> {
   try {
     const token = await acquireGraphToken(opts);
     const userId = await resolveUserIdForOnlineMeetings(opts, userUpn);
@@ -72,7 +72,7 @@ export async function fetchTranscriptsForMeeting(
         'transcriptFetch',
         `could not resolve the owner UPN to AAD Object ID for /onlineMeetings call`
       );
-      return [];
+      return undefined;
     }
     const url =
       `${GRAPH_V1}/users/${encodeURIComponent(userId)}` +
@@ -119,7 +119,7 @@ export async function fetchTranscriptsForMeeting(
         body: e?.response?.data ?? e?.message ?? String(e),
       });
     }
-    return [];
+    return undefined;
   }
 }
 
@@ -262,7 +262,7 @@ export async function fetchAiInsightsForMeeting(
   const v1 = await tryFetchInsights(token, `${GRAPH_V1}${path}`);
   if (v1.status === 'ok') {
     log.debug('insightsFetch', `v1.0 returned ${v1.data.length} insight object(s) for meeting=${meetingId.slice(0, 8)}…`);
-    return normalise(selectInsightsForOccurrence(v1.data, occurrence));
+    return fetchInsightDetails(token, `${GRAPH_V1}${path}`, selectInsightsForOccurrence(v1.data, occurrence));
   }
   if (v1.status === 'unsupported') {
     log.debug('insightsFetch', `v1.0 forbidden for meeting=${meetingId.slice(0, 8)}… (403) — tenant may lack Copilot licence`);
@@ -275,7 +275,7 @@ export async function fetchAiInsightsForMeeting(
   const beta = await tryFetchInsights(token, `${GRAPH_BETA}${path}`);
   if (beta.status === 'ok') {
     log.debug('insightsFetch', `beta returned ${beta.data.length} insight object(s) for meeting=${meetingId.slice(0, 8)}…`);
-    return normalise(selectInsightsForOccurrence(beta.data, occurrence));
+    return fetchInsightDetails(token, `${GRAPH_BETA}${path}`, selectInsightsForOccurrence(beta.data, occurrence));
   }
   // Only declare insights unavailable when BOTH versions say so.
   if (
@@ -300,10 +300,15 @@ async function tryFetchInsights(
   | { status: 'unsupported' }
 > {
   try {
-    const res = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const items = (res.data?.value ?? []) as any[];
+    const items: any[] = [];
+    let pageUrl: string | undefined = url;
+    while (pageUrl) {
+      const res: { data: { value?: any[]; '@odata.nextLink'?: string } } = await axios.get(pageUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      items.push(...(res.data?.value ?? []));
+      pageUrl = res.data?.['@odata.nextLink'];
+    }
     if (items.length === 0) return { status: 'not-ready' };
     return { status: 'ok', data: items };
   } catch (err) {
@@ -319,6 +324,28 @@ async function tryFetchInsights(
     });
     return { status: 'not-ready' };
   }
+}
+
+async function fetchInsightDetails(token: string, collectionUrl: string, selected: any[]): Promise<InsightsResult> {
+  const details: any[] = [];
+  for (const metadata of selected) {
+    if (typeof metadata.id !== 'string' || !metadata.id) {
+      log.warn('insightsFetch', 'matched insight metadata has no id — will retry');
+      return { available: false };
+    }
+    try {
+      const response = await axios.get(`${collectionUrl}/${encodeURIComponent(metadata.id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      details.push(response.data);
+    } catch (err) {
+      log.warn('insightsFetch', 'matched insight detail fetch failed — will retry', {
+        error: err instanceof Error ? err.name : 'UnknownError',
+      });
+      return { available: false };
+    }
+  }
+  return normalise(details);
 }
 
 /** Flatten callAiInsight[] into our simple shape. */

@@ -142,6 +142,8 @@ export interface ClientOptions {
    * resolve owners. No Planner/card write tools and no WorkIQ MCP, so content
    * inside an untrusted transcript can't trigger writes during extraction —
    * all writes happen afterwards in deterministic code (cos/capture.ts).
+   * Also used by Graph-only scheduled jobs for auth/people helpers without
+   * registering WorkIQ; capture opens WorkIQ only at its summary-post step.
    */
   extractionOnly?: boolean;
   /** Server-selected qualifying meeting chat; never supplied by the model. */

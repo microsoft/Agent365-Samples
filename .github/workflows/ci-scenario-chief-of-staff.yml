@@ -30,10 +30,12 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    # --legacy-peer-deps: @openai/agents declares an older zod peer than the
-    # zod version this sample uses.
     - name: Install dependencies
-      run: npm install --legacy-peer-deps
+      run: npm install
 
     - name: Build and run regression tests
       run: npm test
+
+    - name: Run offline bootstrap login tests
+      shell: pwsh
+      run: ./tests/bootstrap-graph-app.test.ps1

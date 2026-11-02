@@ -13,7 +13,7 @@ non-responsive owners, and lets people close tasks by chat.
 
 ## Contents
 
-1. [What you'll have when you're done](#1-what-youll-have-when-youre-done)
+1. [What you&#39;ll have when you&#39;re done](#1-what-youll-have-when-youre-done)
 2. [Prerequisites](#2-prerequisites)
 3. [Microsoft 365 tenant setup](#3-microsoft-365-tenant-setup)
 4. [Clone + install](#4-clone--install)
@@ -30,17 +30,17 @@ non-responsive owners, and lets people close tasks by chat.
 
 A running Node service on your dev machine (or Azure App Service) that:
 
-| Capability | Trigger |
-|---|---|
+| Capability                                                                                                                                                                                                               | Trigger                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Capture** — extracts action items + decisions from Teams meetings and creates Planner tasks (extraction is checkpointed, then tasks and assignment cards are written by code, so a retry never duplicates work) | Calendar poller finds any Teams meeting with both the leader and the CoS on the invite (any organizer; in-progress and upcoming meetings are tracked until their transcript exists), the transcript for that occurrence is fetched, LLM extracts |
-| **Daily Brief** — Adaptive Card DM to the leader with priorities, watch items, upcoming meetings | Cron (default 8 AM weekdays, gated behind `BRIEF_ENABLED`) |
-| **Follow-up** — Adaptive Card DM to each at-risk owner — every current assignee of a task gets their own card (`On track` / `Need more time` / `I'm blocked`) | Cron (default hourly) |
-| **Extension request** — leader gets an approval card, agent PATCHes Planner due date on approval | Owner clicks "Need more time" or types `extend` |
-| **Blocker meeting** — agent proposes 3 slots, books calendar invite on click | Owner clicks "I'm blocked" or types `blocked` |
-| **Escalation** — 🚨 card DM'd to the leader if the owner ignores their follow-up | Post-followup sweep after `FOLLOWUP_ESCALATE_AFTER_HOURS`; auto-cancels if the task is closed first |
-| **Task complete (Planner)** — owner marks it done in Planner, leader gets a confirmation DM | Planner poll detects `percentComplete: 100` |
-| **Task complete (chat)** — owner tells the agent in plain language ("`The task "X" is done`"), agent PATCHes Planner to 100 % and notifies leader | Message router matches completion phrase + quoted title, fuzzy-matches Planner |
-| **Recall / chit-chat** — the leader asks "where are we on X?" and gets a status answer, restricted to leadership team members (Teams chat **and** email) | LLM turn with `planner_list_tasks` + `mcp_CalendarTools` |
+| **Daily Brief** — Adaptive Card DM to the leader with priorities, watch items, upcoming meetings                                                                                                                  | Cron (default 8 AM weekdays, gated behind `BRIEF_ENABLED`)                                                                                                                                                                                     |
+| **Follow-up** — Adaptive Card DM to each at-risk owner — every current assignee of a task gets their own card (`On track` / `Need more time` / `I'm blocked`)                                              | Cron (default hourly)                                                                                                                                                                                                                            |
+| **Extension request** — leader gets an approval card, agent PATCHes Planner due date on approval                                                                                                                  | Owner clicks "Need more time" or types `extend`                                                                                                                                                                                                |
+| **Blocker meeting** — agent proposes 3 slots, books calendar invite on click                                                                                                                                      | Owner clicks "I'm blocked" or types `blocked`                                                                                                                                                                                                  |
+| **Escalation** — 🚨 card DM'd to the leader if the owner ignores their follow-up                                                                                                                                  | Post-followup sweep after `FOLLOWUP_ESCALATE_AFTER_HOURS`; auto-cancels if the task is closed first                                                                                                                                            |
+| **Task complete (Planner)** — owner marks it done in Planner, leader gets a confirmation DM                                                                                                                       | Planner poll detects `percentComplete: 100`                                                                                                                                                                                                    |
+| **Task complete (chat)** — owner tells the agent in plain language ("`The task "X" is done`"), agent PATCHes Planner to 100 % and notifies leader                                                               | Message router matches completion phrase + quoted title, fuzzy-matches Planner                                                                                                                                                                   |
+| **Recall / chit-chat** — the leader asks "where are we on X?" and gets a status answer, restricted to leadership team members (Teams chat **and** email)                                                    | LLM turn with `planner_list_tasks` + `mcp_CalendarTools`                                                                                                                                                                                     |
 
 Everything is deterministic **except** capture extraction (LLM parses the
 transcript), recall/chit-chat, and free-text unblock. Card booking and
@@ -76,6 +76,22 @@ leader-request lookups, meeting discovery/artifact capture, and completion
 polling/notifications have a 30-second timeout plus a whole-request abort
 signal. A stalled Graph response fails instead of holding a scheduled job's
 in-flight guard indefinitely; a later scheduled tick can run again.
+
+Graph-only scheduled jobs do not register WorkIQ tools. Capture registers
+WorkIQ only for its summary post, after checkpointed Graph writes; a failed
+post remains retryable without disabling briefs, follow-ups, or completion
+notifications. Interactive WorkIQ registration still fails closed by default.
+
+Capture rejects transcript attribution when same-URL calendar occurrences
+overlap, including an occurrence the CoS is not invited to. Failed transcript
+list refreshes keep cached segments pending until discovery succeeds or the
+retry deadline expires. Matched Copilot insight metadata is followed by an
+individual insight GET before its action items and notes are used; failed
+detail fetches stay retryable.
+
+Substantive free-text blocker requests without an open check-in reach the
+conversational unblock flow. Bare blocker keywords still ask for details,
+and explicit card actions retain the existing authorization checks.
 
 Daily brief activities are capped at 80 KiB of serialized UTF-8 JSON, leaving
 room below Teams' 100 KB message limit. Oversized briefs retain a bounded
@@ -152,10 +168,39 @@ etc.) are needed on those apps.
 
 **In one command:**
 
+From the repository root, enter the folder below. If your prompt already ends
+in `scenarios\chief-of-staff`, skip the `cd` line.
+
 ```powershell
 cd scenarios/chief-of-staff
 .\scripts\bootstrap-graph-app.ps1
 ```
+
+The script checks live Graph access before making changes; `az account show`
+alone only confirms cached account metadata. For `invalid_grant` /
+`AADSTS50173` and other expired-login errors, it automatically launches
+`az login` once in the cached tenant, waits for you to complete sign-in/MFA,
+then retries the live Graph check. It never automatically logs you out.
+Use `-UseDeviceCode` on the script if browser sign-in is unavailable and your
+tenant permits device-code authentication. If `az account show` reports
+`No subscription found` after logout, the script prompts for your target tenant
+GUID and then starts login with `--allow-no-subscriptions`; it does not require
+an Azure subscription or guess the tenant. Pass
+`-TenantId "<target-tenant-id>"` to skip that prompt. A blank or invalid tenant
+answer stops before provisioning.
+
+If recovery still fails, authenticate manually and rerun:
+
+```powershell
+az login --tenant "<target-tenant-id>" --allow-no-subscriptions --scope "https://graph.microsoft.com/.default"
+.\scripts\bootstrap-graph-app.ps1
+```
+
+If fresh sign-in still reports the revoked session, run `az logout` and sign
+in again; logout clears the local
+CLI session, so do not do it while another workflow is using that login.
+Permission or network errors require their own remediation; they are not
+silently treated as a successful login or a missing app.
 
 The script:
 
@@ -181,6 +226,7 @@ The script:
    GRAPH_APP_SECRET=<secret>
    GRAPH_TENANT_ID=<guid>
    ```
+
    Paste those three into `scenarios/chief-of-staff/.env`.
 
 Re-running is safe: missing permissions are added and verified, and an
@@ -204,11 +250,11 @@ New-CsApplicationAccessPolicy `
 
 Then pick a **grant strategy** — three options, in order of preference:
 
-| Strategy | Command | Onboarding a new leader |
-|---|---|---|
+| Strategy                                                                                                                                                                                                                                 | Command                                                                                        | Onboarding a new leader     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------- |
 | **CoS-agent-only (recommended)** — grants only to the CoS agent UPN. Every Graph call reads as the CoS agent. Any meeting with both the leader and `Chief-of-Staff@…` on the invite gets captured. Zero admin work per leader. | `Grant-CsApplicationAccessPolicy -PolicyName "cos-agent-policy" -Identity "<COS_AGENT_UPN>"` | Just add them to the invite |
-| **Tenant-wide** — grants to every user. Simple for demo tenants. Broad exposure in production. | `Grant-CsApplicationAccessPolicy -PolicyName "cos-agent-policy" -Global` | Nothing |
-| **Per-leader** — precise but manual. Cmdlet re-run for each new leader. | `Grant-CsApplicationAccessPolicy -PolicyName "cos-agent-policy" -Identity "<LEADER_UPN>"` | Re-run cmdlet |
+| **Tenant-wide** — grants to every user. Simple for demo tenants. Broad exposure in production.                                                                                                                                    | `Grant-CsApplicationAccessPolicy -PolicyName "cos-agent-policy" -Global`                     | Nothing                     |
+| **Per-leader** — precise but manual. Cmdlet re-run for each new leader.                                                                                                                                                           | `Grant-CsApplicationAccessPolicy -PolicyName "cos-agent-policy" -Identity "<LEADER_UPN>"`    | Re-run cmdlet               |
 
 For strategy 1 (recommended), leave `CAPTURE_GRAPH_OWNER=cos-agent` in `.env`
 (the default). For strategies 2 or 3, set `CAPTURE_GRAPH_OWNER=leader`.
@@ -233,7 +279,6 @@ Eight rows expected — one per permission listed in step 2.
 > persisted to `.cos-state/conversation-refs.json` and survives restarts.
 > Group-chat or channel references are never stored as DM destinations.
 
-
 ### 3c. Grant WorkIQ (MCP) server permissions
 
 The agent registers the three WorkIQ servers listed in `ToolingManifest.json`
@@ -241,10 +286,10 @@ itself (`addWorkIqServersToAgent` in `src/workiq.ts`). Each server has its
 **own** resource (audience) and uses the delegated `Tools.ListInvoke.All`
 scope; the agent requests a separate agentic token per server.
 
-| MCP server | Resource (audience) | Delegated scope |
-|---|---|---|
-| `mcp_MailTools` | `16b1878d-62c7-4009-aa25-68989d63bbad` | `Tools.ListInvoke.All` |
-| `mcp_TeamsServer` | `ce5029ee-c1d3-45c0-bdcc-efb5a4245687` | `Tools.ListInvoke.All` |
+| MCP server            | Resource (audience)                      | Delegated scope          |
+| --------------------- | ---------------------------------------- | ------------------------ |
+| `mcp_MailTools`     | `16b1878d-62c7-4009-aa25-68989d63bbad` | `Tools.ListInvoke.All` |
+| `mcp_TeamsServer`   | `ce5029ee-c1d3-45c0-bdcc-efb5a4245687` | `Tools.ListInvoke.All` |
 | `mcp_CalendarTools` | `910333d2-47e9-43ca-981f-6df2f4531ef4` | `Tools.ListInvoke.All` |
 
 `a365 develop setup` normally grants these. If it didn't, run
@@ -326,7 +371,11 @@ cd scenarios/chief-of-staff
 npm install
 ```
 
-If npm complains about peer deps: `npm install --legacy-peer-deps`.
+Keep `@openai/agents` on `^0.7.0`, `openai` on `^6.26.0`, and `zod` on
+`^4.4.3`: these ranges satisfy the Agent 365 OpenAI observability extension's
+peer dependencies. If npm reports `ERESOLVE`, check that your dependency ranges
+match this sample and rerun `npm install`; do not bypass peer checks with
+`--force` or `--legacy-peer-deps`.
 
 ---
 
@@ -382,34 +431,34 @@ PORT=3978
 **Optional tunables** (all have sensible code defaults — see `.env.template`
 for the exhaustive list):
 
-| Env | Default | Description |
-|---|---|---|
-| `LEADER_NAME` | — | Display name used in card copy (e.g. "Assigned by: Mario"). Falls back to "the Leader" when unset |
-| `BRIEF_ENABLED` | `false` | Set to `true` to turn on the daily Brief cron |
-| `CRON_BRIEF` | `0 8 * * 1-5` | When the Brief card fires (8 AM weekdays) |
-| `CRON_FOLLOWUP` | `0 * * * *` | When follow-up cards fire (each tick also runs the deterministic escalation sweep) |
-| `CRON_TIMEZONE` | server-local | IANA TZ for the crons (e.g. `Asia/Kolkata`) |
-| `POLL_MEETINGS_MS` | `60000` | Meeting-capture orchestrator cadence (60 s) |
-| `POLL_TASKS_MS` | `300000` | Planner completed-task poller cadence (5 min) |
-| `FOLLOWUP_ESCALATE_AFTER_HOURS` | `3` | Hours before an unanswered followup escalates |
-| `FOLLOWUP_COOLDOWN_HOURS` | `4` | Suppress a fresh check-in for the same owner within this window |
-| `TRANSCRIPT_WATCH_HOURS` | `4` | How far back the calendar watcher scans each tick |
-| `TRANSCRIPT_WATCH_FORWARD_HOURS` | `24` | How far forward (catches in-progress/upcoming) |
-| `INSIGHTS_MIN_WAIT_MINUTES` | `3` | Min budget waiting for Copilot insights |
-| `INSIGHTS_MAX_WAIT_MINUTES` | `30` | Max budget waiting for Copilot insights |
-| `CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY` | `2` | Attempt count after which we fire capture on transcript alone (skip waiting for insights) |
-| `CAPTURE_GIVE_UP_AFTER_HOURS` | `4` | Give up on a meeting whose transcript never appears |
-| `LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug` / `trace` |
-| `LOG_HTTP` | `false` | Log every outbound HTTP call with status + latency (ids, UPNs, and query strings in URLs are masked) |
-| `SCHEDULER_ENABLED` | `true` | Set `false` to disable all crons + pollers |
-| `SKIP_TOOLING_ON_ERRORS` | `false` | `false` fails a turn when WorkIQ MCP registration fails; `true` continues without those tools |
-| `BRIEF_DISPLAY_TZ` | `Asia/Kolkata` | Wall-clock TZ for card dates and blocker meeting slots (DST-aware) |
-| `STATE_BACKEND` | `file` | `file` (persist to disk) or `null` (in-memory only, for tests) |
-| `STATE_DIR` | `./.cos-state` | Root dir for state files. On Azure App Service: `/home/data/cos-state` |
-| `CAPTURE_STATE_RETENTION_DAYS` | `30` | TTL for finished captures on disk. In-flight records always kept |
-| `FOLLOWUP_STATE_RETENTION_HOURS` | `72` | TTL for terminal follow-ups on disk. In-flight always kept |
-| `PLANNER_PLAN_NAME` | — | Disambiguate when `LEADERSHIP_TEAM_ID` has multiple plans (case-insensitive exact match) |
-| `PLANNER_BUCKET_NAME` | `New` | Bucket-name to search for in the auto-resolved plan |
+| Env                                      | Default          | Description                                                                                          |
+| ---------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
+| `LEADER_NAME`                          | —               | Display name used in card copy (e.g. "Assigned by: Mario"). Falls back to "the Leader" when unset    |
+| `BRIEF_ENABLED`                        | `false`        | Set to `true` to turn on the daily Brief cron                                                      |
+| `CRON_BRIEF`                           | `0 8 * * 1-5`  | When the Brief card fires (8 AM weekdays)                                                            |
+| `CRON_FOLLOWUP`                        | `0 * * * *`    | When follow-up cards fire (each tick also runs the deterministic escalation sweep)                   |
+| `CRON_TIMEZONE`                        | server-local     | IANA TZ for the crons (e.g. `Asia/Kolkata`)                                                        |
+| `POLL_MEETINGS_MS`                     | `60000`        | Meeting-capture orchestrator cadence (60 s)                                                          |
+| `POLL_TASKS_MS`                        | `300000`       | Planner completed-task poller cadence (5 min)                                                        |
+| `FOLLOWUP_ESCALATE_AFTER_HOURS`        | `3`            | Hours before an unanswered followup escalates                                                        |
+| `FOLLOWUP_COOLDOWN_HOURS`              | `4`            | Suppress a fresh check-in for the same owner within this window                                      |
+| `TRANSCRIPT_WATCH_HOURS`               | `4`            | How far back the calendar watcher scans each tick                                                    |
+| `TRANSCRIPT_WATCH_FORWARD_HOURS`       | `24`           | How far forward (catches in-progress/upcoming)                                                       |
+| `INSIGHTS_MIN_WAIT_MINUTES`            | `3`            | Min budget waiting for Copilot insights                                                              |
+| `INSIGHTS_MAX_WAIT_MINUTES`            | `30`           | Max budget waiting for Copilot insights                                                              |
+| `CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY` | `2`            | Attempt count after which we fire capture on transcript alone (skip waiting for insights)            |
+| `CAPTURE_GIVE_UP_AFTER_HOURS`          | `4`            | Give up on a meeting whose transcript never appears                                                  |
+| `LOG_LEVEL`                            | `info`         | `error` / `warn` / `info` / `debug` / `trace`                                              |
+| `LOG_HTTP`                             | `false`        | Log every outbound HTTP call with status + latency (ids, UPNs, and query strings in URLs are masked) |
+| `SCHEDULER_ENABLED`                    | `true`         | Set `false` to disable all crons + pollers                                                         |
+| `SKIP_TOOLING_ON_ERRORS`               | `false`        | `false` fails a turn when WorkIQ MCP registration fails; `true` continues without those tools    |
+| `BRIEF_DISPLAY_TZ`                     | `Asia/Kolkata` | Wall-clock TZ for card dates and blocker meeting slots (DST-aware)                                   |
+| `STATE_BACKEND`                        | `file`         | `file` (persist to disk) or `null` (in-memory only, for tests)                                   |
+| `STATE_DIR`                            | `./.cos-state` | Root dir for state files. On Azure App Service: `/home/data/cos-state`                             |
+| `CAPTURE_STATE_RETENTION_DAYS`         | `30`           | TTL for finished captures on disk. In-flight records always kept                                     |
+| `FOLLOWUP_STATE_RETENTION_HOURS`       | `72`           | TTL for terminal follow-ups on disk. In-flight always kept                                           |
+| `PLANNER_PLAN_NAME`                    | —               | Disambiguate when `LEADERSHIP_TEAM_ID` has multiple plans (case-insensitive exact match)           |
+| `PLANNER_BUCKET_NAME`                  | `New`          | Bucket-name to search for in the auto-resolved plan                                                  |
 
 `ALLOW_DIRECT_USER_ACTIONS` defaults to `false`. Set it to `true` to let
 authenticated direct requests invoke action tools. Instructions embedded in
@@ -623,8 +672,7 @@ the in-memory resolve fired by `runTaskComplete`).
   tokens such as `Q2`, `v1`, or numbers must match.
 - Only an exact title match is completed. "Exact" ignores only case,
   whitespace, and those prefixes — punctuation and non-ASCII letters must
-  match, so `"Review C# hiring plan"` never completes `Review C++ hiring
-  plan`. A close-but-not-exact match gets a
+  match, so `"Review C# hiring plan"` never completes `Review C++ hiring plan`. A close-but-not-exact match gets a
   "Did you mean …?" reply and nothing changes until the exact title is sent.
 - Agent replies: `✅ Nice work — marking "…" complete. (Planner updated: 100% complete)`.
 - `plannerPoller` sees the transition on its next tick and fires
@@ -666,6 +714,7 @@ the in-memory resolve fired by `runTaskComplete`).
   [persistentMap] hydrated …/pending-captures.json: kept=N pruned=0
   [meetingWatcher] ✓ QUALIFIED event=…<id-tail> (ended) …
   ```
+
   and **no** `[capturePoller] discovery: added …` line for that meeting —
   it is discovered again, but its capture is already recorded as complete,
   so no new pending capture is created. No duplicate Planner tasks appear.
@@ -680,30 +729,30 @@ the in-memory resolve fired by `runTaskComplete`).
 
 ## 9. Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Startup banner shows `❌ AZURE_OPENAI_*` | Foundry env vars missing | Fill from Foundry portal → Deployments |
-| `NODE_ENV=production` in logs but you set `development` | Your shell has NODE_ENV set | `.env` uses `override:true`, so restart the shell |
-| Teams reply is `Error: 404 Resource not found` from OpenAI | Wrong `AZURE_OPENAI_API_VERSION` | Use `2024-10-21` (not `preview`) |
-| `Invalid schema for function 'planner_list_tasks'` | Azure OpenAI strict schema validator | Already fixed — planner tools ship `additionalProperties: false` |
-| `Access denied: Scope … is not present in the request` from a WorkIQ MCP server | That server's `Tools.ListInvoke.All` grant is missing, or `ToolingManifest.json` has a stale audience | Re-run `a365 develop add-mcp-servers` for the server, then `a365 setup permissions mcp` as Global Admin (see §3c) |
-| `WorkIQ MCP registration failed …` turn error | A WorkIQ server couldn't be registered and `SKIP_TOOLING_ON_ERRORS=false` | Fix the cause in the message (manifest, grant, or dev token), or set `SKIP_TOOLING_ON_ERRORS=true` to continue without those tools |
-| `[scheduler] X skipped — no cached conversation reference` | Brand-new deployment that has never received a message (restarts restore the persisted reference) | DM the agent once (`hi`) to seed the context |
-| `[meetingWatcher] 403 Forbidden` | `Calendars.Read` missing / not consented | Add + admin-consent |
-| `[transcriptFetch] 403` | `OnlineMeetingTranscript.Read.All` missing, or Teams application-access policy not granted | Add scope + run the `Grant-CsApplicationAccessPolicy` from §3b |
-| `[capturePoller] COS_AGENT_UPN not set — Skipping` | Env var missing | Set `COS_AGENT_UPN` and restart |
-| Capture never fires even though the meeting had a transcript | The leader or the CoS agent isn't on the invite | Both are required (organizer doesn't matter) — check that the event's organizer + `attendees` include both `LEADER_UPN` and `COS_AGENT_UPN` |
-| `aiInsights` always empty in logs | Leader has no M365 Copilot license, or the API is `/beta`-only in your tenant | Falls back to transcript-only extraction automatically — no action needed |
-| `[scheduler] N stale followup(s) but LEADER_UPN is not set` | Escalation sweep can't find the leader | Set `LEADER_UPN` |
-| `[scheduler] meeting-poll skipped — previous scan still in flight` | Overlapping tick because your `POLL_MEETINGS_MS` is shorter than a full scan | Harmless — the guard is doing its job. Increase to `60000` if you don't need the density |
-| MAC Activity tab in the admin center is empty even though `agent365-export succeeded` shows in logs | Blueprint-only token refresh — the exporter partitions groups by `(agentId, tenantId)` and drops groups without a cached token silently. The Activity tab is keyed on the agentic-instance id. | Already handled — `src/observability.ts::ensureObservabilityToken` refreshes tokens for BOTH blueprint and instance identities. Verify `[Agent365Exporter] Token resolved successfully` and per-group `export-group succeeded` events appear in your log for **your** agent-instance id (the `recipient.agenticAppId` on inbound activities). |
-| MAC Activity "User principal name" column shows a base64 blob instead of `mario@…` | Tenant privacy setting hashes UPNs in all reports | Microsoft 365 admin center → Settings → Org Settings → Services → Reports → uncheck "Conceal user, group, and site names in all reports" → Save. Refresh after ~5 min. |
-| Adaptive Card button clicks do nothing | Recipient's Teams client isn't routing card actions back as Invoke activities | Users can type the fallback keyword (`ontrack` / `extend` / `blocked`); the router handles both |
-| `AADSTS65001: consent_required` for instance app on first Teams turn | Instance-app SP has no `oauth2PermissionGrants` for MCP / platform scopes | Re-run `a365 develop setup` for this tenant — it re-provisions the MCP / platform consents on the instance SP |
-| `AADSTS82007: Static consent method not supported for service accounts` when opening the `/adminconsent` URL | Signed-in admin is a service account (common in M365 CPI demo tenants) | Skip the browser flow — Path 1 (§3b) does everything via `az` |
-| Duplicate Planner tasks after a demo | Two overlapping meeting-poll ticks ran capture twice | Guard is already in place (`meetingPollInFlight` in `scheduler.ts`) — verify you're on the latest code |
-| Chat message "the task X is done" creates or renames a task instead of completing it | Old build — the deterministic completion router wasn't wired | Pull latest — `actionRouter.ts` handles this via `findOpenTaskByTitle` |
-| `[followup] filtered out … "[COMPLETED] …" — 100% complete` | Working as intended — Planner already shows the task complete | No action |
+| Symptom                                                                                                          | Likely cause                                                                                                                                                                                      | Fix                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Startup banner shows `❌ AZURE_OPENAI_*`                                                                       | Foundry env vars missing                                                                                                                                                                          | Fill from Foundry portal → Deployments                                                                                                                                                                                                                                                                                                                      |
+| `NODE_ENV=production` in logs but you set `development`                                                      | Your shell has NODE_ENV set                                                                                                                                                                       | `.env` uses `override:true`, so restart the shell                                                                                                                                                                                                                                                                                                        |
+| Teams reply is `Error: 404 Resource not found` from OpenAI                                                     | Wrong `AZURE_OPENAI_API_VERSION`                                                                                                                                                                | Use `2024-10-21` (not `preview`)                                                                                                                                                                                                                                                                                                                         |
+| `Invalid schema for function 'planner_list_tasks'`                                                             | Azure OpenAI strict schema validator                                                                                                                                                              | Already fixed — planner tools ship `additionalProperties: false`                                                                                                                                                                                                                                                                                          |
+| `Access denied: Scope … is not present in the request` from a WorkIQ MCP server                               | That server's `Tools.ListInvoke.All` grant is missing, or `ToolingManifest.json` has a stale audience                                                                                         | Re-run `a365 develop add-mcp-servers` for the server, then `a365 setup permissions mcp` as Global Admin (see §3c)                                                                                                                                                                                                                                       |
+| `WorkIQ MCP registration failed …` turn error                                                                 | A WorkIQ server couldn't be registered and `SKIP_TOOLING_ON_ERRORS=false`                                                                                                                       | Fix the cause in the message (manifest, grant, or dev token), or set `SKIP_TOOLING_ON_ERRORS=true` to continue without those tools                                                                                                                                                                                                                         |
+| `[scheduler] X skipped — no cached conversation reference`                                                    | Brand-new deployment that has never received a message (restarts restore the persisted reference)                                                                                                 | DM the agent once (`hi`) to seed the context                                                                                                                                                                                                                                                                                                               |
+| `[meetingWatcher] 403 Forbidden`                                                                               | `Calendars.Read` missing / not consented                                                                                                                                                        | Add + admin-consent                                                                                                                                                                                                                                                                                                                                          |
+| `[transcriptFetch] 403`                                                                                        | `OnlineMeetingTranscript.Read.All` missing, or Teams application-access policy not granted                                                                                                      | Add scope + run the `Grant-CsApplicationAccessPolicy` from §3b                                                                                                                                                                                                                                                                                            |
+| `[capturePoller] COS_AGENT_UPN not set — Skipping`                                                            | Env var missing                                                                                                                                                                                   | Set `COS_AGENT_UPN` and restart                                                                                                                                                                                                                                                                                                                            |
+| Capture never fires even though the meeting had a transcript                                                     | The leader or the CoS agent isn't on the invite                                                                                                                                                   | Both are required (organizer doesn't matter) — check that the event's organizer + `attendees` include both `LEADER_UPN` and `COS_AGENT_UPN`                                                                                                                                                                                                           |
+| `aiInsights` always empty in logs                                                                              | Leader has no M365 Copilot license, or the API is `/beta`-only in your tenant                                                                                                                   | Falls back to transcript-only extraction automatically — no action needed                                                                                                                                                                                                                                                                                   |
+| `[scheduler] N stale followup(s) but LEADER_UPN is not set`                                                    | Escalation sweep can't find the leader                                                                                                                                                            | Set `LEADER_UPN`                                                                                                                                                                                                                                                                                                                                           |
+| `[scheduler] meeting-poll skipped — previous scan still in flight`                                            | Overlapping tick because your `POLL_MEETINGS_MS` is shorter than a full scan                                                                                                                    | Harmless — the guard is doing its job. Increase to `60000` if you don't need the density                                                                                                                                                                                                                                                                  |
+| MAC Activity tab in the admin center is empty even though `agent365-export succeeded` shows in logs            | Blueprint-only token refresh — the exporter partitions groups by `(agentId, tenantId)` and drops groups without a cached token silently. The Activity tab is keyed on the agentic-instance id. | Already handled — `src/observability.ts::ensureObservabilityToken` refreshes tokens for BOTH blueprint and instance identities. Verify `[Agent365Exporter] Token resolved successfully` and per-group `export-group succeeded` events appear in your log for **your** agent-instance id (the `recipient.agenticAppId` on inbound activities). |
+| MAC Activity "User principal name" column shows a base64 blob instead of `mario@…`                            | Tenant privacy setting hashes UPNs in all reports                                                                                                                                                 | Microsoft 365 admin center → Settings → Org Settings → Services → Reports → uncheck "Conceal user, group, and site names in all reports" → Save. Refresh after ~5 min.                                                                                                                                                                                 |
+| Adaptive Card button clicks do nothing                                                                           | Recipient's Teams client isn't routing card actions back as Invoke activities                                                                                                                     | Users can type the fallback keyword (`ontrack` / `extend` / `blocked`); the router handles both                                                                                                                                                                                                                                                        |
+| `AADSTS65001: consent_required` for instance app on first Teams turn                                           | Instance-app SP has no `oauth2PermissionGrants` for MCP / platform scopes                                                                                                                       | Re-run `a365 develop setup` for this tenant — it re-provisions the MCP / platform consents on the instance SP                                                                                                                                                                                                                                             |
+| `AADSTS82007: Static consent method not supported for service accounts` when opening the `/adminconsent` URL | Signed-in admin is a service account (common in M365 CPI demo tenants)                                                                                                                            | Skip the browser flow — Path 1 (§3b) does everything via `az`                                                                                                                                                                                                                                                                                            |
+| Duplicate Planner tasks after a demo                                                                             | Two overlapping meeting-poll ticks ran capture twice                                                                                                                                              | Guard is already in place (`meetingPollInFlight` in `scheduler.ts`) — verify you're on the latest code                                                                                                                                                                                                                                                  |
+| Chat message "the task X is done" creates or renames a task instead of completing it                             | Old build — the deterministic completion router wasn't wired                                                                                                                                     | Pull latest — `actionRouter.ts` handles this via `findOpenTaskByTitle`                                                                                                                                                                                                                                                                                  |
+| `[followup] filtered out … "[COMPLETED] …" — 100% complete`                                                 | Working as intended — Planner already shows the task complete                                                                                                                                    | No action                                                                                                                                                                                                                                                                                                                                                    |
 
 Set `LOG_LEVEL=debug` and `LOG_HTTP=true` to see everything at the wire
 level. Every log line is single-line JSON-ish, easy to grep.
