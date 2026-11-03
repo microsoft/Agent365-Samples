@@ -123,7 +123,7 @@ export async function pollForNewTranscripts(
   }
 
   // ── Pass 1: discovery ──
-  await runDiscoveryPass(opts, cfg);
+  if (!(await runDiscoveryPass(opts, cfg))) return [];
 
   // ── Pass 2: retry sweep ──
   const ready = await runRetrySweep(opts, cfg);
@@ -151,7 +151,7 @@ let observedByJoinUrl = new Map<string, ObservedOccurrence[]>();
 async function runDiscoveryPass(
   opts: PollOptions,
   cfg: ReturnType<typeof readConfig>
-): Promise<void> {
+): Promise<boolean> {
   const observed: ObservedOccurrence[] = [];
   const meetings = await discoverQualifyingMeetings(
     {
@@ -165,17 +165,19 @@ async function runDiscoveryPass(
     },
     observed
   );
-  qualifiedThisPass = new Set(meetings.map((m) => m.eventId));
-  // Keep the previous map if discovery failed (it returns nothing then).
-  if (observed.length > 0) {
-    const byUrl = new Map<string, ObservedOccurrence[]>();
-    for (const o of observed) {
-      const list = byUrl.get(o.joinWebUrl) ?? [];
-      list.push(o);
-      byUrl.set(o.joinWebUrl, list);
-    }
-    observedByJoinUrl = byUrl;
+  if (!meetings) {
+    qualifiedThisPass.clear();
+    log.warn('capturePoller', 'calendar boundaries unavailable — deferring artifact processing until discovery succeeds');
+    return false;
   }
+  qualifiedThisPass = new Set(meetings.map((m) => m.eventId));
+  const byUrl = new Map<string, ObservedOccurrence[]>();
+  for (const o of observed) {
+    const list = byUrl.get(o.joinWebUrl) ?? [];
+    list.push(o);
+    byUrl.set(o.joinWebUrl, list);
+  }
+  observedByJoinUrl = byUrl;
 
   let newlyTracked = 0;
   for (const m of meetings) {
@@ -243,6 +245,7 @@ async function runDiscoveryPass(
       `discovery: added ${newlyTracked} new qualifying meeting(s)`
     );
   }
+  return true;
 }
 
 const PARTICIPATION_RECHECK_RETRY_MS = 5 * 60 * 1000;

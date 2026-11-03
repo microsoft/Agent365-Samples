@@ -9,8 +9,8 @@
 //
 // Every card uses Action.Submit with a `verb` and follow-up context in the
 // action data. When Teams routes the click back to the bot it arrives as an
-// Invoke activity — handled in agent.ts. As a fallback, each card also tells
-// the user they can just reply with a keyword.
+// Invoke activity — handled in agent.ts. Owner check-ins and extension
+// decisions also support the keyword replies advertised on those cards.
 //
 // Delivery: Bot Framework proactive messaging (adapter.continueConversation
 // + sendActivity) — see cards/proactiveSend.ts. A cached
@@ -334,7 +334,7 @@ function buildExtensionRequestCard(args: ExtensionRequestArgs): object {
       spacing: 'Medium',
     });
   }
-  body.push(footerHint('Pick an option below, or reply `approve` / `reject` / `reassign`.'));
+  body.push(footerHint('Pick an option below, or reply `approve` / `reject`. To reassign, use the button.'));
   return {
     type: 'AdaptiveCard',
     $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
@@ -505,7 +505,7 @@ export function buildBlockerMeetingCard(args: BlockerMeetingArgs): object {
       },
       {
         type: 'TextBlock',
-        text: 'Pick a time to meet — I\'ll book it with the owner. Or reply `defer`.',
+        text: 'Pick a time to meet — I\'ll book it with the owner. To defer, use the button below.',
         wrap: true,
         isSubtle: true,
         spacing: 'Medium',

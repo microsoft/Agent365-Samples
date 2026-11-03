@@ -311,6 +311,7 @@ sequenceDiagram
 
   loop every POLL_MEETINGS_MS
     Watcher->>Cal: GET /users/{cos}/calendarView?…
+    Watcher->>Cal: GET /users/{leader}/calendarView?… (exclusion boundaries)
     Cal-->>Watcher: 10 events
     Watcher->>Watcher: keep events with leader AND cos on the invite (any organizer)
     Watcher-->>Store: createPendingCapture per new eventId (refresh if rescheduled)
@@ -470,9 +471,17 @@ sequenceDiagram
 
 The router's `extractIntent` (in `cards/actionRouter.ts`) also handles
 **keyword text replies** — `ontrack`, `extend`, `blocked`, `approve`,
-`reject`, `reassign`, `defer`, and the new completion detection (see §5.6)
-all work even in Teams builds where Graph-sent Adaptive Card clicks don't
-route back as Invoke activities.
+`approve extension`, `reject`, and the new completion detection (see §5.6).
+Extension decisions require exact replies and a single pending request;
+otherwise the leader must select the matching card. Reassign, Defer, and
+Escalate require explicit card actions with a follow-up id. Their plain-text
+forms are left to the conversational flow, not advertised as card fallbacks.
+
+Calendar discovery reads the selected capture mailbox plus the leader's
+calendar to include leader-only same-URL occurrences as exclusions. Copies
+are correlated by `iCalUId`, while online-meeting and artifact endpoints stay
+in the selected mailbox. If either calendar read fails, artifact processing
+is deferred rather than using incomplete exclusion boundaries.
 
 **Reassign is a manual handoff.** `reassign` / `esc_reassign` close the
 check-in and tell the leader to change the assignee in Planner; the agent has

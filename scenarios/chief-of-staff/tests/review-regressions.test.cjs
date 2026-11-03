@@ -1428,6 +1428,128 @@ test('substantive blocker messages without a follow-up reach conversational hand
   }
 });
 
+for (const scenario of ['adjacent', 'overlap', 'leader-read-fails']) {
+  test(`default CoS capture excludes leader-only occurrences: ${scenario}`, async (t) => {
+    const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+    const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER', 'CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY'];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com', CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY: '1' });
+    delete process.env.CAPTURE_GRAPH_OWNER;
+    const now = Date.now(), start = now - 125 * 60000, end = start + 60 * 60000;
+    const id = `default-cos-${scenario}`, meetingId = `meeting-${scenario}`;
+    const agentAad = '22222222-2222-2222-2222-222222222222';
+    const joinUrl = `https://example.test/${scenario}`;
+    const neighborStart = scenario === 'overlap' ? start + 30 * 60000 : end;
+    const iso = (ms) => new Date(ms).toISOString().replace(/Z$/, '');
+    const event = (eventId, iCalUId, begin, finish, invited) => ({
+      id: eventId, iCalUId, isOnlineMeeting: true, onlineMeeting: { joinUrl },
+      start: { dateTime: iso(begin) }, end: { dateTime: iso(finish) },
+      organizer: { emailAddress: { address: 'leader@example.com' } },
+      attendees: invited ? [{ emailAddress: { address: 'agent@example.com' } }] : [],
+    });
+    let failLeader = scenario === 'leader-read-fails';
+    const urls = [], bodies = [];
+    t.mock.method(people, 'resolveUpnToAad', async (upn) => {
+      assert.equal(upn, 'agent@example.com', 'artifact ownership must stay in the capture mailbox');
+      return agentAad;
+    });
+    t.mock.method(axios, 'get', async (url) => {
+      urls.push(url);
+      const pathname = decodeURIComponent(new URL(url).pathname);
+      if (pathname === '/v1.0/users/agent@example.com/calendarView') {
+        assert.ok(new URL(url).searchParams.get('$select').includes('iCalUId'));
+        return { data: { value: [event(id, 'occurrence-a', start, end, true)] } };
+      }
+      if (pathname === '/v1.0/users/leader@example.com/calendarView') {
+        return { data: { value: [event(`leader-copy-${scenario}`, 'occurrence-a', start, end, true)],
+          '@odata.nextLink': `https://graph.microsoft.com/v1.0/leader-page-${scenario}` } };
+      }
+      if (pathname === `/v1.0/leader-page-${scenario}`) {
+        if (failLeader) throw Object.assign(new Error('Calendar unavailable'), { response: { status: 503 } });
+        return { data: { value: [event(`leader-only-${scenario}`, 'occurrence-b', neighborStart, neighborStart + 60 * 60000, false)] } };
+      }
+      if (url.includes('onlineMeetings?')) {
+        assert.ok(pathname.includes(`/users/${agentAad}/`));
+        return { data: { value: [{ id: meetingId }] } };
+      }
+      if (pathname.endsWith('/transcripts')) return { data: { value: [
+        { id: `transcript-a-${scenario}`, createdDateTime: new Date(start + 60000).toISOString() },
+        { id: `transcript-b-${scenario}`, createdDateTime: new Date(neighborStart + 60000).toISOString() },
+      ] } };
+      if (pathname.endsWith('/content')) {
+        bodies.push(pathname);
+        return { data: pathname.includes('transcript-a-') ? 'WEBVTT\ninvited A' : 'WEBVTT\nuninvited B' };
+      }
+      if (url.includes('aiInsights')) throw Object.assign(new Error('Unsupported'), { response: { status: 403 } });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    // Seed a readable pending capture to prove failed discovery cannot finalize
+    // cached artifacts, not just that it discovers no new meetings.
+    if (scenario === 'leader-read-fails') {
+      captures.createPendingCapture({ eventId: id, meetingId, joinWebUrl: joinUrl, subject: 'Cached',
+        ownerUpn: 'agent@example.com', startTime: start, endTime: end, durationMinutes: 60,
+        waitBudgetMinutes: 30, giveUpAfter: now + 3600000, transcriptId: `transcript-a-${scenario}`,
+        transcriptContent: 'WEBVTT\ninvited A', insightsFetched: true });
+      captures.updateCapture(id, { nextCheckAt: 0 });
+    }
+    try {
+      const opts = { authorization: {}, context: {}, authHandlerName: 'agentic' };
+      const first = await pollForNewTranscripts(opts);
+      assert.ok(urls.some((url) => decodeURIComponent(url).includes('/users/leader@example.com/calendarView')));
+      assert.ok(urls.some((url) => url.includes(`leader-page-${scenario}`)), 'leader boundaries must include all pages');
+      assert.equal(captures.getCapture(`leader-only-${scenario}`), undefined);
+      assert.equal(captures.getCapture(`leader-copy-${scenario}`), undefined);
+      assert.ok(!bodies.some((url) => url.includes('transcript-b-')), 'never fetch the uninvited transcript');
+      if (scenario === 'adjacent') {
+        const ready = first.find((capture) => capture.eventId === id);
+        assert.ok(ready, 'iCalUId copies must not create false overlapping neighbors');
+        assert.equal(ready.transcriptContent, 'WEBVTT\ninvited A');
+        assert.equal(captures.getCapture(id).ownerUpn, 'agent@example.com');
+      } else {
+        assert.ok(!first.some((capture) => capture.eventId === id));
+        assert.equal(captures.getCapture(id).status, 'pending');
+        assert.equal(bodies.length, 0);
+      }
+      if (scenario === 'leader-read-fails') {
+        failLeader = false;
+        captures.updateCapture(id, { nextCheckAt: 0 });
+        const recovered = (await pollForNewTranscripts(opts)).find((capture) => capture.eventId === id);
+        assert.equal(recovered.transcriptContent, 'WEBVTT\ninvited A');
+      }
+      captures.markCaptureComplete(id);
+    } finally {
+      for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+    }
+  });
+}
+
+test('unsupported typed leader actions reach conversation without claiming a card action', async () => {
+  for (const text of ['reassign', 'defer', 'escalate', 'reassign the release to Bob',
+    'defer the budget review to next week', 'escalate the vendor delay to Finance']) {
+    const messages = [];
+    const result = await router.handleCardActionIfAny({
+      activity: { id: `unsupported-leader-${text}`, text, from: { aadObjectId: ctx.leaderAad } },
+      sendActivity: async (message) => messages.push(message),
+    }, {}, ctx.leaderAad);
+    assert.equal(result.handled, false, text);
+    assert.deepEqual(messages, []);
+  }
+});
+
+test('leader card hints advertise only supported typed decisions', () => {
+  const cards = require('../dist/cards/followupCards');
+  const blocker = cards.buildBlockerMeetingCard({
+    leaderAadObjectId: ctx.leaderAad, followupId: 'hint', taskId: 'hint-task', taskTitle: 'Task',
+    ownerName: 'Owner', ownerAadObjectId: 'owner', blockerSummary: 'Blocked',
+    proposedTimes: ['Tomorrow'], proposedTimesIso: ['2099-01-01T10:00:00Z'],
+  });
+  assert.ok(!JSON.stringify(blocker).includes('reply `defer`'));
+  assert.ok(JSON.stringify(blocker).includes('use the button below'));
+  const source = fs.readFileSync(path.join(__dirname, '../src/cards/followupCards.ts'), 'utf8');
+  assert.ok(!source.includes('reply `defer`'));
+  assert.ok(!source.includes('/ `reassign`'));
+});
+
 test('environment template keeps observability export disabled by default', () => {
   const template = fs.readFileSync(path.join(__dirname, '..', '.env.template'), 'utf8');
   assert.match(template, /^ENABLE_A365_OBSERVABILITY_EXPORTER=false$/m);

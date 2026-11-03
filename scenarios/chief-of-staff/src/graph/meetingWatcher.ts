@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Calendar-driven meeting discovery. Every poll cycle we read the calendar of
-// GRAPH_OWNER (either the leader or the CoS agent — see CAPTURE_GRAPH_OWNER
-// env), keep only events that are:
+// Calendar-driven meeting discovery. Every poll cycle we read the capture
+// mailbox and the leader's calendar for exclusions. Capture-mailbox events
+// qualify only when they are:
 //   - Teams online meetings (isOnlineMeeting = true)
 //   - attended by BOTH the leader and the CoS agent (as organizer or
 //     attendee) — regardless of who organized the meeting
@@ -43,7 +43,7 @@ export interface MeetingWatcherOptions {
   authorization: Authorization;
   context: TurnContext;
   authHandlerName: string;
-  /** UPN whose calendar we read + whose /users/{}/onlineMeetings we hit. */
+  /** Capture mailbox; artifact endpoints stay here. Leader calendar also bounds attribution. */
   graphOwnerUpn: string;
   /** UPN who must be on the invite (organizer or attendee) — the leader. */
   leaderUpn: string;
@@ -114,12 +114,12 @@ export async function checkEventParticipation(
 
 /**
  * Discover meetings that qualify for CoS capture. Never throws — logs and
- * returns [] on failure so the poller keeps running.
+ * returns undefined on failure so cached captures cannot use stale boundaries.
  */
 export async function discoverQualifyingMeetings(
   opts: MeetingWatcherOptions,
   observed?: ObservedOccurrence[]
-): Promise<QualifyingMeeting[]> {
+): Promise<QualifyingMeeting[] | undefined> {
   const { graphOwnerUpn, leaderUpn, cosAgentUpn, watchHours } = opts;
   if (!graphOwnerUpn || !leaderUpn || !cosAgentUpn) return [];
 
@@ -134,14 +134,8 @@ export async function discoverQualifyingMeetings(
     const end = new Date(Date.now() + forwardHours * 60 * 60 * 1000).toISOString();
 
     // calendarView is the correct endpoint for expanded recurring events.
-    // We read the CALENDAR of graphOwnerUpn (leader or cos-agent, per env)
-    // and keep events where BOTH the leader and the CoS are on the invite.
-    const url =
-      `${GRAPH_BASE}/users/${encodeURIComponent(graphOwnerUpn)}/calendarView` +
-      `?startDateTime=${start}&endDateTime=${end}` +
-      `&$select=id,subject,start,end,isCancelled,isOnlineMeeting,onlineMeeting,organizer,attendees` +
-      `&$top=100`;
-
+    // Capture events come from graphOwnerUpn; the leader's calendar adds
+    // exclusion boundaries even when the CoS wasn't invited to that call.
     log.debug(
       'meetingWatcher',
       `reading watched calendar (window=[-${watchHours}h, +${forwardHours}h])`
@@ -149,19 +143,31 @@ export async function discoverQualifyingMeetings(
 
     // calendarView is paged (expanded recurrences count individually) — follow
     // @odata.nextLink until exhausted so busy calendars aren't truncated.
-    const events: any[] = [];
-    let pageUrl: string | null = url;
-    let pages = 0;
-    while (pageUrl) {
-      const res: any = await axios.get(pageUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      events.push(...((res.data?.value ?? []) as any[]));
-      pageUrl = res.data?.['@odata.nextLink'] ?? null;
-      pages++;
-    }
-    if (pages > 1) {
-      log.info('meetingWatcher', `calendarView returned ${events.length} event(s) across ${pages} pages`);
+    const events: { ev: any; exclusionOnly: boolean; eventId: string }[] = [];
+    const captureIdsByICal = new Map<string, string>();
+    const mailboxes = graphOwnerUpn.toLowerCase() === leaderUpn.toLowerCase()
+      ? [graphOwnerUpn] : [graphOwnerUpn, leaderUpn];
+    for (const mailbox of mailboxes) {
+      const exclusionOnly = mailbox !== graphOwnerUpn;
+      let pageUrl: string | undefined =
+        `${GRAPH_BASE}/users/${encodeURIComponent(mailbox)}/calendarView` +
+        `?startDateTime=${start}&endDateTime=${end}` +
+        `&$select=id,iCalUId,subject,start,end,isCancelled,isOnlineMeeting,onlineMeeting,organizer,attendees&$top=100`;
+      while (pageUrl) {
+        const res: { data: { value?: any[]; '@odata.nextLink'?: string } } = await axios.get(pageUrl, {
+          headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="UTC"' },
+        });
+        for (const ev of res.data?.value ?? []) {
+          if (!exclusionOnly && ev.iCalUId) captureIdsByICal.set(String(ev.iCalUId), String(ev.id));
+          // Mailbox copies have different event ids. iCalUId identifies the
+          // same occurrence; unknown copies remain separate (fail closed).
+          const eventId = exclusionOnly
+            ? captureIdsByICal.get(String(ev.iCalUId)) ?? `${mailbox.toLowerCase()}:${ev.id}`
+            : String(ev.id);
+          events.push({ ev, exclusionOnly, eventId });
+        }
+        pageUrl = res.data?.['@odata.nextLink'];
+      }
     }
     const now = Date.now();
     const cosUpnLower = cosAgentUpn.toLowerCase();
@@ -173,7 +179,7 @@ export async function discoverQualifyingMeetings(
     );
 
     const qualifying: QualifyingMeeting[] = [];
-    for (const ev of events) {
+    for (const { ev, exclusionOnly, eventId } of events) {
       const subject = String(ev.subject ?? '(untitled)');
       // Log-safe reference: never the meeting subject or attendee addresses.
       // Event ids share a mailbox prefix, so the tail is what distinguishes them.
@@ -194,7 +200,7 @@ export async function discoverQualifyingMeetings(
         const oStart = ev.start?.dateTime ? Date.parse(ev.start.dateTime + 'Z') : NaN;
         if (isFinite(oEnd)) {
           observed.push({
-            eventId: String(ev.id),
+            eventId,
             joinWebUrl: joinUrl,
             startTime: isFinite(oStart) ? oStart : undefined,
             endTime: oEnd,
@@ -202,6 +208,10 @@ export async function discoverQualifyingMeetings(
           });
         }
       }
+
+      // Leader-only calendar reads establish exclusions, never change the
+      // capture mailbox or authorize additional captures.
+      if (exclusionOnly) continue;
 
       if (ev.isCancelled) {
         log.debug('meetingWatcher', `skip ${ref} — cancelled`);
@@ -299,7 +309,7 @@ export async function discoverQualifyingMeetings(
         body: e?.response?.data ?? e?.message ?? String(e),
       });
     }
-    return [];
+    return undefined;
   }
 }
 

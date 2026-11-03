@@ -88,6 +88,11 @@ list refreshes keep cached segments pending until discovery succeeds or the
 retry deadline expires. Matched Copilot insight metadata is followed by an
 individual insight GET before its action items and notes are used; failed
 detail fetches stay retryable.
+Discovery reads both the capture mailbox and the leader's calendar, including
+leader-only occurrences as exclusion boundaries. Mailbox copies are correlated
+by `iCalUId`; artifact access stays in the `CAPTURE_GRAPH_OWNER` mailbox.
+If either calendar read fails, cached captures wait for a successful discovery
+instead of processing with incomplete boundaries.
 
 Substantive free-text blocker requests without an open check-in reach the
 conversational unblock flow. Bare blocker keywords still ask for details,
@@ -612,15 +617,16 @@ POST /planner/tasks   × N
     directly if it never is. If the task is completed in the meantime, the
     queued request is dropped instead of being sent.
 
-Every card also accepts a plain-text keyword reply. Owners can reply
+Owner check-in cards also accept a plain-text keyword reply. Owners can reply
 `ontrack`, `extend`, or `blocked`. For extension decisions, the leader must
 send exactly `approve`, `approve extension`, or `reject` (ignoring case and
 surrounding whitespace), or use the matching card's buttons. Conditions or
 unrelated trailing text such as `approve only if Finance signs off` or
 `approve the purchase order` are not interpreted as extension decisions.
 If several requests are pending, the agent asks you to use the matching
-card's buttons. Other leader keywords include `reassign` / `defer` /
-`escalate`. Leader keywords are only honored from the configured leader;
+card's buttons. Reassign, Defer, and Escalate require the corresponding card
+buttons; those words typed in chat are not deterministic card actions.
+Leader decision keywords are only honored from the configured leader;
 card buttons are checked against the sender too — owners can only act on
 check-ins that are still open and on tasks Planner currently assigns to
 them (a closed check-in only accepts **Complete**).

@@ -417,9 +417,6 @@ function extractIntent(
       approve: 'approve_extend',
       'approve extension': 'approve_extend',
       reject: 'reject_extend',
-      reassign: 'reassign',
-      defer: 'defer_blocker',
-      escalate: 'esc_escalate',
     });
   }
   for (const [kw, verb] of Object.entries(kwMap)) {
