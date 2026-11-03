@@ -246,8 +246,10 @@ setInterval, guarded by `meetingPollInFlight` — see §10.2):
   (`@odata.nextLink`), so a busy calendar isn't truncated, and it also
   records every online occurrence in the window — invited or not — as a
   transcript-window boundary for its join URL. An existing event whose start/end
-  moved is refreshed (`rescheduleCapture`), and a `gave-up` record is
-  reopened when the reschedule moves it into a new capture window.
+  moved is refreshed (`rescheduleCapture`) with its old fetched artifacts
+  invalidated. Unwritten extraction is discarded; captures with existing
+  writes stop for manual review to avoid duplicate or obsolete writes. A
+  `gave-up` record without writes reopens in a new capture window.
 - **Pass 2 — retry sweep.** For each pending capture whose `nextCheckAt` has
   arrived, the sweep first re-reads the calendar event (unless this tick's
   discovery just confirmed it). A cancelled or deleted event, or one the
@@ -261,7 +263,9 @@ setInterval, guarded by `meetingPollInFlight` — see §10.2):
   to any other occurrence on the same join URL — tracked or not (an
   occurrence the CoS isn't invited to still counts) — the slack stops at the
   midpoint of the gap and the shared boundary belongs to the later
-  occurrence. It also fetches the Copilot insights, then decides one of three
+  occurrence. A successful refresh with no eligible transcripts clears the
+  old artifact selection and retries rather than promoting cached content.
+  It also fetches the Copilot insights, then decides one of three
   outcomes:
   1. **Ready** — the meeting has ended, its transcript ID is known, and
      every selected transcript segment has a readable body, AND
@@ -920,7 +924,7 @@ All card verbs are strings in `activity.value.verb`:
 | `reject_extend` | Extension request card | Only while `pending`: deterministic DM to owner "not approved" |
 | `reassign` | Extension request card | Manual handoff: closes the check-in, cancels the pending extension request / queued delivery, and tells the leader to change the assignee in Planner |
 | `book_meeting` | Blocker meeting card | Per-follow-up lock; validate current request/task and future slot. Direct Calendar MCP call with fixed organizer, attendees, and times. A returned event ID permits resolution and the owner DM; failure leaves the request open. |
-| `defer_blocker` | Blocker meeting card | Snooze — resolves the followup with a note |
+| `defer_blocker` | Blocker meeting card | Resolves the followup with a note; shares the booking lock and declines while another action is in flight |
 | `esc_reassign` | Escalation card | Same manual handoff as `reassign` |
 | `esc_extend` | Escalation card | Sends the leader an extension approval card |
 | `esc_escalate` | Escalation card | Deterministic DM to owner that the leader will reach out |

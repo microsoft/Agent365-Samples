@@ -1550,6 +1550,163 @@ test('leader card hints advertise only supported typed decisions', () => {
   assert.ok(!source.includes('/ `reassign`'));
 });
 
+test('Defer cannot close a blocker while booking is paused at the live Planner lookup', { timeout: 5000 }, async (t) => {
+  const planner = require('../dist/graph/plannerTools');
+  const cards = require('../dist/cards/followupCards');
+  const record = followups.createFollowup({ taskId: 'defer-during-booking', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+  followups.recordOwnerResponse(record.followupId, 'blocked');
+  const originalStatus = followups.getFollowup(record.followupId).status;
+  let release, reached;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const paused = new Promise((resolve) => { reached = resolve; });
+  let reads = 0;
+  t.mock.method(planner, 'getPlannerTaskDetails', async () => {
+    if (++reads === 2) { reached(); await gate; }
+    return { ok: true, planId: 'allowed-plan', title: 'Task', assigneeAads: ['owner'], percentComplete: 0 };
+  });
+  t.mock.method(planner, 'updatePlannerTaskTitle', async () => ({ ok: true, newTitle: '[BLOCKER] Task' }));
+  t.mock.method(people, 'resolveAadToUpn', async () => 'owner@example.com');
+  t.mock.method(cards, 'sendPlainDmToUser', async () => ({ ok: true }));
+  const operations = [];
+  t.mock.method(ops, 'runWorkIqOperation', async (_opts, operation) => { operations.push(operation); return 'created-event'; });
+  const savedLeader = process.env.LEADER_UPN;
+  process.env.LEADER_UPN = 'leader@example.com';
+  const messages = [];
+  const action = (id, verb) => router.handleCardActionIfAny({
+    activity: { id, from: { aadObjectId: ctx.leaderAad }, value: {
+      verb, followupId: record.followupId, taskId: record.taskId, timeslot: 'Future', timeslotIso: '2099-01-01T10:00:00Z',
+    } },
+    sendActivity: async (message) => messages.push(message),
+  }, { getPeopleOpts: () => ({}) }, ctx.leaderAad);
+  const booking = action('paused-booking', 'book_meeting');
+  try {
+    await paused;
+    await action('defer-paused-booking', 'defer_blocker');
+    assert.equal(followups.getFollowup(record.followupId).status, originalStatus);
+    assert.ok(messages.some((message) => message.includes('already processing')));
+    assert.ok(!messages.some((message) => message.includes('blocker record is closed')));
+    assert.equal(operations.length, 0);
+  } finally {
+    release();
+    await booking;
+    if (savedLeader === undefined) delete process.env.LEADER_UPN; else process.env.LEADER_UPN = savedLeader;
+  }
+  assert.equal(operations.length, 1);
+  assert.ok(followups.getFollowup(record.followupId).meetingScheduledAt);
+});
+
+test('Defer before booking closes the blocker, prevents a later invite, and releases its lock', async (t) => {
+  const planner = require('../dist/graph/plannerTools');
+  const record = followups.createFollowup({ taskId: 'defer-before-booking', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+  t.mock.method(planner, 'getPlannerTaskDetails', async () => ({
+    ok: true, planId: 'allowed-plan', title: 'Task', assigneeAads: ['owner'], percentComplete: 0,
+  }));
+  let operations = 0;
+  t.mock.method(ops, 'runWorkIqOperation', async () => { operations++; return 'unexpected-event'; });
+  const messages = [];
+  for (const [i, verb] of ['defer_blocker', 'defer_blocker', 'book_meeting'].entries()) {
+    await router.handleCardActionIfAny({
+      activity: { id: `deferred-first-${i}`, from: { aadObjectId: ctx.leaderAad }, value: {
+        verb, followupId: record.followupId, taskId: record.taskId, timeslot: 'Future', timeslotIso: '2099-01-01T10:00:00Z',
+      } },
+      sendActivity: async (message) => messages.push(message),
+    }, {}, ctx.leaderAad);
+  }
+  assert.equal(followups.getFollowup(record.followupId).status, 'resolved');
+  assert.equal(operations, 0);
+  assert.equal(messages.filter((message) => message.includes('blocker record is closed')).length, 2);
+  assert.ok(messages.some((message) => message.includes('already closed')));
+});
+
+test('rescheduling invalidates pending, ready, and expired artifacts without duplicating written tasks', () => {
+  const now = Date.now();
+  const timing = { startTime: now - 2 * 60000, endTime: now - 60000, durationMinutes: 1, waitBudgetMinutes: 3, giveUpAfter: now + 3600000 };
+  for (const status of ['pending', 'ready', 'gave-up', 'complete', 'partial-writes']) {
+    const id = `reschedule-artifacts-${status}`;
+    const old = captures.createPendingCapture({ eventId: id, meetingId: id, subject: 'Old', ownerUpn: 'leader@example.com',
+      startTime: now - 120 * 60000, endTime: now - 60 * 60000, durationMinutes: 60, waitBudgetMinutes: 3,
+      giveUpAfter: now + 3600000 });
+    const checkpoint = [{ itemId: 'i1', kind: 'task', title: 'Old extraction', ownerAad: ctx.leaderAad, ownerName: 'Leader',
+      ...(status === 'partial-writes' ? { taskId: 'already-written' } : {}) }];
+    captures.updateCapture(id, { status: status === 'partial-writes' ? 'ready' : status, attempts: 5, processingFailures: 2,
+      transcriptId: 'obsolete', transcriptSegments: [{ transcriptId: 'obsolete', content: 'OLD', callId: 'old-call' }],
+      transcriptFetchedAt: now - 3600000, transcriptCallId: 'old-call', transcriptCorrelationId: 'old-correlation',
+      transcriptContent: 'OLD', insightsFetched: true, insightsActionItems: [{ title: 'Old action' }],
+      insightsMeetingNotes: [{ content: 'Old note' }], extractedItems: checkpoint });
+    const result = captures.rescheduleCapture(id, timing);
+    const updated = captures.getCapture(id);
+    if (status === 'complete') {
+      assert.equal(result, 'unchanged');
+      assert.equal(updated.endTime, old.endTime);
+      assert.equal(updated.transcriptId, 'obsolete');
+      continue;
+    }
+    for (const key of ['transcriptId', 'transcriptSegments', 'transcriptContent', 'transcriptFetchedAt',
+      'transcriptCallId', 'transcriptCorrelationId', 'insightsActionItems', 'insightsMeetingNotes']) {
+      assert.equal(updated[key], undefined, `${status}: ${key}`);
+    }
+    assert.equal(updated.insightsFetched, false);
+    if (status === 'partial-writes') {
+      assert.equal(updated.status, 'gave-up');
+      assert.equal(updated.extractedItems[0].taskId, 'already-written');
+    } else {
+      assert.equal(updated.status, 'pending');
+      assert.equal(updated.attempts, 0);
+      assert.equal(updated.processingFailures, 0);
+      assert.equal(updated.extractedItems, undefined);
+      assert.ok(updated.nextCheckAt <= Date.now());
+    }
+    captures.markCaptureComplete(id);
+  }
+});
+
+for (const listing of ['obsolete-only', 'empty', 'rescheduled']) {
+  test(`no current transcript selection cannot promote cached content: ${listing}`, async (t) => {
+    const watcher = require('../dist/graph/meetingWatcher');
+    const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+    const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER', 'CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY'];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com',
+      CAPTURE_GRAPH_OWNER: 'leader', CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY: '1' });
+    const now = Date.now(), start = now - 60 * 60000, end = now - 30 * 60000;
+    const id = `current-selection-${listing}`;
+    captures.createPendingCapture({ eventId: id, meetingId: id, subject: 'Moved', ownerUpn: 'leader@example.com',
+      startTime: listing === 'rescheduled' ? start - 120 * 60000 : start,
+      endTime: listing === 'rescheduled' ? end - 120 * 60000 : end,
+      durationMinutes: 30, waitBudgetMinutes: 3, giveUpAfter: now + 3600000,
+      transcriptId: 'old', transcriptContent: 'OBSOLETE', transcriptSegments: [{ transcriptId: 'old', content: 'OBSOLETE' }],
+      insightsFetched: true, insightsActionItems: [{ title: 'Obsolete action' }], transcriptCallId: 'old-call' });
+    let currentAvailable = false, bodyFetches = 0;
+    t.mock.method(watcher, 'discoverQualifyingMeetings', async () => listing === 'rescheduled' ? [{
+      eventId: id, meetingId: id, subject: 'Moved', startTime: start, endTime: end, durationMinutes: 30,
+      joinWebUrl: `https://example.test/${id}`,
+    }] : []);
+    t.mock.method(watcher, 'checkEventParticipation', async () => 'qualified');
+    t.mock.method(insights, 'fetchTranscriptsForMeeting', async () => currentAvailable
+      ? [{ transcriptId: `new-${listing}`, createdDateTime: new Date(start + 60000).toISOString() }]
+      : listing === 'empty' ? [] : [{ transcriptId: 'old', createdDateTime: new Date(start - 90 * 60000).toISOString() }]);
+    t.mock.method(insights, 'fetchTranscriptContent', async () => { bodyFetches++; return 'WEBVTT\nCURRENT'; });
+    t.mock.method(insights, 'fetchAiInsightsForMeeting', async () => ({ available: false, unsupported: true }));
+    const opts = { authorization: {}, context: {}, authHandlerName: 'agentic' };
+    try {
+      captures.updateCapture(id, { nextCheckAt: 0 });
+      assert.ok(!(await pollForNewTranscripts(opts)).some((capture) => capture.eventId === id));
+      assert.equal(captures.getCapture(id).status, 'pending');
+      assert.equal(captures.getCapture(id).transcriptContent, undefined);
+      assert.equal(captures.getCapture(id).insightsFetched, false);
+      assert.equal(bodyFetches, 0);
+      currentAvailable = true;
+      captures.updateCapture(id, { nextCheckAt: 0 });
+      const ready = (await pollForNewTranscripts(opts)).find((capture) => capture.eventId === id);
+      assert.equal(ready.transcriptContent, 'WEBVTT\nCURRENT');
+      assert.equal(ready.transcriptId, `new-${listing}`);
+      captures.markCaptureComplete(id);
+    } finally {
+      for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+    }
+  });
+}
+
 test('environment template keeps observability export disabled by default', () => {
   const template = fs.readFileSync(path.join(__dirname, '..', '.env.template'), 'utf8');
   assert.match(template, /^ENABLE_A365_OBSERVABILITY_EXPORTER=false$/m);

@@ -27,6 +27,7 @@ import {
   TranscriptSummary,
 } from './meetingArtifactsFetch';
 import {
+  clearCaptureArtifacts,
   computeWaitBudget,
   createPendingCapture,
   findCapturesDueForCheck,
@@ -379,11 +380,18 @@ async function advanceCapture(
       cap.transcriptFetchedAt = transcriptFetchedAt;
       cap.transcriptCallId = match.callId;
       cap.transcriptCorrelationId = match.contentCorrelationId;
-    } else if (transcripts.length > 0) {
+    } else {
       log.debug(
         'capturePoller',
         `${eventRef(cap.eventId)}: ${transcripts.length} transcript(s) found, none belong to this occurrence yet`
       );
+      clearCaptureArtifacts(cap.eventId);
+      if (now > cap.giveUpAfter) markCaptureGaveUp(cap.eventId);
+      else {
+        const delayMin = pickNextRetryDelayMinutes(cap.attempts, cap.waitBudgetMinutes);
+        updateCapture(cap.eventId, { nextCheckAt: now + delayMin * 60 * 1000 });
+      }
+      return undefined;
     }
   }
 

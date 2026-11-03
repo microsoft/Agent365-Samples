@@ -88,6 +88,11 @@ list refreshes keep cached segments pending until discovery succeeds or the
 retry deadline expires. Matched Copilot insight metadata is followed by an
 individual insight GET before its action items and notes are used; failed
 detail fetches stay retryable.
+Successful refreshes must select a transcript eligible for the current
+occurrence before cached artifacts can become ready. Rescheduling clears old
+transcript/insight artifacts and unwritten extraction checkpoints. If a moved
+capture has already written tasks, it stops for manual review rather than
+duplicate those tasks or finish writing from obsolete content.
 Discovery reads both the capture mailbox and the leader's calendar, including
 leader-only occurrences as exclusion boundaries. Mailbox copies are correlated
 by `iCalUId`; artifact access stays in the `CAPTURE_GRAPH_OWNER` mailbox.
@@ -639,6 +644,8 @@ owner.
 Reassign uses the same per-check-in lock as extension decisions and booking.
 If another action is in flight, it asks the leader to wait without cancelling
 the request or claiming that the check-in was closed.
+The Defer button uses that same lock, so it cannot close a blocker while its
+calendar booking is in flight.
 
 ### 8.4 Escalation (owner ignored the check-in)
 

@@ -1168,11 +1168,19 @@ async function routeIntent(
   }
 
   if (intent.verb === 'defer_blocker') {
-    if (followup) markResolved(followup.followupId);
-    await context.sendActivity(
-      `Ok — I\'ll leave this one for you to handle. The blocker record is closed but the task is still open in Planner.`
-    );
-    return { handled: true };
+    if (followup && !tryAcquireFollowupLock(followup.followupId)) {
+      await context.sendActivity(`I'm already processing the blocker request for "${followup.taskTitle}". Please wait for the booking or decision to finish before deferring.`);
+      return { handled: true };
+    }
+    try {
+      if (followup) markResolved(followup.followupId);
+      await context.sendActivity(
+        `Ok — I\'ll leave this one for you to handle. The blocker record is closed but the task is still open in Planner.`
+      );
+      return { handled: true };
+    } finally {
+      if (followup) releaseFollowupLock(followup.followupId);
+    }
   }
 
   if (intent.verb === 'esc_reassign') return handleManualReassign(context, followup);

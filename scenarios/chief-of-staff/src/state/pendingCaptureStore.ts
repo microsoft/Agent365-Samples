@@ -14,6 +14,7 @@
 // only in-flight `pending` / `ready` captures carry the fat fields.
 
 import { PersistentMap } from './persistentMap';
+import { log } from '../util/logger';
 
 export type CaptureStatus = 'pending' | 'ready' | 'complete' | 'gave-up';
 
@@ -252,20 +253,47 @@ export function rescheduleCapture(
   const moved = c.endTime !== timing.endTime || (timing.startTime !== undefined && c.startTime !== timing.startTime);
   if (!moved) return 'unchanged';
   Object.assign(c, timing);
+  clearCaptureArtifacts(eventId);
+  const hasWrites = c.extractedItems?.some((item) => !!item.taskId) || c.summaryPosted;
+  if (hasWrites) {
+    // Already-written tasks cannot be undone or safely re-extracted.
+    c.status = 'gave-up';
+    c.revokedAt = undefined;
+    store.set(eventId, c);
+    log.warn('captureStore', 'rescheduled capture already has writes — stopped for manual review', {
+      eventId: eventId.slice(-8),
+    });
+    return 'updated';
+  }
+  c.extractedItems = undefined;
+  c.summaryPosted = undefined;
+  c.attempts = 0;
+  c.processingFailures = 0;
   let result: 'updated' | 'reopened' = 'updated';
   if (c.status === 'gave-up' && timing.giveUpAfter > Date.now()) {
     c.status = 'pending';
-    c.attempts = 0;
-    c.processingFailures = 0;
-    c.transcriptId = undefined;
-    c.transcriptSegments = undefined;
-    c.transcriptFetchedAt = undefined;
-    c.insightsFetched = false;
     result = 'reopened';
   }
+  if (c.status === 'ready') c.status = 'pending';
   if (c.status === 'pending') c.nextCheckAt = Date.now();
   store.set(eventId, c);
   return result;
+}
+
+/** Discard fetched artifacts that no longer match the current occurrence. */
+export function clearCaptureArtifacts(eventId: string): void {
+  const c = store.get(eventId);
+  if (!c) return;
+  c.transcriptId = undefined;
+  c.transcriptSegments = undefined;
+  c.transcriptFetchedAt = undefined;
+  c.transcriptCallId = undefined;
+  c.transcriptCorrelationId = undefined;
+  c.transcriptContent = undefined;
+  c.insightsFetched = false;
+  c.insightsActionItems = undefined;
+  c.insightsMeetingNotes = undefined;
+  store.set(eventId, c);
 }
 
 /**
