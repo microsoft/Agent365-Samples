@@ -23,6 +23,12 @@ function issue(key, parentKey) {
         ...(parentKey ? { parent: { key: parentKey } } : {}) } };
 }
 
+function epicBackedStory(key, epicKey) {
+    const raw = issue(key);
+    raw.fields.parent = { key: epicKey };
+    return raw;
+}
+
 function fixture(mode = 'live') {
     const requests = [];
     const cfg = { mode, projectKey: 'TEAM', baseUrl: 'https://jira.example.test', email: 'offline', apiToken: 'placeholder', boardId: 1 };
@@ -35,7 +41,7 @@ function fixture(mode = 'live') {
                     requests.push({ url, options });
                     if (url.endsWith('/sprint')) return { data: { values: [{ id: 42, name: 'Shared board sprint' }] } };
                     const page = options.params.startAt === 0
-                        ? [issue('PRIVATE-123'), issue('TEAM-1'), issue('TEAM-8', 'PRIVATE-123')]
+                        ? [issue('PRIVATE-123'), epicBackedStory('TEAM-1', 'PROGRAM-1'), issue('TEAM-8', 'PRIVATE-123')]
                         : [issue('PRIVATE-456'), issue('TEAM-2'), issue('TEAM-1'), issue('invalid')];
                     return { data: { issues: page, total: 7 } };
                 },
@@ -65,7 +71,9 @@ test('multi-project sprint reads constrain requests and filter every returned pa
     assert.equal(f.requests.length, 2);
     assert.deepEqual(f.requests.map(r => r.options.params.startAt), [0, 3]);
     assert.ok(f.requests.every(r => r.options.params.jql === 'project = "TEAM"'));
-    assert.doesNotMatch(JSON.stringify(issues), /PRIVATE|TEAM-8|invalid/);
+    assert.equal(issues[0].parentKey, null);
+    assert.equal(issues[0].issueType, 'Story');
+    assert.doesNotMatch(JSON.stringify(issues), /PRIVATE|PROGRAM|TEAM-8|invalid/);
 });
 
 test('subtask reads constrain project and parents, filter foreign or unexpected parent results, and retain pagination', async () => {
@@ -97,7 +105,7 @@ test('jira_list_sprint_issues never exposes foreign board content or launders it
     });
     const result = await tools.listSprintIssuesTool.execute();
     assert.deepEqual(result.issues.map(i => i.key), ['Task-1', 'Task-2']);
-    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|Task-123|Task-456|Task-8/);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|PROGRAM|Task-123|Task-456|Task-8/);
 });
 
 test('mock collection boundary retains SCRUM seed and denies foreign parent keys despite live project setting', async () => {

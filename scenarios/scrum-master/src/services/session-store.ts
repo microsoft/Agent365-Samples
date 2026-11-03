@@ -81,10 +81,6 @@ export function getCompletedSession(standupId: string): { sentTo: number } | und
 export function claimSessionFinalization(session: StandupSession): boolean {
     if (session.state !== 'open') return false;
     session.state = 'summarizing';
-    if (session.cutoffTimer) {
-        clearTimeout(session.cutoffTimer);
-        session.cutoffTimer = undefined;
-    }
     return true;
 }
 

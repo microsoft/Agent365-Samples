@@ -166,7 +166,8 @@ export class LiveJiraClient implements JiraClient {
             const page: any[] = res.data?.issues ?? [];
             issues.push(...page
                 .filter(i => isProjectIssue(i.key, this.cfg.projectKey)
-                    && (!i.fields?.parent || isProjectIssue(i.fields.parent.key, this.cfg.projectKey)))
+                    && (i.fields?.issuetype?.subtask !== true
+                        || !i.fields?.parent || isProjectIssue(i.fields.parent.key, this.cfg.projectKey)))
                 .map(i => mapIssue(i, this.cfg.baseUrl, sprintId)));
             startAt += page.length;
             if (!page.length || res.data.isLast === true ||

@@ -41,10 +41,12 @@ Every design decision below reflects one or more of these six principles:
    in `try/catch`; process-level `unhandledRejection` /
    `uncaughtException` handlers ([`index.ts`](../src/index.ts)) keep the
    server alive even if the connector 502s on an outbound Activity.
-4. **One path to Graph.** Every Graph call uses a delegated device-code
-   token cached to `.mstoken-cache.json`. No application-permission
-   client secret is needed. Provisioning and runtime use the same
-   `GRAPH_SCOPES`. See §7.
+4. **Explicit delegated Graph identities.** SharePoint and user lookup
+   use a device-code token cached to `.mstoken-cache.json`; provisioning
+   and runtime share `GRAPH_SCOPES`. Email retrieval separately uses the
+   agentic auth handler's delegated `Mail.Read` token for the agent's
+   mailbox, requiring consent on the blueprint. Neither path uses an
+   application-permission Graph client. See §7.
 5. **SharePoint records with explicit process-local limits.** Live roster,
    response, blocker and report-delivery records live in `SMA_*` lists.
    Standup fan-in, cutoff timers, completed daily session records and Q&A
@@ -412,17 +414,23 @@ history remain process-local. Complete column-level reference:
   when blank/unset. This avoids local app registration, not tenant policy
   or delegated-permission consent. Register your own public client for a
   real deployment.
+- **Microsoft Graph (email retrieval)** — the agentic auth handler
+  exchanges a separate delegated `https://graph.microsoft.com/Mail.Read`
+  token to read `/me/messages/{id}` in the agent's mailbox. Grant and
+  consent `Mail.Read` on the agent blueprint's connection before enabling
+  email notifications. This token is not the SharePoint user's device-code
+  token; `Mail.Read` is not in `GRAPH_SCOPES` or its local cache.
 - **Jira Cloud** — Basic auth with `email:apiToken`. Token from
   [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
 - **Azure OpenAI / OpenAI** — API key from `.env`.
 - **MCP Calendar** — Agent 365 platform provides the identity; the sample
   wraps it through [`services/calendar.ts`](../src/services/calendar.ts).
 
-**No application-permission Graph client.** Everything a user touches
-they touch as themselves. Adding application permissions was intentionally
-avoided to keep the onboarding story to a single device-code sign-in and
-no application-permission grant. Delegated scopes can still require admin
-consent under the tenant's policies.
+**No application-permission Graph client.** SharePoint/user lookup use the
+signed-in user's identity; email retrieval uses the agent's delegated mailbox
+identity. The device-code sign-in provisions only the SharePoint/user-lookup
+path; email additionally requires the blueprint's delegated `Mail.Read` grant
+and consent. Delegated scopes can require admin consent under tenant policy.
 
 ## 8. Determinism boundary — where the LLM lives
 
@@ -449,6 +457,10 @@ also model-driven and is never used for inbound email.
 
 ## 9. Concurrency, idempotency, and dedup
 
+- **Early finalization preserves the cutoff.** The synchronous finalization
+  claim prevents concurrent summaries but keeps the future deadline armed.
+  Failed early delivery reopens the session, so the cutoff can retry without
+  manual intervention. Successful delivery cancels the timer before cleanup.
 - **Card submits use fire-and-forget** — handler acks in <200 ms via
   `context.sendActivity('working on it…')`, downstream work runs via
   `setImmediate`. Follow-ups arrive as proactive DMs against the cached

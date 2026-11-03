@@ -111,6 +111,59 @@ test('transient roster failure leaves finalization retryable and concurrent retr
     });
 });
 
+test('failed early delivery preserves the future cutoff and recovery finalizes exactly once automatically', async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-03T09:00:00Z') });
+    const id = ++sprintId;
+    let succeeds = false, deliveries = 0, summaries = 0, chases = 0;
+    await withStandup({
+        '../config': { getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: 4 }) },
+        '../services/jira': { getJiraClient: () => ({
+            getActiveSprint: async () => ({ id, name: 'Cutoff retry sprint' }),
+            searchSprintIssues: async () => [],
+            getSprintSubtasks: async () => [],
+        }) },
+        '../services/team-roster': { listTeamMembers: async () => [{
+            Title: 'SM', Role: 'SM', AadObjectId: 'sm',
+            conversationReference: { conversation: { id: 'sm-dm' } },
+        }] },
+        '../services/sharepoint': {
+            findByTitle: async () => sessions.getSession(sessions.makeStandupId(id))
+                ? { id: 'session' } : null,
+        },
+        '../services/proactive': { sendProactive: async () => {
+            deliveries++;
+            if (succeeds) summaries++;
+            return { ok: succeeds, error: 'Temporary connector failure' };
+        } },
+        './chase': { chaseAfterStandup: async () => { chases++; } },
+    }, async standup => {
+        const result = await standup.triggerStandup({ source: 'http' });
+        const session = sessions.getSession(result.standupId);
+        const cutoffTimer = session.cutoffTimer;
+        assert.ok(cutoffTimer);
+        await assert.rejects(standup.summarizeStandup(session), /not delivered/);
+        assert.equal(session.state, 'open');
+        assert.equal(session.cutoffTimer, cutoffTimer);
+        assert.equal(deliveries, 2);
+        succeeds = true;
+        t.mock.timers.tick(4 * 3600_000 - 1);
+        assert.equal(deliveries, 2);
+        t.mock.timers.tick(1);
+        for (let i = 0; i < 10 && !sessions.getCompletedSession(result.standupId); i++) {
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        assert.equal(summaries, 1);
+        assert.equal(chases, 1);
+        assert.equal(session.cutoffTimer, undefined);
+        assert.equal(sessions.getSession(result.standupId), undefined);
+        assert.ok(sessions.getCompletedSession(result.standupId));
+        await standup.summarizeStandup(session);
+        t.mock.timers.tick(3600_000);
+        assert.equal(summaries, 1);
+        assert.equal(chases, 1);
+    });
+});
+
 test('completion lookup or write failure cannot skip chase, cleanup or the summary delivery guard', async () => {
     for (const failure of ['lookup', 'write']) {
         const session = makeSession([]);
@@ -239,7 +292,7 @@ test('finalization guard releases when summary construction fails before deliver
 
 });
 
-test('live epic-backed Story expands inherited subtasks and sends the second assignee a card', async () => {
+test('live Story under a foreign-project epic expands subtasks without exposing the epic', async () => {
         const jiraFilename = require.resolve('../src/services/jira');
         const cachedJira = require.cache[jiraFilename];
         const load = Module._load;
@@ -264,7 +317,7 @@ test('live epic-backed Story expands inherited subtasks and sends the second ass
                     return { data: { values: [{ id, name: 'Live fixture sprint', state: 'active' }] } };
                 }
                 assert.match(url, new RegExp(`/sprint/${id}/issue$`));
-                return { data: { total: 1, issues: [rawIssue('TEAM-1', false, 'TEAM-100', 'first')] } };
+                return { data: { total: 1, issues: [rawIssue('TEAM-1', false, 'PROGRAM-1', 'first')] } };
             },
             post: async (url, body) => {
                 assert.equal(url, '/rest/api/3/search/jql');
@@ -301,6 +354,7 @@ test('live epic-backed Story expands inherited subtasks and sends the second ass
                 assert.deepEqual(cards.map(entry => entry.reference.conversation.id), ['dm-first', 'dm-second']);
                 assert.deepEqual(cards[1].card.items.map(issue => issue.key), ['TEAM-2']);
                 assert.equal(sessions.getSession(result.standupId).itemsByAssignee.get('first')[0].parentKey, null);
+                assert.doesNotMatch(JSON.stringify(cards), /PROGRAM-1/);
                 sessions.removeSession(result.standupId);
             });
         } finally {
