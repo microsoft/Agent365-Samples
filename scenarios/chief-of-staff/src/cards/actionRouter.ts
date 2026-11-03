@@ -423,6 +423,8 @@ function extractIntent(
     });
   }
   for (const [kw, verb] of Object.entries(kwMap)) {
+    // Extension decisions must not discard conditions or unrelated objects.
+    if ((verb === 'approve_extend' || verb === 'reject_extend') && text !== kw) continue;
     if (text === kw || text.startsWith(kw + ' ')) {
       if (verb === 'complete') {
         if (!isAffirmativeCompletion(rawText)) return null;

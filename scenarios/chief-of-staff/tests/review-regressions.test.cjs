@@ -493,6 +493,68 @@ test('people lookup, polling, and brief delivery errors log metadata, not provid
   }
 });
 
+test('conditional or unrelated decision prefixes never select or mutate a pending extension', async (t) => {
+  const record = followups.createFollowup({ taskId: 'explicit-decision-task', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+  followups.recordExtensionRequest(record.followupId, times.normalizeDueDate('2099-11-03'), null);
+  let selections = 0, reads = 0, writes = 0;
+  t.mock.method(followups, 'findPendingExtensionRequests', () => { selections++; return [record]; });
+  t.mock.method(axios, 'get', async () => {
+    reads++;
+    return { data: { '@odata.etag': 'e', planId: 'allowed-plan', assignments: {}, title: 'Task' } };
+  });
+  t.mock.method(axios, 'patch', async () => { writes++; return { data: {} }; });
+  const messages = [];
+  const cards = require('../dist/cards/followupCards');
+  t.mock.method(cards, 'sendPlainDmToUser', async (_opts, _aad, text) => { messages.push(text); return { ok: true }; });
+  const client = { getPeopleOpts: () => ({ authorization: {}, context: {}, authHandlerName: 'agentic' }) };
+  const texts = [
+    'approve only if Finance signs off', 'approve the purchase order',
+    'approve extension only after Finance signs off', 'approve extension for another task',
+    'reject only if Finance declines', 'reject the purchase order',
+    'approve but keep the current deadline', 'approve or reject?',
+  ];
+  try {
+    for (const [i, text] of texts.entries()) {
+      const result = await router.handleCardActionIfAny({
+        activity: { id: `not-an-extension-decision-${i}`, text, from: { aadObjectId: ctx.leaderAad } },
+        sendActivity: async (message) => messages.push(message),
+      }, client, ctx.leaderAad);
+      assert.equal(result.handled, false, text);
+      assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'pending', text);
+    }
+    assert.equal(selections, 0);
+    assert.equal(reads, 0);
+    assert.equal(writes, 0);
+    assert.deepEqual(messages, []);
+  } finally {
+    followups.cancelOutstandingRequestsForTask(record.taskId);
+  }
+});
+
+for (const text of ['approve', 'approve extension', '  APPROVE EXTENSION  ', 'reject', ' ReJeCt ']) {
+  test(`exact extension decision remains supported: ${JSON.stringify(text)}`, async (t) => {
+    const record = followups.createFollowup({ taskId: `exact-decision-${text}`, taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+    const proposal = times.normalizeDueDate('2099-11-03');
+    followups.recordExtensionRequest(record.followupId, proposal, null);
+    t.mock.method(followups, 'findPendingExtensionRequests', () => [followups.getFollowup(record.followupId)]);
+    t.mock.method(axios, 'get', async () => ({ data: {
+      '@odata.etag': 'e', planId: 'allowed-plan', assignments: {}, title: 'Task', percentComplete: 0, dueDateTime: null,
+    } }));
+    const writes = [];
+    t.mock.method(axios, 'patch', async (_url, body) => { writes.push(body); return { data: {} }; });
+    const cards = require('../dist/cards/followupCards');
+    t.mock.method(cards, 'sendPlainDmToUser', async () => ({ ok: true }));
+    const result = await router.handleCardActionIfAny({
+      activity: { id: `exact-decision-${text}`, text, from: { aadObjectId: ctx.leaderAad } },
+      sendActivity: async () => {},
+    }, { getPeopleOpts: () => ({}) }, ctx.leaderAad);
+    const approved = text.trim().toLowerCase().startsWith('approve');
+    assert.equal(result.handled, true);
+    assert.equal(followups.getFollowup(record.followupId).extensionStatus, approved ? 'approved' : 'rejected');
+    assert.deepEqual(writes, approved ? [{ dueDateTime: proposal }] : []);
+  });
+}
+
 test('old extension cards cannot approve or reject a replacement proposal', async (t) => {
   const record = followups.createFollowup({ taskId: 'proposal-task', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
   const oldDate = times.normalizeDueDate('2099-11-02'), currentDate = times.normalizeDueDate('2099-11-03');

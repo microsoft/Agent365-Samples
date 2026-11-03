@@ -611,9 +611,13 @@ POST /planner/tasks   × N
     queued request is dropped instead of being sent.
 
 Every card also accepts a plain-text keyword reply. Owners can reply
-`ontrack`, `extend`, or `blocked`. The leader can reply `approve` or
-`reject` to a pending extension request (if several are pending, the agent
-asks you to use the matching card's buttons), plus `reassign` / `defer` /
+`ontrack`, `extend`, or `blocked`. For extension decisions, the leader must
+send exactly `approve`, `approve extension`, or `reject` (ignoring case and
+surrounding whitespace), or use the matching card's buttons. Conditions or
+unrelated trailing text such as `approve only if Finance signs off` or
+`approve the purchase order` are not interpreted as extension decisions.
+If several requests are pending, the agent asks you to use the matching
+card's buttons. Other leader keywords include `reassign` / `defer` /
 `escalate`. Leader keywords are only honored from the configured leader;
 card buttons are checked against the sender too — owners can only act on
 check-ins that are still open and on tasks Planner currently assigns to
