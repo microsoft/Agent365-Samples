@@ -22,6 +22,25 @@ function Read-Host {
 function az {
   $command = $args -join ' '
   $state.Calls.Add($command)
+  if ($state.Mode -like 'secret-*') {
+    $global:LASTEXITCODE = 0
+    switch -Wildcard ($command) {
+      'account show*' { return '{"tenantId":"11111111-1111-1111-1111-111111111111","user":{"name":"offline-test"}}' }
+      'ad app list*' { return '[{"displayName":"cos-graph-worker","appId":"test-app"}]' }
+      'ad sp list*' { return '[{"id":"worker-sp"}]' }
+      'ad sp show*' { return (@{ appRoles = $state.Roles } | ConvertTo-Json -Depth 8 -Compress) }
+      'ad app show*' {
+        return (@{ requiredResourceAccess = @(@{
+          resourceAppId = '00000003-0000-0000-c000-000000000000'
+          resourceAccess = @($state.Roles | ForEach-Object { @{ id = $_.id; type = 'Role' } })
+        }); passwordCredentials = $state.Credentials } | ConvertTo-Json -Depth 8 -Compress)
+      }
+      'ad app permission admin-consent*' { return }
+      'rest *' { return (@{ value = @($state.Roles | ForEach-Object { @{ appRoleId = $_.id } }) } | ConvertTo-Json -Depth 8 -Compress) }
+      'ad app credential reset*' { return '{"password":"offline-test-only"}' }
+      default { throw "Unexpected provisioning command in offline test: $command" }
+    }
+  }
   if ($command -like 'login *') {
     if ($state.Mode -eq 'cancelled-login') {
       & $pwsh -NoProfile -Command "[Console]::Error.WriteLine('ERROR: login cancelled'); exit 1"
@@ -114,5 +133,41 @@ foreach ($mode in @('revoked-login', 'missing-login', 'missing-login-with-tenant
     Assert-True ($state.Prompts -eq $expectedPrompts) 'Prompt only when the target tenant is unknown'
   }
   Assert-True (@($state.Calls | Where-Object { $_ -like 'logout*' }).Count -eq 0) 'Never sign out automatically'
+  Write-Host "PASS: $mode"
+}
+
+# Simulate a UTC-08:00 host's local wall clock independently of the test
+# runner's zone. UTC Graph expiry values must still compare as instants.
+function Get-Date {
+  param([string]$Format)
+  $local = [datetime]::SpecifyKind([datetime]::UtcNow.AddHours(-8), [DateTimeKind]::Local)
+  if ($Format) { return $local.ToString($Format) }
+  return $local
+}
+
+$roles = @('Calendars.Read', 'OnlineMeetings.Read.All', 'OnlineMeetingTranscript.Read.All',
+  'OnlineMeetingAiInsight.Read.All', 'Tasks.ReadWrite.All', 'User.Read.All', 'GroupMember.Read.All', 'ChatMember.Read.All') |
+  ForEach-Object { @{ id = "role-$_"; value = $_ } }
+foreach ($mode in @('secret-expired', 'secret-valid', 'secret-mixed', 'secret-rotate', 'secret-missing')) {
+  $expired = @{ endDateTime = [DateTimeOffset]::UtcNow.AddHours(-1).UtcDateTime.ToString('o') }
+  $valid = @{ endDateTime = [DateTimeOffset]::UtcNow.AddHours(1).UtcDateTime.ToString('o') }
+  $credentials = switch ($mode) {
+    'secret-expired' { @($expired) }
+    'secret-valid' { @($valid) }
+    'secret-mixed' { @($expired, $valid) }
+    'secret-rotate' { @($valid) }
+    'secret-missing' { @() }
+  }
+  $state = @{ Mode = $mode; Roles = @($roles); Credentials = @($credentials); Calls = [System.Collections.Generic.List[string]]::new() }
+  $parameters = @{ RotateSecret = ($mode -eq 'secret-rotate') }
+  $messages = @(& $bootstrap @parameters 6>&1)
+  $resets = @($state.Calls | Where-Object { $_ -like 'ad app credential reset*' })
+  $shouldReset = $mode -in @('secret-expired', 'secret-rotate', 'secret-missing')
+  Assert-True ($resets.Count -eq [int]$shouldReset) "$mode must handle secret expiry as an instant on a UTC-08:00 host"
+  if ($shouldReset) {
+    Assert-True ($resets[0] -match '--append') 'Replacement must retain other existing credentials'
+  } else {
+    Assert-True (($messages -join "`n") -match 'keeping the existing unexpired secret \(1 found\)') 'Only truly unexpired credentials may be kept'
+  }
   Write-Host "PASS: $mode"
 }

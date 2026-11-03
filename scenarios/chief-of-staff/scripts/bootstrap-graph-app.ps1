@@ -250,8 +250,8 @@ Write-Host "  all $($APP_ROLE_NAMES.Count) roles assigned."
 
 Write-Host ''
 Write-Host '=== 6. Client secret ==='
-$now = Get-Date
-$validSecrets = @($appDetails.passwordCredentials | Where-Object { [datetime]$_.endDateTime -gt $now })
+$now = [DateTimeOffset]::UtcNow
+$validSecrets = @($appDetails.passwordCredentials | Where-Object { [DateTimeOffset]$_.endDateTime -gt $now })
 $newSecret = $null
 if ($validSecrets.Count -gt 0 -and -not $RotateSecret) {
   Write-Host "  keeping the existing unexpired secret ($($validSecrets.Count) found). Pass -RotateSecret to append a new one."

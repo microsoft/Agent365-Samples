@@ -555,6 +555,72 @@ for (const text of ['approve', 'approve extension', '  APPROVE EXTENSION  ', 're
   });
 }
 
+test('Reassign cannot cancel an approval paused at its final Planner lookup', { timeout: 5000 }, async (t) => {
+  const record = followups.createFollowup({ taskId: 'reassign-during-approval', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+  const proposal = times.normalizeDueDate('2099-11-03');
+  followups.recordExtensionRequest(record.followupId, proposal, null);
+  let release, reachedLookup;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const paused = new Promise((resolve) => { reachedLookup = resolve; });
+  let reads = 0;
+  t.mock.method(axios, 'get', async () => {
+    if (++reads === 3) {
+      reachedLookup();
+      await gate;
+    }
+    return { data: { '@odata.etag': 'e', planId: 'allowed-plan', assignments: {}, title: 'Task', percentComplete: 0, dueDateTime: null } };
+  });
+  const writes = [];
+  t.mock.method(axios, 'patch', async (_url, body) => { writes.push(body); return { data: {} }; });
+  const cards = require('../dist/cards/followupCards');
+  t.mock.method(cards, 'sendPlainDmToUser', async () => ({ ok: true }));
+  const client = { getPeopleOpts: () => ({}) };
+  const approveMessages = [], reassignMessages = [];
+  const action = (id, verb, messages) => router.handleCardActionIfAny({
+    activity: { id, from: { aadObjectId: ctx.leaderAad }, value: {
+      verb, followupId: record.followupId, taskId: record.taskId, newDueDate: proposal, baseDueDate: '',
+    } },
+    sendActivity: async (message) => messages.push(message),
+  }, client, ctx.leaderAad);
+  const approval = action('approval-paused', 'approve_extend', approveMessages);
+  try {
+    await paused;
+    await action('reassign-while-paused', 'reassign', reassignMessages);
+    assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'pending');
+    assert.ok(reassignMessages.some((message) => message.includes('already processing')));
+    assert.ok(!reassignMessages.some((message) => message.includes("I've closed")));
+    assert.equal(writes.length, 0);
+  } finally {
+    release();
+    await approval;
+  }
+  assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'approved');
+  assert.deepEqual(writes, [{ dueDateTime: proposal }]);
+  // The approval releases the lock, so a later manual handoff can proceed.
+  await action('reassign-after-approval', 'reassign', reassignMessages);
+  assert.ok(reassignMessages.some((message) => message.includes("I've closed")));
+});
+
+test('a completed manual Reassign cancels the request and prevents later approval', async (t) => {
+  const record = followups.createFollowup({ taskId: 'reassign-before-approval', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+  const proposal = times.normalizeDueDate('2099-11-03');
+  followups.recordExtensionRequest(record.followupId, proposal, null);
+  t.mock.method(axios, 'get', async () => ({ data: { planId: 'allowed-plan', title: 'Task', assignments: {}, percentComplete: 0 } }));
+  let writes = 0;
+  t.mock.method(axios, 'patch', async () => { writes++; return { data: {} }; });
+  const messages = [];
+  for (const verb of ['reassign', 'approve_extend']) {
+    await router.handleCardActionIfAny({
+      activity: { id: `manual-handoff-${verb}`, from: { aadObjectId: ctx.leaderAad },
+        value: { verb, followupId: record.followupId, taskId: record.taskId, newDueDate: proposal, baseDueDate: '' } },
+      sendActivity: async (message) => messages.push(message),
+    }, {}, ctx.leaderAad);
+  }
+  assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'cancelled');
+  assert.equal(writes, 0);
+  assert.ok(messages.some((message) => message.includes('was cancelled')));
+});
+
 test('old extension cards cannot approve or reject a replacement proposal', async (t) => {
   const record = followups.createFollowup({ taskId: 'proposal-task', taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
   const oldDate = times.normalizeDueDate('2099-11-02'), currentDate = times.normalizeDueDate('2099-11-03');

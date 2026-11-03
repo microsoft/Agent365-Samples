@@ -1387,16 +1387,24 @@ async function handleManualReassign(
   context: TurnContext,
   followup: PendingFollowup | undefined
 ): Promise<CardActionResult> {
-  // Reassigning closes the owner's request too: a pending extension or a
-  // queued leader card for this check-in must not be approvable later.
-  if (followup) cancelOwnerRequest(followup.followupId);
-  const taskTitle = followup?.taskTitle ?? 'this task';
-  await context.sendActivity(
-    `🔀 To reassign **"${taskTitle}"**, change its assignee in Planner. ` +
-      `I've closed this check-in; once Planner shows the new owner, the next follow-up cycle will check in with them. ` +
-      `I haven't changed the task or messaged anyone.`
-  );
-  return { handled: true };
+  if (followup && !tryAcquireFollowupLock(followup.followupId)) {
+    await context.sendActivity(`I'm already processing a decision for "${followup.taskTitle}". Please wait for it to finish before reassigning.`);
+    return { handled: true };
+  }
+  try {
+    // Reassigning closes the owner's request too: a pending extension or a
+    // queued leader card for this check-in must not be approvable later.
+    if (followup) cancelOwnerRequest(followup.followupId);
+    const taskTitle = followup?.taskTitle ?? 'this task';
+    await context.sendActivity(
+      `🔀 To reassign **"${taskTitle}"**, change its assignee in Planner. ` +
+        `I've closed this check-in; once Planner shows the new owner, the next follow-up cycle will check in with them. ` +
+        `I haven't changed the task or messaged anyone.`
+    );
+    return { handled: true };
+  } finally {
+    if (followup) releaseFollowupLock(followup.followupId);
+  }
 }
 
 async function handleActionForwardToExtendOffer(

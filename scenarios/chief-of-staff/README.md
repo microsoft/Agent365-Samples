@@ -230,7 +230,9 @@ The script:
    Paste those three into `scenarios/chief-of-staff/.env`.
 
 Re-running is safe: missing permissions are added and verified, and an
-existing secret is **kept**. To issue a new secret, run with
+existing unexpired secret is **kept**. Expiry is compared as UTC instants,
+independently of the host time zone; if all secrets are expired, a new one
+is appended. To explicitly issue a new secret, run with
 `-RotateSecret` — it is appended (old secrets are not deleted), so remove
 the previous one yourself after `.env` and App Service use the new value.
 
@@ -628,6 +630,9 @@ clicking **Reassign** closes the check-in, cancels the owner's pending
 extension request (so a typed `approve` can't revive it), and tells the
 leader to change the assignee in Planner. The next follow-up cycle then checks in with the new
 owner.
+Reassign uses the same per-check-in lock as extension decisions and booking.
+If another action is in flight, it asks the leader to wait without cancelling
+the request or claiming that the check-in was closed.
 
 ### 8.4 Escalation (owner ignored the check-in)
 
