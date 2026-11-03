@@ -111,6 +111,39 @@ test('transient roster failure leaves finalization retryable and concurrent retr
     });
 });
 
+test('completion lookup or write failure cannot skip chase, cleanup or the summary delivery guard', async () => {
+    for (const failure of ['lookup', 'write']) {
+        const session = makeSession([]);
+        let summaries = 0, chases = 0;
+        const errors = [];
+        const original = console.error;
+        console.error = (...args) => errors.push(args.join(' '));
+        try {
+            await withStandup({
+                '../services/sharepoint': {
+                    findByTitle: async () => {
+                        if (failure === 'lookup') throw new Error('lookup unavailable');
+                        return { id: 'session' };
+                    },
+                    updateItem: async () => { throw new Error('PATCH succeeded but refresh GET failed'); },
+                },
+                '../cards/standup-summary.card': { buildStandupSummaryCard: value => { summaries++; return value; } },
+                './chase': { chaseAfterStandup: async () => { chases++; } },
+            }, async standup => {
+                await standup.summarizeStandup(session);
+                await standup.summarizeStandup(session);
+                assert.equal(summaries, 1);
+                assert.equal(chases, 1);
+                assert.equal(sessions.getSession(session.standupId), undefined);
+                assert.ok(sessions.getCompletedSession(session.standupId));
+                assert.match(errors.join('\n'), /Summary delivered, but completion persistence failed/);
+            });
+        } finally {
+            console.error = original;
+        }
+    }
+});
+
 test('mock cron and HTTP without a turn context skip before daily session lookup or persistence', async () => {
     const forbidden = () => { throw new Error('Must skip before accessing services'); };
     await withStandup({

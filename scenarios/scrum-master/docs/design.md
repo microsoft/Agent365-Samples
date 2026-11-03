@@ -28,9 +28,10 @@ Every design decision below reflects one or more of these six principles:
 
 1. **Deterministic-first.** Everything a Scrum Master depends on (which
    transition to apply, when to warn, which helper to match, what a report
-   contains) is TypeScript, not the LLM. LLM calls are gated to the two
+   contains) is TypeScript, not the LLM. Ceremony LLM calls are gated to the two
    places where language understanding is genuinely required: free-text
    Q&A (`answer.ts`) and the MCP calendar tool loop (`calendar.ts`).
+   Email notifications separately use a tool-less model to summarize and draft.
 2. **Card actions must never double-fire.** Teams and the A365 platform
    enforce a short SLA on card-shaped Invoke and Message activities. Every
    card handler sends an immediate ack (`Booking the meeting…`) and runs
@@ -85,7 +86,7 @@ flowchart LR
   (roster, standup sessions, blockers, helpers) via delegated Graph.
 - **MCP Calendar** creates the unblock meeting on the agent's own mailbox
   so no delegated user-calendar consent is required.
-- **LLM** is used for grounded Q&A and MCP tool loops only.
+- **LLM** is used for grounded Q&A, MCP tool loops, and tool-less email drafting.
 
 ## 3. High-level component diagram
 
@@ -433,11 +434,18 @@ consent under the tenant's policies.
 | Chase — calendar tool loop | Yes | MCP tools invoked by LLM; output Zod-validated |
 | Warn thresholds | No | Pure arithmetic on sprint state |
 | Q&A (Answer) | Yes | Free-text intent + tool selection |
+| Email notification | Yes | Direct Graph read, then isolated tool-less summarization and drafting |
 | Mid-sprint RAG | No | Rule-based due-date classifier |
 | Sprint close report | No | Deterministic markdown template over Jira data |
 
-The two LLM paths (Chase calendar, Q&A) are the only places where behaviour
-depends on model output. Everything else is TypeScript.
+Chase calendar, Q&A, and email drafting depend on model output. Email retrieval
+uses the agentic auth handler with Graph `Mail.Read` to GET only the notified
+message; it never uses the SharePoint user's cached credentials. Grant that
+delegated scope to the agent blueprint before using email notifications.
+Email content is passed only to an agent with no tools, MCP servers, or handoffs.
+The host sends the draft through the notification response, not a model-selected
+mail-send action. The optional `SMA_ANSWER_DISABLED=true` generic assistant is
+also model-driven and is never used for inbound email.
 
 ## 9. Concurrency, idempotency, and dedup
 

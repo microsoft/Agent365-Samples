@@ -137,7 +137,7 @@ function adfParagraph(text: string): any {
 async function createIssue(
     http: AxiosInstance,
     projectKey: string,
-    issueTypeName: 'Story' | 'Subtask',
+    issueType: { name: 'Story' } | { id: string },
     summary: string,
     accountId: string,
     opts: {
@@ -150,7 +150,7 @@ async function createIssue(
     const fields: Record<string, unknown> = {
         project: { key: projectKey },
         summary,
-        issuetype: { name: issueTypeName },
+        issuetype: issueType,
         assignee: { accountId },
     };
     if (opts.description) fields.description = adfParagraph(opts.description);
@@ -199,7 +199,16 @@ async function moveIssuesToSprint(
     console.log(`[seed:jira] moved ${issueKeys.length} issue(s) into sprint ${sprintId}`);
 }
 
-async function main() {
+export async function resolveSubtaskIssueTypeId(http: AxiosInstance, projectKey: string): Promise<string> {
+    const response = await http.get<{ issueTypes: Array<{ id: string; subtask: boolean }> }>(
+        `/rest/api/3/project/${encodeURIComponent(projectKey)}`,
+    );
+    const subtask = response.data.issueTypes.find(type => type.subtask);
+    if (!subtask?.id) throw new Error(`Project ${projectKey} has no enabled subtask issue type.`);
+    return subtask.id;
+}
+
+export async function main() {
     console.log('[seed:jira] Starting Jira sample-data seed...');
     const cfg = loadConfig();
     const http = makeClient(cfg);
@@ -209,6 +218,9 @@ async function main() {
         fs.readFileSync(path.join(__dirname, 'sprint.sample.json'), 'utf-8'),
     );
 
+    const subtaskTypeId = stories.some(story => story.subtasks?.length)
+        ? await resolveSubtaskIssueTypeId(http, cfg.projectKey)
+        : null;
     const createdIssueKeys: string[] = [];
 
     for (const story of stories) {
@@ -223,7 +235,7 @@ async function main() {
         if (parentKey) {
             console.log(`[seed:jira] story exists: ${parentKey} — ${story.summary}`);
         } else {
-            parentKey = await createIssue(http, cfg.projectKey, 'Story', story.summary, parentAccount, {
+            parentKey = await createIssue(http, cfg.projectKey, { name: 'Story' }, story.summary, parentAccount, {
                 description: story.description,
                 storyPoints: story.storyPoints,
                 labels: story.labels,
@@ -245,7 +257,8 @@ async function main() {
                 createdIssueKeys.push(existingSub);
                 continue;
             }
-            const subKey = await createIssue(http, cfg.projectKey, 'Subtask', sub.summary, subAccount, {
+            if (!subtaskTypeId) throw new Error('No subtask issue type was resolved.');
+            const subKey = await createIssue(http, cfg.projectKey, { id: subtaskTypeId }, sub.summary, subAccount, {
                 parentKey,
                 storyPoints: sub.storyPoints,
             });
@@ -268,7 +281,7 @@ async function main() {
     console.log('Next: open the board in Jira and click "Start sprint" when ready to demo.');
 }
 
-main().catch(err => {
+if (require.main === module) main().catch(err => {
     const detail = err?.response?.data ?? err?.message ?? err;
     console.error('[seed:jira] failed:', typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2));
     process.exit(1);

@@ -147,9 +147,9 @@ export async function ensureObservabilityToken(
                 if (!token) throw new Error('Observability token refresh returned no cached token');
                 tokenCache.set(createAgenticTokenCacheKey(agentId, tenantId), token);
             }
-        } catch (err) {
+        } catch {
             console.warn(
-                `[observability] token refresh failed for agentId=${agentId.slice(0, 8)}… — spans for this turn may be dropped: ${(err as Error)?.message ?? err}`
+                '[observability] Token refresh failed; spans for this turn may be dropped.'
             );
         }
     }

@@ -42,7 +42,7 @@ app.timer('StandupTimer', {
         context.log('[StandupTimer] tick', { pastDue: myTimer.isPastDue });
         try {
             const res = await axios.post(agentUrl('/api/internal/standup-trigger'), {}, {
-                headers: headers(), timeout: 60_000,
+                headers: headers(), timeout: 60_000, maxRedirects: 0,
             });
             context.log('[StandupTimer] agent responded:', res.status, res.data);
         } catch (e) {
@@ -60,7 +60,7 @@ app.timer('NightlyTimer', {
         context.log('[NightlyTimer] tick', { pastDue: myTimer.isPastDue });
         try {
             const res = await axios.post(agentUrl('/api/internal/nightly-check'), {}, {
-                headers: headers(), timeout: 120_000,
+                headers: headers(), timeout: 120_000, maxRedirects: 0,
             });
             context.log('[NightlyTimer] agent responded:', res.status, res.data);
         } catch (e) {

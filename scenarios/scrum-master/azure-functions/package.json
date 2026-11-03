@@ -11,11 +11,15 @@
     },
     "dependencies": {
         "@azure/functions": "^4.5.0",
-        "axios": "^1.7.4"
+        "axios": "^1.18.1",
+        "follow-redirects": "git+https://github.com/follow-redirects/follow-redirects.git#7130c835c45e71dcce25fcc999febe14c97ef64d"
     },
     "devDependencies": {
         "@types/node": "^20.14.9",
         "rimraf": "^5.0.0",
         "typescript": "^5.9.2"
+    },
+    "overrides": {
+        "follow-redirects": "$follow-redirects"
     }
 }

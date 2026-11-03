@@ -107,9 +107,11 @@ It does not read `MCP_AUTH_TOKEN` or `AGENTIC_USER_ID`. If registration fails,
 the warning is logged and the agent can continue without those tools; that is
 not proof that an external operation succeeded.
 
-The notification route handles email notifications by retrieving content,
-then asking the generic client to summarize/draft a response while treating
-the email body as untrusted data. Other notification types receive a generic
+The notification route retrieves only the notified message through Graph with
+the agentic auth handler's `Mail.Read` token (this delegated scope must be granted
+on the blueprint). It then uses an isolated client with no tools, MCP servers,
+or handoffs to summarize/draft a response. The generic tool-enabled client never
+receives the email body. Other notification types receive a generic
 notification-type response. Installation updates send welcome/farewell text.
 
 ## 6. Calendar tools, fallback and connection lifecycle

@@ -19,8 +19,8 @@ export const tokenResolver = (agentId: string, tenantId: string): string | null 
     } else {
       return null;
     }
-  } catch (error) {
-    console.error(`❌ Error resolving token for agent ${agentId}, tenant ${tenantId}:`, error);
+  } catch {
+    console.error('Error resolving cached observability token.');
     return null;
   }
 };
@@ -36,7 +36,7 @@ class TokenCache {
 
   set(key: string, token: string): void {
     this.cache.set(key, token);
-    console.log(`🔐 Token cached for key: ${key}`);
+    console.log('Observability token cached.');
   }
 
   /**
@@ -46,7 +46,7 @@ class TokenCache {
     const entry = this.cache.get(key);
 
     if (!entry) {
-      console.log(`🔍 Token cache miss for key: ${key}`);
+      console.log('Observability token cache miss.');
       return null;
     }
 

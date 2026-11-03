@@ -614,8 +614,13 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
     if (session.cutoffTimer) { clearTimeout(session.cutoffTimer); session.cutoffTimer = undefined; }
 
     // Update StandupSessions row.
-    const row = await findByTitle<StandupSessionFields>('standupSessions', session.standupId).catch(() => null);
-    if (row) await updateItem<StandupSessionFields>('standupSessions', row.id, { State: 'summarized' });
+    try {
+        const row = await findByTitle<StandupSessionFields>('standupSessions', session.standupId);
+        if (!row) throw new Error('Standup session row was not found.');
+        await updateItem<StandupSessionFields>('standupSessions', row.id, { State: 'summarized' });
+    } catch (e) {
+        console.error('[standup] Summary delivered, but completion persistence failed; check the StandupSessions row before restarting:', (e as Error).message);
+    }
 
     // Chase runs AFTER summary post (blocker DMs to SM / owner pings can wait).
     try {

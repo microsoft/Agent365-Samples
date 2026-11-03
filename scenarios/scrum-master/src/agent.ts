@@ -15,7 +15,8 @@ import { getObservabilityAuthenticationScope } from '@microsoft/agents-a365-runt
 import '@microsoft/agents-a365-notifications';
 import { AgentNotificationActivity, NotificationType, createEmailResponseActivity } from '@microsoft/agents-a365-notifications';
 
-import { Client, getClient } from './client';
+import axios from 'axios';
+import { Client, getClient, getToollessEmailClient } from './client';
 import { ensureObservabilityToken, runWithTurnBaggage } from './observability';
 import tokenCache, { createAgenticTokenCacheKey } from './token-cache';
 
@@ -64,14 +65,14 @@ export class MyAgent extends AgentApplication<TurnState> {
     // binding to MAC Activity.
     try {
       await ensureObservabilityToken(turnContext, this.authorization as any);
-    } catch (err) {
-      console.warn('[SMA] ensureObservabilityToken failed (non-fatal):', (err as Error).message);
+    } catch {
+      console.warn('[SMA] ensureObservabilityToken failed (non-fatal).');
     }
 
     try {
       await this.preloadObservabilityToken(turnContext);
-    } catch (err) {
-      console.warn('[SMA] preloadObservabilityToken failed (non-fatal):', (err as Error).message);
+    } catch {
+      console.warn('[SMA] preloadObservabilityToken failed (non-fatal).');
     }
 
     // Every dispatch branch below — cards, slash commands, Answer, and the
@@ -201,7 +202,7 @@ export class MyAgent extends AgentApplication<TurnState> {
         scopes: getObservabilityAuthenticationScope()
       });
 
-      console.log(`Preloaded Observability token for agentId=${agentId}, tenantId=${tenantId}`);
+      console.log('Preloaded Observability token.');
       const cacheKey = createAgenticTokenCacheKey(agentId, tenantId);
       tokenCache.set(cacheKey, aauToken?.token || '');
     } else {
@@ -221,8 +222,8 @@ export class MyAgent extends AgentApplication<TurnState> {
     try {
       await ensureObservabilityToken(context, this.authorization as any);
       await this.preloadObservabilityToken(context);
-    } catch (err) {
-      console.warn('[SMA] observability token warm-up failed (non-fatal):', (err as Error).message);
+    } catch {
+      console.warn('[SMA] observability token warm-up failed (non-fatal).');
     }
 
     await runWithTurnBaggage(context, async () => {
@@ -246,13 +247,22 @@ export class MyAgent extends AgentApplication<TurnState> {
     }
 
     try {
-      const client: Client = await getClient(this.authorization, MyAgent.authHandlerName, context);
-
-      // First, retrieve the email content
-      const emailContent = await client.invokeAgentWithScope(
-        `You have a new email from ${context.activity.from?.name} with id '${emailNotification.id}', ` +
-        `ConversationId '${emailNotification.conversationId}'. Please retrieve this message and return it in text format.`
+      if (!emailNotification.id) throw new Error('Email notification has no message ID.');
+      const token = await this.authorization.exchangeToken(context, MyAgent.authHandlerName, {
+        scopes: ['https://graph.microsoft.com/Mail.Read'],
+      });
+      if (!token?.token) throw new Error('Unable to acquire the mail read token.');
+      const message = await axios.get<{ subject: string; body: { content: string } }>(
+        `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(emailNotification.id)}`,
+        {
+          headers: { Authorization: `Bearer ${token.token}`, Prefer: 'outlook.body-content-type="text"' },
+          params: { $select: 'subject,body' },
+          timeout: 30_000,
+          maxRedirects: 0,
+        },
       );
+      const emailContent = JSON.stringify(message.data);
+      const client = getToollessEmailClient(context);
 
       // Treat the email body strictly as data (not as instructions to execute) —
       // untrusted senders can inject prompts, request secrets, or ask for privileged actions.
@@ -265,8 +275,8 @@ export class MyAgent extends AgentApplication<TurnState> {
 
       const emailResponseActivity = createEmailResponseActivity(response || 'I have processed your email but do not have a response at this time.');
       await context.sendActivity(emailResponseActivity);
-    } catch (error) {
-      console.error('Email notification error:', error);
+    } catch {
+      console.error('Email notification processing failed.');
       const errorResponse = createEmailResponseActivity('Unable to process your email at this time.');
       await context.sendActivity(errorResponse);
     }

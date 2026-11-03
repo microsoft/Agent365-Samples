@@ -161,6 +161,10 @@ npm run seed:jira
 
 If you ran `npm run seed:jira`, open your Jira board and click **Start sprint** on the newly-created sprint before continuing.
 
+The seed resolves the project's enabled subtask type by ID, including `Sub-task`
+and localized names. If subtasks are disabled, it fails before creating issues;
+enable a subtask issue type in the project's Jira settings and retry.
+
 ### 5. Run
 
 ```powershell
@@ -326,6 +330,8 @@ To reset Jira sprint issues, use the Atlassian UI or `POST /rest/agile/1.0/sprin
 | MCP calendar tool call returns `-32001 Session not found` on the second run. | MCP transport was closed after the first call. | Check `services/calendar.ts` — the `withServers()` helper should NOT close after each call; a retry-once on session-lost is expected on cold starts. |
 | `Cannot find module '../services/xxx'` after `git pull`. | ts-node cached the old module tree. | `Ctrl+C` the dev server and restart. If persistent, `rm -rf dist && npm run build`. |
 | Duplicate standup summary cards. | Both local `node-cron` and the Azure Function timer fired the same day. | Set `LOCAL_CRON=false` once the Function is deployed. |
+| Email notification returns `Unable to process your email`. | The agent's delegated Graph `Mail.Read` scope is missing or the notified message cannot be read. | Grant `Mail.Read` to the blueprint's agentic connection and verify access to the agent mailbox. Email retrieval does not use the SharePoint user's cache. Drafting uses a tool-less agent, not the generic MCP assistant. |
+| `Summary delivered, but completion persistence failed` in logs. | The SharePoint completion lookup, PATCH, or refresh GET failed after summary delivery. | Blocker follow-up and in-memory cleanup still run without resending the summary. Inspect the daily `SMA_StandupSessions` row and repair its State to `summarized` before restarting; do not delete the daily claim. |
 
 ### Enable HTTP tracing
 

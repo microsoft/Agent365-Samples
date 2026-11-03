@@ -26,7 +26,7 @@ The agent runs Express on `:3978` behind a dev tunnel (dev) or App Service / Con
 ## Local dev
 
 ```powershell
-npm install
+npm ci
 Copy-Item local.settings.sample.json local.settings.json
 # Edit local.settings.json — set:
 #   AGENT_CALLBACK_URL      → your dev tunnel URL (e.g. https://<id>.devtunnels.ms)
@@ -52,6 +52,11 @@ Invoke-RestMethod -Method Post `
 ```
 
 ## Deploy to Azure
+
+Callbacks reject redirects to avoid forwarding `x-internal-token`. Set
+`AGENT_CALLBACK_URL` to the final HTTPS endpoint, not a redirecting URL.
+This package has its own lockfile and the same pinned `follow-redirects`
+security fix as the parent agent; CI installs and builds both packages.
 
 **1. Create the Function App** (once):
 
