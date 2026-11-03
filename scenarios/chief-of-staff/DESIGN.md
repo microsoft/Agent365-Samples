@@ -288,9 +288,11 @@ setInterval, guarded by `meetingPollInFlight` — see §10.2):
      Marks the capture `gave-up` and moves on. A capture retired because
      its invitation was withdrawn (removed, declined, cancelled) is marked
      *revoked* instead; when discovery sees the event qualify again it is
-     reopened with clean transcript/insight artifacts and retry counters,
-     **keeping** the extraction checkpoint so tasks already written are
-     resumed, not re-created.
+     reopened with clean transcript/insight artifacts and retry counters.
+     Unchanged occurrences keep their extraction checkpoint so written tasks
+     are resumed, not re-created. Moved occurrences use the reschedule guard:
+     no-write checkpoints are discarded, while records with existing writes
+     stop for manual review and retain only written task references.
   3. **Retry** — computes the next delay from a `[1, 3, 7, 15, 30]` minute
      ladder (clamped by wait budget) and updates `nextCheckAt`.
 
@@ -491,6 +493,9 @@ is deferred rather than using incomplete exclusion boundaries.
 check-in and tell the leader to change the assignee in Planner; the agent has
 no assignee-update write path and does not promise one. The next follow-up
 cycle checks in with whoever Planner then shows as the owner.
+Extension proposal creation and queued leader delivery acquire that same
+follow-up lock through state validation, card delivery, and persistence.
+Cancellation is rechecked before recording a pending proposal.
 
 ### 5.4 Escalation
 

@@ -259,6 +259,7 @@ export function rescheduleCapture(
     // Already-written tasks cannot be undone or safely re-extracted.
     c.status = 'gave-up';
     c.revokedAt = undefined;
+    c.extractedItems = c.extractedItems?.filter((item) => !!item.taskId);
     store.set(eventId, c);
     log.warn('captureStore', 'rescheduled capture already has writes — stopped for manual review', {
       eventId: eventId.slice(-8),
@@ -311,7 +312,8 @@ export function markCaptureRevoked(eventId: string): void {
 /**
  * Fresh discovery confirms a revoked capture qualifies again: reopen it with
  * clean transcript/insight artifacts and retry counters, keeping the
- * extraction checkpoint. No-op for captures that weren't revoked.
+ * extraction checkpoint only when the occurrence hasn't moved. Moved records
+ * use the same stop-on-writes guard as rescheduling.
  */
 export function reopenRevokedCapture(
   eventId: string,
@@ -319,21 +321,18 @@ export function reopenRevokedCapture(
 ): boolean {
   const c = store.get(eventId);
   if (!c || c.status !== 'gave-up' || !c.revokedAt) return false;
+  const moved = c.endTime !== timing.endTime || (timing.startTime !== undefined && c.startTime !== timing.startTime);
+  if (moved) {
+    rescheduleCapture(eventId, timing);
+    if (store.get(eventId)?.status !== 'pending') return false;
+  }
   Object.assign(c, timing);
   c.status = 'pending';
   c.revokedAt = undefined;
   c.attempts = 0;
   c.processingFailures = 0;
   c.nextCheckAt = Date.now();
-  c.transcriptId = undefined;
-  c.transcriptSegments = undefined;
-  c.transcriptFetchedAt = undefined;
-  c.transcriptCallId = undefined;
-  c.transcriptCorrelationId = undefined;
-  c.transcriptContent = undefined;
-  c.insightsFetched = false;
-  c.insightsActionItems = undefined;
-  c.insightsMeetingNotes = undefined;
+  clearCaptureArtifacts(eventId);
   // Keep extractedItems and summaryPosted: tasks may already exist, and
   // wiping the checkpoint would re-extract and duplicate them. The reopened
   // capture resumes the unfinished writes instead.

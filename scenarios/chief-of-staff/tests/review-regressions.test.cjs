@@ -1707,6 +1707,168 @@ for (const listing of ['obsolete-only', 'empty', 'rescheduled']) {
   });
 }
 
+test('re-invitation applies the moved-occurrence guard before reopening an old checkpoint', async (t) => {
+  const watcher = require('../dist/graph/meetingWatcher');
+  const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+  const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER'];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com', CAPTURE_GRAPH_OWNER: 'leader' });
+  const now = Date.now(), id = 'revoked-and-moved';
+  const oldTiming = { startTime: now - 120 * 60000, endTime: now - 90 * 60000, durationMinutes: 30, waitBudgetMinutes: 3, giveUpAfter: now + 3600000 };
+  const newTiming = { ...oldTiming, startTime: now - 60 * 60000, endTime: now - 30 * 60000 };
+  const checkpoint = [
+    { itemId: 'i1', kind: 'task', title: 'Written', ownerAad: ctx.leaderAad, ownerName: 'Leader', taskId: 'existing-task' },
+    { itemId: 'i2', kind: 'task', title: 'Obsolete unwritten', ownerAad: ctx.leaderAad, ownerName: 'Leader' },
+  ];
+  captures.createPendingCapture({ eventId: id, meetingId: id, subject: 'Meeting', ownerUpn: 'leader@example.com', ...oldTiming });
+  captures.updateCapture(id, { extractedItems: checkpoint, transcriptId: 'old' });
+  captures.markCaptureRevoked(id);
+  t.mock.method(watcher, 'discoverQualifyingMeetings', async () => [{
+    eventId: id, meetingId: id, subject: 'Moved', joinWebUrl: `https://example.test/${id}`, ...newTiming,
+  }]);
+  let fetches = 0;
+  t.mock.method(insights, 'fetchTranscriptsForMeeting', async () => { fetches++; return []; });
+  try {
+    assert.ok(!(await pollForNewTranscripts({ authorization: {}, context: {}, authHandlerName: 'agentic' })).some((c) => c.eventId === id));
+    const stopped = captures.getCapture(id);
+    assert.equal(stopped.status, 'gave-up');
+    assert.equal(stopped.revokedAt, undefined);
+    assert.equal(stopped.transcriptId, undefined);
+    assert.deepEqual(stopped.extractedItems, [checkpoint[0]]);
+    assert.equal(fetches, 0);
+    const unchanged = 'revoked-unchanged';
+    captures.createPendingCapture({ eventId: unchanged, meetingId: unchanged, subject: 'Meeting', ownerUpn: 'leader@example.com', ...oldTiming });
+    captures.updateCapture(unchanged, { extractedItems: checkpoint });
+    captures.markCaptureRevoked(unchanged);
+    assert.equal(captures.reopenRevokedCapture(unchanged, oldTiming), true);
+    assert.deepEqual(captures.getCapture(unchanged).extractedItems, checkpoint, 'same occurrence resumes checkpoint without duplicating writes');
+    captures.markCaptureComplete(unchanged);
+    const unwritten = 'revoked-moved-unwritten';
+    captures.createPendingCapture({ eventId: unwritten, meetingId: unwritten, subject: 'Meeting', ownerUpn: 'leader@example.com', ...oldTiming });
+    captures.updateCapture(unwritten, { extractedItems: [checkpoint[1]] });
+    captures.markCaptureRevoked(unwritten);
+    assert.equal(captures.reopenRevokedCapture(unwritten, newTiming), true);
+    assert.equal(captures.getCapture(unwritten).extractedItems, undefined);
+    assert.equal(captures.getCapture(unwritten).status, 'pending');
+    captures.markCaptureComplete(unwritten);
+  } finally {
+    for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+  }
+});
+
+for (const queued of [false, true]) {
+  test(`${queued ? 'queued' : 'escalation'} extension delivery shares the Reassign lock`, { timeout: 5000 }, async (t) => {
+    const planner = require('../dist/graph/plannerTools');
+    const cards = require('../dist/cards/followupCards');
+    const record = followups.createFollowup({ taskId: `proposal-race-${queued}`, taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+    if (queued) followups.queueLeaderDelivery(record.followupId, { kind: 'extension' });
+    else followups.markEscalated(record.followupId);
+    t.mock.method(planner, 'getPlannerTaskDetails', async () => ({
+      ok: true, title: 'Task', planId: 'allowed-plan', assigneeAads: ['owner'], percentComplete: 0, dueDateTime: null,
+    }));
+    let release, reached;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const paused = new Promise((resolve) => { reached = resolve; });
+    t.mock.method(cards, 'sendExtensionRequestCardDirect', async () => { reached(); await gate; return { ok: true }; });
+    const messages = [];
+    const client = { getPeopleOpts: () => ({}) };
+    const action = (verb, suffix) => router.handleCardActionIfAny({
+      activity: { id: `proposal-race-${queued}-${suffix}`, from: { aadObjectId: ctx.leaderAad },
+        value: { verb, followupId: record.followupId, taskId: record.taskId } },
+      sendActivity: async (message) => messages.push(message),
+    }, client, ctx.leaderAad);
+    const delivery = queued ? router.deliverPendingLeaderRequest({}, record, ctx.leaderAad) : action('esc_extend', 'create');
+    try {
+      await paused;
+      await action('reassign', 'during');
+      assert.notEqual(followups.getFollowup(record.followupId).status, 'resolved');
+      assert.ok(messages.some((message) => message.includes('already processing')));
+      assert.ok(!messages.some((message) => message.includes("I've closed")));
+    } finally {
+      release();
+      await delivery;
+    }
+    assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'pending');
+    await action('reassign', 'after');
+    assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'cancelled');
+    let patches = 0;
+    t.mock.method(planner, 'updatePlannerTaskDueDate', async () => { patches++; return { ok: true, newDue: 'unexpected' }; });
+    await action('approve_extend', 'late-approve');
+    assert.equal(patches, 0);
+    assert.equal(followups.getFollowup(record.followupId).extensionStatus, 'cancelled');
+  });
+
+  test(`${queued ? 'queued' : 'escalation'} proposal does not restore cancellation during delivery`, async (t) => {
+    const planner = require('../dist/graph/plannerTools');
+    const cards = require('../dist/cards/followupCards');
+    const record = followups.createFollowup({ taskId: `cancelled-proposal-${queued}`, taskTitle: 'Task', ownerAad: 'owner', ownerName: 'Owner' });
+    if (queued) followups.queueLeaderDelivery(record.followupId, { kind: 'extension' });
+    t.mock.method(planner, 'getPlannerTaskDetails', async () => ({
+      ok: true, title: 'Task', planId: 'allowed-plan', assigneeAads: ['owner'], percentComplete: 0, dueDateTime: null,
+    }));
+    t.mock.method(cards, 'sendExtensionRequestCardDirect', async () => {
+      followups.cancelOwnerRequest(record.followupId);
+      return { ok: true };
+    });
+    if (queued) {
+      assert.equal((await router.deliverPendingLeaderRequest({}, record, ctx.leaderAad)).ok, false);
+    } else {
+      await router.handleCardActionIfAny({
+        activity: { id: 'cancelled-while-sending', from: { aadObjectId: ctx.leaderAad },
+          value: { verb: 'esc_extend', followupId: record.followupId, taskId: record.taskId } },
+        sendActivity: async () => {},
+      }, { getPeopleOpts: () => ({}) }, ctx.leaderAad);
+    }
+    assert.equal(followups.getFollowup(record.followupId).status, 'resolved');
+    assert.notEqual(followups.getFollowup(record.followupId).extensionStatus, 'pending');
+    assert.equal(followups.getFollowup(record.followupId).pendingLeaderDelivery, undefined);
+  });
+}
+
+test('booking prefixes stay within Planner limits without splitting surrogate pairs', async (t) => {
+  const planner = require('../dist/graph/plannerTools');
+  const cards = require('../dist/cards/followupCards');
+  const titles = [244, 245, 246, 250, 255].map((length) => 'x'.repeat(length));
+  titles.push('x'.repeat(244) + '🚀tail');
+  let title;
+  t.mock.method(axios, 'get', async () => ({ data: {
+    '@odata.etag': 'title-etag', planId: 'allowed-plan', title, assignments: {}, percentComplete: 0,
+  } }));
+  t.mock.method(people, 'resolveAadToUpn', async () => 'owner@example.com');
+  t.mock.method(cards, 'sendPlainDmToUser', async () => ({ ok: true }));
+  t.mock.method(ops, 'runWorkIqOperation', async () => 'created-event');
+  const writes = [];
+  t.mock.method(axios, 'patch', async (_url, body) => {
+    assert.ok(body.title.length <= 255);
+    writes.push(body.title);
+    return { data: {} };
+  });
+  const saved = process.env.LEADER_UPN;
+  process.env.LEADER_UPN = 'leader@example.com';
+  try {
+    for (const [i, value] of titles.entries()) {
+      title = value;
+      const record = followups.createFollowup({ taskId: `long-blocker-${i}`, taskTitle: value, ownerAad: 'owner', ownerName: 'Owner' });
+      await router.handleCardActionIfAny({
+        activity: { id: `long-booking-${i}`, from: { aadObjectId: ctx.leaderAad }, value: {
+          verb: 'book_meeting', followupId: record.followupId, taskId: record.taskId,
+          timeslot: 'Future', timeslotIso: '2099-01-01T10:00:00Z',
+        } },
+        sendActivity: async () => {},
+      }, { getPeopleOpts: () => ({}) }, ctx.leaderAad);
+      assert.ok(followups.getFollowup(record.followupId).meetingScheduledAt);
+      assert.equal(writes[i], planner.truncatePlannerTitle(`[BLOCKER] ${value}`));
+      assert.ok(writes[i].startsWith('[BLOCKER] '));
+      assert.ok(!/[\uD800-\uDBFF]$/.test(writes[i]));
+    }
+    assert.equal(writes.length, titles.length);
+    assert.equal(writes[1].length, 255);
+    assert.equal(writes.at(-1).length, 254);
+  } finally {
+    if (saved === undefined) delete process.env.LEADER_UPN; else process.env.LEADER_UPN = saved;
+  }
+});
+
 test('environment template keeps observability export disabled by default', () => {
   const template = fs.readFileSync(path.join(__dirname, '..', '.env.template'), 'utf8');
   assert.match(template, /^ENABLE_A365_OBSERVABILITY_EXPORTER=false$/m);

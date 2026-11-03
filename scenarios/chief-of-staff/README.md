@@ -93,6 +93,9 @@ occurrence before cached artifacts can become ready. Rescheduling clears old
 transcript/insight artifacts and unwritten extraction checkpoints. If a moved
 capture has already written tasks, it stops for manual review rather than
 duplicate those tasks or finish writing from obsolete content.
+The same rule applies when a revoked meeting is moved and the CoS is
+re-invited: unwritten old items are discarded, while written task references
+are retained for review. An unchanged re-invitation resumes its checkpoint.
 Discovery reads both the capture mailbox and the leader's calendar, including
 leader-only occurrences as exclusion boundaries. Mailbox copies are correlated
 by `iCalUId`; artifact access stays in the `CAPTURE_GRAPH_OWNER` mailbox.
@@ -646,6 +649,11 @@ If another action is in flight, it asks the leader to wait without cancelling
 the request or claiming that the check-in was closed.
 The Defer button uses that same lock, so it cannot close a blocker while its
 calendar booking is in flight.
+Creating extension proposals, including queued owner-request deliveries,
+also holds the shared lock through delivery and persistence. Cancellation is
+rechecked before saving a proposal so a late send cannot restore it.
+Booked tasks receive a surrogate-safe `[BLOCKER]` title capped at Planner's
+255-character limit.
 
 ### 8.4 Escalation (owner ignored the check-in)
 

@@ -137,6 +137,11 @@ export interface CreatePlannerTaskInput {
   priority?: number | null;
 }
 
+/** Planner's title limit is UTF-16 length; do not leave a split surrogate. */
+export function truncatePlannerTitle(title: string): string {
+  return title.slice(0, 255).replace(/[\uD800-\uDBFF]$/, '');
+}
+
 export type CreatePlannerTaskResult =
   | { ok: true; taskId: string; title: string; bucketId: string; assignees: string[]; descriptionSaved?: boolean }
   /** `taskId` is set when the task exists but a follow-up write failed. */

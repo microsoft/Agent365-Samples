@@ -33,6 +33,7 @@ import {
   getPlannerTaskDetails,
   isTaskInAllowedPlan,
   samePlannerDueDate,
+  truncatePlannerTitle,
   updatePlannerTaskDueDate,
   updatePlannerTaskTitle,
 } from '../graph/plannerTools';
@@ -216,8 +217,26 @@ export async function deliverPendingLeaderRequest(
   leaderAad: string,
   ownerDisplayName?: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const d = followup.pendingLeaderDelivery;
-  if (!d) return { ok: true };
+  if (!tryAcquireFollowupLock(followup.followupId)) {
+    return { ok: false, error: 'Another action is already processing this check-in.' };
+  }
+  try {
+    return await deliverLockedLeaderRequest(opts, followup, leaderAad, ownerDisplayName);
+  } finally {
+    releaseFollowupLock(followup.followupId);
+  }
+}
+
+async function deliverLockedLeaderRequest(
+  opts: CardToolOptions,
+  followup: PendingFollowup,
+  leaderAad: string,
+  ownerDisplayName?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const current = getFollowup(followup.followupId);
+  if (!current || current.status === 'resolved') return { ok: false, error: 'The check-in is closed.' };
+  const d = current.pendingLeaderDelivery;
+  if (!d) return { ok: false, error: 'The queued request is no longer pending.' };
   const ownerName = followup.ownerName || ownerDisplayName || 'the owner';
   let res: { ok: boolean; error?: string };
   if (d.kind === 'extension') {
@@ -227,6 +246,13 @@ export async function deliverPendingLeaderRequest(
     if (!live.ok || !(await isTaskInAllowedPlan(live.planId))) {
       res = { ok: false, error: 'Could not verify the current Planner due date.' };
     } else {
+      if (live.percentComplete >= 100) {
+        cancelOutstandingRequestsForTask(followup.taskId);
+        return { ok: false, error: 'The task is complete.' };
+      }
+      if (getFollowup(followup.followupId)?.pendingLeaderDelivery !== d || getFollowup(followup.followupId)?.status === 'resolved') {
+        return { ok: false, error: 'The request was cancelled or replaced during delivery.' };
+      }
       const currentDueDate = live.dueDateTime;
       const suggestedNewDueDate = computeNextDueDateIso(currentDueDate);
       res = await sendExtensionRequestCardDirect(opts, {
@@ -239,7 +265,13 @@ export async function deliverPendingLeaderRequest(
         suggestedNewDueDate,
         agentRationale: `Owner (${ownerName}) requested more time via the check-in card.`,
       });
-      if (res.ok) recordExtensionRequest(followup.followupId, suggestedNewDueDate, currentDueDate);
+      if (res.ok) {
+        const latest = getFollowup(followup.followupId);
+        if (!latest || latest.status === 'resolved' || latest.pendingLeaderDelivery !== d) {
+          return { ok: false, error: 'The request was cancelled or replaced during delivery.' };
+        }
+        recordExtensionRequest(followup.followupId, suggestedNewDueDate, currentDueDate);
+      }
     }
   } else {
     // Slots are recomputed per attempt so a retried card never offers past times.
@@ -255,6 +287,9 @@ export async function deliverPendingLeaderRequest(
       proposedTimes: slots.map((s) => s.label),
       proposedTimesIso: slots.map((s) => s.iso),
     });
+  }
+  if (getFollowup(followup.followupId)?.pendingLeaderDelivery !== d) {
+    return { ok: false, error: 'The request was cancelled or replaced during delivery.' };
   }
   recordLeaderDeliveryAttempt(followup.followupId, res.ok, res.error);
   return res;
@@ -1136,7 +1171,7 @@ async function routeIntent(
       if (followup?.taskId) {
         const r = await updatePlannerTaskTitle(
           followup.taskId,
-          (current) => /^\[(BLOCKER|RISK)\]/i.test(current) ? current : `[BLOCKER] ${current}`
+          (current) => /^\[(BLOCKER|RISK)\]/i.test(current) ? current : truncatePlannerTitle(`[BLOCKER] ${current}`)
         );
         if (!r.ok) {
           console.warn(
@@ -1422,6 +1457,23 @@ async function handleActionForwardToExtendOffer(
     await context.sendActivity("I couldn't identify the task for this extension proposal, so I didn't send anything.");
     return { handled: true };
   }
+  if (!tryAcquireFollowupLock(followup.followupId)) {
+    await context.sendActivity(`I'm already processing a decision for "${followup.taskTitle}". Please wait before proposing an extension.`);
+    return { handled: true };
+  }
+  try {
+    return await proposeExtensionUnderLock(context, client, followup, leaderAad);
+  } finally {
+    releaseFollowupLock(followup.followupId);
+  }
+}
+
+async function proposeExtensionUnderLock(
+  context: TurnContext,
+  client: Client,
+  followup: PendingFollowup,
+  leaderAad: string
+): Promise<CardActionResult> {
   // An old escalation card must not revive a closed or already-decided request.
   if (
     followup.status === 'resolved' ||
@@ -1454,6 +1506,10 @@ async function handleActionForwardToExtendOffer(
     await context.sendActivity(`"${followup.taskTitle}" is already complete in Planner, so no extension is needed.`);
     return { handled: true };
   }
+  if (getFollowup(followup.followupId)?.status === 'resolved') {
+    await context.sendActivity('The check-in was closed while I checked Planner, so no extension was proposed.');
+    return { handled: true };
+  }
 
   const currentDueDate = live.dueDateTime;
   const suggestedNewDueDate = computeNextDueDateIso(currentDueDate);
@@ -1468,6 +1524,11 @@ async function handleActionForwardToExtendOffer(
     agentRationale: 'Auto-suggested after no reply to the follow-up.',
   });
   if (res.ok) {
+    const latest = getFollowup(followup.followupId);
+    if (!latest || latest.status === 'resolved' || latest.extensionStatus === 'cancelled') {
+      await context.sendActivity('The check-in was closed during delivery. The extension card cannot be approved.');
+      return { handled: true };
+    }
     recordExtensionRequest(followup.followupId, suggestedNewDueDate, currentDueDate);
     markResolved(followup.followupId);
     await context.sendActivity(

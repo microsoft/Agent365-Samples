@@ -131,10 +131,9 @@ test('Planner polling bounds Graph requests and preserves pending completion ret
 test('task completion display-name lookup is bounded and failure still delivers Graph-backed notifications', async (t) => {
   setEnv(t, { ...process.env, LEADER_AAD_ID: 'leader' });
   const axios = require('axios').default;
+  const lookups = [];
   t.mock.method(axios, 'get', async (url, config) => {
-    assert.match(url, /users\/owner/);
-    assert.equal(config.timeout, 30_000);
-    assert.ok(config.signal instanceof AbortSignal);
+    lookups.push({ url, config });
     throw new Error('lookup unavailable');
   });
   const sent = [];
@@ -149,6 +148,10 @@ test('task completion display-name lookup is bounded and failure still delivers 
   });
   assert.deepEqual(await runTaskComplete({ taskId: 'task' }, {}, {}, { getPeopleOpts: () => ({}) }),
     { complete: true, delivered: ['owner', 'leader'] });
+  assert.equal(lookups.length, 1);
+  assert.match(lookups[0].url, /users\/owner/);
+  assert.equal(lookups[0].config.timeout, 30_000);
+  assert.ok(lookups[0].config.signal instanceof AbortSignal);
   assert.deepEqual(sent, ['owner', 'leader']);
 });
 

@@ -29,7 +29,7 @@ import {
 } from '../state/pendingCaptureStore';
 import { log } from '../util/logger';
 import { getPlannerBucketId } from '../graph/plannerConfig';
-import { createPlannerTaskDirect, setPlannerTaskDescription } from '../graph/plannerTools';
+import { createPlannerTaskDirect, setPlannerTaskDescription, truncatePlannerTitle } from '../graph/plannerTools';
 import { sendPlainDmToUser, sendTaskAssignmentCardDirect } from '../cards/followupCards';
 import { civilDateInZone, DISPLAY_TZ, normalizeDueDate } from '../util/time';
 import { runWorkIqOperation } from '../workiqOperations';
@@ -315,7 +315,7 @@ function captureTitle(kind: CaptureItem['kind'], value: string): string {
     ? `[DECISION] ${normalized.replace(/^\[DECISION\]\s*/i, '')}`
     : normalized;
   // Planner's 255-character limit includes the decision prefix.
-  return title.slice(0, 255).replace(/[\uD800-\uDBFF]$/, '');
+  return truncatePlannerTitle(title);
 }
 
 /** YYYY-MM-DD for a civil date. */
