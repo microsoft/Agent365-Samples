@@ -328,7 +328,8 @@ export class CosAgent extends AgentApplication<TurnState> {
                       authorization,
                       AUTH_HANDLER_NAME,
                       proactiveCtx,
-                      displayName
+                      displayName,
+                      { extractionOnly: true }
                     );
                     const leaderAad =
                       process.env.LEADER_AAD_ID?.trim() ||
@@ -382,23 +383,27 @@ export class CosAgent extends AgentApplication<TurnState> {
         }`
       );
 
-      // Non-members get a client without Planner, calendar, mail, or Teams
-      // tools, so the restriction is enforced in the tool layer — not only
-      // by the prompt.
-      const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName, {
+      // Deterministic routing uses Graph helpers and explicit Calendar writes,
+      // not the conversational client's full WorkIQ registration.
+      const routingClient = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName, {
         restrictedAccess: inTeam === false,
+        extractionOnly: true,
       });
 
       // Card-action / keyword-fallback router. If the message is a follow-up
       // reply (button click OR keyword text), handle it here and bypass the
       // normal LLM turn.
       try {
-        const routed = await handleCardActionIfAny(context, client, leaderAad);
+        const routed = await handleCardActionIfAny(context, routingClient, leaderAad);
         if (routed.handled) return;
       } catch (err) {
         console.error('[agent] card action router failed — falling back to LLM turn:', err);
       }
 
+      // Non-members still get no tools if routing falls through.
+      const client = await getClient(this.authorization as any, AUTH_HANDLER_NAME, context, displayName, {
+        restrictedAccess: inTeam === false,
+      });
       const promptWithContext = buildUserTurnPrompt({
         text,
         displayName,
@@ -492,7 +497,8 @@ export class CosAgent extends AgentApplication<TurnState> {
                   authorization,
                   AUTH_HANDLER_NAME,
                   proactiveCtx,
-                  displayName
+                  displayName,
+                  { extractionOnly: true }
                 );
                 const leaderAad =
                   process.env.LEADER_AAD_ID?.trim() ||

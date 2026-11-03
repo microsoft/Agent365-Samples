@@ -81,6 +81,11 @@ Graph-only scheduled jobs do not register WorkIQ tools. Capture registers
 WorkIQ only for its summary post, after checkpointed Graph writes; a failed
 post remains retryable without disabling briefs, follow-ups, or completion
 notifications. Interactive WorkIQ registration still fails closed by default.
+Card submissions, invokes, and keyword replies route with a WorkIQ-free
+client first, so unrelated Mail/Teams registration failures do not drop
+Graph-only actions. Full WorkIQ registration is deferred until a message
+needs the conversational flow; card booking uses its explicit Calendar
+operation and reports that operation's failure independently.
 
 Capture rejects transcript attribution when same-URL calendar occurrences
 overlap, including an occurrence the CoS is not invited to. Failed transcript

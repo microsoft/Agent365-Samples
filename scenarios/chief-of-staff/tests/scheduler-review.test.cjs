@@ -105,6 +105,105 @@ test('all scheduled jobs bypass WorkIQ registration and a failed capture does no
   }
 });
 
+function loadRoutingAgent(t, { handled = true, inTeam = true, rejectWorkIQ = true } = {}) {
+  setEnv(t, { ...process.env, LEADER_AAD_ID: 'leader', LEADER_UPN: 'leader@example.com' });
+  t.mock.method(require('dotenv'), 'configDotenv', () => ({}));
+  const clients = [], routes = [], prompts = [];
+  const { CosAgent } = loadWithMocks('../dist/agent', {
+    '@microsoft/agents-hosting': {
+      AgentApplication: class { onAgentNotification() {} onActivity() {} },
+      MemoryStorage: class {},
+    },
+    '@microsoft/agents-a365-notifications': {},
+    '../dist/client': { getClient: async (_auth, _handler, context, _name, options) => {
+      clients.push({ context, options });
+      if (!options.extractionOnly && rejectWorkIQ) throw new Error('Mail audience token exchange failed');
+      return {
+        resolveUpnToAad: async () => 'leader',
+        getPeopleOpts: () => ({ context }),
+        invokeAgentWithScope: async (prompt) => { prompts.push(prompt); return 'conversation response'; },
+      };
+    } },
+    '../dist/graph/peopleTools': { resolveUpnToAad: async () => 'leader', isUserInTeam: async () => inTeam },
+    '../dist/observability': {
+      ensureObservabilityToken: async () => {},
+      runWithInvokeAgentScope: async (_ctx, _opts, work) => work(),
+      runWithObservabilityContext: async (_ctx, _auth, work) => work(),
+    },
+    '../dist/scheduler': { cacheConversationReference() {}, startScheduler() {} },
+    '../dist/state/conversationRefs': { rememberConversationRef() {} },
+    '../dist/cards/actionRouter': { handleCardActionIfAny: async (context, client, leader) => {
+      routes.push({ context, client, leader });
+      return { handled };
+    } },
+  });
+  // Exercise the actual private handlers without starting the SDK server or
+  // constructor registrations. TypeScript private methods remain callable in JS.
+  const agent = Object.create(CosAgent.prototype);
+  Object.defineProperty(agent, 'authorization', { value: {} });
+  return { agent, clients, routes, prompts };
+}
+
+for (const mode of ['keyword', 'message-card', 'invoke-card', 'sync-card']) {
+  test(`${mode} routing runs without full WorkIQ registration`, { timeout: 5000 }, async (t) => {
+    const { agent, clients, routes, prompts } = loadRoutingAgent(t);
+    const activity = {
+      id: `routing-${mode}`, type: mode === 'invoke-card' ? 'invoke' : 'message',
+      text: mode === 'keyword' ? 'ontrack' : '',
+      from: { aadObjectId: 'owner', name: 'Owner' },
+      getConversationReference: () => ({ conversation: { id: 'personal-chat' } }),
+      ...(mode === 'keyword' ? {} : { value: { verb: 'ontrack', followupId: 'pending' } }),
+      ...(mode === 'invoke-card' ? { name: 'adaptiveCard/action' } : {}),
+    };
+    const messages = [];
+    const context = { activity, sendActivity: async (message) => messages.push(message) };
+    let finish;
+    const continued = new Promise((resolve) => { finish = resolve; });
+    if (mode === 'message-card' || mode === 'invoke-card') {
+      context.adapter = { continueConversation: async (_id, _ref, work) => {
+        try {
+          await work({ activity: {}, sendActivity: context.sendActivity });
+        } finally { finish(); }
+      } };
+    }
+    if (mode === 'invoke-card') await agent.handleInvoke(context, {});
+    else await agent.handleUserMessage(context, {});
+    if (context.adapter) await continued;
+    assert.equal(routes.length, 1, 'the handler must not lose the action in its background catch');
+    assert.equal(routes[0].context.activity.from.aadObjectId, 'owner');
+    assert.equal(routes[0].leader, 'leader');
+    assert.equal(clients.length, 1);
+    assert.equal(clients[0].options.extractionOnly, true);
+    assert.deepEqual(prompts, []);
+    if (mode === 'invoke-card') assert.equal(messages[0].type, 'invokeResponse');
+  });
+}
+
+test('conversational fallthrough still fails closed on full WorkIQ registration errors', async (t) => {
+  const { agent, clients, routes } = loadRoutingAgent(t, { handled: false });
+  await assert.rejects(agent.handleUserMessage({
+    activity: { id: 'fallthrough-error', text: 'Summarize my inbox', from: { aadObjectId: 'owner', name: 'Owner' } },
+    sendActivity: async () => {},
+  }, {}), /Mail audience token exchange failed/);
+  assert.equal(routes.length, 1);
+  assert.equal(clients.length, 2);
+  assert.equal(clients[0].options.extractionOnly, true);
+  assert.equal(clients[1].options.extractionOnly, undefined);
+});
+
+test('conversational fallthrough preserves the restricted sender gate', async (t) => {
+  const { agent, clients, routes, prompts } = loadRoutingAgent(t, { handled: false, inTeam: false, rejectWorkIQ: false });
+  await agent.handleUserMessage({
+    activity: { id: 'restricted-fallthrough', text: 'Show task status', from: { aadObjectId: 'outsider', name: 'User' } },
+    sendActivity: async () => {},
+  }, {});
+  assert.equal(routes.length, 1);
+  assert.equal(clients.length, 2);
+  assert.equal(clients[0].options.extractionOnly, true);
+  assert.ok(clients.every((client) => client.options.restrictedAccess === true));
+  assert.equal(prompts.length, 1);
+});
+
 test('Planner polling bounds Graph requests and preserves pending completion retries on failure', async (t) => {
   const axios = require('axios').default;
   let fail = false;

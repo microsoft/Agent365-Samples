@@ -221,6 +221,13 @@ The message handler:
    keyword-only reply like `blocked`), and if not handled, run one LLM
    turn with `buildUserTurnPrompt(...)`.
 
+Card-message continuations, Invoke continuations, and keyword routing create
+a WorkIQ-free client (`extractionOnly: true`) before deterministic dispatch.
+Full conversational registration happens only after a message falls through,
+with the sender's existing restricted-access gate preserved. Calendar booking
+uses its explicit Calendar operation; unrelated MCP audiences cannot block
+Graph-only card responses.
+
 ### 4.4 Every scheduled tick
 
 `scheduler.ts` uses `fireInAuthedContext(deps, name, cb)` to reconstitute a
