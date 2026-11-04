@@ -305,7 +305,8 @@ public class MyAgent : AgentApplication
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
                     // W365 tool loading and explicit session startup entirely.
-                    var needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+                    var needsCua = _orchestrator.HasPendingHumanLogin(localSessionKey)
+                        || await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
 
                     if (!needsCua)
                     {
@@ -340,7 +341,7 @@ public class MyAgent : AgentApplication
 
                     // Announce first W365 connection setup only when we don't already have W365 tools cached.
                     // Explicit session startup is announced separately from the CUA loop.
-                    var willAcquireFreshSession = !_orchestrator.HasCachedW365Tools;
+                    var willAcquireFreshSession = _orchestrator.GetSelectedW365SessionId(localSessionKey) == null;
                     if (willAcquireFreshSession)
                     {
                         await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Connecting to Windows 365 Computer Use tools…");
@@ -411,7 +412,9 @@ public class MyAgent : AgentApplication
                             prestartedScreenShareUrl: prestartedScreenShareUrl,
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
-                            cancellationToken: cancellationToken);
+                            cancellationToken: cancellationToken,
+                            onHumanLoginRequired: guidance => turnContext.SendActivityAsync(
+                                MessageFactory.Text(guidance), cancellationToken));
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
@@ -452,13 +455,13 @@ public class MyAgent : AgentApplication
         if (!string.IsNullOrEmpty(authHandlerName))
         {
             accessToken = await UserAuthorization.GetTurnTokenAsync(context, authHandlerName);
-            agentId = Utility.ResolveAgentIdentity(context, accessToken);
+            agentId = !includeW365 || context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken) : null;
         }
         else if (TryGetBearerTokenForDevelopment(out var bearerToken))
         {
             _logger.LogInformation("Using bearer token from environment.");
             accessToken = bearerToken;
-            agentId = Utility.ResolveAgentIdentity(context, accessToken!);
+            agentId = !includeW365 || context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken!) : null;
         }
 
         if (includeW365 && !IsDevelopment())
@@ -467,13 +470,13 @@ public class MyAgent : AgentApplication
             if (!string.IsNullOrEmpty(w365AuthHandlerName))
             {
                 accessToken = await UserAuthorization.GetTurnTokenAsync(context, w365AuthHandlerName);
-                agentId = Utility.ResolveAgentIdentity(context, accessToken);
+                agentId = context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken) : null;
             }
         }
 
-        if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
+        if (string.IsNullOrEmpty(accessToken) || (!includeW365 && string.IsNullOrEmpty(agentId)))
         {
-            _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
+            _logger.LogWarning("No compatible auth token or required identity available. Cannot connect to MCP.");
             return (null, null, null, null, null);
         }
 
@@ -481,6 +484,23 @@ public class MyAgent : AgentApplication
         {
             IList<AITool>? allTools;
             IMcpClient? mcpClient = null;
+
+            if (includeW365)
+            {
+                var development = IsDevelopment() && TryGetBearerTokenForDevelopment(out _);
+                var endpoint = development
+                    ? _w365McpServerUrls.FirstOrDefault()
+                        ?? throw new InvalidOperationException("Configure a W365 MCP endpoint in McpServers or McpServer:Url for Development mode.")
+                    : _w365GatewayUrl;
+                var result = await _orchestrator.ConnectDirectW365Async(
+                    endpoint, accessToken!, agentId, context,
+                    localSessionKey ?? throw new InvalidOperationException("A conversation key is required for W365."),
+                    cancellationToken);
+                var otherTools = development
+                    ? await _orchestrator.GetOrCreateNonW365McpConnectionAsync(_otherMcpServerUrls, accessToken!)
+                    : Array.Empty<AITool>();
+                return (result.Tools, otherTools, result.Client, null, null);
+            }
 
             // Development with bearer token: use orchestrator's cached MCP connection
             if (TryGetBearerTokenForDevelopment(out _) && IsDevelopment())
@@ -502,20 +522,6 @@ public class MyAgent : AgentApplication
             }
             else
             {
-                if (includeW365)
-                {
-                    var existingSessionId = _orchestrator.GetSelectedW365SessionId(localSessionKey);
-                    var w365Result = await _orchestrator.StartDirectW365SessionAndListToolsAsync(
-                        _w365GatewayUrl,
-                        accessToken!,
-                        agentId,
-                        context,
-                        existingSessionId,
-                        cancellationToken);
-                    var additionalToolsForCua = Array.Empty<AITool>();
-                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId, w365Result.ScreenShareUrl);
-                }
-
                 _logger.LogInformation("Skipping production MCP tool discovery for non-CUA turn while ToolingManifest is restricted to W365 CUA.");
                 return (null, Array.Empty<AITool>(), null, null, null);
             }
