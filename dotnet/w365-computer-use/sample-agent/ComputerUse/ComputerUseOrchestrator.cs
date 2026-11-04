@@ -116,7 +116,7 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// All MCP clients — one per connected server, for cleanup on shutdown.
     /// </summary>
-    private readonly ConcurrentDictionary<IMcpClient, byte> _allMcpClients = new();
+    private readonly List<IMcpClient> _allMcpClients = [];
 
     /// <summary>
     /// Shared tool list — merged tools from all connected servers.
@@ -1157,7 +1157,7 @@ public class ComputerUseOrchestrator
         _cachedTools = null;
         _w365McpClientsBySessionId.Clear();
 
-        foreach (var client in _allMcpClients.Keys)
+        foreach (var client in _allMcpClients)
         {
             try { await client.DisposeAsync(); }
             catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
@@ -1263,7 +1263,7 @@ public class ComputerUseOrchestrator
                 var client = await McpClientFactory.CreateAsync(transport);
                 var tools = (await client.ListToolsAsync()).Cast<AITool>().ToList();
 
-                _allMcpClients.TryAdd(client, 0);
+                _allMcpClients.Add(client);
                 allTools.AddRange(tools);
 
                 // Use the W365 server's client for direct screenshot calls.
@@ -1281,7 +1281,7 @@ public class ComputerUseOrchestrator
         }
 
         // Fallback: use first client if no W365 server found
-        _cachedMcpClient ??= _allMcpClients.Keys.FirstOrDefault();
+        _cachedMcpClient ??= _allMcpClients.FirstOrDefault();
 
         return allTools;
     }
@@ -1454,7 +1454,7 @@ public class ComputerUseOrchestrator
             if (session.McpClient is { } previousClient)
             {
                 session.McpClient = null;
-                _allMcpClients.TryRemove(previousClient, out _);
+                _allMcpClients.Remove(previousClient);
                 foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId.TryRemove(id, out _);
                 await previousClient.DisposeAsync();
             }
@@ -1466,7 +1466,7 @@ public class ComputerUseOrchestrator
             session.ConnectionFingerprint = fingerprint;
             session.RemoteTools = null;
             foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId[id] = client;
-            _allMcpClients.TryAdd(client, 0);
+            _allMcpClients.Add(client);
             var tools = new W365McpSessionClient(client).CreateLifecycleTools(
                 turnContext.Activity.Conversation?.Id, turnContext.Activity.ChannelId);
             return (tools, client);
@@ -1559,7 +1559,7 @@ public class ComputerUseOrchestrator
             return;
         }
 
-        _allMcpClients.TryRemove(client, out _);
+        _allMcpClients.Remove(client);
         if (ReferenceEquals(_cachedMcpClient, client))
         {
             _cachedMcpClient = _w365McpClientsBySessionId.Values.FirstOrDefault();
