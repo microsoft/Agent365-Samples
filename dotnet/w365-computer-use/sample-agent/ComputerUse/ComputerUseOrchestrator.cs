@@ -617,7 +617,7 @@ public class ComputerUseOrchestrator
         }
 
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message if session already active
-        if (includeCuaTool && _toolType == "computer" && session.ConversationHistory.Count == 0 && session.SessionStarted)
+        if (includeCuaTool && _toolType == "computer" && session.ConversationHistory.Count == 0)
         {
             var initialScreenshot = await CaptureScreenshotWithRecoveryAsync(w365Tools, session, additionalTools, mcpClient, onStatusUpdate, cancellationToken);
             var convIdPrefix = conversationId.Length > 8 ? conversationId[..8] : conversationId;
