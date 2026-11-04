@@ -54,9 +54,10 @@ from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
 
 from turn_context_utils import (
     extract_turn_context_details,
+    create_agent_details,
     create_invoke_agent_details,
     create_caller_details,
-    create_tenant_details,
+    create_user_details,
     create_request,
 )
 from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
@@ -71,7 +72,6 @@ ms_agents_logger.setLevel(logging.INFO)
 # Enable observability SDK logging to see exporter warnings
 observability_logger = logging.getLogger("microsoft_agents_a365.observability")
 observability_logger.setLevel(logging.INFO)
-
 logger = logging.getLogger(__name__)
 
 # Load configuration
@@ -204,7 +204,7 @@ class GenericAgentHost:
                 # Extract context from turn using shared utility
                 ctx_details = extract_turn_context_details(context)
 
-                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).correlation_id(ctx_details.correlation_id).build():
+                with BaggageBuilder().tenant_id(ctx_details.tenant_id).agent_id(ctx_details.agent_id).session_id(ctx_details.conversation_id).build():
                     if not self.agent_instance:
                         error_msg = "ERROR Sorry, the agent is not available."
                         logger.error(error_msg)
@@ -237,16 +237,17 @@ class GenericAgentHost:
                     typing_task = asyncio.create_task(_typing_loop())
                     try:
                         # Create observability details using shared utility
-                        invoke_details = create_invoke_agent_details(ctx_details, "AI agent powered by CrewAI framework")
+                        invoke_details = create_invoke_agent_details()
                         caller_details = create_caller_details(ctx_details)
-                        tenant_details = create_tenant_details(ctx_details)
+                        user_details = create_user_details(ctx_details)
                         request = create_request(ctx_details, user_message)
+                        agent_details = create_agent_details(ctx_details, "AI agent powered by CrewAI framework")
 
                         # Wrap the agent invocation with InvokeAgentScope
                         with InvokeAgentScope.start(
-                            invoke_agent_details=invoke_details,
-                            tenant_details=tenant_details,
                             request=request,
+                            scope_details=invoke_details,
+                            agent_details=agent_details,
                             caller_details=caller_details,
                         ) as invoke_scope:
                             if hasattr(invoke_scope, 'record_input_messages'):
