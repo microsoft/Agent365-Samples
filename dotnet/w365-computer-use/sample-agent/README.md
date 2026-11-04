@@ -22,6 +22,12 @@ It supports two model types:
 - **`computer-use-preview`** - The original CUA model on Azure OpenAI
 - **`gpt-5.4` / `gpt-5.4-mini`** - Newer GPT models with built-in computer use capability
 
+## Demonstrates
+
+- Session-aware MCP discovery and desktop/browser tool calls.
+- Optional W365 session kind, display dimensions and browser selection, with unchanged defaults.
+- Human sign-in handoff, bounded readiness checks, same-session task resumption and cleanup.
+
 ## Architecture
 
 ```
@@ -29,7 +35,7 @@ User Message
     |
 MyAgent (Agent Framework)
     | connects to MCP server
-W365 MCP Tools (QuickStartSession, CaptureScreenshot, Click, Type, etc.)
+W365 MCP Tools (StartSession, take_screenshot, click, type_text, etc.)
     | provisions and controls
 Windows 365 Cloud PC
     | screenshots fed back to
@@ -116,7 +122,7 @@ Create `appsettings.Development.json` (this file is gitignored):
 
 ### 4. Obtain a bearer token
 
-> **Note:** Running locally requires an agent identity. Create an Agent Blueprint with an Agent Identity for local development, then use that identity's client ID and the Agent Blueprint client credentials in the commands below.
+> **Note:** The default session requires an agentic context. Create an Agent Blueprint with an Agent Identity for that flow, then use that identity's client ID and the Agent Blueprint client credentials below. Explicit `human` sessions instead require a compatible human-user token; the agent-token helper below does not produce one. See [Optional session settings and human sign-in](#optional-session-settings-and-human-sign-in).
 
 #### Get the Windows 365 for Agents MCP token
 
@@ -232,7 +238,7 @@ dotnet run
 
 ## Authentication to the W365 Computer Use MCP server
 
-The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Streamable HTTP / SSE). Every request is authenticated with an OAuth 2.0 **bearer token for the calling agent's identity**; the agent's identity is carried by the token, so no separate identity header is required. The sample also sends optional `x-ms-*` correlation headers (see below).
+The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Streamable HTTP / SSE). Every request is authenticated with an OAuth 2.0 **bearer token for the caller**. Default sessions require an agentic context; explicit kinds also support compatible human callers. The service enforces caller compatibility and session ownership using the token. The sample also sends optional `x-ms-*` correlation headers (see below).
 
 ### Endpoint
 
@@ -263,7 +269,7 @@ Only one header is required: `Authorization: Bearer <token>` for the resource ab
 
 ### Minimal request example
 
-The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. Starting a session (`mcp_W365ComputerUse_StartSession`) takes no arguments and returns a `sessionId`; every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes that `sessionId`.
+The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. By default, `mcp_W365ComputerUse_StartSession` receives no arguments and waits until ready. Optional `sessionKind` and `sessionProperties` are described below. Every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes the returned `sessionId`.
 
 ```http
 POST /agents/servers/mcp_W365ComputerUse HTTP/1.1
@@ -283,7 +289,7 @@ Accept: application/json, text/event-stream
 }
 ```
 
-The response includes a `sessionId` (and, on start, a `screenShareUrl`). Pass the `sessionId` on the next call:
+The response includes a `sessionId` and may include `screenShareUrl`, `connectivityUrl` and `awaitingHumanLogin`. A successful human-session start is **not** necessarily ready for remote tools. Pass the same `sessionId` when inspecting progress:
 
 ```json
 {
@@ -297,7 +303,7 @@ The response includes a `sessionId` (and, on start, a `screenShareUrl`). Pass th
 }
 ```
 
-In .NET, the sample uses the MCP SDK rather than hand-rolling JSON-RPC — it attaches the headers via `SseClientTransportOptions.AdditionalHeaders` and calls `IMcpClient.CallToolAsync(...)` (see `ComputerUse/W365McpSessionClient.cs`):
+In .NET, the sample attaches headers via `SseClientTransportOptions.AdditionalHeaders` and uses the MCP SDK's `SendRequestAsync` for session-aware discovery and tool calls (see `ComputerUse/W365McpSessionClient.cs`). Keeping the raw result preserves additive fields such as `structuredContent` that the pinned SDK's typed tool result would discard:
 
 ```csharp
 var transport = new SseClientTransportOptions
@@ -311,6 +317,41 @@ var transport = new SseClientTransportOptions
 };
 ```
 
+### Optional session settings and human sign-in
+
+The checked-in configuration omits `W365:Session`, so existing agents continue to send `{}` to `StartSession` and retain the default behavior. To opt in, configure only the options you need in `appsettings.Development.json` or environment variables such as `W365__Session__SessionKind`:
+
+```json
+{
+  "W365": {
+    "Session": {
+      "SessionKind": "human",
+      "DisplayWidth": 1600,
+      "DisplayHeight": 900,
+      "BrowserMode": "chromium"
+    }
+  },
+  "ComputerUse": {
+    "DisplayWidth": 1600,
+    "DisplayHeight": 900
+  }
+}
+```
+
+This sends `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}`. Dimensions must be positive integers; browser mode is `chromium` or `legacy`. Invalid local configuration fails at startup. `ComputerUse:DisplayWidth` / `DisplayHeight` describe the model's view, not server session options; keep them aligned when using `computer-use-preview`. Existing model defaults are never sent as session properties automatically.
+
+Omit `SessionKind` to retain the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds.
+
+For local human sessions, run in `Development` and set `BEARER_TOKEN` to a human-user token for the W365 MCP resource with the required permission. Use your organization's approved delegated-user authentication flow; the agent-user helper is not a human-token acquisition flow. Configure the development W365 endpoint with `McpServer:Url` or `McpServers`. The shipped hosted `w365` handler is agentic: setting `SessionKind=human` does not convert it to human authentication. Hosted human authentication requires a separately configured compatible user-token handler.
+
+When `awaitingHumanLogin` is true, the sample posts **Open W365 sign-in** using `connectivityUrl`, retains the session, and does not take screenshots or invoke the computer-use model. Open the link promptly and sign in with your own credentials. It is not the screen-share link and does not bypass authentication. The sample checks `GetSessionDetails` up to three times, two seconds apart, within a 15-second local budget. If a details response omits the optional readiness flag, successful session-aware `tools/list` must confirm readiness before any remote action; pending discovery guidance preserves the session. If still pending, reply after signing in: the same session and original task resume. These local limits are not a guaranteed service timeout.
+
+Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also calls `EndSession` for retained pending sessions. An explicitly ended session cannot be reused.
+
+Once ready, remote discovery uses `tools/list` with `params._meta.sessionId`, and every remote call includes `sessionId` in its arguments. The ordinary no-options session still waits until ready, and existing additive response fields remain accepted.
+
+For integrations managing `x-ms-authorization-auxiliary`, this is an **HTTP request header**, never a tool argument: `local` rejects a supplied header, `human` accepts an optional single raw token, and `agentic` ignores a caller-supplied value. This sample does not configure or store auxiliary tokens.
+
 ## Configuration Reference
 
 | Setting | Description | Default |
@@ -322,6 +363,10 @@ var transport = new SseClientTransportOptions
 | `AIServices:AzureOpenAI:ModelName` | Model name (for model-based URLs, e.g., `gpt-5.4-mini`) | - |
 | `McpServer:Url` | MCP server URL (dev only; omit for production) | - |
 | `W365:GatewayUrl` | W365 Computer Use MCP gateway URL (production) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
+| `W365:Session:SessionKind` | Optional `local`, `human` or `agentic`; caller/availability checked by the service | Omitted |
+| `W365:Session:DisplayWidth` | Optional positive-integer session display width | Omitted |
+| `W365:Session:DisplayHeight` | Optional positive-integer session display height | Omitted |
+| `W365:Session:BrowserMode` | Optional session browser: `chromium` or `legacy` | Omitted |
 | `ComputerUse:MaxIterations` | Max CUA loop iterations | `30` |
 | `ComputerUse:DisplayWidth` | Display width for computer_use_preview tool | `1024` |
 | `ComputerUse:DisplayHeight` | Display height for computer_use_preview tool | `768` |
@@ -352,8 +397,8 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 ## How It Works
 
 1. **User sends a message** -> `MyAgent.OnMessageAsync`
-2. **MCP connection** established (direct SSE in dev, A365 SDK gateway in prod)
-3. **Session startup** runs explicitly with `mcp_W365ComputerUse_StartSession` before the first desktop action. Returned `sessionId` values are cached per conversation, and the selected session ID is sent on every remote W365 tool call.
+2. **MCP connection** established directly to the configured W365 endpoint in development or the W365 gateway in production, without requiring remote discovery first
+3. **Session startup and readiness** run explicitly with `mcp_W365ComputerUse_StartSession`. Pending human sign-in is handled outside the model loop. Once ready, `tools/list` uses `_meta.sessionId`; the selected ID is sent on every remote W365 call.
 4. **CUA loop** in `ComputerUseOrchestrator.RunAsync`:
    - User message + conversation history sent to the model
    - Model returns `computer_call` actions (click, type, scroll, etc.)
@@ -370,7 +415,7 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 - If a user references a known `sessionId`, the orchestrator selects that session before taking screenshots or sending remote W365 tool calls
 - Conversation history accumulates across messages, giving the model context for follow-up tasks
 - On app shutdown (`Ctrl+C`), the agent calls `EndSession` for each cached `sessionId` to release VMs back to the pool
-- If the app crashes, sessions auto-expire after ~30 minutes on the W365 backend
+- If the app crashes, backend expiration is service-controlled; do not rely on a fixed timeout, especially while sign-in is pending
 
 ## Screenshare
 
@@ -420,8 +465,13 @@ The in-memory handoff store is single-process. If the web app is scaled out to m
 | `BEARER_TOKEN` not set | Set `$env:BEARER_TOKEN` before running |
 | Model returns 400 | Check that the tool type matches your model (see Supported Models table) |
 | Screenshot extraction fails | Ensure MCP server returns image content blocks |
-| Session orphaned after crash | Sessions auto-expire after ~30 min on the W365 backend |
+| Session orphaned after crash | End known sessions when possible; backend expiration is service-controlled, not a guaranteed fixed timeout |
 | Multiple sessions started | Ensure only one agent instance is running per MCP server |
+| Waiting for human sign-in | Open `connectivityUrl` promptly, sign in, then reply to resume; do not start another session |
+| Invalid display/browser option | Use positive integer dimensions and `chromium` or `legacy` |
+| Unavailable kind / incompatible caller | Check service availability and token identity; an agentic token cannot request `human`, and app-only callers cannot select explicit kinds |
+| Session ended while signing in | The old ID cannot be reused; send a new computer-use request |
+| W365 authentication expired | Refresh the W365 token and retry; the service session ID is retained |
 
 ## Links
 
