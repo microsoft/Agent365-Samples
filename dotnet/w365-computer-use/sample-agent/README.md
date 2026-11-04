@@ -338,7 +338,7 @@ The checked-in configuration omits `W365:Session`, so existing agents continue t
 }
 ```
 
-This sends `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}`. Dimensions must be positive integers; browser mode is `chromium` or `legacy`. Invalid local configuration fails at startup. `ComputerUse:DisplayWidth` / `DisplayHeight` describe the model's view, not server session options; keep them aligned when using `computer-use-preview`. Existing model defaults are never sent as session properties automatically.
+This sends `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}`. Dimensions must be positive integers; browser mode is `chromium` or `legacy`. Invalid local configuration is rejected when the computer-use orchestrator is first initialized, before starting a W365 session. `ComputerUse:DisplayWidth` / `DisplayHeight` describe the model's view, not server session options; keep them aligned when using `computer-use-preview`. Existing model defaults are never sent as session properties automatically.
 
 Omit `SessionKind` to retain the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds.
 
