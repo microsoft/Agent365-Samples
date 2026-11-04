@@ -1869,6 +1869,72 @@ test('booking prefixes stay within Planner limits without splitting surrogate pa
   }
 });
 
+for (const movedIntoOverlap of [true, false]) {
+  test(`live uninvited neighbor replaces stored timing: ${movedIntoOverlap ? 'moves into overlap' : 'moves out of overlap'}`, async (t) => {
+    const watcher = require('../dist/graph/meetingWatcher');
+    const { pollForNewTranscripts } = require('../dist/graph/transcriptPoller');
+    const keys = ['LEADER_UPN', 'COS_AGENT_UPN', 'CAPTURE_GRAPH_OWNER', 'CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY'];
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    Object.assign(process.env, { LEADER_UPN: 'leader@example.com', COS_AGENT_UPN: 'agent@example.com',
+      CAPTURE_GRAPH_OWNER: 'leader', CAPTURE_MIN_ATTEMPTS_TRANSCRIPT_ONLY: '1' });
+    const now = Date.now(), start = now - 180 * 60000, end = start + 60 * 60000;
+    const aId = `live-boundary-a-${movedIntoOverlap}`, bId = `live-boundary-b-${movedIntoOverlap}`;
+    const meetingId = `live-boundary-meeting-${movedIntoOverlap}`, joinWebUrl = `https://example.test/${meetingId}`;
+    const oldStart = movedIntoOverlap ? end : start + 30 * 60000;
+    const liveStart = movedIntoOverlap ? start + 30 * 60000 : end;
+    const a = { eventId: aId, meetingId, joinWebUrl, subject: 'A', startTime: start, endTime: end, durationMinutes: 60 };
+    const b = { ...a, eventId: bId, subject: 'B', startTime: oldStart, endTime: oldStart + 60 * 60000 };
+    let updated = false, observeNeighbor = true;
+    t.mock.method(watcher, 'discoverQualifyingMeetings', async (_opts, observed) => {
+      observed.push(a);
+      if (observeNeighbor) observed.push(updated ? { ...b, startTime: liveStart, endTime: liveStart + 60 * 60000 } : b);
+      return updated ? [a] : [a, b];
+    });
+    t.mock.method(watcher, 'checkEventParticipation', async (_opts, _owner, eventId) => eventId === bId ? 'disqualified' : 'qualified');
+    t.mock.method(insights, 'fetchTranscriptsForMeeting', async () => updated ? [
+      { transcriptId: `a-transcript-${movedIntoOverlap}`, createdDateTime: new Date(start + 60000).toISOString() },
+      { transcriptId: `b-transcript-${movedIntoOverlap}`, createdDateTime: new Date(liveStart + 60000).toISOString() },
+    ] : []);
+    const fetched = [];
+    t.mock.method(insights, 'fetchTranscriptContent', async (_opts, _owner, _meeting, transcriptId) => {
+      fetched.push(transcriptId);
+      return 'WEBVTT\ninvited A';
+    });
+    t.mock.method(insights, 'fetchAiInsightsForMeeting', async () => ({ available: false, unsupported: true }));
+    const opts = { authorization: {}, context: {}, authHandlerName: 'agentic' };
+    try {
+      assert.deepEqual(await pollForNewTranscripts(opts), []);
+      assert.equal(captures.getCapture(bId).startTime, oldStart);
+      updated = true;
+      captures.updateCapture(aId, { nextCheckAt: 0 });
+      captures.updateCapture(bId, { nextCheckAt: 0 });
+      const ready = await pollForNewTranscripts(opts);
+      assert.equal(captures.getCapture(bId).status, 'gave-up');
+      assert.ok(captures.getCapture(bId).revokedAt, 'uninvited neighbor must not qualify again');
+      assert.equal(captures.getCapture(bId).startTime, oldStart, 'persisted nonqualifying timing remains stale');
+      if (movedIntoOverlap) {
+        assert.ok(!ready.some((capture) => capture.eventId === aId));
+        assert.deepEqual(fetched, [], 'ambiguous content must not even be fetched');
+        assert.equal(captures.getCapture(aId).status, 'pending');
+      } else {
+        assert.ok(ready.some((capture) => capture.eventId === aId), 'stale overlap must not suppress a valid capture');
+        assert.deepEqual(fetched, [`a-transcript-${movedIntoOverlap}`]);
+      }
+      // When the neighbor has no current observation, its persisted interval
+      // still bounds attribution rather than being dropped entirely.
+      observeNeighbor = false;
+      captures.updateCapture(aId, { nextCheckAt: Date.now() + 3600000 });
+      await pollForNewTranscripts(opts);
+      const candidate = [{ transcriptId: 'boundary-fallback', createdDateTime: new Date(end + 60000).toISOString() }];
+      assert.deepEqual(selectTranscriptsForOccurrence(candidate, a, now), []);
+    } finally {
+      captures.markCaptureComplete(aId);
+      captures.markCaptureComplete(bId);
+      for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+    }
+  });
+}
+
 test('environment template keeps observability export disabled by default', () => {
   const template = fs.readFileSync(path.join(__dirname, '..', '.env.template'), 'utf8');
   assert.match(template, /^ENABLE_A365_OBSERVABILITY_EXPORTER=false$/m);

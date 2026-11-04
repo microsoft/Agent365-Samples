@@ -252,7 +252,10 @@ setInterval, guarded by `meetingPollInFlight` — see §10.2):
   occurrences to `pendingCaptureStore`. Discovery follows calendarView paging
   (`@odata.nextLink`), so a busy calendar isn't truncated, and it also
   records every online occurrence in the window — invited or not — as a
-  transcript-window boundary for its join URL. An existing event whose start/end
+  transcript-window boundary for its join URL. Live observed timing supersedes
+  a stored neighbor's old interval, even if it no longer qualifies; stored
+  timing is only a fallback when no current observation exists.
+  An existing event whose start/end
   moved is refreshed (`rescheduleCapture`) with its old fetched artifacts
   invalidated. Unwritten extraction is discarded; captures with existing
   writes stop for manual review to avoid duplicate or obsolete writes. A

@@ -554,7 +554,9 @@ function sameMeetingNeighbors(
   }
   if (cap.joinWebUrl) {
     for (const o of observedByJoinUrl.get(cap.joinWebUrl) ?? []) {
-      if (o.eventId !== cap.eventId && !byEvent.has(o.eventId)) byEvent.set(o.eventId, o);
+      // Discovery includes uninvited events that aren't rescheduled in the
+      // capture store. Their live timing supersedes the persisted interval.
+      if (o.eventId !== cap.eventId) byEvent.set(o.eventId, o);
     }
   }
   return Array.from(byEvent.values());

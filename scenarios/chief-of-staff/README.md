@@ -106,6 +106,9 @@ leader-only occurrences as exclusion boundaries. Mailbox copies are correlated
 by `iCalUId`; artifact access stays in the `CAPTURE_GRAPH_OWNER` mailbox.
 If either calendar read fails, cached captures wait for a successful discovery
 instead of processing with incomplete boundaries.
+Current calendar observations override stored neighbor timing, including
+meetings moved after the CoS was uninvited. Stored intervals are used only
+when no current observation exists for that neighboring occurrence.
 
 Substantive free-text blocker requests without an open check-in reach the
 conversational unblock flow. Bare blocker keywords still ask for details,
