@@ -1,0 +1,44 @@
+# TeamsFx files
+env/.env.*.user
+env/.env.local
+env/.env.sandbox
+.localConfigs
+.localConfigs.playground
+.localConfigs
+.notification.localstore.json
+.notification.playgroundstore.json
+appPackage/build
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# misc
+.env
+.deployment
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Dev tool directories
+/devTools/
+
+# Agent 365 generated / local state
+a365.generated.config.json
+chat.json
+deploy.zip
+log.txt
+*.log
+cred.json
+manifest/manifest.zip
