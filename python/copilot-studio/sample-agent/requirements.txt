@@ -1,0 +1,10 @@
+microsoft-agents-hosting-aiohttp
+microsoft-agents-hosting-core
+microsoft-agents-authentication-msal
+microsoft-agents-activity
+microsoft-agents-copilotstudio-client
+microsoft-agents-a365-notifications
+microsoft-agents-a365-runtime>=0.1.0
+microsoft-opentelemetry>=0.1.0a3
+python-dotenv
+aiohttp
