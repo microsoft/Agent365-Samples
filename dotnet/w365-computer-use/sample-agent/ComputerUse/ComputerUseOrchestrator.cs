@@ -2972,3 +2972,6 @@ public class ComputerUseOrchestrator
         }
     }
 }
+                Lifecycle = new W365SessionState(W365SessionId);
+                RemoteTools = null;
+                ScreenShareLinkEmitted = false;

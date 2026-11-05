@@ -143,12 +143,16 @@ internal sealed class W365McpSessionClient
         string? channelId,
         JsonElement? inputSchema = null)
     {
+        var preserveExplicitSessionId =
+            string.Equals(name, ComputerUseOrchestrator.W365EndSessionToolName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, ComputerUseOrchestrator.W365GetSessionDetailsToolName, StringComparison.OrdinalIgnoreCase);
         var tool = AIFunctionFactory.Create(
             async (AIFunctionArguments arguments, CancellationToken cancellationToken) =>
             {
                 var callArguments = arguments.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
                 var toolCallId = ExtractToolCallId(callArguments);
-                if (includeSessionId && !string.IsNullOrEmpty(sessionId))
+                if (includeSessionId && !string.IsNullOrEmpty(sessionId)
+                    && (!preserveExplicitSessionId || !callArguments.ContainsKey("sessionId")))
                 {
                     callArguments["sessionId"] = sessionId;
                 }
@@ -166,24 +170,24 @@ internal sealed class W365McpSessionClient
             },
             name,
             description);
-        TelemetryOwnedTools.Add(tool, TelemetryOwnedToolMarker);
-        return tool;
-    }
-
         if (inputSchema is { } schema)
         {
             tool = new SchemaPreservingFunction(tool, schema);
         }
-    private void AddLifecycleToolIfMissing(
-        List<AITool> tools,
-        string name,
-        string description,
+        TelemetryOwnedTools.Add(tool, TelemetryOwnedToolMarker);
+        return tool;
+    }
+
     private sealed class SchemaPreservingFunction(AIFunction innerFunction, JsonElement inputSchema)
         : DelegatingAIFunction(innerFunction)
     {
         public override JsonElement JsonSchema { get; } = inputSchema.Clone();
     }
 
+    private void AddLifecycleToolIfMissing(
+        List<AITool> tools,
+        string name,
+        string description,
         string sessionId,
         bool includeSessionId,
         string? conversationId,
