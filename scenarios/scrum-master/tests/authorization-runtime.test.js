@@ -32,6 +32,20 @@ async function drain() {
     for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
 }
 
+test('blocker cards include the bound issue and row identifiers for both authorized actions', () => {
+    const { buildBlockerEscalationCard } = require('../src/cards/blocker-escalation.card.ts');
+    const card = buildBlockerEscalationCard({
+        blockerId: 'blocker-1', issueKey: 'TEAM-1', summary: 'Work', url: 'https://jira.invalid/TEAM-1',
+        status: 'To Do', sprintName: 'Sprint', ownerDisplayName: 'Dev', reporterDisplayName: 'Dev', blockerText: 'Help',
+    });
+    const submits = card.content.actions.filter(action => action.type === 'Action.Submit');
+    assert.equal(submits.length, 2);
+    for (const action of submits) {
+        assert.equal(action.data.issueKey, 'TEAM-1');
+        assert.equal(action.data.blockerId, 'blocker-1');
+    }
+});
+
 test('standup submissions fail closed before writes for unknown sessions, identities and issue assignments', async () => {
     const sessions = require('../src/services/session-store');
     let writes = 0, comments = 0;

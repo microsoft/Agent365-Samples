@@ -59,7 +59,7 @@ export function buildBlockerEscalationCard(p: BlockerCardParams): Attachment {
                 {
                     type: 'Action.Submit',
                     title: 'Dismiss',
-                    data: { action: 'blocker.dismiss', blockerId: p.blockerId },
+                    data: { action: 'blocker.dismiss', blockerId: p.blockerId, issueKey: p.issueKey },
                 },
             ],
         },
