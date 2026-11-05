@@ -102,7 +102,8 @@ internal sealed class W365McpSessionClient
                 sessionId,
                 includeSessionId: !string.Equals(tool.Name, ComputerUseOrchestrator.W365StartSessionToolName, StringComparison.OrdinalIgnoreCase),
                 conversationId,
-                channelId));
+                channelId,
+                tool.InputSchema));
         }
 
         AddLifecycleToolIfMissing(
@@ -139,7 +140,8 @@ internal sealed class W365McpSessionClient
         string sessionId,
         bool includeSessionId,
         string? conversationId,
-        string? channelId)
+        string? channelId,
+        JsonElement? inputSchema = null)
     {
         var tool = AIFunctionFactory.Create(
             async (AIFunctionArguments arguments, CancellationToken cancellationToken) =>
@@ -168,10 +170,20 @@ internal sealed class W365McpSessionClient
         return tool;
     }
 
+        if (inputSchema is { } schema)
+        {
+            tool = new SchemaPreservingFunction(tool, schema);
+        }
     private void AddLifecycleToolIfMissing(
         List<AITool> tools,
         string name,
         string description,
+    private sealed class SchemaPreservingFunction(AIFunction innerFunction, JsonElement inputSchema)
+        : DelegatingAIFunction(innerFunction)
+    {
+        public override JsonElement JsonSchema { get; } = inputSchema.Clone();
+    }
+
         string sessionId,
         bool includeSessionId,
         string? conversationId,
