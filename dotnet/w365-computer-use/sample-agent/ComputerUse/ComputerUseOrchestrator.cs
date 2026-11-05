@@ -1560,10 +1560,30 @@ public class ComputerUseOrchestrator
             return;
         }
 
+        foreach (var mapping in _w365McpClientsBySessionId)
+        {
+            if (ReferenceEquals(mapping.Value, client))
+            {
+                ((ICollection<KeyValuePair<string, IMcpClient>>)_w365McpClientsBySessionId).Remove(mapping);
+            }
+        }
+
+        foreach (var session in _sessions.Values)
+        {
+            if (ReferenceEquals(session.McpClient, client))
+            {
+                session.McpClient = null;
+                session.ConnectionFingerprint = null;
+                session.RemoteTools = null;
+                session.LifecycleTools = null;
+            }
+        }
+
         _allMcpClients.Remove(client);
         if (ReferenceEquals(_cachedMcpClient, client))
         {
-            _cachedMcpClient = _w365McpClientsBySessionId.Values.FirstOrDefault();
+            _cachedMcpClient = null;
+            _cachedTools = null;
         }
 
         try
@@ -2961,6 +2981,9 @@ public class ComputerUseOrchestrator
             if (string.Equals(W365SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
             {
                 W365SessionId = W365SessionIds.LastOrDefault();
+                Lifecycle = new W365SessionState(W365SessionId);
+                RemoteTools = null;
+                ScreenShareLinkEmitted = false;
             }
 
             SessionStarted = !string.IsNullOrEmpty(W365SessionId);
@@ -2973,6 +2996,3 @@ public class ComputerUseOrchestrator
         }
     }
 }
-                Lifecycle = new W365SessionState(W365SessionId);
-                RemoteTools = null;
-                ScreenShareLinkEmitted = false;
