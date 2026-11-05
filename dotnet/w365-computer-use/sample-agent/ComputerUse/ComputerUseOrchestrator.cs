@@ -439,6 +439,7 @@ public class ComputerUseOrchestrator
         // the shared ConversationHistory, producing the Azure OpenAI 400 "Computer tool cannot
         // use multiple image inputs."
         await session.TurnLock.WaitAsync(cancellationToken);
+        var effectiveTask = session.PendingTask ?? userMessage;
         try
         {
             session.TelemetryConversationId = !string.IsNullOrWhiteSpace(telemetryConversationId)
@@ -471,7 +472,7 @@ public class ComputerUseOrchestrator
             if (string.IsNullOrEmpty(session.W365SessionId))
                 throw new InvalidOperationException("W365 reported pending human sign-in without a sessionId. No session can be resumed.");
             session.Lifecycle.MarkPending();
-            session.PendingTask ??= userMessage;
+            session.PendingTask ??= effectiveTask;
             session.ConversationHistory.Clear();
             return HumanLoginGuidance(session);
         }
