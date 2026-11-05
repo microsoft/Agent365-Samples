@@ -19,7 +19,9 @@ function makeSession(expected = ['dev']) {
         standupId: sessions.makeStandupId(id), sprintId: id, sprintName: 'Lifecycle sprint',
         state: 'open', startedUtc: new Date().toISOString(),
         cutoffUtc: new Date(Date.now() - 1000).toISOString(), initiatedByAadId: null,
-        itemsByAssignee: new Map(), expectedResponders: new Set(expected),
+        itemsByAssignee: new Map(expected.map(user => [user, [{
+            key: 'SCRUM-1', summary: 'Assigned work', status: 'To Do', url: 'https://jira.invalid/SCRUM-1',
+        }]])), expectedResponders: new Set(expected),
         sentTo: new Set(expected), unreachable: new Set(), responses: new Map(),
     });
 }

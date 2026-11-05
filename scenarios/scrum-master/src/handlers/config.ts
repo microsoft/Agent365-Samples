@@ -17,6 +17,7 @@ import {
 } from '@microsoft/agents-activity';
 
 import { findByField, createItem, updateItem } from '../services/sharepoint';
+import { requireScrumMaster } from '../services/authorization';
 
 const PRIMARY = 'primary';
 
@@ -30,6 +31,8 @@ interface TeamsConfigFields {
 }
 
 export async function handleConfigChannel(context: TurnContext): Promise<void> {
+    const scrumMaster = await requireScrumMaster(context);
+    if (!scrumMaster) return;
     const activity: Activity = context.activity;
 
     // Teams populates `channelData` with team + channel identifiers for channel messages.
@@ -45,6 +48,13 @@ export async function handleConfigChannel(context: TurnContext): Promise<void> {
             'This command must be run from **inside** the Teams channel where I should post updates. ' +
             'Please @mention me from the channel and try again.',
         );
+        return;
+    }
+    const allowedTeamId = process.env.SMA_ALLOWED_TEAM_ID?.trim();
+    if (!allowedTeamId || teamId.toLowerCase() !== allowedTeamId.toLowerCase() ||
+        activity.channelId !== 'msteams' || activity.conversation?.conversationType !== 'channel') {
+        console.warn('[config] Rejected a reporting destination outside the allowed Teams team.');
+        await context.sendActivity('This team is not an allowed reporting destination. Configure SMA_ALLOWED_TEAM_ID on the deployment first. No changes were made.');
         return;
     }
 
@@ -68,7 +78,7 @@ export async function handleConfigChannel(context: TurnContext): Promise<void> {
         TeamId: teamId,
         ChannelId: channelId,
         ConversationRef: convRefJson,
-        ConfiguredByAadId: activity.from?.aadObjectId ?? '',
+        ConfiguredByAadId: scrumMaster.AadObjectId,
         ConfiguredAtUtc: new Date().toISOString(),
     };
 

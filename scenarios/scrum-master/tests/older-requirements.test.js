@@ -281,22 +281,41 @@ test('successful fallback does not retain an error result but still logs the fai
 test('repeated booked cards safely return a stored-event link without another calendar request', async () => {
     for (const eventId of ['existing-event-123', 'id/with?query#fragment)[bad](javascript:alert(1))', undefined]) {
         const messages = [];
+        let state = 'open', proposalId;
+        const sm = { AadObjectId: 'sm', Role: 'SM' };
         const chase = load('src\\handlers\\chase.ts', {
-            '../services/jira': {}, '../services/team-roster': {}, '../services/helperMatcher': {},
+            '../services/jira': {},
+            '../services/team-roster': { getMemberByAadId: async () => null },
+            '../services/helperMatcher': { findHelperForBlocker: async () => null },
+            '../services/authorization': { requireScrumMaster: async () => sm, getScrumMaster: async () => sm },
+            '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+            '../cards/meeting-propose.card': { buildMeetingProposeCard: value => value },
             '../services/sharepoint': { findByField: async () => [{
-                id: 'blocker', fields: { State: 'booked', MeetingEventId: eventId },
+                id: 'blocker', fields: { Title: 'T-1', State: state, MeetingEventId: state === 'booked' ? eventId : undefined },
             }] },
-            '../services/calendar': { createUnblockMeeting: () => { throw new Error('Must not rebook'); } },
-            '../agent': {},
+            '../services/calendar': {
+                findUnblockSlots: async () => [{ startIso: '2030-01-01T10:00:00Z', endIso: '2030-01-01T10:30:00Z', label: 'Slot' }],
+                createUnblockMeeting: () => { throw new Error('Must not rebook'); },
+            },
+            '../agent': { agentApplication: { authorization: {} } },
             '../services/proactive': { sendProactive: async (_ref, callback) => {
-                await callback({ sendActivity: async text => messages.push(text) });
+                await callback({ sendActivity: async activity => {
+                    if (activity?.attachments) proposalId = activity.attachments[0].proposalId;
+                    else messages.push(activity);
+                } });
                 return { ok: true };
             } },
         });
-        await chase.bookMeetingAsync({}, {
-            blockerId: 'blocker', issueKey: 'T-1',
+        const context = value => ({ activity: { value, getConversationReference: () => ({}) }, sendActivity: async () => {} });
+        await chase.handleBlockerSubmit(context({ action: 'blocker.proposeSlots', blockerId: 'blocker', issueKey: 'T-1' }));
+        for (let i = 0; i < 10 && !proposalId; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.ok(proposalId);
+        state = 'booked';
+        await chase.handleMeetingSubmit(context({
+            action: 'meeting.book', proposalId,
             slot: '2030-01-01T10:00:00Z|2030-01-01T10:30:00Z',
-        }, 'sm');
+        }));
+        for (let i = 0; i < 10 && !messages.length; i++) await new Promise(resolve => setImmediate(resolve));
         assert.match(messages[0], /already booked/);
         if (eventId) {
             const encoded = messages[0].match(/\(https:\/\/outlook.office.com\/calendar\/item\/([^)]*)\)/)[1];

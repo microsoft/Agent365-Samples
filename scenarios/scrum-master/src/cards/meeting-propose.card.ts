@@ -15,7 +15,7 @@ export interface SlotChoice {
 }
 
 export interface MeetingProposeCardParams {
-    blockerId: string;
+    proposalId: string;
     issueKey: string;
     /** Display names of the people invited, in whatever order the caller wants
      *  them shown. This is deduplicated case-insensitively before rendering, so
@@ -68,11 +68,11 @@ export function buildMeetingProposeCard(p: MeetingProposeCardParams): Attachment
             actions: [
                 {
                     type: 'Action.Submit', title: 'Book it', style: 'positive',
-                    data: { action: 'meeting.book', blockerId: p.blockerId, issueKey: p.issueKey },
+                    data: { action: 'meeting.book', proposalId: p.proposalId },
                 },
                 {
                     type: 'Action.Submit', title: 'Cancel',
-                    data: { action: 'meeting.cancel', blockerId: p.blockerId },
+                    data: { action: 'meeting.cancel', proposalId: p.proposalId },
                 },
             ],
         },

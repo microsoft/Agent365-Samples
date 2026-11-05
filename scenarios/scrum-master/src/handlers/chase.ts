@@ -18,13 +18,14 @@
  */
 
 import { DateTime } from 'luxon';
+import { randomUUID } from 'crypto';
 import { Activity, ConversationReference } from '@microsoft/agents-activity';
 import { TurnContext } from '@microsoft/agents-hosting';
 
 import { getJiraClient } from '../services/jira';
 import { listTeamMembers, TeamMember, getMemberByAadId } from '../services/team-roster';
 import { sendProactive } from '../services/proactive';
-import { findByField, findByTitle, updateItem, claimItemState } from '../services/sharepoint';
+import { findByField, updateItem, claimItemState } from '../services/sharepoint';
 import { getScheduleConfig, getJiraMode } from '../config';
 import {
     buildBlockerEscalationCard,
@@ -39,6 +40,7 @@ import {
 import { findHelperForBlocker, HelperMatch } from '../services/helperMatcher';
 import { StandupSession } from '../services/session-store';
 import { agentApplication } from '../agent';
+import { getScrumMaster, requireScrumMaster } from '../services/authorization';
 
 // The static authHandlerName on the AgentApplication. Hardcoded here (not imported)
 // to avoid a load-time circular reference chase.ts → agent.ts → chase.ts.
@@ -52,6 +54,33 @@ interface BlockerFields {
     BlockerText: string;
     State: string;
     MeetingEventId?: string;
+}
+
+interface MeetingProposal {
+    blockerId: string;
+    issueKey: string;
+    approverAadId: string;
+    expiresAt: number;
+    slots: Set<string>;
+}
+
+const meetingProposals = new Map<string, MeetingProposal>();
+
+function pruneMeetingProposals(): void {
+    for (const [id, proposal] of meetingProposals) {
+        if (proposal.expiresAt <= Date.now()) meetingProposals.delete(id);
+    }
+}
+
+function getMeetingProposal(proposalId: string, callerId: string): MeetingProposal | undefined {
+    pruneMeetingProposals();
+    const proposal = meetingProposals.get(proposalId);
+    return proposal?.approverAadId.toLowerCase() === callerId.toLowerCase() ? proposal : undefined;
+}
+
+async function findBlocker(blockerId: string, issueKey: string) {
+    const rows = await findByField<BlockerFields>('blockers', 'Title', issueKey);
+    return rows.find(row => row.id === blockerId && row.fields.Title === issueKey);
 }
 
 // --- entry point called from summarizeStandup ---------------------------
@@ -128,11 +157,19 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
 export async function handleBlockerSubmit(context: TurnContext): Promise<void> {
     const value = context.activity.value as Record<string, unknown> | undefined;
     const action = String(value?.action ?? '');
+    if (action !== 'blocker.dismiss' && action !== 'blocker.proposeSlots') return;
+    const sm = await requireScrumMaster(context);
+    if (!sm) return;
+    const row = await findBlocker(String(value?.blockerId ?? ''), String(value?.issueKey ?? ''));
+    if (!row || row.fields.State !== 'open' || row.fields.MeetingEventId) {
+        console.warn('[chase] Rejected an unknown or inactive blocker action.');
+        await context.sendActivity('This blocker is unavailable or no longer open. No changes were made.');
+        return;
+    }
 
     if (action === 'blocker.dismiss') {
-        const blockerId = String(value?.blockerId ?? '');
-        await updateBlockerState(blockerId, 'resolved');
-        await context.sendActivity('Dismissed — marked as resolved.');
+        const claimed = await claimItemState('blockers', row.id, 'open', 'resolved');
+        await context.sendActivity(claimed ? 'Dismissed — marked as resolved.' : 'The blocker changed; no changes were made.');
         return;
     }
 
@@ -141,7 +178,7 @@ export async function handleBlockerSubmit(context: TurnContext): Promise<void> {
         // the Graph findMeetingTimes call + slot-picker card send run in background.
         await context.sendActivity('Looking up open slots…');
         const ref = context.activity.getConversationReference();
-        const smAadId = context.activity.from?.aadObjectId ?? '';
+        const smAadId = sm.AadObjectId;
         setImmediate(() => {
             proposeSlotsAsync(ref, value, smAadId).catch(err =>
                 console.error('[chase] background proposeSlots failed:', (err as Error).message),
@@ -154,8 +191,19 @@ export async function handleBlockerSubmit(context: TurnContext): Promise<void> {
 export async function handleMeetingSubmit(context: TurnContext): Promise<void> {
     const value = context.activity.value as Record<string, unknown> | undefined;
     const action = String(value?.action ?? '');
+    if (action !== 'meeting.cancel' && action !== 'meeting.book') return;
+    const sm = await requireScrumMaster(context);
+    if (!sm) return;
+    const proposalId = String(value?.proposalId ?? '');
+    const proposal = getMeetingProposal(proposalId, sm.AadObjectId);
+    if (!proposal) {
+        console.warn('[chase] Rejected an unknown, expired, or unauthorized meeting proposal.');
+        await context.sendActivity('This meeting proposal is unavailable. Request new slots; no meeting was booked.');
+        return;
+    }
 
     if (action === 'meeting.cancel') {
+        meetingProposals.delete(proposalId);
         await context.sendActivity('Meeting not booked — blocker still open.');
         return;
     }
@@ -166,38 +214,44 @@ export async function handleMeetingSubmit(context: TurnContext): Promise<void> {
     }
 
     const slotRaw = String(value?.slot ?? '');
-    const [startIso, endIso] = slotRaw.split('|');
-    if (!startIso || !endIso) {
-        await context.sendActivity('No slot selected — aborting.');
+    if (!proposal.slots.has(slotRaw)) {
+        console.warn('[chase] Rejected a slot outside the server-side meeting proposal.');
+        await context.sendActivity('Select one of the offered slots. No meeting was booked.');
         return;
     }
+    meetingProposals.delete(proposalId);
 
     // Ack immediately so Teams doesn't fire "Something went wrong" while we do the
     // Graph POST /events call; background task then reports back with the outcome.
     await context.sendActivity('Booking the meeting…');
     const ref = context.activity.getConversationReference();
-    const smAadId = context.activity.from?.aadObjectId ?? '';
     setImmediate(() => {
-        bookMeetingAsync(ref, value, smAadId).catch(err =>
+        bookMeetingAsync(ref, proposal, slotRaw, sm.AadObjectId).catch(err =>
             console.error('[chase] background book failed:', (err as Error).message),
         );
     });
 }
 
-export async function bookMeetingAsync(
+async function bookMeetingAsync(
     ref: ConversationReference,
-    value: Record<string, unknown> | undefined,
+    proposal: MeetingProposal,
+    slotRaw: string,
     smAadId: string,
 ): Promise<void> {
-    const issueKey = String(value?.issueKey ?? '');
-    const slotRaw = String(value?.slot ?? '');
+    const sm = await getScrumMaster(smAadId);
+    if (!sm) {
+        console.warn('[chase] Meeting approver is no longer the configured Scrum Master.');
+        await sendProactive(ref, async ctx => {
+            await ctx.sendActivity('Meeting authorization is no longer valid. No meeting was booked.');
+        });
+        return;
+    }
+    const { issueKey, blockerId } = proposal;
     const [startIso, endIso] = slotRaw.split('|');
-    const blockerId = String(value?.blockerId ?? '');
     if (!blockerId || !Number.isFinite(Date.parse(startIso)) ||
         !Number.isFinite(Date.parse(endIso)) || Date.parse(endIso) <= Date.parse(startIso)) return;
 
-    const rows = await findByField<BlockerFields>('blockers', 'Title', issueKey);
-    const row = rows.find(r => r.id === blockerId);
+    const row = await findBlocker(blockerId, issueKey);
     const b = row?.fields;
     if (!b || !row) {
         await sendProactive(ref, async ctx => {
@@ -219,7 +273,6 @@ export async function bookMeetingAsync(
     }
     const owner = await getMemberByAadId(b.OwnerAadId);
     const reporter = await getMemberByAadId(b.ReporterAadId);
-    const sm = smAadId ? await getMemberByAadId(smAadId) : null;
 
     // Attendees: include the SM as an explicit attendee too, since the event is now
     // organised by the agent itself (mcp_CalendarTools → agent's mailbox). Dedup by
@@ -313,6 +366,14 @@ async function proposeSlotsAsync(
     value: Record<string, unknown> | undefined,
     smAadId: string,
 ): Promise<void> {
+    const sm = await getScrumMaster(smAadId);
+    if (!sm) {
+        console.warn('[chase] Slot requester is no longer the configured Scrum Master.');
+        await sendProactive(ref, async ctx => {
+            await ctx.sendActivity('Meeting authorization is no longer valid. No slots were proposed.');
+        });
+        return;
+    }
     if (getJiraMode() === 'mock') {
         await sendProactive(ref, async ctx => {
             await ctx.sendActivity('Offline demo: meeting-slot lookup is disabled; no Graph or Calendar request was made.');
@@ -321,9 +382,9 @@ async function proposeSlotsAsync(
     }
     const blockerId = String(value?.blockerId ?? '');
     const issueKey = String(value?.issueKey ?? '');
-    const rows = await findByField<BlockerFields>('blockers', 'Title', issueKey);
-    const b = rows[0]?.fields;
-    if (!b) {
+    const row = await findBlocker(blockerId, issueKey);
+    const b = row?.fields;
+    if (!b || b.State !== 'open' || b.MeetingEventId) {
         await sendProactive(ref, async ctx => {
             await ctx.sendActivity(`Could not find blocker for ${issueKey}.`);
         });
@@ -332,7 +393,6 @@ async function proposeSlotsAsync(
 
     const owner = await getMemberByAadId(b.OwnerAadId);
     const reporter = await getMemberByAadId(b.ReporterAadId);
-    const sm = smAadId ? await getMemberByAadId(smAadId) : null;
 
     // Build attendee list (deduped later inside findUnblockSlots for display too).
     const attendees: Attendee[] = [];
@@ -364,6 +424,12 @@ async function proposeSlotsAsync(
             authHandlerName: AUTH_HANDLER,
         };
         const slots = await findUnblockSlots(cc, attendees, durationMinutes, getScheduleConfig().timezone);
+        const allowedSlots = slots.filter(slot => Number.isFinite(Date.parse(slot.startIso)) &&
+            Date.parse(slot.endIso) > Date.parse(slot.startIso));
+        if (!allowedSlots.length) {
+            await ctx.sendActivity('No valid meeting slots were found. No meeting was booked.');
+            return;
+        }
 
         const attendeeNames = [
             owner?.Title ?? b.OwnerAadId,
@@ -372,31 +438,33 @@ async function proposeSlotsAsync(
         ];
         if (helper) attendeeNames.push(helper.displayName);
 
+        const proposalId = randomUUID();
+        pruneMeetingProposals();
+        meetingProposals.set(proposalId, {
+            blockerId, issueKey, approverAadId: smAadId,
+            expiresAt: Date.now() + 30 * 60_000,
+            slots: new Set(allowedSlots.map(slot => `${slot.startIso}|${slot.endIso}`)),
+        });
         const card = buildMeetingProposeCard({
-            blockerId,
+            proposalId,
             issueKey,
             attendeeNames,
             durationMinutes,
-            slots,
+            slots: allowedSlots,
         });
-        await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+        try {
+            await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+        } catch (error) {
+            meetingProposals.delete(proposalId);
+            throw error;
+        }
     });
 }
 
 async function updateBlockerState(blockerId: string, state: string, meetingEventId?: string): Promise<void> {
-    if (!blockerId) return;
-    const row = await findByTitle<BlockerFields>('blockers', blockerId).catch(() => null);
-    // blockerId is the SharePoint item id (numeric); findByTitle matches on Title (issueKey).
-    // We need to update by item id directly.
     const patch: Partial<BlockerFields> = { State: state };
     if (meetingEventId) patch.MeetingEventId = meetingEventId;
-    try {
-        await updateItem<BlockerFields>('blockers', blockerId, patch);
-    } catch (e) {
-        // Fall back: if blockerId was actually a Title (issueKey), look up and update.
-        if (row) await updateItem<BlockerFields>('blockers', row.id, patch);
-        else throw e;
-    }
+    await updateItem<BlockerFields>('blockers', blockerId, patch);
 }
 
 // suppress unused-var warnings under strict TS

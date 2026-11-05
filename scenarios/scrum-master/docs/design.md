@@ -233,6 +233,12 @@ Jira Story-to-Epic relationships do not count as subtask parents: `parentKey`
 is populated only when Jira's `issuetype.subtask` is true, so inherited
 subtasks of epic-backed Stories remain eligible for standup fan-out.
 
+Submissions fail closed before writes unless the open in-memory session exists,
+the authenticated caller is an expected responder, and every submitted issue key
+belongs to their server-side assignment. The claimed assignee must match the
+caller; `DEMO_MODE` never bypasses authorization. Unknown/post-restart sessions
+cannot accept updates via a client-provided standup ID.
+
 ### 5.2 Reconcile (MVP 2)
 
 Free-text updates are classified by a deterministic phrase table in
@@ -260,6 +266,13 @@ consumes that proposal. Replayed, expired or post-restart submissions fail
 closed and require a new proposal.
 
 ### 5.3 Chase (MVP 3)
+
+Every blocker/meeting action checks the caller's configured `SM` role on the
+server. Slot lookup verifies the blocker ID and issue key together. The picker
+contains only a random proposal ID and the selected slot; the server retains the
+blocker, authorized approver and offered slots for 30 minutes. Book/cancel consumes
+the proposal once. Forged, expired and post-restart proposals require new slots.
+Booking rechecks the SM role and blocker state before any calendar side effect.
 
 Booking uses a conditional SharePoint state claim, `open → booking → booked`,
 so repeated submissions cannot independently create the same meeting.
@@ -404,6 +417,11 @@ history remain process-local. Complete column-level reference:
 | `SMA_SprintReportsDelivery` | Sprint-close claim and delivery status (`claimed` / `sent` / `failed`) | Unique `DeliveryKey = sprint-close:<sprintId>` |
 
 ## 7. Auth model — delegated Graph only
+
+The reporting destination is deployment-scoped: `/config channel` requires a
+configured SM and a Teams channel in `SMA_ALLOWED_TEAM_ID`. Missing configuration
+or a foreign team is denied before modifying `TeamsConfig`. Roster `Role=SM`
+assignments and this team setting must be managed by trusted deployment operators.
 
 - **Microsoft Graph (SharePoint + user lookup)** — MSAL device-code flow
   in [`services/graph.ts`](../src/services/graph.ts), scopes

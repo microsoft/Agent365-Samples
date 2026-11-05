@@ -150,12 +150,16 @@ test('meeting cards cannot book twice concurrently, after success, or after reso
     let state = 'open';
     let meetingId;
     let creations = 0;
+    let proposalId;
+    const sm = { AadObjectId: 'sm', Role: 'SM', Email: 'sm@example.test', Title: 'SM' };
     const chase = load('src\\handlers\\chase.ts', {
         '../services/jira': {},
         '../services/team-roster': { getMemberByAadId: async () => ({ Email: 'test@example.test', Title: 'Test' }) },
         '../services/proactive': {
             sendProactive: async (_ref, callback) => {
-                await callback({ sendActivity: async () => {} });
+                await callback({ sendActivity: async activity => {
+                    if (activity?.attachments) proposalId = activity.attachments[0].proposalId;
+                } });
                 return { ok: true };
             },
         },
@@ -170,20 +174,32 @@ test('meeting cards cannot book twice concurrently, after success, or after reso
             updateItem: async (_key, _id, fields) => { state = fields.State; meetingId = fields.MeetingEventId; },
         },
         '../config': { getScheduleConfig: () => ({ timezone: 'UTC' }), getJiraMode: () => 'live' },
+        '../services/authorization': { requireScrumMaster: async () => sm, getScrumMaster: async () => sm },
         '../cards/blocker-escalation.card': {},
-        '../cards/meeting-propose.card': {},
-        '../services/calendar': { createUnblockMeeting: async () => { creations++; return { id: 'event-1', webLink: 'https://example.test/event' }; } },
+        '../cards/meeting-propose.card': { buildMeetingProposeCard: value => value },
+        '../services/calendar': {
+            findUnblockSlots: async () => [{
+                startIso: '2030-01-01T10:00:00Z', endIso: '2030-01-01T10:30:00Z', label: 'Offered slot',
+            }],
+            createUnblockMeeting: async () => { creations++; return { id: 'event-1', webLink: 'https://example.test/event' }; },
+        },
         '../services/helperMatcher': { findHelperForBlocker: async () => null },
         '../agent': { agentApplication: { authorization: {} } },
     });
-    const value = { blockerId: 'blocker-1', issueKey: 'T-1', slot: '2030-01-01T10:00:00Z|2030-01-01T10:30:00Z' };
-    await Promise.all([chase.bookMeetingAsync({}, value, 'sm'), chase.bookMeetingAsync({}, value, 'sm')]);
+    const context = value => ({ activity: { value, from: { aadObjectId: 'sm' },
+        getConversationReference: () => ({}) }, sendActivity: async () => {} });
+    await chase.handleBlockerSubmit(context({ action: 'blocker.proposeSlots', blockerId: 'blocker-1', issueKey: 'T-1' }));
+    for (let i = 0; i < 10 && !proposalId; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.ok(proposalId);
+    const value = { action: 'meeting.book', proposalId, slot: '2030-01-01T10:00:00Z|2030-01-01T10:30:00Z' };
+    await Promise.all([chase.handleMeetingSubmit(context(value)), chase.handleMeetingSubmit(context(value))]);
+    for (let i = 0; i < 10 && state !== 'booked'; i++) await new Promise(resolve => setImmediate(resolve));
     assert.equal(creations, 1);
     assert.equal(state, 'booked');
     assert.equal(meetingId, 'event-1');
-    await chase.bookMeetingAsync({}, value, 'sm');
+    await chase.handleMeetingSubmit(context(value));
     state = 'resolved';
-    await chase.bookMeetingAsync({}, value, 'sm');
+    await chase.handleMeetingSubmit(context(value));
     assert.equal(creations, 1);
 });
 

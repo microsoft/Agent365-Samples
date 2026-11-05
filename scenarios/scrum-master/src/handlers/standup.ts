@@ -312,19 +312,10 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         return;
     }
 
-    // Security: reject cards where a user tries to submit on someone else's behalf.
-    // DEMO_MODE=true relaxes this so one tester can submit on behalf of multiple
-    // "persona" rows in TeamMembers whose AAD IDs point at the tester's inbox —
-    // useful for validating 3-person fan-out without three real Teams accounts.
-    const demoMode = String(process.env.DEMO_MODE ?? '').toLowerCase() === 'true';
-    if (claimedAssigneeAadId && actualAadId && claimedAssigneeAadId !== actualAadId) {
-        if (demoMode) {
-            console.warn(`[standup] DEMO_MODE — accepting cross-identity submit: claimed=${claimedAssigneeAadId} actual=${actualAadId}`);
-        } else {
-            console.warn(`[standup] identity mismatch on submit: claimed=${claimedAssigneeAadId} actual=${actualAadId}`);
-            await context.sendActivity('Your response does not match your identity — I did not record it.');
-            return;
-        }
+    if (!actualAadId || (claimedAssigneeAadId && claimedAssigneeAadId !== actualAadId)) {
+        console.warn('[standup] Rejected missing or mismatched responder identity.');
+        await context.sendActivity('Your response does not match your identity — I did not record it.');
+        return;
     }
 
     const session = getSession(standupId);
@@ -333,10 +324,23 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         return;
     }
     if (!session) {
-        await context.sendActivity(
-            `Standup ${standupId} has already been summarized or is unknown — I've noted your update for later.`,
-        );
-        // Still persist it so nothing is lost.
+        console.warn('[standup] Rejected an unknown standup session.');
+        await context.sendActivity('This standup is unknown or no longer active. No updates were recorded.');
+        return;
+    }
+    if (!session.expectedResponders.has(actualAadId)) {
+        console.warn('[standup] Rejected a caller outside the standup responder set.');
+        await context.sendActivity('You are not an expected responder for this standup. No updates were recorded.');
+        return;
+    }
+    const assignedKeys = new Set((session.itemsByAssignee.get(actualAadId) ?? []).map(issue => issue.key));
+    if (Object.keys(value ?? {}).some(key => {
+        const match = key.match(/^(?:update_|blockerText_|blocker_)(.+)$/);
+        return match && !assignedKeys.has(match[1]);
+    })) {
+        console.warn('[standup] Rejected an issue outside the responder assignment.');
+        await context.sendActivity('Your response contains an issue not assigned to you in this standup. No updates were recorded.');
+        return;
     }
 
     // Parse per-issue inputs.
@@ -360,14 +364,8 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     }
 
     const nowUtc = new Date();
-    // In DEMO_MODE, always key the response by the claimed assignee so each persona's
-    // submit produces a distinct entry in session.responses (instead of collapsing to
-    // a single entry keyed by the tester's real AAD).
-    const responderKey = demoMode && claimedAssigneeAadId
-        ? claimedAssigneeAadId
-        : (actualAadId || claimedAssigneeAadId);
     const response: StandupResponse = {
-        userAadId: responderKey,
+        userAadId: actualAadId,
         submittedUtc: nowUtc.toISOString(),
         items,
     };

@@ -227,7 +227,11 @@ Slash commands and free-text go to the agent DM. Card actions come back as follo
 | Mid-sprint RAG | `POST /api/internal/sprint-summary?force=true` | Red/Amber/Green table posted to the configured channel. | [`sprint-summary.ts`](src/handlers/sprint-summary.ts) |
 | Sprint close | `POST /api/internal/nightly-check?force=report` | Management-ready markdown report posted to the channel. | [`report.ts`](src/handlers/report.ts) |
 
-Point the channel at the right place with `/config channel` from **inside** a Teams channel — captures its conversation reference so all downstream summaries and reports post there instead of the SM's DM.
+Set `SMA_ALLOWED_TEAM_ID` to your deployment's Teams team GUID, then have the
+configured Scrum Master (`SMA_TeamMembers.Role=SM`, matching their authenticated
+AAD object ID) run `/config channel` from **inside** a channel of that team.
+The command fails closed if the team setting is missing, the team differs, or
+the caller is not an SM. It captures the channel reference for downstream reports.
 
 ## Configuration reference
 
@@ -247,6 +251,7 @@ Every scenario-specific env var — see [`.env.template`](.env.template) for the
 | `SHAREPOINT_LISTS_PREFIX` | `SMA_` | live | Namespace prefix on every list |
 | `GRAPH_TENANT_ID` | `common` | live | Set to a single tenant guid to pin the sign-in |
 | `GRAPH_CLIENT_ID` | `14d82eec-204b-4c2f-b7e8-296a70dab67e` | live Graph | Microsoft Graph CLI public client when blank/unset. Tenant policy and delegated-permission consent still apply; use your own public client for production. |
+| `SMA_ALLOWED_TEAM_ID` | *(none)* | `/config channel` | Allowed Teams team GUID; only configured SMs can set a reporting channel within this team. Missing value denies changes. |
 | `STANDUP_CRON` | `0 30 3 * * 1-5` | Local scheduler | UTC cron — default = 09:00 IST weekdays |
 | `NIGHTLY_CRON` | `0 0 19 * * *` | Local scheduler | UTC cron — default = 00:30 IST daily |
 | `STANDUP_CUTOFF_HOURS` | `4` | Standup | Give people this long to respond before the summary posts anyway |
@@ -257,6 +262,14 @@ Every scenario-specific env var — see [`.env.template`](.env.template) for the
 | `INTERNAL_TRIGGER_TOKEN` | *(none)* | Timer endpoints | Shared secret in the `x-internal-token` header |
 
 ## Internal HTTP endpoints
+
+Standup card submissions require a known open in-memory session, the authenticated
+expected responder, and only that responder's server-side assigned issues.
+Unknown/post-restart sessions and cross-identity submissions are rejected without
+writes; `DEMO_MODE` does not bypass this check.
+Blocker dismiss/slot actions and meeting book/cancel actions require the configured
+SM. Booking uses a single-use, 30-minute server-side proposal bound to that SM,
+the blocker and offered slots. Old cards after restart/expiry require fresh slots.
 
 All three accept the `x-internal-token` header (must match a configured `INTERNAL_TRIGGER_TOKEN`) and are designed for the Azure Function timers in the sibling [`azure-functions/`](azure-functions) folder. A blank token leaves them open only when `NODE_ENV` is exactly `development`; every other value (including unset or `test`) requires a nonempty token at startup.
 
