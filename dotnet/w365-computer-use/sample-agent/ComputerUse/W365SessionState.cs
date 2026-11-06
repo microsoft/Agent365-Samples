@@ -106,14 +106,18 @@ internal sealed class W365SessionState
         || message.Contains("pending human sign-in", StringComparison.OrdinalIgnoreCase)
         || message.Contains("pending human login", StringComparison.OrdinalIgnoreCase)
         || message.Contains("human sign-in is pending", StringComparison.OrdinalIgnoreCase)
-        || message.Contains("human login is pending", StringComparison.OrdinalIgnoreCase);
+        || message.Contains("human login is pending", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("waiting for the human to sign in", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsEndedMessage(string message) =>
         message.Contains("session has ended", StringComparison.OrdinalIgnoreCase)
         || message.Contains("session has been terminated", StringComparison.OrdinalIgnoreCase)
         || message.Contains("session expired", StringComparison.OrdinalIgnoreCase)
         || message.Contains("session not found", StringComparison.OrdinalIgnoreCase)
-        || message.Contains("no active session found", StringComparison.OrdinalIgnoreCase);
+        || message.Contains("no active session found", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("no W365 session found", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("session was not found or has expired", StringComparison.OrdinalIgnoreCase)
+        || message.Contains("session is not Ready and was removed", StringComparison.OrdinalIgnoreCase);
 
     private static JsonElement Payload(JsonElement root)
     {

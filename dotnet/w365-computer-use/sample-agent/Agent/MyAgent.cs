@@ -305,8 +305,17 @@ public class MyAgent : AgentApplication
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
                     // W365 tool loading and explicit session startup entirely.
-                    var needsCua = _orchestrator.HasPendingHumanLogin(localSessionKey)
-                        || await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+                    var pendingTaskAction = ComputerUseOrchestrator.PendingTaskAction.Resume;
+                    bool needsCua;
+                    if (_orchestrator.HasPendingW365Task(localSessionKey))
+                    {
+                        (needsCua, pendingTaskAction) = await _orchestrator.ClassifyPendingTurnAsync(
+                            localSessionKey, userText, cancellationToken);
+                    }
+                    else
+                    {
+                        needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+                    }
 
                     if (!needsCua)
                     {
@@ -413,8 +422,7 @@ public class MyAgent : AgentApplication
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken,
-                            onHumanLoginRequired: guidance => turnContext.SendActivityAsync(
-                                MessageFactory.Text(guidance), cancellationToken));
+                            pendingTaskAction: pendingTaskAction);
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
