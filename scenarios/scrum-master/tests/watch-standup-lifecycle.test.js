@@ -74,6 +74,12 @@ async function withStandup(overrides, run) {
     for (const [request, values] of Object.entries(overrides)) {
         stubs[request] = { ...stubs[request], ...values };
     }
+    if (!overrides['../services/sharepoint']?.claimStandupResponse) {
+        stubs['../services/sharepoint'].claimStandupResponse = async fields => ({
+            created: true,
+            item: await stubs['../services/sharepoint'].createItem('standupResponses', fields),
+        });
+    }
     delete require.cache[filename];
     Module._load = function (request, parent, ...args) {
         if (parent?.filename === filename && Object.hasOwn(stubs, request)) return stubs[request];
@@ -164,6 +170,97 @@ test('failed early delivery preserves the future cutoff and recovery finalizes e
         assert.equal(summaries, 1);
         assert.equal(chases, 1);
     });
+});
+
+test('an early failure straddling cutoff recovers automatically once the in-flight delivery ends', async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-06T09:00:00Z') });
+    const id = ++sprintId;
+    const entered = deferred(), delivery = deferred();
+    let recovered = false, summaries = 0, chases = 0;
+    await withStandup({
+        '../config': { getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: 1 }) },
+        '../services/jira': { getJiraClient: () => ({
+            getActiveSprint: async () => ({ id, name: 'Deadline straddle' }),
+            searchSprintIssues: async () => [], getSprintSubtasks: async () => [],
+        }) },
+        '../services/sharepoint': {
+            findByTitle: async () => sessions.getSession(sessions.makeStandupId(id)) ? { id: 'session' } : null,
+        },
+        '../services/proactive': { sendProactive: async () => {
+            if (!recovered) {
+                entered.resolve();
+                await delivery.promise;
+                return { ok: false, error: 'Transient delivery failure' };
+            }
+            summaries++;
+            return { ok: true };
+        } },
+        './chase': { chaseAfterStandup: async () => { chases++; } },
+    }, async standup => {
+        const result = await standup.triggerStandup({ source: 'http' });
+        const session = sessions.getSession(result.standupId);
+        const early = standup.summarizeStandup(session);
+        await entered.promise;
+        assert.equal(session.state, 'summarizing');
+        t.mock.timers.tick(3600_000);
+        assert.ok(session.cutoffTimer);
+        delivery.resolve();
+        await assert.rejects(early, /not delivered/);
+        assert.equal(session.state, 'open');
+        recovered = true;
+        t.mock.timers.tick(60_000);
+        for (let i = 0; i < 10 && !sessions.getCompletedSession(result.standupId); i++) {
+            await new Promise(resolve => setImmediate(resolve));
+        }
+        assert.equal(summaries, 1);
+        assert.equal(chases, 1);
+        assert.ok(sessions.getCompletedSession(result.standupId));
+        assert.equal(session.cutoffTimer, undefined);
+        t.mock.timers.tick(60_000);
+        assert.equal(summaries, 1);
+    });
+});
+
+test('cutoff delivery failures retry three times at sixty-second intervals then retain the session for manual recovery', async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-06T09:00:00Z') });
+    const id = ++sprintId;
+    let attempts = 0, recovered = false;
+    const errors = [];
+    const original = console.error;
+    console.error = (...args) => errors.push(args.join(' '));
+    try {
+        await withStandup({
+            '../config': { getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: 1 }) },
+            '../services/jira': { getJiraClient: () => ({
+                getActiveSprint: async () => ({ id, name: 'Retry cap' }),
+                searchSprintIssues: async () => [], getSprintSubtasks: async () => [],
+            }) },
+            '../services/sharepoint': {
+                findByTitle: async () => sessions.getSession(sessions.makeStandupId(id)) ? { id: 'session' } : null,
+            },
+            '../services/proactive': { sendProactive: async () => {
+                attempts++;
+                return { ok: recovered, error: 'Transient delivery failure' };
+            } },
+        }, async standup => {
+            const result = await standup.triggerStandup({ source: 'http' });
+            const session = sessions.getSession(result.standupId);
+            for (let attempt = 0; attempt < 4; attempt++) {
+                t.mock.timers.tick(attempt === 0 ? 3600_000 : 60_000);
+                for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+                assert.equal(attempts, attempt + 1);
+            }
+            assert.equal(session.state, 'open');
+            assert.equal(session.cutoffTimer, undefined);
+            assert.match(errors.join('\n'), /retries exhausted/);
+            t.mock.timers.tick(60_000);
+            assert.equal(attempts, 4);
+            recovered = true;
+            await standup.triggerStandup({ source: 'http' });
+            assert.equal(attempts, 5);
+            assert.ok(sessions.getCompletedSession(result.standupId));
+        });
+    } finally { console.error = original; }
 });
 
 test('completion lookup or write failure cannot skip chase, cleanup or the summary delivery guard', async () => {
@@ -275,6 +372,91 @@ test('submission guard releases on blocker failure and preserves the accepted re
         assert.equal(summary.respondedCount, 1);
         assert.equal(session.state, 'summarized');
     });
+});
+
+test('concurrent and sequential response replays return the original ack without repeating writes or comments', async () => {
+    const session = makeSession(['dev', 'pending']);
+    const entered = deferred(), persist = deferred();
+    let responses = 0, blockers = 0, comments = 0;
+    await withStandup({
+        '../services/sharepoint': {
+            claimStandupResponse: async fields => {
+                responses++;
+                entered.resolve();
+                await persist.promise;
+                return { created: true, item: { id: 'response', fields } };
+            },
+            createItem: async () => { blockers++; return { id: 'blocker' }; },
+        },
+        '../services/jira': { getJiraClient: () => ({ addComment: async () => { comments++; } }) },
+    }, async standup => {
+        const first = submitContext(session, 'dev', true);
+        const replay = submitContext(session, 'dev', true);
+        const initial = standup.handleStandupSubmit(first);
+        await entered.promise;
+        const concurrent = standup.handleStandupSubmit(replay);
+        assert.equal(responses, 1);
+        persist.resolve();
+        await Promise.all([initial, concurrent]);
+        const changed = submitContext(session, 'dev', true);
+        changed.activity.value['update_SCRUM-1'] = 'Should not overwrite the accepted response';
+        await standup.handleStandupSubmit(changed);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(responses, 1);
+        assert.equal(blockers, 1);
+        assert.equal(comments, 1);
+        assert.deepEqual(replay.messages, first.messages);
+        assert.deepEqual(changed.messages, first.messages);
+        assert.equal(session.responses.size, 1);
+    });
+    sessions.removeSession(session.standupId);
+});
+
+test('a failed durable response insert remains retryable and never produces a success acknowledgement', async () => {
+    const session = makeSession(['dev', 'pending']);
+    let attempts = 0;
+    await withStandup({
+        '../services/sharepoint': {
+            claimStandupResponse: async fields => {
+                if (++attempts === 1) throw new Error('Storage unavailable');
+                return { created: true, item: { id: 'response', fields } };
+            },
+        },
+    }, async standup => {
+        const failed = submitContext(session);
+        await assert.rejects(standup.handleStandupSubmit(failed), /Storage unavailable/);
+        assert.equal(session.responses.size, 0);
+        assert.deepEqual(failed.messages, []);
+        const retry = submitContext(session);
+        await standup.handleStandupSubmit(retry);
+        assert.equal(attempts, 2);
+        assert.equal(retry.messages.length, 1);
+    });
+    sessions.removeSession(session.standupId);
+});
+
+test('an existing durable response is acknowledged without repeating blockers or Jira comments', async () => {
+    const session = makeSession(['dev', 'pending']);
+    const storedItems = [{ issueKey: 'SCRUM-1', update: 'Already accepted', hasBlocker: true, blockerText: 'Dependency' }];
+    let mutations = 0;
+    await withStandup({
+        '../services/sharepoint': {
+            claimStandupResponse: async fields => ({ created: false, item: { id: 'existing', fields: {
+                ...fields, Items: JSON.stringify(storedItems),
+            } } }),
+            createItem: async () => { mutations++; },
+            updateItem: async () => { mutations++; },
+        },
+        '../services/jira': { getJiraClient: () => ({ addComment: async () => { mutations++; } }) },
+    }, async standup => {
+        const replay = submitContext(session);
+        await standup.handleStandupSubmit(replay);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(mutations, 0);
+        assert.deepEqual(session.responses.get('dev').items, storedItems);
+        assert.deepEqual(replay.messages[0].attachments[0].items, storedItems);
+    });
+    sessions.removeSession(session.standupId);
 });
 
 test('finalization guard releases when summary construction fails before delivery', async () => {

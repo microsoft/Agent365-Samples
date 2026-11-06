@@ -25,7 +25,8 @@ test('reconciliation rejects unsafe inference and preserves clear single-status 
         '../services/proactive': {},
     });
     for (const text of ['Not done yet, still reviewing', 'not started', 'will be finished',
-        'going to deploy', 'finished coding and started review', 'done but not deployed']) {
+        'going to deploy', 'finished coding and started review', 'done but not deployed',
+        "We aren't done yet", "We weren't finished", 'We aren’t done yet', 'They weren’t deployed']) {
         assert.equal(classifyUpdateText(text, false), 'unchanged', text);
     }
     assert.equal(classifyUpdateText('Merged', false), 'Done');

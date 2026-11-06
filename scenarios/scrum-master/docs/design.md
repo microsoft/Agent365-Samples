@@ -478,7 +478,16 @@ also model-driven and is never used for inbound email.
 - **Early finalization preserves the cutoff.** The synchronous finalization
   claim prevents concurrent summaries but keeps the future deadline armed.
   Failed early delivery reopens the session, so the cutoff can retry without
-  manual intervention. Successful delivery cancels the timer before cleanup.
+  manual intervention. If the deadline fires while a finalizer is running, it
+  checks again after 60 seconds instead of dropping the timer. Failed cutoff
+  attempts get up to three further retries, 60 seconds apart; exhaustion logs
+  an explicit manual `/standup` recovery instruction and retains the session.
+  Successful delivery cancels the timer before cleanup.
+- **Response replay is first-write-wins.** A responder-scoped in-memory claim
+  serializes submissions; a unique durable `ResponseKey` protects the canonical
+  `<StandupId>#<UserAadId>` across competing workers. Replays acknowledge the first
+  accepted payload and do not repeat blocker writes or Jira comments. Existing
+  response lists require the paused-worker migration described in the README.
 - **Card submits use fire-and-forget** — handler acks in <200 ms via
   `context.sendActivity('working on it…')`, downstream work runs via
   `setImmediate`. Follow-ups arrive as proactive DMs against the cached

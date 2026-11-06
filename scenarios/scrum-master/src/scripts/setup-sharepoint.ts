@@ -40,6 +40,19 @@ const COLUMN_TYPE_MAP: Record<string, object> = {
 export async function migrateStandupRunKeys(
     graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
 ): Promise<void> {
+    await migrateStandupKeys(graph, siteId, listId, 'RunKey');
+}
+
+export async function migrateStandupResponseKeys(
+    graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
+): Promise<void> {
+    await migrateStandupKeys(graph, siteId, listId, 'ResponseKey');
+}
+
+async function migrateStandupKeys(
+    graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
+    keyName: 'RunKey' | 'ResponseKey',
+): Promise<void> {
     const listPath = `/sites/${siteId}/lists/${listId}`;
     const columns: Array<{ id: string; name: string; indexed?: boolean; enforceUniqueValues?: boolean }> = [];
     let next: string | undefined = `${listPath}/columns`;
@@ -48,7 +61,7 @@ export async function migrateStandupRunKeys(
         columns.push(...(page.value ?? []));
         next = page['@odata.nextLink'];
     }
-    const rows: Array<{ id: string; fields: { Title?: string; RunKey?: string } }> = [];
+    const rows: Array<{ id: string; fields: Record<string, string | undefined> }> = [];
     next = `${listPath}/items?$expand=fields`;
     while (next) {
         const page = await graph.api(next).get();
@@ -58,23 +71,25 @@ export async function migrateStandupRunKeys(
     const keys = new Set<string>();
     for (const row of rows) {
         const title = row.fields.Title;
-        if (!title || keys.has(title) || (row.fields.RunKey && row.fields.RunKey !== title)) {
-            throw new Error('Standup RunKey migration requires distinct nonempty Titles and matching existing RunKeys. Review legacy records with all workers paused; no records were changed.');
+        if (!title || keys.has(title) || (row.fields[keyName] && row.fields[keyName] !== title) ||
+            (keyName === 'ResponseKey' && (!row.fields.StandupId || !row.fields.UserAadId ||
+                title !== `${row.fields.StandupId}#${row.fields.UserAadId}`))) {
+            throw new Error(`Standup ${keyName} migration requires distinct nonempty Titles and matching existing keys${keyName === 'ResponseKey' ? ' derived from StandupId and UserAadId' : ''}. Review legacy records with all workers paused; no records were changed.`);
         }
         keys.add(title);
     }
-    let column = columns.find(c => c.name === 'RunKey');
+    let column = columns.find(c => c.name === keyName);
     if (!column) {
-        column = await graph.api(`${listPath}/columns`).post({ name: 'RunKey', text: {}, indexed: true });
+        column = await graph.api(`${listPath}/columns`).post({ name: keyName, text: {}, indexed: true });
     }
-    for (const row of rows.filter(r => r.fields.RunKey !== r.fields.Title)) {
-        await graph.api(`${listPath}/items/${row.id}/fields`).update({ RunKey: row.fields.Title });
+    for (const row of rows.filter(r => r.fields[keyName] !== r.fields.Title)) {
+        await graph.api(`${listPath}/items/${row.id}/fields`).update({ [keyName]: row.fields.Title });
     }
-    if (!column?.id) throw new Error('SharePoint did not return the RunKey column id; migration cannot enforce uniqueness.');
+    if (!column?.id) throw new Error(`SharePoint did not return the ${keyName} column id; migration cannot enforce uniqueness.`);
     if (!column.indexed || !column.enforceUniqueValues) {
         await graph.api(`${listPath}/columns/${column.id}`).update({ indexed: true, enforceUniqueValues: true });
     }
-    console.log('[setup] Standup RunKeys backfilled and uniqueness enforced.');
+    console.log(`[setup] Standup ${keyName}s backfilled and uniqueness enforced.`);
 }
 
 export async function provisionSharePoint(): Promise<void> {
@@ -103,6 +118,9 @@ export async function provisionSharePoint(): Promise<void> {
         if ((existing.value ?? []).length > 0) {
             if (key === 'standupSessions') {
                 await migrateStandupRunKeys(graph, siteId, existing.value[0].id);
+            }
+            if (key === 'standupResponses') {
+                await migrateStandupResponseKeys(graph, siteId, existing.value[0].id);
             }
             if (key === 'sprintRisks') {
                 const listId = existing.value[0].id;

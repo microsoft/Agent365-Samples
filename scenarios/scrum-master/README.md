@@ -232,6 +232,9 @@ configured Scrum Master (`SMA_TeamMembers.Role=SM`, matching their authenticated
 AAD object ID) run `/config channel` from **inside** a channel of that team.
 The command fails closed if the team setting is missing, the team differs, or
 the caller is not an SM. It captures the channel reference for downstream reports.
+Authorization compares the setting with `channelData.team.aadGroupId` (the team's
+Microsoft 365 group GUID), not `team.id` (the connector's `19:...` routing ID).
+Missing AAD group metadata is rejected explicitly; connector IDs are retained for routing.
 
 ## Configuration reference
 
@@ -373,6 +376,15 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   An operator must inspect Teams and delivery logs first. Confirm a delivered
   report as `sent`; only after establishing that nothing was delivered should
   an authorized operator mark the record `failed` and retry.
+- **Standup responses:** `SMA_StandupResponses.ResponseKey` is indexed and unique
+  (`<StandupId>#<UserAadId>`). The first accepted response wins. Replaying a card
+  returns the original acknowledgement without repeating blocker mutations or
+  Jira comments; response edits require a new standup, not resubmitting the card.
+  Pause all workers and run `npm run setup:sharepoint` before upgrading an existing
+  list. The script validates canonical, distinct response Titles and backfills
+  `ResponseKey` before enabling uniqueness. Existing duplicates or mismatched
+  identities stop migration before any response rows change; inspect and reconcile
+  those records manually, then rerun. Do not delete accepted rows merely to retry.
   Automatic selection skips already delivered/claimed ended sprints and selects
   the newest remaining unreported (or explicitly failed) ended sprint, including
   closed sprints, so an already reported newer sprint cannot starve the backlog.

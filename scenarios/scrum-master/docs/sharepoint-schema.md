@@ -91,11 +91,22 @@ One row per person per standup — the actual card payload they submitted.
 
 | Column | Type | Description |
 |---|---|---|
-| `Title` | text | `<StandupId>#<UserAadId>` — idempotency key |
+| `Title` | text | `<StandupId>#<UserAadId>` — canonical response label |
+| `ResponseKey` | text, indexed, unique | Same canonical key; atomic first-response claim |
 | `StandupId` | text | Foreign key to `SMA_StandupSessions.Title` |
 | `UserAadId` | text | Responder AAD id |
 | `SubmittedUtc` | dateTime | When the card was submitted |
 | `Items` | note | JSON array — one item per issue with `update` + optional `blockerText` |
+
+Repeated/concurrent submissions for a responder keep the first accepted payload
+and return its acknowledgement without repeating Jira comments or blocker writes.
+Before upgrading an existing list, pause all workers and run
+`npm run setup:sharepoint`. It validates distinct Titles matching StandupId/UserAadId,
+backfills ResponseKey across all pages, then enables uniqueness. Duplicate or
+malformed legacy rows must be reconciled manually; migration does not delete them.
+Interrupted migrations can be rerun with workers still paused. A persisted response
+claim is not an outbox: interrupted downstream side effects need operator inspection,
+not replaying the card.
 
 ### `SMA_Blockers`
 

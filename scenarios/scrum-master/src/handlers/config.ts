@@ -37,10 +37,11 @@ export async function handleConfigChannel(context: TurnContext): Promise<void> {
 
     // Teams populates `channelData` with team + channel identifiers for channel messages.
     const channelData = (activity.channelData ?? {}) as {
-        team?: { id?: string };
+        team?: { id?: string; aadGroupId?: string };
         channel?: { id?: string };
     };
     const teamId = channelData.team?.id ?? '';
+    const teamGroupId = channelData.team?.aadGroupId?.trim();
     const channelId = channelData.channel?.id ?? '';
 
     if (!teamId || !channelId) {
@@ -51,10 +52,10 @@ export async function handleConfigChannel(context: TurnContext): Promise<void> {
         return;
     }
     const allowedTeamId = process.env.SMA_ALLOWED_TEAM_ID?.trim();
-    if (!allowedTeamId || teamId.toLowerCase() !== allowedTeamId.toLowerCase() ||
+    if (!allowedTeamId || !teamGroupId || teamGroupId.toLowerCase() !== allowedTeamId.toLowerCase() ||
         activity.channelId !== 'msteams' || activity.conversation?.conversationType !== 'channel') {
         console.warn('[config] Rejected a reporting destination outside the allowed Teams team.');
-        await context.sendActivity('This team is not an allowed reporting destination. Configure SMA_ALLOWED_TEAM_ID on the deployment first. No changes were made.');
+        await context.sendActivity('The Teams AAD group ID is missing or does not match SMA_ALLOWED_TEAM_ID. Set that setting to the allowed team GUID and run this command from that team. No changes were made.');
         return;
     }
 

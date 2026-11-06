@@ -227,6 +227,21 @@ export async function claimStandupSession<T extends object>(
     }
 }
 
+export async function claimStandupResponse<T extends object>(
+    fields: T & { Title: string },
+): Promise<{ created: boolean; item: ListItem<T> }> {
+    const existing = await findByTitle<T>('standupResponses', fields.Title);
+    if (existing) return { created: false, item: existing };
+    try {
+        const item = await createItem('standupResponses', { ...fields, ResponseKey: fields.Title });
+        return { created: true, item };
+    } catch (error) {
+        const winner = (await findByField<T>('standupResponses', 'ResponseKey', fields.Title))[0];
+        if (winner) return { created: false, item: winner };
+        throw error;
+    }
+}
+
 export async function claimSprintReport(sprintId: number): Promise<string | null> {
     const deliveryKey = `sprint-close:${sprintId}`;
     const existing = (await findByField<{ State: string }>(
@@ -320,6 +335,7 @@ export const LIST_SCHEMAS: Record<ListKey, {
     },
     standupResponses: {
         columns: [
+            { name: 'ResponseKey', type: 'text', unique: true },
             { name: 'StandupId', type: 'text' },
             { name: 'UserAadId', type: 'text' },
             { name: 'SubmittedUtc', type: 'dateTime' },

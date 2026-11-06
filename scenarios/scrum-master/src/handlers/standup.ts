@@ -29,6 +29,7 @@ import { DateTime } from 'luxon';
 import {
     createItem,
     claimStandupSession,
+    claimStandupResponse,
     findByField,
     findByTitle,
     updateItem,
@@ -53,6 +54,7 @@ import {
     claimSessionFinalization,
     reserveSessionSubmission,
     waitForSessionSubmissions,
+    waitForResponderSubmission,
     allExpectedResponded,
 } from '../services/session-store';
 import { getJiraMode, getScheduleConfig } from '../config';
@@ -254,15 +256,7 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     // Schedule the cutoff timer only if the cutoff falls today (dev cron loop only).
     const msUntilCutoff = cutoffUtc.getTime() - nowUtc.getTime();
     if (msUntilCutoff > 0 && msUntilCutoff < 86_400_000) {
-        session.cutoffTimer = setTimeout(async () => {
-            const s = getSession(standupId);
-            if (s && s.state === 'open') {
-                console.log(`[standup] Cutoff fired for ${standupId}`);
-                await summarizeStandup(s).catch(err =>
-                    console.error('[standup] cutoff summarize failed:', (err as Error).message),
-                );
-            }
-        }, msUntilCutoff);
+        scheduleStandupCutoff(session, msUntilCutoff);
     }
 
     // Fan out request cards.
@@ -299,6 +293,41 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
 }
 
 // --- handleStandupSubmit -------------------------------------------------
+
+function scheduleStandupCutoff(session: StandupSession, delayMs: number, retries = 0): void {
+    session.cutoffTimer = setTimeout(async () => {
+        session.cutoffTimer = undefined;
+        if (getSession(session.standupId) !== session || session.state === 'summarized') return;
+        if (session.state === 'summarizing') {
+            scheduleStandupCutoff(session, 60_000, retries);
+            return;
+        }
+        try {
+            console.log(`[standup] Cutoff fired for ${session.standupId}`);
+            await summarizeStandup(session);
+        } catch (error) {
+            console.error('[standup] cutoff summarize failed:', (error as Error).message);
+            if (session.state === 'open' && retries < 3) {
+                scheduleStandupCutoff(session, 60_000, retries + 1);
+            } else {
+                console.error('[standup] Automatic summary retries exhausted. Retry /standup manually; the session is retained.');
+            }
+        }
+    }, delayMs);
+}
+
+async function acknowledgeStandupSubmission(
+    context: TurnContext, session: StandupSession, response: StandupResponse,
+): Promise<void> {
+    await context.sendActivity({
+        type: 'message',
+        attachments: [buildStandupSubmittedCard({
+            sprintName: session.sprintName,
+            submittedAtLocal: formatLocal(new Date(response.submittedUtc), getScheduleConfig().timezone),
+            items: response.items,
+        })],
+    } as Partial<Activity> as Activity);
+}
 
 export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     const value = context.activity.value as Record<string, unknown> | undefined;
@@ -370,26 +399,52 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         items,
     };
 
-    const releaseSubmission = session ? reserveSessionSubmission(session) : undefined;
-    if (session && !releaseSubmission) {
-        await context.sendActivity(`Standup ${standupId} is already being summarized — no further updates were recorded.`);
+    const accepted = session.responses.get(actualAadId);
+    if (accepted) {
+        await acknowledgeStandupSubmission(context, session, accepted);
         return;
     }
+    const releaseSubmission = reserveSessionSubmission(session, actualAadId);
+    if (!releaseSubmission) {
+        await waitForResponderSubmission(session, actualAadId);
+        const recorded = session.responses.get(actualAadId);
+        if (recorded) await acknowledgeStandupSubmission(context, session, recorded);
+        else {
+            console.warn('[standup] The pending response was not recorded; a retry is required.');
+            await context.sendActivity('Your earlier submission was not recorded. Please retry the card.');
+        }
+        return;
+    }
+    let acceptedResponse = response;
+    let created = false;
     try {
-        // Persist the response row.
-        await createItem<StandupResponseFields>('standupResponses', {
+        const result = await claimStandupResponse<StandupResponseFields>({
             Title: `${standupId}#${response.userAadId}`,
             StandupId: standupId,
             UserAadId: response.userAadId,
             SubmittedUtc: response.submittedUtc,
             Items: JSON.stringify(items),
-        }).catch(err => {
-            console.warn(`[standup] StandupResponses insert warning: ${(err as Error).message}`);
         });
-        if (session) session.responses.set(response.userAadId, response);
+        created = result.created;
+        if (!created) {
+            const fields = result.item.fields;
+            const storedItems: unknown = JSON.parse(fields.Items);
+            if (fields.StandupId !== standupId || fields.UserAadId !== actualAadId ||
+                !Number.isFinite(Date.parse(fields.SubmittedUtc)) || !Array.isArray(storedItems) ||
+                !storedItems.every((item: unknown): item is StandupItemResponse =>
+                    typeof item === 'object' && item !== null &&
+                    'issueKey' in item && typeof item.issueKey === 'string' && assignedKeys.has(item.issueKey) &&
+                    'update' in item && typeof item.update === 'string' &&
+                    'hasBlocker' in item && typeof item.hasBlocker === 'boolean' &&
+                    (!('blockerText' in item) || item.blockerText === undefined || typeof item.blockerText === 'string'))) {
+                throw new Error('Stored standup response does not match the authorized responder assignment.');
+            }
+            acceptedResponse = { userAadId: actualAadId, submittedUtc: fields.SubmittedUtc, items: storedItems };
+        }
+        session.responses.set(actualAadId, acceptedResponse);
 
         // Persist / update Blocker rows for any hasBlocker=true items.
-        for (const item of items) {
+        for (const item of created ? items : []) {
             if (!item.hasBlocker) continue;
             const blockerTitle = item.issueKey;
             const existing = await findByTitle<BlockerFields>('blockers', blockerTitle).catch(() => null);
@@ -404,8 +459,11 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
             if (existing) await updateItem<BlockerFields>('blockers', existing.id, fields);
             else await createItem<BlockerFields>('blockers', fields);
         }
+    } catch (error) {
+        console.error('[standup] Response recording failed:', (error as Error).message);
+        throw error;
     } finally {
-        releaseSubmission?.();
+        releaseSubmission();
     }
 
     // Push the raw update + blocker text back to Jira as a comment on each issue.
@@ -414,7 +472,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     const responderDisplayName =
         context.activity.from?.name?.trim() || response.userAadId;
     const commentDateLocal = formatLocal(nowUtc, getScheduleConfig().timezone);
-    setImmediate(async () => {
+    if (created) setImmediate(async () => {
         const jira = getJiraClient();
         for (const item of items) {
             const lines = [
@@ -435,15 +493,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     });
 
     // Ack the user.
-    const submittedAtLocal = formatLocal(nowUtc, getScheduleConfig().timezone);
-    await context.sendActivity({
-        type: 'message',
-        attachments: [buildStandupSubmittedCard({
-            sprintName: session?.sprintName ?? '',
-            submittedAtLocal,
-            items,
-        })],
-    } as Partial<Activity> as Activity);
+    await acknowledgeStandupSubmission(context, session, acceptedResponse);
 
     // Fire-and-forget the downstream summarize/reconcile/chase chain.
     //

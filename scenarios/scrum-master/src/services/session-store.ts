@@ -53,24 +53,29 @@ export interface StandupSession {
 
 const sessions = new Map<string, StandupSession>();
 const completed = new Map<string, { sentTo: number }>();
-const pendingSubmissions = new WeakMap<StandupSession, Set<Promise<void>>>();
+const pendingSubmissions = new WeakMap<StandupSession, Map<string, Promise<void>>>();
 
 /** Reserve synchronously so cutoff finalization includes every accepted write. */
-export function reserveSessionSubmission(session: StandupSession): (() => void) | undefined {
+export function reserveSessionSubmission(session: StandupSession, responderId: string): (() => void) | undefined {
     if (session.state !== 'open') return undefined;
+    const writes = pendingSubmissions.get(session) ?? new Map<string, Promise<void>>();
+    if (writes.has(responderId) || session.responses.has(responderId)) return undefined;
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
-    const writes = pendingSubmissions.get(session) ?? new Set<Promise<void>>();
-    writes.add(pending);
+    writes.set(responderId, pending);
     pendingSubmissions.set(session, writes);
     return () => {
-        writes.delete(pending);
+        writes.delete(responderId);
         release();
     };
 }
 
 export async function waitForSessionSubmissions(session: StandupSession): Promise<void> {
-    await Promise.all(pendingSubmissions.get(session) ?? []);
+    await Promise.all(pendingSubmissions.get(session)?.values() ?? []);
+}
+
+export async function waitForResponderSubmission(session: StandupSession, responderId: string): Promise<void> {
+    await pendingSubmissions.get(session)?.get(responderId);
 }
 
 export function getCompletedSession(standupId: string): { sentTo: number } | undefined {

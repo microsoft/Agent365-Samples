@@ -119,7 +119,7 @@ test('independent standup workers fan out once after competing for the same dail
     } finally { sessions.removeSession(sessions.makeStandupId(882001)); }
 });
 
-function migrationFixture(rows, columns = [], failUniqueOnce = false) {
+function migrationFixture(rows, columns = [], failUniqueOnce = false, keyName = 'RunKey') {
     const writes = [];
     const graph = {
         api(endpoint) {
@@ -151,12 +151,52 @@ function migrationFixture(rows, columns = [], failUniqueOnce = false) {
             };
         },
     };
-    const { migrateStandupRunKeys } = load('src\\scripts\\setup-sharepoint.ts', {
+    const { migrateStandupRunKeys, migrateStandupResponseKeys } = load('src\\scripts\\setup-sharepoint.ts', {
         dotenv: { configDotenv() {} }, 'isomorphic-fetch': {},
         '../services/graph': {}, '../services/sharepoint': {}, '../config': {},
     });
-    return { migrate: () => migrateStandupRunKeys(graph, 'site', 'list'), writes, rows };
+    return {
+        migrate: () => (keyName === 'ResponseKey' ? migrateStandupResponseKeys : migrateStandupRunKeys)(graph, 'site', 'list'),
+        writes, rows,
+    };
 }
+
+test('response migration backfills all pages and enforces a unique canonical responder key', async () => {
+    const fixture = migrationFixture(['one', 'two'].map((user, i) => ({
+        id: String(i), fields: { Title: `session#${user}`, StandupId: 'session', UserAadId: user },
+    })), [], false, 'ResponseKey');
+    await fixture.migrate();
+    assert.deepEqual(fixture.rows.map(row => row.fields.ResponseKey), ['session#one', 'session#two']);
+    assert.equal(fixture.writes[0][2].name, 'ResponseKey');
+    assert.deepEqual(fixture.writes.at(-1)[2], { indexed: true, enforceUniqueValues: true });
+    const count = fixture.writes.length;
+    await fixture.migrate();
+    assert.equal(fixture.writes.length, count);
+    for (const fields of [
+        [{ Title: 'session#one', StandupId: 'session', UserAadId: 'one' },
+            { Title: 'session#one', StandupId: 'session', UserAadId: 'one' }],
+        [{ Title: '' }],
+        [{ Title: 'forged', StandupId: 'session', UserAadId: 'one' }],
+        [{ Title: 'session#one', StandupId: 'session', UserAadId: 'one', ResponseKey: 'other' }],
+    ]) {
+        const invalid = migrationFixture(fields.map((value, i) => ({ id: String(i), fields: value })), [], false, 'ResponseKey');
+        await assert.rejects(invalid.migrate(), /distinct nonempty Titles/);
+        assert.equal(invalid.writes.length, 0);
+    }
+});
+
+test('competing durable response claims create one row and return the original payload on replay', async () => {
+    const sp = offlineSharePoint();
+    const fields = { Title: 'response#user', StandupId: 'response', UserAadId: 'user', Items: 'original' };
+    const results = await Promise.all([sp.claimStandupResponse(fields), sp.claimStandupResponse(fields)]);
+    assert.equal(results.filter(result => result.created).length, 1);
+    assert.equal((await sp.listItems('standupResponses')).length, 1);
+    const replay = await sp.claimStandupResponse({ ...fields, Items: 'replaced' });
+    assert.equal(replay.created, false);
+    assert.equal(replay.item.fields.Items, 'original');
+    assert.deepEqual(sp.LIST_SCHEMAS.standupResponses.columns.find(column => column.name === 'ResponseKey'),
+        { name: 'ResponseKey', type: 'text', unique: true });
+});
 
 test('standup migration backfills every page before enforcing uniqueness and can be rerun', async () => {
     const fixture = migrationFixture([

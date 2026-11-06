@@ -65,6 +65,10 @@ test('standup submissions fail closed before writes for unknown sessions, identi
             '../services/jira': { getJiraClient: () => ({ addComment: async () => { comments++; } }) },
             '../services/sharepoint': {
                 createItem: async () => { writes++; return { id: 'new' }; },
+                claimStandupResponse: async fields => {
+                    writes++;
+                    return { created: true, item: { id: 'new', fields } };
+                },
                 updateItem: async () => { writes++; },
                 findByTitle: async () => null,
             },
@@ -135,20 +139,30 @@ test('channel configuration requires the configured SM and the deployment allowe
                     updateItem: async (_key, _id, fields) => { writes++; stored = fields; },
                 },
             }, async config => {
-                function channel(caller, teamId = 'allowed-team') {
+                const allowedGuid = '11111111-1111-4111-8111-111111111111';
+                function channel(caller, groupId = allowedGuid) {
                     const ctx = context(caller);
                     ctx.activity.channelId = 'msteams';
                     ctx.activity.conversation = { conversationType: 'channel' };
-                    ctx.activity.channelData = { team: { id: teamId }, channel: { id: 'channel-root' } };
+                    ctx.activity.channelData = {
+                        team: { id: '19:team@thread.tacv2', aadGroupId: groupId },
+                        channel: { id: '19:channel@thread.tacv2' },
+                    };
                     return ctx;
                 }
-                process.env.SMA_ALLOWED_TEAM_ID = 'allowed-team';
+                process.env.SMA_ALLOWED_TEAM_ID = allowedGuid;
                 await config.handleConfigChannel(channel('dev'));
                 await config.handleConfigChannel(channel(undefined));
-                await config.handleConfigChannel(channel('sm', 'foreign-team'));
+                await config.handleConfigChannel(channel('sm', '22222222-2222-4222-8222-222222222222'));
+                await config.handleConfigChannel(channel('sm', ''));
+                const missingGroup = channel('sm');
+                delete missingGroup.activity.channelData.team.aadGroupId;
+                await config.handleConfigChannel(missingGroup);
+                process.env.SMA_ALLOWED_TEAM_ID = '19:team@thread.tacv2';
+                await config.handleConfigChannel(channel('sm'));
                 delete process.env.SMA_ALLOWED_TEAM_ID;
                 await config.handleConfigChannel(channel('sm'));
-                process.env.SMA_ALLOWED_TEAM_ID = 'allowed-team';
+                process.env.SMA_ALLOWED_TEAM_ID = allowedGuid;
                 const spoofed = channel('sm');
                 spoofed.activity.channelId = 'emulator';
                 await config.handleConfigChannel(spoofed);
@@ -157,9 +171,9 @@ test('channel configuration requires the configured SM and the deployment allowe
                 await config.handleConfigChannel(channel('sm'));
                 await config.handleConfigChannel(channel('sm'));
                 assert.equal(writes, 2);
-                assert.equal(stored.TeamId, 'allowed-team');
+                assert.equal(stored.TeamId, '19:team@thread.tacv2');
                 assert.equal(stored.ConfiguredByAadId, 'sm');
-                assert.equal(JSON.parse(stored.ConversationRef).conversation.id, 'channel-root');
+                assert.equal(JSON.parse(stored.ConversationRef).conversation.id, '19:channel@thread.tacv2');
             });
         });
     } finally {
