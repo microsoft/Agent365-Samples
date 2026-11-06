@@ -1,6 +1,23 @@
+<!--
+---
+name: "Observability — Agent 365 SDK with LangGraph"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Add Agent 365 observability to a Python LangGraph agent while preserving its existing OpenTelemetry exporter."
+---
+-->
+
 # Observability — Agent 365 SDK with LangGraph
 
-This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to a [LangGraph](https://langchain-ai.github.io/langgraph/) agent that **already** uses OpenTelemetry. After running this, both your existing exporter and the Agent 365 backend receive every span produced by the agent.
+This sample shows how to add the Microsoft Agent 365 Python SDK to a [LangGraph](https://langchain-ai.github.io/langgraph/) agent that **already** uses OpenTelemetry. After running this, both your existing exporter and the Agent 365 backend receive every span produced by the agent.
+
+This sample uses the following Agent 365 packages:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-extensions-langchain · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-extensions-langchain/)
 
 The structure mirrors Google Cloud's [LangGraph + OpenTelemetry reference sample](https://docs.cloud.google.com/stackdriver/docs/instrumentation/ai-agent-langgraph): an OTel TracerProvider is set up first, an auto-instrumentor handles the LLM and tool spans, and a manual top-level span wraps `agent.invoke(...)` so the trace tree has a clear "agent run" root.
 
@@ -119,7 +136,7 @@ Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` w
 `idtyp`; any `scp` claim is rejected.
 
 The sample-local resolver adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow).
 Blueprint credentials with `fmi_path=agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
 `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants use

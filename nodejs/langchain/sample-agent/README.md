@@ -1,3 +1,15 @@
+<!--
+---
+name: "LangChain Sample Agent - Node.js"
+page_type: sample
+languages:
+- typescript
+products:
+- agent-365
+description: "Build a LangChain agent in TypeScript with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # LangChain Sample Agent - Node.js
 
 
@@ -8,9 +20,17 @@ This sample demonstrates how to build an agent using LangChain in Node.js with t
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Node.js](https://github.com/microsoft/Agent365-nodejs).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [@microsoft/agents-a365-notifications - npm](https://www.npmjs.com/package/@microsoft/agents-a365-notifications)
+- [@microsoft/agents-a365-runtime - npm](https://www.npmjs.com/package/@microsoft/agents-a365-runtime)
+- [@microsoft/agents-a365-tooling - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling)
+- [@microsoft/agents-a365-tooling-extensions-langchain - npm](https://www.npmjs.com/package/@microsoft/agents-a365-tooling-extensions-langchain)
+- [@microsoft/agents-activity - npm](https://www.npmjs.com/package/@microsoft/agents-activity)
+- [@microsoft/agents-hosting - npm](https://www.npmjs.com/package/@microsoft/agents-hosting)
+- [@microsoft/opentelemetry - npm](https://www.npmjs.com/package/@microsoft/opentelemetry)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -124,7 +144,7 @@ try {
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions.
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
 ## Support
@@ -132,7 +152,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-nodejs/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../SECURITY.md)
 
 ## Contributing

@@ -1,3 +1,15 @@
+<!--
+---
+name: "Observability — Agent 365 SDK with manual OTel + manual instrumentation"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Instrument a Python agent manually with OpenTelemetry and Agent 365 tracing, with optional Agent 365 S2S export."
+---
+-->
+
 # Observability — Agent 365 SDK with manual OTel + manual instrumentation
 
 ## Optional A365 S2S export
@@ -25,7 +37,7 @@ Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` w
 `idtyp`; any `scp` claim is rejected.
 
 The standalone `observability_token_service.py` adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint client credentials with `fmi_path=agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
 `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
@@ -42,8 +54,12 @@ blueprint assertion flow.
 
 This sample shows two patterns at once:
 
-1. Adding the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
+1. Adding the Microsoft Agent 365 Python SDK to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
 2. **Manual instrumentation** using `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` — useful when you don't use an agent framework, or when you want explicit control over which calls produce spans.
+
+This sample uses the following Agent 365 package:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 

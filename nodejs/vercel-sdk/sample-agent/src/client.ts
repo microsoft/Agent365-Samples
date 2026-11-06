@@ -93,6 +93,7 @@ class VercelAiClient implements Client {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: modelName,
+      providerName: 'anthropic',
     };
 
     const request: Request = {

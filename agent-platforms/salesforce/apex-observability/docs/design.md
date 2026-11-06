@@ -54,7 +54,7 @@ Dependency direction (no cycles):
 
 > **Background:** this uses Microsoft Entra **Agent ID** — an agent identity blueprint plus Federated
 > Managed Identity (FMI) and the `jwt-bearer` grant. For the identity model and OAuth grant types, see
-> [Microsoft Entra Agent ID — Agent OAuth flows](https://learn.microsoft.com/en-us/entra/agent-id/agent-on-behalf-of-oauth-flow).
+> [Microsoft Entra Agent ID — Agent OAuth flows](https://learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow).
 > The steps below show only what the Apex sample sends on the wire.
 
 MSAL is unavailable in Apex, so each hop is a raw `application/x-www-form-urlencoded` POST. The ingest
