@@ -1,52 +1,84 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Globalization;
-using Microsoft.Extensions.Configuration;
+using System.Text.Json;
 
 namespace W365ComputerUseSample.ComputerUse;
 
-internal sealed class W365SessionOptions
+public sealed record W365SessionOptions(
+    string? SessionKind = null,
+    int? DisplayWidth = null,
+    int? DisplayHeight = null,
+    string? BrowserMode = null)
 {
-    private readonly string? sessionKind;
-    private readonly Dictionary<string, object?> properties = [];
+    internal bool HasExplicitOptions =>
+        SessionKind != null || DisplayWidth != null || DisplayHeight != null || BrowserMode != null;
 
-    public W365SessionOptions(IConfiguration configuration)
+    internal static W365SessionOptions FromChat(string? sessionKind, JsonElement properties)
     {
-        var section = configuration.GetSection("W365:Session");
-        sessionKind = section["SessionKind"];
-        if (sessionKind != null && sessionKind is not ("local" or "human" or "agentic"))
+        int? displayWidth = null;
+        int? displayHeight = null;
+        string? browserMode = null;
+        if (properties.ValueKind != JsonValueKind.Null)
         {
-            throw new InvalidOperationException("W365:Session:SessionKind must be local, human or agentic, or omitted.");
-        }
+            if (properties.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("The session properties requested in chat must be an object or null.");
 
-        foreach (var name in new[] { "DisplayWidth", "DisplayHeight" })
-        {
-            if (section[name] is not { } value) continue;
-            if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var dimension) || dimension <= 0)
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in properties.EnumerateObject())
             {
-                throw new InvalidOperationException($"W365:Session:{name} must be a positive integer.");
-            }
+                if (!names.Add(property.Name))
+                    throw new InvalidOperationException("The chat router returned duplicate session properties.");
 
-            properties[char.ToLowerInvariant(name[0]) + name[1..]] = dimension;
+                switch (property.Name)
+                {
+                    case "displayWidth":
+                        displayWidth = ReadDimension(property.Value, property.Name);
+                        break;
+                    case "displayHeight":
+                        displayHeight = ReadDimension(property.Value, property.Name);
+                        break;
+                    case "browserMode" when property.Value.ValueKind == JsonValueKind.String:
+                        browserMode = property.Value.GetString();
+                        break;
+                    default:
+                        throw new InvalidOperationException($"The chat router returned an unsupported session property or value: {property.Name}.");
+                }
+            }
         }
 
-        if (section["BrowserMode"] is { } browserMode)
-        {
-            if (browserMode is not ("chromium" or "legacy"))
-            {
-                throw new InvalidOperationException("W365:Session:BrowserMode must be chromium or legacy, or omitted.");
-            }
+        var options = new W365SessionOptions(sessionKind, displayWidth, displayHeight, browserMode);
+        options.Validate();
+        return options;
+    }
 
-            properties["browserMode"] = browserMode;
-        }
+    private static int ReadDimension(JsonElement value, string name)
+    {
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var dimension) || dimension <= 0)
+            throw new InvalidOperationException($"The session {name} requested in chat must be a positive integer.");
+        return dimension;
+    }
+
+    private void Validate()
+    {
+        if (SessionKind is not (null or "local" or "human" or "agentic"))
+            throw new InvalidOperationException("The session kind requested in chat must be local, human or agentic, or omitted.");
+        if (DisplayWidth is <= 0 || DisplayHeight is <= 0)
+            throw new InvalidOperationException("The session display dimensions requested in chat must be positive integers.");
+        if (BrowserMode is not (null or "chromium" or "legacy"))
+            throw new InvalidOperationException("The session browser mode requested in chat must be chromium or legacy, or omitted.");
     }
 
     public Dictionary<string, object?> CreateStartArguments()
     {
+        Validate();
         var arguments = new Dictionary<string, object?>();
-        if (sessionKind != null) arguments["sessionKind"] = sessionKind;
-        if (properties.Count > 0) arguments["sessionProperties"] = new Dictionary<string, object?>(properties);
+        if (SessionKind != null) arguments["sessionKind"] = SessionKind;
+        var properties = new Dictionary<string, object?>();
+        if (DisplayWidth is { } width) properties["displayWidth"] = width;
+        if (DisplayHeight is { } height) properties["displayHeight"] = height;
+        if (BrowserMode != null) properties["browserMode"] = BrowserMode;
+        if (properties.Count > 0) arguments["sessionProperties"] = properties;
         return arguments;
     }
 }

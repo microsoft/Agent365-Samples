@@ -305,19 +305,18 @@ public class MyAgent : AgentApplication
                     // Step 1: classify intent with a cheap tool-less LLM call. If the message
                     // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
                     // W365 tool loading and explicit session startup entirely.
-                    var pendingTaskAction = ComputerUseOrchestrator.PendingTaskAction.Resume;
-                    bool needsCua;
-                    if (_orchestrator.HasPendingW365Task(localSessionKey))
+                    ComputerUseOrchestrator.TurnIntent intent;
+                    try
                     {
-                        (needsCua, pendingTaskAction) = await _orchestrator.ClassifyPendingTurnAsync(
-                            localSessionKey, userText, cancellationToken);
+                        intent = await _orchestrator.ClassifyTurnAsync(localSessionKey, userText, cancellationToken);
                     }
-                    else
+                    catch (InvalidOperationException ex)
                     {
-                        needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
+                        turnContext.StreamingResponse.QueueTextChunk(ex.Message);
+                        return ex.Message;
                     }
 
-                    if (!needsCua)
+                    if (!intent.NeedsCua)
                     {
                         // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
                         // discovery entirely so chit-chat never touches W365.
@@ -422,7 +421,8 @@ public class MyAgent : AgentApplication
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken,
-                            pendingTaskAction: pendingTaskAction);
+                            pendingTaskAction: intent.TaskAction,
+                            sessionOptions: intent.SessionOptions);
 
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);

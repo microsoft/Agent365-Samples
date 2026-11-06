@@ -319,34 +319,21 @@ var transport = new SseClientTransportOptions
 
 ### Optional session settings and human sign-in
 
-The checked-in configuration omits `W365:Session`, so existing agents continue to send `{}` to `StartSession` and retain the default behavior. To opt in, configure only the options you need in `appsettings.Development.json` or environment variables such as `W365__Session__SessionKind`:
+All W365 session options come **only from explicit chat requests**, for example **"Start a human W365 session at 1600 by 900 using chromium browser mode and open Notepad"**, **"Start a local W365 session"**, or **"Start an agentic W365 session using legacy browser mode"**. Session kind, display dimensions, and browser mode are not read from app settings or environment variables.
 
-```json
-{
-  "W365": {
-    "Session": {
-      "SessionKind": "human",
-      "DisplayWidth": 1600,
-      "DisplayHeight": 900,
-      "BrowserMode": "chromium"
-    }
-  },
-  "ComputerUse": {
-    "DisplayWidth": 1600,
-    "DisplayHeight": 900
-  }
-}
-```
+The chat router extracts options before session startup, without calling remote tools. Incidental words such as "human resources", numbers in a task, resizing an application window, simply opening Chrome, and questions about session settings do not select options. If routing fails or returns invalid, unsupported, or ambiguous options, the turn reports an error instead of starting a potentially unintended default session. Options cannot change or replace an active session: end it first, then explicitly request a new session with the desired options.
 
-This sends `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}`. Dimensions must be positive integers; browser mode is `chromium` or `legacy`. Invalid local configuration is rejected when the computer-use orchestrator is first initialized, before starting a W365 session. `ComputerUse:DisplayWidth` / `DisplayHeight` describe the model's view, not server session options; keep them aligned when using `computer-use-preview`. Existing model defaults are never sent as session properties automatically.
+Without explicit chat options, `StartSession` still receives `{}`. The first example sends `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}`. Requesting only **"Start a W365 session using legacy browser mode"** sends `{"sessionProperties":{"browserMode":"legacy"}}`; unspecified properties and kind are omitted rather than filled with defaults. Dimensions must be positive integers; browser mode is `chromium` or `legacy`.
 
-Omit `SessionKind` to retain the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds.
+For `computer-use-preview`, chat-selected dimensions also override the model's view for that conversation's session. `ComputerUse:DisplayWidth` / `DisplayHeight` remain model-only defaults for dimensions not selected in chat; they are never sent to `StartSession`. The bare `computer` tool still derives dimensions from screenshots. Model defaults and other conversations are not modified.
 
-For local human sessions, run in `Development` and set `BEARER_TOKEN` to a human-user token for the W365 MCP resource with the required permission. Use your organization's approved delegated-user authentication flow; the agent-user helper is not a human-token acquisition flow. Configure the development W365 endpoint with `McpServer:Url` or `McpServers`. The shipped hosted `w365` handler is agentic: setting `SessionKind=human` does not convert it to human authentication. Hosted human authentication requires a separately configured compatible user-token handler.
+Omitting a kind in chat retains the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds or dropping properties. Chat options are scoped to the conversation's session and retained for in-turn recovery, not applied as defaults to later new sessions.
+
+For local human sessions, run in `Development` and set `BEARER_TOKEN` to a human-user token for the W365 MCP resource with the required permission. Use your organization's approved delegated-user authentication flow; the agent-user helper is not a human-token acquisition flow. Configure the development W365 endpoint with `McpServer:Url` or `McpServers`. The shipped hosted `w365` handler is agentic: requesting a human session in chat does not convert it to human authentication. Hosted human authentication requires a separately configured compatible user-token handler.
 
 When `awaitingHumanLogin` is true, the sample immediately replies with **Open W365 sign-in** using `connectivityUrl`, retains the session, and does not take screenshots or enter the computer-use action loop. Open the link promptly and sign in with your own credentials. It is not the screen-share link and does not bypass authentication. On a later computer-use turn, the sample checks `GetSessionDetails` up to three times, two seconds apart, within a 15-second local budget. If a details response omits the optional readiness flag, successful session-aware `tools/list` must confirm readiness before any remote action; pending discovery guidance preserves the session. If still pending, the turn returns one sign-in guidance reply. These local limits are not a guaranteed service timeout.
 
-A sign-in acknowledgement resumes the same session and saved task. Corrections amend that task, and a new computer-use request replaces it without allocating another session. Greetings, unrelated questions, and non-desktop function-tool requests follow the normal non-CUA path while the pending task is retained. The pending-turn intent classifier does not run remote actions; if classification fails, the sample logs a warning and retains the latest message as an amendment rather than discarding it.
+A sign-in acknowledgement resumes the same session and saved task. Corrections amend that task, and a new computer-use request replaces it without allocating another session. A request that explicitly selects session options instead receives the end-first guidance while the active session and task are retained. Greetings, unrelated questions, and non-desktop function-tool requests follow the normal non-CUA path while the pending task is retained. The intent classifier does not run remote actions; if classification fails, the sample logs a warning and reports the error without modifying the saved task or starting another session.
 
 Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also calls `EndSession` for retained pending sessions. An explicitly ended session cannot be reused.
 
@@ -365,10 +352,6 @@ For integrations managing `x-ms-authorization-auxiliary`, this is an **HTTP requ
 | `AIServices:AzureOpenAI:ModelName` | Model name (for model-based URLs, e.g., `gpt-5.4-mini`) | - |
 | `McpServer:Url` | MCP server URL (dev only; omit for production) | - |
 | `W365:GatewayUrl` | W365 Computer Use MCP gateway URL (production) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
-| `W365:Session:SessionKind` | Optional `local`, `human` or `agentic`; caller/availability checked by the service | Omitted |
-| `W365:Session:DisplayWidth` | Optional positive-integer session display width | Omitted |
-| `W365:Session:DisplayHeight` | Optional positive-integer session display height | Omitted |
-| `W365:Session:BrowserMode` | Optional session browser: `chromium` or `legacy` | Omitted |
 | `ComputerUse:MaxIterations` | Max CUA loop iterations | `30` |
 | `ComputerUse:DisplayWidth` | Display width for computer_use_preview tool | `1024` |
 | `ComputerUse:DisplayHeight` | Display height for computer_use_preview tool | `768` |
