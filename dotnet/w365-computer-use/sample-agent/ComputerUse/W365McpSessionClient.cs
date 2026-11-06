@@ -27,40 +27,8 @@ internal sealed class W365McpSessionClient
         this.mcpClient = mcpClient ?? throw new ArgumentNullException(nameof(mcpClient));
     }
 
-    public async Task<W365McpToolListResult> StartSessionAndListToolsAsync(
-        CancellationToken cancellationToken,
-        string? conversationId = null,
-        string? channelId = null)
-    {
-        var startArguments = new Dictionary<string, object?>();
-        var startResultJson = await ToolTelemetry.InvokeAsync(
-            toolName: ComputerUseOrchestrator.W365StartSessionToolName,
-            arguments: startArguments,
-            toolCallId: null,
-            toolServerName: "w365",
-            endpoint: null,
-            conversationId: conversationId,
-            channelId: channelId,
-            invokeAsync: () => this.CallToolRawAsync(
-                ComputerUseOrchestrator.W365StartSessionToolName,
-                startArguments,
-                cancellationToken)).ConfigureAwait(false);
-
-        if (!TryExtractStringProperty(startResultJson, "sessionId", out var sessionId))
-        {
-            throw new InvalidOperationException("W365 StartSession did not return a sessionId.");
-        }
-
-        // Capture the screenShareUrl from the StartSession response so the prestart path can
-        // emit a screen-share link. (The in-turn StartSession that normally drives emission
-        // is skipped when the session is prestarted out-of-band.)
-        TryExtractStringProperty(startResultJson, "screenShareUrl", out var screenShareUrl);
-
-        var result = await ListToolsAsync(sessionId, cancellationToken, conversationId, channelId);
-        return string.IsNullOrWhiteSpace(screenShareUrl)
-            ? result
-            : result with { ScreenShareUrl = screenShareUrl };
-    }
+    public IList<AITool> CreateLifecycleTools(string? conversationId = null, string? channelId = null) =>
+        CreateTools(new ListToolsResult { Tools = [] }, string.Empty, conversationId, channelId);
 
     public async Task<W365McpToolListResult> ListToolsAsync(
         string sessionId,
@@ -89,6 +57,14 @@ internal sealed class W365McpSessionClient
         var response = await this.mcpClient.SendRequestAsync(request, cancellationToken);
         var toolsResult = response.Result?.Deserialize<ListToolsResult>(JsonOptions)
             ?? throw new InvalidOperationException("W365 tools/list response did not contain a result.");
+        var error = toolsResult.Tools.FirstOrDefault(tool => string.Equals(tool.Name, "Error", StringComparison.OrdinalIgnoreCase));
+        if (error != null)
+        {
+            var message = error.Description ?? "W365 tool discovery failed without error details.";
+            if (W365SessionState.IsPendingLoginMessage(message)) throw new W365HumanLoginRequiredException();
+            if (W365SessionState.IsEndedMessage(message)) throw new W365SessionEndedException(message);
+            throw new InvalidOperationException(message);
+        }
         var tools = CreateTools(toolsResult, sessionId, conversationId, channelId);
         return new W365McpToolListResult(sessionId, tools, this.mcpClient);
     }
@@ -124,9 +100,10 @@ internal sealed class W365McpSessionClient
                 tool.Name,
                 tool.Description ?? string.Empty,
                 sessionId,
-                includeSessionId: true,
+                includeSessionId: !string.Equals(tool.Name, ComputerUseOrchestrator.W365StartSessionToolName, StringComparison.OrdinalIgnoreCase),
                 conversationId,
-                channelId));
+                channelId,
+                tool.InputSchema));
         }
 
         AddLifecycleToolIfMissing(
@@ -163,14 +140,19 @@ internal sealed class W365McpSessionClient
         string sessionId,
         bool includeSessionId,
         string? conversationId,
-        string? channelId)
+        string? channelId,
+        JsonElement? inputSchema = null)
     {
+        var preserveExplicitSessionId =
+            string.Equals(name, ComputerUseOrchestrator.W365EndSessionToolName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(name, ComputerUseOrchestrator.W365GetSessionDetailsToolName, StringComparison.OrdinalIgnoreCase);
         var tool = AIFunctionFactory.Create(
             async (AIFunctionArguments arguments, CancellationToken cancellationToken) =>
             {
                 var callArguments = arguments.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
                 var toolCallId = ExtractToolCallId(callArguments);
-                if (includeSessionId && !callArguments.ContainsKey("sessionId"))
+                if (includeSessionId && !string.IsNullOrEmpty(sessionId)
+                    && (!preserveExplicitSessionId || !callArguments.ContainsKey("sessionId")))
                 {
                     callArguments["sessionId"] = sessionId;
                 }
@@ -188,8 +170,18 @@ internal sealed class W365McpSessionClient
             },
             name,
             description);
+        if (inputSchema is { } schema)
+        {
+            tool = new SchemaPreservingFunction(tool, schema);
+        }
         TelemetryOwnedTools.Add(tool, TelemetryOwnedToolMarker);
         return tool;
+    }
+
+    private sealed class SchemaPreservingFunction(AIFunction innerFunction, JsonElement inputSchema)
+        : DelegatingAIFunction(innerFunction)
+    {
+        public override JsonElement JsonSchema { get; } = inputSchema.Clone();
     }
 
     private void AddLifecycleToolIfMissing(
@@ -209,15 +201,42 @@ internal sealed class W365McpSessionClient
         tools.Add(CreateTool(name, description, sessionId, includeSessionId, conversationId, channelId));
     }
 
-    private async Task<string> CallToolRawAsync(
+    private Task<string> CallToolRawAsync(
+        string name,
+        IReadOnlyDictionary<string, object?> arguments,
+        CancellationToken cancellationToken) =>
+        CallToolRawAsync(this.mcpClient, name, arguments, cancellationToken);
+
+    internal static async Task<string> CallToolRawAsync(
+        IMcpClient client,
         string name,
         IReadOnlyDictionary<string, object?> arguments,
         CancellationToken cancellationToken)
     {
-        var result = await this.mcpClient
-            .CallToolAsync(name, arguments, cancellationToken: cancellationToken)
-            .ConfigureAwait(false);
-        return JsonSerializer.Serialize(result, JsonOptions);
+        // Keep additive fields such as structuredContent that the pinned SDK's typed result drops.
+        try
+        {
+            var response = await client.SendRequestAsync(new JsonRpcRequest
+            {
+                Id = new RequestId($"tools-call-{Guid.NewGuid():N}"),
+                Method = RequestMethods.ToolsCall,
+                Params = new JsonObject
+                {
+                    ["name"] = name,
+                    ["arguments"] = JsonSerializer.SerializeToNode(arguments, JsonOptions),
+                },
+            }, cancellationToken).ConfigureAwait(false);
+            return response.Result?.ToJsonString()
+                ?? throw new InvalidOperationException($"W365 {name} did not return a result.");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsPendingLoginMessage(ex.Message))
+        {
+            throw new W365HumanLoginRequiredException();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsEndedMessage(ex.Message))
+        {
+            throw new W365SessionEndedException(ex.Message);
+        }
     }
 
     private static string? ExtractToolCallId(IDictionary<string, object?> arguments)
@@ -240,125 +259,6 @@ internal sealed class W365McpSessionClient
             _ => value.ToString(),
         };
     }
-
-    private static bool TryExtractStringProperty(string? response, string propertyName, out string value)
-    {
-        value = string.Empty;
-        if (string.IsNullOrWhiteSpace(response))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(response);
-            return TryExtractStringProperty(doc.RootElement, propertyName, out value);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static bool TryExtractStringProperty(JsonElement element, string propertyName, out string value)
-    {
-        value = string.Empty;
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            if (TryGetProperty(element, propertyName, out var property)
-                && property.ValueKind == JsonValueKind.String)
-            {
-                value = property.GetString() ?? string.Empty;
-                return !string.IsNullOrEmpty(value);
-            }
-
-            if (TryGetProperty(element, "content", out var content)
-                && content.ValueKind == JsonValueKind.Array)
-            {
-                var stringTextBlocks = content.EnumerateArray()
-                    .Where(b => TryGetProperty(b, "text", out var t) && t.ValueKind == JsonValueKind.String);
-                foreach (var block in stringTextBlocks)
-                {
-                    TryGetProperty(block, "text", out var text);
-                    var nestedText = text.GetString();
-                    if (TryExtractStringProperty(nestedText, propertyName, out value))
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            var objectHit = element.EnumerateObject()
-                .Select(candidate => TryExtractStringPropertyTuple(candidate.Value, propertyName))
-                .FirstOrDefault(r => r.found);
-            if (objectHit.found)
-            {
-                value = objectHit.value;
-                return true;
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.Array)
-        {
-            var arrayHit = element.EnumerateArray()
-                .Select(item => TryExtractStringPropertyTuple(item, propertyName))
-                .FirstOrDefault(r => r.found);
-            if (arrayHit.found)
-            {
-                value = arrayHit.value;
-                return true;
-            }
-        }
-        else if (element.ValueKind == JsonValueKind.String)
-        {
-            var text = element.GetString();
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                try
-                {
-                    using var nested = JsonDocument.Parse(text);
-                    return TryExtractStringProperty(nested.RootElement, propertyName, out value);
-                }
-                catch (JsonException)
-                {
-                    return false;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private static (bool found, string value) TryExtractStringPropertyTuple(JsonElement element, string propertyName)
-    {
-        return TryExtractStringProperty(element, propertyName, out var value)
-            ? (true, value)
-            : (false, string.Empty);
-    }
-
-    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)
-    {
-        if (element.ValueKind == JsonValueKind.Object)
-        {
-            var match = element.EnumerateObject()
-                .FirstOrDefault(candidate => string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase));
-            if (match.Value.ValueKind != JsonValueKind.Undefined)
-            {
-                property = match.Value;
-                return true;
-            }
-        }
-
-        property = default;
-        return false;
-    }
 }
 
-internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client)
-{
-    /// <summary>
-    /// screenShareUrl captured from the StartSession response (prestart path only). Null when
-    /// the session was reused/listed rather than freshly started, or when the platform did not
-    /// return a screenShareUrl.
-    /// </summary>
-    public string? ScreenShareUrl { get; init; }
-}
+internal sealed record W365McpToolListResult(string SessionId, IList<AITool> Tools, IMcpClient Client);
