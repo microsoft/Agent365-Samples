@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/vdevPreview/MicrosoftTeams.schema.json",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "name": {
+    "short": "Scrum Master Blueprint",
+    "full": "Scrum Master Sample Blueprint"
+  },
+  "description": {
+    "short": "A brief description of what your agent does.",
+    "full": "A comprehensive description of your agent\u0027s capabilities and purpose. Explain what problems it solves, what data it can access, and how users will interact with it. This description helps users understand when and how to use your agent effectively."
+  },
+  "icons": {
+    "outline": "outline.png",
+    "color": "color.png"
+  },
+  "accentColor": "#9ec9d9",
+  "version": "1.1.4",
+  "manifestVersion": "devPreview",
+  "developer": {
+    "name": "Microsoft Corporation",
+    "mpnId": "",
+    "websiteUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "privacyUrl": "https://go.microsoft.com/fwlink/?LinkId=518028",
+    "termsOfUseUrl": "https://shares.datatransfer.microsoft.com/assets/Microsoft_Terms_of_Use.html"
+  },
+  "agenticUserTemplates": [
+    {
+      "id": "00000000-0000-0000-0000-000000000000",
+      "file": "agenticUserTemplateManifest.json"
+    }
+  ]
+}
