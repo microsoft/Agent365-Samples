@@ -22,12 +22,14 @@ import { getAgenticGraphClient } from './graph-service';
 import { rememberAgentIdentity } from './agent-identity';
 import * as proactiveRefs from './proactive-refs';
 import { isPersonalConversation } from './proactive-refs';
+import { isPrivateConversation, PRIVATE_ONLY_NOTICE } from './conversation-privacy';
+import { resolveDirectoryUser, type DirectoryUser } from './directory-lookup';
 
 /** Outcome of a proactive portal DM. `retryable` is true for failures that can clear up (Teams / Graph outage). */
 export interface ProactiveResult { ok: boolean; reason?: string; retryable?: boolean }
 import { FileStorage } from './file-storage';
 import { handleSkillRatingsSubmit, handleSavePlanSubmit, savePlan, savePlanInputFromReview, handleQuizSubmit, handleSyncProgress, emitQuizFor, queueReportedCourses, savedPlanReviewCard, handleCompletedAllCourses, findReportedCourses, handleReportedCompletions, validateBlockedCourses, SkillRatingInput } from './handlers';
-import { getQuiz, queueQuizzes, wasGraded } from './quiz-cache';
+import { getQuiz, getQuizGenerationId, queueQuizzes, wasGraded } from './quiz-cache';
 import { takeBlockedCompletions } from './sharepoint-tools';
 import { extractEmailText, extractQuotedHistory, emailTurnPrompt, llmResponseToEmailHtml, isSavePlanIntent, findPlanReview, cardPayloadToHtml, markdownToHtml } from './email-conversation';
 import { getPendingPlan, putPendingPlan, clearPendingPlan } from './email-plan-store';
@@ -204,9 +206,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     // via handlers.ts) — no full LLM turn. This eliminates hallucinated skill bumps,
     // wrong goal completion, and 10-30s invoke timeouts.
     this.adaptiveCards.actionExecute('careercoach_quiz_submit', async (context: TurnContext, _state: TurnState, rawData: any) => {
+      if (!isPrivateConversation(context.activity)) return PRIVATE_ONLY_NOTICE;
       const data = unwrapActionData(rawData);
       try {
         const courseId = String(data?.courseId ?? '');
+        const generationId = String(data?.generationId ?? '');
         const skillId = String(data?.skillId ?? '');
         const meta: Array<{ id: string; type: string; topicTag: string }> = Array.isArray(data?.questionMeta) ? data.questionMeta : [];
         const answersByQuestionId: Record<string, string> = {};
@@ -214,9 +218,12 @@ export class MyAgent extends AgentApplication<TurnState> {
           answersByQuestionId[m.id] = data && typeof data[m.id] !== 'undefined' ? String(data[m.id]) : '';
         }
         const userAADId = context.activity?.from?.aadObjectId ?? '';
-        if (!userAADId || !courseId) {
-          console.warn('[Quiz] Missing userAADId or courseId in submit payload.');
+        if (!userAADId || !courseId || !generationId) {
+          console.warn('[Quiz] Missing userAADId, courseId, or quiz generation in submit payload.');
           return 'Sorry — could not identify the quiz. Please try again.';
+        }
+        if (getQuizGenerationId(userAADId, courseId) !== generationId) {
+          return 'This quiz is from an earlier question set and was not recorded. Say **check my progress** for the current quiz.';
         }
         console.log(`[Quiz] Deterministic grading for course ${courseId} (${Object.keys(answersByQuestionId).length} answers).`);
         // Lock the card: replace it with a read-only copy showing the submitted answers so it
@@ -228,6 +235,7 @@ export class MyAgent extends AgentApplication<TurnState> {
             const readOnlyAttachment = renderCard({
               type: 'quiz',
               courseId,
+              generationId,
               courseTitle: String(data?.courseTitle ?? '') || courseId,
               skillId,
               intro: '5 quick questions to lock in what you learned. Pass = 4 of 5.',
@@ -253,10 +261,11 @@ export class MyAgent extends AgentApplication<TurnState> {
           // Safe to resubmit only while the attempt wasn't recorded; keeps the user's answers.
           restore: () => {
             const questions = getQuiz(userAADId, courseId);
-            if (wasGraded(userAADId, courseId) || !questions?.length) return undefined;
+            if (wasGraded(userAADId, courseId) || getQuizGenerationId(userAADId, courseId) !== generationId || !questions?.length) return undefined;
             return renderCard({
               type: 'quiz',
               courseId,
+              generationId,
               courseTitle: quizTitle,
               skillId,
               intro: '5 quick questions to lock in what you learned. Pass = 4 of 5.',
@@ -272,6 +281,7 @@ export class MyAgent extends AgentApplication<TurnState> {
           () => handleQuizSubmit(context, this.authorization, {
             userAADId,
             courseId,
+            generationId,
             skillId,
             answersByQuestionId,
           }),
@@ -287,6 +297,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // Deterministic — we compute gaps + rank courses from LearningCatalog directly, no LLM.
     // The submit payload carries skills[] with {id, competencyId, name, target} + user's ratings.
     this.adaptiveCards.actionExecute('careercoach_skill_ratings', async (context: TurnContext, _state: TurnState, rawData: any) => {
+      if (!isPrivateConversation(context.activity)) return PRIVATE_ONLY_NOTICE;
       const data = unwrapActionData(rawData);
       try {
         const meta: Array<{ id: string; competencyId?: string; name: string; target?: number }> = Array.isArray(data?.skills) ? data.skills : [];
@@ -400,6 +411,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // them from what the LLM would have carried… but with the deterministic path they
     // arrive as part of `data.ratings` (added by cards.ts).
     this.adaptiveCards.actionExecute('careercoach_save_plan', async (context: TurnContext, _state: TurnState, rawData: any) => {
+      if (!isPrivateConversation(context.activity)) return PRIVATE_ONLY_NOTICE;
       const data = unwrapActionData(rawData);
       try {
         const groups = Array.isArray(data?.groups) ? data.groups : [];
@@ -456,6 +468,7 @@ export class MyAgent extends AgentApplication<TurnState> {
     // through the deterministic sync handler; the other three synthesize a natural-language
     // user message and re-enter the standard message flow so the LLM picks up from there.
     this.adaptiveCards.actionExecute('careercoach_welcome', async (context: TurnContext, state: TurnState, rawData: any) => {
+      if (!isPrivateConversation(context.activity)) return PRIVATE_ONLY_NOTICE;
       const data = unwrapActionData(rawData);
       const intent = String(data?.intent ?? '');
       const aadObjectId = context.activity?.from?.aadObjectId ?? '';
@@ -506,6 +519,14 @@ export class MyAgent extends AgentApplication<TurnState> {
  * Handles incoming user messages and sends responses.
  */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
+    // Private career data is only ever rendered into a personal chat: in a group chat or channel
+    // nothing is read, no LLM turn runs, and the employee is pointed to a 1:1 chat instead.
+    if (!isPrivateConversation(turnContext.activity)) {
+      console.log('[Privacy] Message in a non-personal conversation — pointing the user to a personal chat.');
+      await turnContext.sendActivity(MessageFactory.text(PRIVATE_ONLY_NOTICE));
+      return;
+    }
+
     const userMessage = turnContext.activity.text?.trim() || '';
 
     const from = turnContext.activity?.from;
@@ -1019,10 +1040,10 @@ export class MyAgent extends AgentApplication<TurnState> {
     rememberAgentIdentity(context.activity);
     const senderAddress = String(from?.id ?? '').trim();
     if (!senderAddress || senderAddress.toLowerCase() === String(recipient?.id ?? '').toLowerCase()) return;
-    let sender: { id?: string; displayName?: string; userType?: string } | null = null;
+    let sender: DirectoryUser | null = null;
     try {
-      const graph = getAgenticGraphClient(context, this.authorization);
-      sender = await graph.api(`/users/${encodeURIComponent(senderAddress)}`).select('id,displayName,userType').get();
+      // Object id / UPN first, then the SMTP address (an internal member's mail address can differ from their UPN).
+      sender = await resolveDirectoryUser(getAgenticGraphClient(context, this.authorization), senderAddress);
     } catch (err) {
       console.warn('[Email] Sender lookup failed:', (err as any)?.message ?? err);
     }

@@ -116,16 +116,16 @@ Out of scope: acting for anyone but the signed-in user, writing to the reference
 3. *Save my plan* (or email reply "Save it") → the same `savePlan` function applies the lifecycle rules, writes `UserState`, returns a progress card.
 
 ### 6.2 Prove a course (quiz)
-Portal row complete, or the user says "I completed X" → server generates 5 questions and keeps the answer key **server-side** → card without answers → submit → deterministic grading (short answers by one narrow LLM call) → pass = 4/5 → course Complete, skill level raised, progress recomputed → milestone / completion cascade → next queued quiz.
+Portal row complete, or the user says "I completed X" → server generates 5 questions and keeps the answer key and a server-issued quiz-generation ID **server-side** → card without answers carries that opaque ID in its submit action → submit is accepted only if its ID still matches the cached question set → deterministic grading (short answers by one narrow LLM call) → pass = 4/5 → course Complete, skill level raised, progress recomputed → milestone / completion cascade → next queued quiz. A card from before a restart or regeneration is rejected rather than being graded against replacement questions with reused `q1`–`q5` IDs.
 
 ### 6.3 Completion
 100% → LLM writes the email text, **code** sends it (To: the employee, Cc: the manager looked up at send time) → the goal is recorded as Completed **before** the summary card is rendered → the next conversation starts with the welcome card. If the employee's own address can't be resolved (after one retry) nothing is sent and the goal stays Active, so a later "check my progress" retries; the manager is never made the only recipient. The chat model is instructed never to send this email itself.
 
 ### 6.4 Email
-Inbound email → sender must be an organisation member → thread-scoped history (stable thread id) → same LLM and rules as Teams, with a prompt that excludes interactive steps → reply as HTML (cards become tables). A proposed plan is stored per thread so "Save it" saves exactly that plan.
+Inbound email → sender resolved in the directory (UPN/id, then an unambiguous SMTP / proxy-address match) and must be an organisation member → thread-scoped history (stable thread id) → same LLM and rules as Teams, with a prompt that excludes interactive steps → reply as HTML (cards become tables). A proposed plan is stored per thread so "Save it" saves exactly that plan.
 
 ### 6.5 Learning-portal event
-List change → Graph notification → webhook (validated by a shared secret) → proactive turn → the same sync handler as "check my progress".
+List change → Graph notification → webhook (validated by a shared secret) → durable queue; each pass scans from a persisted processing watermark (not the notification's arrival time, since list notifications can be hours late) → proactive turn → the same sync handler as "check my progress".
 
 ## 7. Security and trust boundaries
 
@@ -133,7 +133,7 @@ List change → Graph notification → webhook (validated by a shared secret) �
 |---|---|
 | Prompt injection via user text, email bodies, documents, tool results | System prompt says only system instructions count; email text and quoted history are fenced in `<untrusted_email>` tags (delimiters inside neutralised); Mail/Calendar recipients are enforced **in code** (`mail-guard.ts`: sender only, manager only when the sender's own message asks; forward/reply and unverifiable recipients refused, fail closed); all writes still go through code guards |
 | One employee reads another's coaching mail through the shared mailbox | Every employee talks to the same Career Coach mailbox and calendar, so the Mail server is **send-only** (`mail-guard.ts` hides and refuses reading, searching, replying, forwarding, updating and deleting; sending an existing draft by id is refused too). Calendar reads are allowed only for lookups that name a verified address (the employee, or their manager when asked), never as an open listing |
-| A group chat receives someone's private progress | Proactive references are stored only from **personal (1:1)** conversations and never replaced by a group or channel; a reference saved earlier that turns out not to be personal is dropped at send time and nothing is posted |
+| A group chat receives someone's private progress | Messages and card buttons are answered only in a personal (1:1) conversation (`conversation-privacy.ts`; Teams group chats, channels and unknown types get a "message me directly" notice before any data is read). Proactive references are stored only from **personal (1:1)** conversations and never replaced by a group or channel; a reference saved earlier that turns out not to be personal is dropped at send time and nothing is posted |
 | LLM claims progress it didn't earn | Progress guard rejects Complete / passed-quiz / skill-level writes (including records with no `courseId`); every plan course must exist in the catalog; quiz-earned progress is merged from the fresh row into stale writes; a quiz only counts for a course on the current plan |
 | LLM corrupts lifecycle data | Lifecycle columns and the manager identity stripped from model writes (under their display **and** internal names); finished goals read-only; one active goal; role switch with progress rejected |
 | LLM reads or writes another employee's data | Data tools are limited to the configured site and the five Career Coach lists; personal lists are filtered to the caller's own rows in code; new plans are bound to the caller; updates verify row ownership fail-closed and can't change the owner; chat writes are limited to `UserState`; email threads are keyed on the verified sender so members never share a conversation |

@@ -33,7 +33,7 @@ src/
 ├── career-coach-types.ts     Types, SP_CONFIG (list names), PlanStatus lifecycle helpers
 ├── llm-tasks.ts              Small focused LLM calls: quiz questions, short-answer grading, completion email text
 ├── cards.ts                  All Adaptive Card builders, extractCards(), renderCard()
-├── quiz-cache.ts             In-memory quiz answer keys (one in-flight generation per user/course), graded markers, pending-quiz queue
+├── quiz-cache.ts             In-memory quiz answer keys, server-issued quiz-generation IDs, one in-flight generation per user/course, graded markers, pending-quiz queue
 ├── user-lock.ts              Per-user async mutex around every UserState read-modify-write
 ├── email-conversation.ts     Email text extraction, email prompt, card → HTML
 ├── email-plan-store.ts       Disk-backed "plan proposed by email, awaiting Save it"
@@ -44,6 +44,8 @@ src/
 ├── mail-guard.ts             Code-level recipient allowlist for the WorkIQ Mail and Calendar MCP servers
 ├── sharepoint-column-map.ts  Display-name ↔ internal-column-name translation
 ├── file-storage.ts           Disk-backed SDK Storage (proactive subsystem)
+├── conversation-privacy.ts   isPrivateConversation + notice: private data only in 1:1 chats
+├── directory-lookup.ts       email sender → directory user (UPN/id, then unambiguous SMTP / proxy address)
 ├── proactive-refs.ts         AAD object id → personal (1:1) conversation id map (disk); group chats and channels are never stored
 ├── portal-notifications.ts   Durable queue for portal notifications: recorded before the 202, bounded-backoff retry, per-user checkpoint (dedupe)
 ├── observability/
@@ -129,12 +131,12 @@ Teams gives an `Action.Execute` about 10 seconds. Reads/writes to SharePoint plu
 
 ## 7. Quizzes — grade deterministically
 
-**Sending** (`emitQuizFor`): `generateQuizQuestions` (LLM, in `llm-tasks.ts`) makes 5 questions (about 3 multiple choice + 2 short answer) with answer keys and rubrics. The keys go into `quiz-cache.ts` (in memory, keyed by user + course); overlapping syncs or portal events for the same course share **one** generation, so every card sent is graded against the same key. The card sent to the user contains **no answers**.
+**Sending** (`emitQuizFor`): `generateQuizQuestions` (LLM, in `llm-tasks.ts`) makes 5 questions (about 3 multiple choice + 2 short answer) with answer keys and rubrics. The keys and a server-issued `generationId` go into `quiz-cache.ts` (in memory, keyed by user + course); overlapping syncs or portal events for the same course share **one** generation, so every card sent is graded against the same key. The card carries that opaque ID in its submit action, but contains **no answers**.
 
 **Grading** (`handleQuizSubmit` → `handleQuizSubmitInner`):
 
 1. A per-user/course in-flight claim ignores a double-click.
-2. Already-graded or missing-cache submissions get a clear message (a restart empties the cache: "say *check my progress* and I'll regenerate it").
+2. The submit action's `generationId` must match the current cached quiz. A card from before a restart/regeneration is refused even if its course id and question ids (`q1`–`q5`) match the new card. Already-graded or missing-cache submissions get a clear message (a restart empties the cache: "say *check my progress* and I'll regenerate it").
 3. Multiple choice is a letter match (`gradeMcqAnswer`). Short answers are graded by one focused LLM call (`gradeShortAnswers`); if that fails or returns an incomplete result, nothing is recorded and no attempt is counted — `runDeferred` tells the user and restores the card with their answers. An outage is never graded as wrong and never silently passed.
 4. Under the user lock the course must be on the **current plan** (otherwise the submit is refused before any write). Pass = 4 of 5. The attempt is appended to `QuizResponses`, then `applyQuizPass` / `applyQuizFail` updates `UserState`. A pass marks the course Complete, raises the skill level to the course's `ToLevel`, and recomputes goal and overall progress.
 5. The result is marked graded **before** the quiz-result card is sent, so a send failure can't leave a graded quiz open for a duplicate submit. Then the **cascade**: 80% milestone, 100% completion, and the next queued quiz — so the user is never left waiting after a result.
@@ -199,7 +201,7 @@ These make wrong LLM behaviour impossible rather than merely discouraged:
 **Inbound** — `handleAgentNotificationActivity` → `handleEmailNotification`:
 
 1. Bounce / non-delivery mails are ignored (`isBounceEmail`).
-2. The sender is looked up in Graph; only organisation **Members** get a reply (guests / external ignored). The sender's object id is put on the activity so the conversation is scoped to their plan.
+2. The sender is looked up in Graph (`resolveDirectoryUser`: object id / UPN first, then an exact, unambiguous `mail` / `proxyAddresses` match for members whose mail address differs from their UPN); only organisation **Members** get a reply (guests / external / unresolvable ignored). The sender's object id is put on the activity so the conversation is scoped to their plan.
 3. The thread key is `email:<agent instance>:<sender id>:<emailNotification.conversationId>` — stable across a thread (unlike the per-message activity id) and unique per member, so two people replying in the same thread never share a client, history or pending plan.
 4. **"Save it"** (`isSavePlanIntent`) with a pending plan for this thread → `savePlan` (same code as the Teams button), reply with the progress table.
 5. Otherwise the LLM runs with an email-specific prompt. The email text — and, if there is no history for the thread (first email, or after a restart), the **quoted reply history** (`extractQuotedHistory`) — goes in `<untrusted_email>` fences with any delimiter tags inside neutralised, and the model is told never to follow instructions in them. Mail / Calendar tools are checked in code by `mail-guard.ts`: the Career Coach mailbox is shared by every employee, so the Mail server is **send-only** (reading, searching, replying, forwarding, updating and deleting are hidden and refused); every address in a send or invite must be the sender (or their manager, only when the sender's own message asks for the manager); Calendar reads must name a verified address; unverifiable recipients are refused.
@@ -211,7 +213,7 @@ These make wrong LLM behaviour impossible rather than merely discouraged:
 
 ## 13. Proactive flow (learning-portal updates)
 
-A row changes in `LearningPortalStatus` → Graph change notification → `POST /api/portal-event` → the work is **recorded on disk** (`.portal-queue.json`) → `202` → `PortalQueue` finds rows updated in the last 10 minutes that haven't been handled yet → `agentApplication.handleProactivePortalEvent(aadId, …)` → `proactive.continueConversation(...)` → inside that turn `handleSyncProgress` runs under `runObserved` with a short preface message → the user gets a quiz DM for any newly finished course. Failed reads or deliveries are retried with bounded backoff (and resumed after a restart); the per-user checkpoint stops a retry or someone else's update from re-sending a DM. The destination is the employee's stored **personal (1:1)** conversation (`.proactive-refs.json`): only a personal chat is ever stored, so a group chat or channel never receives a private update. If there is no private chat yet, nothing is sent until the user messages the agent once.
+A row changes in `LearningPortalStatus` → Graph change notification → `POST /api/portal-event` → the work is **recorded on disk** (`.portal-queue.json`) → `202` → `PortalQueue` finds rows updated since the persisted **processing watermark** (start of the last fully successful pass, minus a 10-minute overlap, capped at 24 h back — notifications can arrive hours late) that haven't been handled yet → `agentApplication.handleProactivePortalEvent(aadId, …)` → `proactive.continueConversation(...)` → inside that turn `handleSyncProgress` runs under `runObserved` with a short preface message → the user gets a quiz DM for any newly finished course. Failed reads or deliveries are retried with bounded backoff (and resumed after a restart); the per-user checkpoint stops a retry or someone else's update from re-sending a DM. The destination is the employee's stored **personal (1:1)** conversation (`.proactive-refs.json`): only a personal chat is ever stored, so a group chat or channel never receives a private update. If there is no private chat yet, nothing is sent until the user messages the agent once.
 
 ## 14. Observability
 

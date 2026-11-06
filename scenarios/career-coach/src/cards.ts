@@ -26,7 +26,7 @@ export type CardPayload =
   | { type: 'progress'; roleTitle?: string; overall?: number; goals: { name: string; progressPct: number; status?: string }[]; learning?: { title: string; skill?: string; status?: string }[]; footer?: string }
   | { type: 'roadmap'; roleTitle: string; stages: { label: string; detail?: string; state?: 'done' | 'current' | 'todo' }[]; footer?: string }
   | { type: 'prepBrief'; roleTitle?: string; overall?: number; goals?: { name: string; progressPct: number; status?: string }[]; managerAsks?: string; wins: { title: string; star: string }[]; talkingPoints: string[]; questions: string[]; footer?: string }
-  | { type: 'quiz'; courseId: string; courseTitle: string; skillId?: string; skillName?: string; intro?: string; questions: QuizQuestion[]; footer?: string; readOnly?: boolean; answers?: Record<string, string> }
+  | { type: 'quiz'; courseId: string; generationId: string; courseTitle: string; skillId?: string; skillName?: string; intro?: string; questions: QuizQuestion[]; footer?: string; readOnly?: boolean; answers?: Record<string, string> }
   | { type: 'quizResult'; courseTitle: string; skillName?: string; score: number; total: number; passed: boolean; feedback: QuizFeedback[]; footer?: string }
   | { type: 'milestone80'; roleTitle?: string; overall: number; stillToClose: { name: string; progressPct: number }[]; areasToStrengthen: string[]; footer?: string }
   | { type: 'completionSummary'; roleTitle?: string; managerName?: string; managerEmail?: string; userEmail?: string; totalTimeMinutes?: number; coursesCompleted?: number; subject?: string; sent: boolean; note?: string; footer?: string };
@@ -721,6 +721,7 @@ function buildQuiz(p: Extract<CardPayload, { type: 'quiz' }>) {
     verb: 'careercoach_quiz_submit',
     data: {
       courseId: p.courseId,
+      generationId: p.generationId,
       courseTitle: p.courseTitle,
       skillId: p.skillId,
       // Include the question metadata so the handler can round-trip it back into the LLM turn

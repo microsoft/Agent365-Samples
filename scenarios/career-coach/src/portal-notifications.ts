@@ -15,6 +15,13 @@
  * per-user checkpoint is the deduplication key (user + row LastUpdated), so a retry never re-sends a
  * DM that already went out. A failure that can't clear up by retrying (the user has no private chat
  * yet) is not retried.
+ *
+ * What to scan is decided by a persisted PROCESSING WATERMARK — the start time of the last fully
+ * successful pass — not by when a notification happened to arrive. SharePoint-list notifications can
+ * be delayed by hours (documented latency of up to 6 h), so a window relative to arrival would miss a
+ * completion whose notification shows up late, and an empty result would then clear the work. Each
+ * pass scans from `watermark - overlap` (the overlap absorbs clock skew; the per-user checkpoint stops
+ * it re-sending), bounded by `maxLookback` so a very old watermark can't trigger an unbounded scan.
  */
 
 import * as fs from 'fs';
@@ -56,14 +63,17 @@ export interface PortalQueueOptions {
     now?: () => number;
     /** Delay before retry number `attempt` (1-based). */
     backoffMs?: (attempt: number) => number;
+    /** Overlap re-scanned before the watermark (default 10 min). */
     windowMs?: number;
+    /** Furthest back a pass will ever scan, however old the watermark is (default 24 h). */
+    maxLookbackMs?: number;
     maxAttempts?: number;
     maxAgeMs?: number;
     schedule?: (fn: () => void, ms: number) => { unref?: () => void };
 }
 
 interface Pending {
-    /** When the oldest unfinished notification arrived; the scan window starts `windowMs` before it. */
+    /** When the oldest unfinished notification arrived. Only used to start the very first watermark. */
     since: number;
     attempts: number;
     nextAttemptAt: number;
@@ -71,18 +81,22 @@ interface Pending {
     generation: number;
 }
 
-interface PersistedState { pending: Pending | null; handled: Record<string, number> }
+interface PersistedState { pending: Pending | null; handled: Record<string, number>; watermark?: number | null }
 
 const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 export class PortalQueue {
     private pending: Pending | null = null;
     private handled = new Map<string, number>();
+    /** Start time (ms) of the last fully successful pass; every row older than this has been handled. */
+    private watermark: number | null = null;
     private running: Promise<void> | null = null;
     private timer: { unref?: () => void } | null = null;
     private readonly now: () => number;
     private readonly backoffMs: (attempt: number) => number;
     private readonly windowMs: number;
+    private readonly maxLookbackMs: number;
     private readonly maxAttempts: number;
     private readonly maxAgeMs: number;
     private readonly schedule: (fn: () => void, ms: number) => { unref?: () => void };
@@ -91,6 +105,7 @@ export class PortalQueue {
         this.now = opts.now ?? (() => Date.now());
         this.backoffMs = opts.backoffMs ?? ((attempt) => Math.min(30_000 * 2 ** (attempt - 1), 10 * MINUTE));
         this.windowMs = opts.windowMs ?? 10 * MINUTE;
+        this.maxLookbackMs = opts.maxLookbackMs ?? 24 * HOUR;
         this.maxAttempts = opts.maxAttempts ?? 8;
         this.maxAgeMs = opts.maxAgeMs ?? 60 * MINUTE;
         this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
@@ -103,6 +118,7 @@ export class PortalQueue {
             const parsed = JSON.parse(fs.readFileSync(this.opts.filePath, 'utf-8')) as Partial<PersistedState>;
             this.pending = parsed.pending ?? null;
             this.handled = new Map(Object.entries(parsed.handled ?? {}));
+            this.watermark = typeof parsed.watermark === 'number' ? parsed.watermark : null;
         } catch (err) {
             console.warn('[portal-queue] Could not read saved state, starting empty:', (err as any)?.message ?? err);
         }
@@ -110,7 +126,7 @@ export class PortalQueue {
 
     private save(): void {
         try {
-            const state: PersistedState = { pending: this.pending, handled: Object.fromEntries(this.handled) };
+            const state: PersistedState = { pending: this.pending, handled: Object.fromEntries(this.handled), watermark: this.watermark };
             fs.writeFileSync(this.opts.filePath, JSON.stringify(state), 'utf-8');
         } catch (err) {
             console.warn('[portal-queue] Could not save state:', (err as any)?.message ?? err);
@@ -155,9 +171,16 @@ export class PortalQueue {
         this.arm();
     }
 
+    private scanCutoff(startedAt: number): number {
+        // Start from the last fully successful pass (or, the very first time, when the first notification
+        // arrived), re-scan a short overlap for clock skew, and never look further back than maxLookback.
+        const base = this.watermark ?? this.pending?.since ?? startedAt;
+        return Math.max(base - this.windowMs, startedAt - this.maxLookbackMs);
+    }
+
     private async runOnce(): Promise<boolean> {
-        const pending = this.pending!;
-        const cutoff = pending.since - this.windowMs;
+        const startedAt = this.now();
+        const cutoff = this.scanCutoff(startedAt);
         let rows: Array<{ id: string; fields: Record<string, any> }>;
         try {
             rows = await this.opts.scan(cutoff);
@@ -167,7 +190,7 @@ export class PortalQueue {
         }
         const selected = selectUsersToNotify(rows, cutoff, this.handled);
         if (selected.size === 0) {
-            console.log('[Proactive] No new portal changes since the last notification — nothing to DM.');
+            console.log('[Proactive] No new portal changes since the last successful scan — nothing to DM.');
         } else {
             console.log(`[Proactive] Firing proactive DM for ${selected.size} user(s).`);
         }
@@ -190,7 +213,10 @@ export class PortalQueue {
                 console.warn(`[Proactive]   -> ${aad}: ${result.reason ?? 'not deliverable'}`);
             }
         }
-        this.prune();
+        // Only a fully successful pass moves the watermark: a failed one is re-scanned from the same point,
+        // and so is a pass that gave up, by whichever notification arrives next.
+        if (allDone) this.watermark = startedAt;
+        this.prune(cutoff);
         return allDone;
     }
 
@@ -220,10 +246,9 @@ export class PortalQueue {
         this.timer.unref?.();
     }
 
-    private prune(): void {
-        // A checkpoint only matters while a row of that age can still be scanned.
-        const keepAfter = this.now() - (this.maxAgeMs + 2 * this.windowMs);
-        for (const [key, at] of this.handled) if (at < keepAfter) this.handled.delete(key);
+    private prune(cutoff: number): void {
+        // A checkpoint only matters while a row of that age can still be selected by a scan.
+        for (const [key, at] of this.handled) if (at < cutoff) this.handled.delete(key);
         this.save();
     }
 }

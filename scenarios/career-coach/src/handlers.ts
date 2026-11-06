@@ -35,7 +35,7 @@ import {
     generateQuizQuestions, gradeShortAnswers, composeCompletionEmail, ShortGradeInput,
 } from './llm-tasks';
 import { getAgenticGraphClient, getMyManager, getMyProfile, sendMail } from './graph-service';
-import { getQuiz, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes, getSubmission, saveSubmission, clearSubmission } from './quiz-cache';
+import { getQuiz, getQuizGenerationId, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes, getSubmission, saveSubmission, clearSubmission } from './quiz-cache';
 import { createHash } from 'crypto';
 import { withUserLock } from './user-lock';
 
@@ -472,6 +472,8 @@ export async function emitQuizFor(
     // Reuse a cached quiz if we recently generated it (e.g., after a failed submit). Concurrent
     // callers share one in-flight generation so every card sent is graded against the same key.
     const questions = await getOrCreateQuiz(userAADId, courseId, () => generateQuizQuestions(course));
+    const generationId = getQuizGenerationId(userAADId, courseId);
+    if (!generationId) throw new Error('Quiz generation was not cached after creation.');
     // A freshly-sent card is a new attempt: allow it to be submitted, and drop it from the queue.
     unmarkGraded(userAADId, courseId);
     dequeueQuiz(userAADId, courseId);
@@ -482,6 +484,7 @@ export async function emitQuizFor(
     const card: CardPayload = {
         type: 'quiz',
         courseId: course.CourseId,
+        generationId,
         courseTitle: course.Title,
         skillId: primarySkillId,
         skillName: undefined,
@@ -660,6 +663,7 @@ export async function queueReportedCourses(
 export interface QuizSubmitInput {
     userAADId: string;
     courseId: string;
+    generationId: string;
     skillId?: string;
     answersByQuestionId: Record<string, string>;
 }
@@ -699,6 +703,12 @@ async function handleQuizSubmitInner(
         await sendPlain(context, "You've already submitted this quiz — your results are above. 👍");
         return;
     }
+    const currentGenerationId = getQuizGenerationId(input.userAADId, input.courseId);
+    if (!currentGenerationId || input.generationId !== currentGenerationId) {
+        await sendPlain(context,
+            "This quiz is from an earlier question set, so I didn't record it. Say **check my progress** and I'll show you the current quiz.");
+        return;
+    }
     const cached = getQuiz(input.userAADId, input.courseId);
     if (!cached || cached.length === 0) {
         await sendPlain(context,
@@ -709,9 +719,9 @@ async function handleQuizSubmitInner(
     // A resubmission with the SAME answers after a failed plan update is the same logical submission:
     // reuse its recorded grading, attempt number and audit row rather than grading and appending again.
     const fingerprint = createHash('sha256')
-        .update(JSON.stringify(cached.map((q) => [q.id, String(input.answersByQuestionId[q.id] ?? '').trim()])))
+        .update(JSON.stringify([input.generationId, cached.map((q) => [q.id, String(input.answersByQuestionId[q.id] ?? '').trim()])]))
         .digest('hex');
-    const recorded = getSubmission(input.userAADId, input.courseId, fingerprint);
+    const recorded = getSubmission(input.userAADId, input.courseId, input.generationId, fingerprint);
 
     // Grade every question.
     let graded: GradedAnswer[] = [];
@@ -755,6 +765,9 @@ async function handleQuizSubmitInner(
     // Load user + course context and persist, as one critical section per user. A concurrent sync, or
     // a submission for another course, can't read the same plan and overwrite this result (or lose theirs).
     const persisted = await withUserLock(input.userAADId, async () => {
+        if (getQuizGenerationId(input.userAADId, input.courseId) !== input.generationId) {
+            return { ok: false as const, problem: "This quiz was replaced while I was grading it, so I didn't record it. Say **check my progress** for the current quiz." };
+        }
         const userRecord = await readUserState(graph, input.userAADId);
         if (!userRecord) return { ok: false as const, problem: "I couldn't find your plan to record the quiz result. Save a plan first." };
         const catalog = await readLearningCatalog(graph, userRecord.siteId);
@@ -767,6 +780,7 @@ async function handleQuizSubmitInner(
         // Counted only once the reads succeed, so a network failure above isn't an attempt. A retry of a
         // recorded submission keeps its original attempt number and date.
         const submission = recorded ?? {
+            generationId: input.generationId,
             fingerprint,
             graded,
             attempts: bumpAttempts(input.userAADId, input.courseId) || 1,

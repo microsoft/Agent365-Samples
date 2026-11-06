@@ -4,7 +4,9 @@
 /**
  * In-memory quiz cache. When we render a quiz card, we cache the questions
  * (including correct answers + short-answer rubrics) server-side keyed by
- * userAADId + courseId. On submit, we look them up to grade deterministically.
+ * userAADId + courseId, with an opaque generationId sent back in the card action.
+ * On submit, both the course and generationId must match before grading, so an
+ * older card can never be graded against replacement questions with reused q1-q5 IDs.
  *
  * Kept in memory only — lost on server restart. If a user submits a quiz whose
  * cache entry is gone, we regenerate the questions on the fly (or ask them to
@@ -12,8 +14,10 @@
  */
 
 import { QuizQuestionWithKey, GradedAnswer } from './career-coach-service';
+import { randomUUID } from 'crypto';
 
 interface QuizCacheEntry {
+    generationId: string;
     questions: QuizQuestionWithKey[];
     createdAt: number;
     attempts: number;
@@ -29,6 +33,7 @@ export function putQuiz(userAADId: string, courseId: string, questions: QuizQues
     const key = keyOf(userAADId, courseId);
     const prior = cache.get(key);
     cache.set(key, {
+        generationId: randomUUID(),
         questions,
         createdAt: Date.now(),
         attempts: (prior?.attempts ?? 0),
@@ -45,6 +50,7 @@ export function putQuiz(userAADId: string, courseId: string, questions: QuizQues
 // ----------------------------------------------------------------------------
 
 export interface PendingSubmission {
+    generationId: string;
     /** Hash of the submitted answers; a retry with different answers is a new submission. */
     fingerprint: string;
     graded: GradedAnswer[];
@@ -56,9 +62,9 @@ export interface PendingSubmission {
 
 const submissions = new Map<string, PendingSubmission>();
 
-export function getSubmission(userAADId: string, courseId: string, fingerprint: string): PendingSubmission | null {
+export function getSubmission(userAADId: string, courseId: string, generationId: string, fingerprint: string): PendingSubmission | null {
     const found = submissions.get(keyOf(userAADId, courseId));
-    return found && found.fingerprint === fingerprint ? found : null;
+    return found && found.generationId === generationId && found.fingerprint === fingerprint ? found : null;
 }
 
 export function saveSubmission(userAADId: string, courseId: string, submission: PendingSubmission): void {
@@ -99,6 +105,11 @@ export function getQuiz(userAADId: string, courseId: string): QuizQuestionWithKe
     const key = keyOf(userAADId, courseId);
     const entry = cache.get(key);
     return entry ? entry.questions : null;
+}
+
+/** Immutable identifier for the exact question set rendered to the user. */
+export function getQuizGenerationId(userAADId: string, courseId: string): string | null {
+    return cache.get(keyOf(userAADId, courseId))?.generationId ?? null;
 }
 
 export function bumpAttempts(userAADId: string, courseId: string): number {
