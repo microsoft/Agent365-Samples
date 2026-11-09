@@ -33,10 +33,13 @@ Every design decision below reflects one or more of these six principles:
    Q&A (`answer.ts`) and the MCP calendar tool loop (`calendar.ts`).
    Email notifications separately use a tool-less model to summarize and draft.
 2. **Card actions must never double-fire.** Teams and the A365 platform
-   enforce a short SLA on card-shaped Invoke and Message activities. Every
-   card handler sends an immediate ack (`Booking the meeting…`) and runs
-   the heavy work in `setImmediate` so the invoke response lands inside
-   the platform's ~15 s timeout.
+   enforce a short SLA on card-shaped Invoke and Message activities. Standup
+   submits validate the local assignment, send a non-success recording ack,
+   and defer the response claim, blocker writes and Jira comments with
+   `setImmediate`. The submitted card arrives proactively only after recording
+   succeeds. Other handlers defer selected long operations such as booking;
+   authorization and some lookups still run inline. There is no universal
+   sub-200 ms acknowledgement guarantee.
 3. **Graceful degradation, never a crash.** Every scheduled path is wrapped
    in `try/catch`; process-level `unhandledRejection` /
    `uncaughtException` handlers ([`index.ts`](../src/index.ts)) keep the
@@ -393,6 +396,10 @@ recording success requires operator review rather than assuming exactly-once
 delivery. An ambiguous/crashed claim stays `claimed` without automatic expiry;
 an explicit delivery failure is marked `failed` and may be retried. Mock
 mode's delivery records are in-memory.
+Demo highlights and release-note improvements quote completed Jira summaries
+with issue links. Keyword matches categorize work; they do not establish
+accessibility compliance, successful deployment, test coverage or production
+impact.
 Automatic selection checks ended active and closed sprints newest-first,
 skipping existing `sent`/`claimed` records before choosing an unreported or
 explicitly failed candidate. The selected candidate must still acquire the
@@ -488,10 +495,22 @@ also model-driven and is never used for inbound email.
   `<StandupId>#<UserAadId>` across competing workers. Replays acknowledge the first
   accepted payload and do not repeat blocker writes or Jira comments. Existing
   response lists require the paused-worker migration described in the README.
-- **Card submits use fire-and-forget** — handler acks in <200 ms via
-  `context.sendActivity('working on it…')`, downstream work runs via
-  `setImmediate`. Follow-ups arrive as proactive DMs against the cached
-  conversation reference.
+- **Standup submits defer Graph work.** After local validation the invoke sends
+  `Recording your standup response…` and returns without awaiting SharePoint.
+  The reserved background submission records the response and blockers before
+  sending a submitted card proactively against the captured conversation
+  reference (the local turn in mock mode). Storage failures send a retry
+  notice instead of a success card; a failure after recording explicitly asks
+  the Scrum Master to inspect follow-up records. Other card handlers can
+  perform inline authorization/lookups; no fixed acknowledgement latency is
+  promised.
+- **Failed chase is not an empty chase.** Blocker lookup and notification
+  delivery failures leave a summarized session with failed follow-up retained
+  in memory. Retry `/standup` in the same process and UTC day to retry only
+  chase, without reposting the summary, reconciling again or repeating fan-out.
+  Successfully sent blocker notifications are skipped on retry. After a
+  restart, inspect the persisted blocker rows and manually recover follow-up;
+  neither pending chase nor notification progress is reconstructed.
 - **Deduplication has different scopes.** Standup daily records
   (`<sprintId>#<UTC-date>`) remain in-memory after completion. Warn/blocker
   records use their own natural keys; a key alone is not an atomic lock.
@@ -511,9 +530,9 @@ also model-driven and is never used for inbound email.
   cannot create the same daily run. Existing deployments must pause workers and
   migrate/backfill this key with the setup script before upgrading (see
   `sharepoint-schema.md`). A creation claim does not resume a crashed run.
-  Mock mode enforces the same key within its in-memory store only. A thrown failure
-  after finalization is claimed can leave the in-memory state `summarizing`; SharePoint
-  stores `open` or `summarized`, not `summarizing`. Explicitly failed summary
+  Mock mode enforces the same key within its in-memory store only. Failed
+  finalization releases the in-memory `summarizing` claim; SharePoint stores
+  `open` or `summarized`, not `summarizing`. Explicitly failed summary
   delivery leaves the session `open` and does not mark it completed. In the
   same process, retry `/standup` after cutoff or when all responses are
   collected to resend the summary without repeating fan-out. After a restart,

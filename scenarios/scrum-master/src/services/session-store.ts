@@ -49,6 +49,8 @@ export interface StandupSession {
     responses: Map<string, StandupResponse>;
     /** Cutoff timer handle (only set when running under local cron). */
     cutoffTimer?: NodeJS.Timeout;
+    chaseState?: 'running' | 'failed' | 'complete';
+    chaseNotifications?: Set<string>;
 }
 
 const sessions = new Map<string, StandupSession>();

@@ -73,7 +73,10 @@ test('standup submissions fail closed before writes for unknown sessions, identi
                 findByTitle: async () => null,
             },
             '../services/team-roster': {},
-            '../services/proactive': {},
+            '../services/proactive': { sendProactive: async (_ref, logic) => {
+                await logic({ sendActivity: async () => {} });
+                return { ok: true };
+            } },
             '../cards/standup-request.card': { buildStandupSubmittedCard: value => value },
         }, async standup => {
             const value = { standupId: session.standupId, assigneeAadId: 'dev',

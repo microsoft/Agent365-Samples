@@ -86,8 +86,7 @@ async function findBlocker(blockerId: string, issueKey: string) {
 // --- entry point called from summarizeStandup ---------------------------
 
 export async function chaseAfterStandup(session: StandupSession): Promise<void> {
-    const openBlockers = await findByField<BlockerFields>('blockers', 'StandupId', session.standupId)
-        .catch(() => []);
+    const openBlockers = await findByField<BlockerFields>('blockers', 'StandupId', session.standupId);
     const openOnly = openBlockers.filter(b => b.fields.State === 'open');
     if (openOnly.length === 0) {
         console.log(`[chase] ${session.standupId}: no open blockers.`);
@@ -98,6 +97,7 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
     const memberByAadId = new Map(members.map(m => [m.AadObjectId, m]));
     const sm = members.find(m => m.Role === 'SM');
     const jira = getJiraClient();
+    const delivered = session.chaseNotifications ??= new Set<string>();
 
     for (const row of openOnly) {
         const b = row.fields;
@@ -106,21 +106,23 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
         const reporter = memberByAadId.get(b.ReporterAadId);
 
         // Ping the owner (unless it's the same person who reported — no self-ping).
-        if (owner?.conversationReference && b.OwnerAadId !== b.ReporterAadId) {
-            await sendProactive(owner.conversationReference, async ctx => {
+        if (owner?.conversationReference && b.OwnerAadId !== b.ReporterAadId && !delivered.has(`owner:${row.id}`)) {
+            const result = await sendProactive(owner.conversationReference, async ctx => {
                 await ctx.sendActivity(
                     `👋 Heads up — **${issueKey}** was flagged as blocked in today's standup:\n\n` +
                     `> ${b.BlockerText || '_(no detail provided)_'}\n\n` +
                     `Reply here with what you need to unblock, or the Scrum Master will schedule a sync.`,
                 );
             });
+            if (!result.ok) throw new Error(`Blocker owner notification failed: ${result.error ?? row.id}`);
+            delivered.add(`owner:${row.id}`);
         }
 
         // DM the SM the blocker card.
         if (!sm?.conversationReference) {
-            console.warn('[chase] No SM conversation ref — skipping blocker card DM.');
-            continue;
+            throw new Error('No SM conversation reference; blocker escalation remains pending.');
         }
+        if (delivered.has(`sm:${row.id}`)) continue;
         let issueSummary = issueKey;
         let issueStatus = 'Unknown';
         let issueUrl = '';
@@ -145,9 +147,11 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
             blockerText: b.BlockerText,
         });
 
-        await sendProactive(sm.conversationReference, async ctx => {
+        const result = await sendProactive(sm.conversationReference, async ctx => {
             await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
         });
+        if (!result.ok) throw new Error(`Blocker escalation delivery failed: ${result.error ?? row.id}`);
+        delivered.add(`sm:${row.id}`);
     }
     console.log(`[chase] ${session.standupId}: escalated ${openOnly.length} blocker(s) to SM.`);
 }

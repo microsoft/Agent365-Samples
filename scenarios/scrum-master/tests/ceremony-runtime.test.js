@@ -105,6 +105,62 @@ test('report never invents a Sprint 2 target when the next sprint is unknown', (
     assert.doesNotMatch(markdown, /Sprint 2\s*\|/);
 });
 
+test('report quotes completed work instead of inventing compliance, deployment or production outcomes', () => {
+    const { buildSprintReportMarkdown } = reportFixture();
+    const markdown = buildSprintReportMarkdown({
+        sprint,
+        stories: [
+            issue('T-1', 'Task', 'Done', 'Investigate WCAG gaps'),
+            issue('T-2', 'Task', 'Done', 'Create CI/CD pipeline'),
+            issue('T-3', 'Bug', 'Done', 'Fix local test fixture'),
+            issue('T-4', 'Task', 'To Do', 'Achieve accessibility compliance'),
+        ],
+        subtasks: [issue('T-5', 'Sub-task', 'Done', 'Investigate E2E testing')],
+        blockers: [], tz: 'UTC',
+    });
+    assert.match(markdown, /Investigate WCAG gaps \(\[T-1\]/);
+    assert.match(markdown, /Create CI\/CD pipeline \(\[T-2\]/);
+    assert.match(markdown, /Fix local test fixture \(\[T-3\]/);
+    assert.match(markdown, /Investigate E2E testing \(\[T-5\]/);
+    assert.doesNotMatch(markdown, /Accessibility compliance \(WCAG|Deployed across environments|production issue|safeguarding critical flows|Accessible and inclusive UI/);
+    const improvements = markdown.split('**Improvements**')[1].split('**Bug Fixes**')[0];
+    assert.doesNotMatch(improvements, /Achieve accessibility compliance/);
+});
+
+test('chase propagates lookup failures and retries failed sends without repeating successful notifications', async () => {
+    let lookupFails = true, sendFails = true, ownerPings = 0, escalations = 0;
+    const chase = load('src\\handlers\\chase.ts', {
+        '../services/sharepoint': { findByField: async () => {
+            if (lookupFails) throw new Error('SharePoint 503');
+            return [{ id: 'blocker-1', fields: {
+                Title: 'T-1', State: 'open', OwnerAadId: 'owner', ReporterAadId: 'reporter',
+            } }];
+        } },
+        '../services/team-roster': { listTeamMembers: async () => [
+            { AadObjectId: 'owner', conversationReference: { target: 'owner' } },
+            { AadObjectId: 'sm', Role: 'SM', conversationReference: { target: 'sm' } },
+        ] },
+        '../services/jira': { getJiraClient: () => ({ getIssue: async () => ({ summary: 'Task', status: 'To Do' }) }) },
+        '../services/proactive': { sendProactive: async ref => {
+            if (ref.target === 'owner') { ownerPings++; return { ok: true }; }
+            escalations++;
+            return { ok: !sendFails, error: 'Connector unavailable' };
+        } },
+        '../config': {}, '../agent': {},
+    });
+    const session = { standupId: 'retry-chase', sprintName: 'Sprint' };
+    await assert.rejects(chase.chaseAfterStandup(session), /SharePoint 503/);
+    assert.equal(ownerPings, 0);
+    assert.equal(escalations, 0);
+    lookupFails = false;
+    await assert.rejects(chase.chaseAfterStandup(session), /escalation delivery failed/);
+    assert.equal(ownerPings, 1);
+    sendFails = false;
+    await chase.chaseAfterStandup(session);
+    assert.equal(ownerPings, 1);
+    assert.equal(escalations, 2);
+});
+
 test('offline SharePoint CRUD and per-sprint claim are isolated and atomic', async () => {
     const sp = load('src\\services\\sharepoint.ts', {
         './graph': { getGraphClient: () => { throw new Error('Offline mode must not use Graph'); } },

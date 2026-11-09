@@ -219,35 +219,12 @@ export function buildSprintReportMarkdown(opts: {
 }
 
 function buildDemoHighlights(stories: JiraIssue[], tasksDone: JiraIssue[], bugs: JiraIssue[]): string[] {
-    const highlights: string[] = [];
-    for (const s of stories.slice(0, 5)) highlights.push(cleanUserStorySummary(s.summary));
-    if (!stories.length) {
-        for (const task of tasksDone.slice(0, 3)) highlights.push(cleanSummary(task.summary));
-    }
-    if (tasksDone.some(t => RX_ACCESSIBILITY.test(t.summary))) {
-        highlights.push('Accessible and inclusive UI with a11y checks in CI');
-    }
-    if (tasksDone.some(t => RX_E2E.test(t.summary))) {
-        highlights.push('Automated E2E test coverage safeguarding critical flows');
-    }
-    if (tasksDone.some(t => RX_DEPLOYMENT.test(t.summary))) {
-        highlights.push('Deployed across environments via automated CI/CD pipeline');
-    }
-    if (bugs.length > 0) {
-        highlights.push(`Fixed ${bugs.length} production issue(s), improving stability`);
-    }
-    return highlights;
+    return [...stories.slice(0, 5), ...tasksDone.slice(0, 3), ...bugs.slice(0, 3)]
+        .map(issue => `${cleanSummary(issue.summary)} ([${issue.key}](${issue.url}))`);
 }
 
 function extractImprovements(tasksDone: JiraIssue[]): string[] {
-    const buckets: string[] = [];
-    if (tasksDone.some(t => RX_ACCESSIBILITY.test(t.summary))) buckets.push('Accessibility compliance (WCAG 2.1 AA)');
-    if (tasksDone.some(t => /responsive|mobile|breakpoint|tablet/i.test(t.summary))) buckets.push('Responsive user experience across viewports');
-    if (tasksDone.some(t => /api|backend|endpoint|rest/i.test(t.summary))) buckets.push('Backend integrations and API validations');
-    if (tasksDone.some(t => /jwt|auth|argon|rate.?limit|security/i.test(t.summary))) buckets.push('Authentication and security hardening');
-    if (tasksDone.some(t => /prisma|schema|migration|database/i.test(t.summary))) buckets.push('Data model and migration foundations');
-    if (tasksDone.some(t => /performance|cache|debounce|optimization/i.test(t.summary))) buckets.push('Performance optimisations (debounce, caching)');
-    return buckets;
+    return tasksDone.map(task => `${cleanSummary(task.summary)} ([${task.key}](${task.url}))`);
 }
 
 interface ActionItem { item: string; owner: string; sprint: string; }

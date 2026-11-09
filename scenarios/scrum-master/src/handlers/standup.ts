@@ -13,8 +13,8 @@
  *
  *   handleStandupSubmit(context)
  *     └─ validates & parses card payload
- *     └─ persists StandupResponses row + optional Blockers rows
- *     └─ acks the user with a "submitted" card
+ *     └─ acks recording before deferring persistence and blocker writes
+ *     └─ sends the "submitted" card proactively after recording succeeds
  *     └─ if all responded, immediately summarizes
  *
  *   summarizeStandup(session)
@@ -160,6 +160,14 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     // don't re-fan-out. Callers get a friendly note.
     const existingMem = getSession(standupId);
     const completed = getCompletedSession(standupId);
+    if (existingMem?.state === 'summarized') {
+        await finishStandupChase(existingMem);
+        const note = existingMem.chaseState === 'complete'
+            ? 'Blocker follow-up completed without repeating the standup summary.'
+            : 'Summary already delivered; blocker follow-up is pending. Retry /standup to retry only blocker follow-up.';
+        if (opts.turnContext) await opts.turnContext.sendActivity(note);
+        return { standupId, sentTo: existingMem.sentTo.size, skipped: 0, note };
+    }
     if (existingMem?.state === 'open' &&
         (allExpectedResponded(existingMem) || Date.now() >= DateTime.fromISO(existingMem.cutoffUtc).toMillis())) {
         await summarizeStandup(existingMem);
@@ -404,17 +412,59 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         await acknowledgeStandupSubmission(context, session, accepted);
         return;
     }
-    const releaseSubmission = reserveSessionSubmission(session, actualAadId);
-    if (!releaseSubmission) {
-        await waitForResponderSubmission(session, actualAadId);
-        const recorded = session.responses.get(actualAadId);
-        if (recorded) await acknowledgeStandupSubmission(context, session, recorded);
-        else {
-            console.warn('[standup] The pending response was not recorded; a retry is required.');
-            await context.sendActivity('Your earlier submission was not recorded. Please retry the card.');
+    const reference = context.activity.getConversationReference();
+    const reply = async (logic: (ctx: TurnContext) => Promise<void>): Promise<void> => {
+        if (getJiraMode() === 'mock') {
+            await logic(context);
+            return;
         }
-        return;
+        const result = await deliverStandup(standupId, reference, logic);
+        if (!result.ok) throw new Error(`Standup submission notification failed: ${result.error}`);
+    };
+    const releaseSubmission = reserveSessionSubmission(session, actualAadId);
+    try {
+        await context.sendActivity('Recording your standup response…');
+    } catch (error) {
+        releaseSubmission?.();
+        throw error;
     }
+    const responderDisplayName = context.activity.from?.name?.trim() || response.userAadId;
+    setImmediate(() => {
+        const work = async () => {
+            if (releaseSubmission) {
+                await recordStandupSubmission(session, response, assignedKeys, responderDisplayName, reply, releaseSubmission);
+            } else {
+                await waitForResponderSubmission(session, actualAadId);
+                const recorded = session.responses.get(actualAadId);
+                if (!recorded) throw new Error('The pending response was not recorded. Please retry the card.');
+                await reply(ctx => acknowledgeStandupSubmission(ctx, session, recorded));
+            }
+        };
+        work().catch(async error => {
+            console.error('[standup] Background submission failed:', (error as Error).message);
+            const message = session.responses.has(actualAadId)
+                ? 'Your response was recorded, but follow-up failed. Please notify the Scrum Master to check blocker records and Jira comments.'
+                : 'Your response could not be confirmed as recorded. Please retry the card.';
+            try {
+                await reply(async ctx => { await ctx.sendActivity(message); });
+            } catch (notificationError) {
+                console.error('[standup] Submission failure notification failed:', (notificationError as Error).message);
+            }
+        });
+    });
+}
+
+async function recordStandupSubmission(
+    session: StandupSession,
+    response: StandupResponse,
+    assignedKeys: Set<string>,
+    responderDisplayName: string,
+    reply: (logic: (ctx: TurnContext) => Promise<void>) => Promise<void>,
+    releaseSubmission: () => void,
+): Promise<void> {
+    const { standupId } = session;
+    const actualAadId = response.userAadId;
+    const items = response.items;
     let acceptedResponse = response;
     let created = false;
     try {
@@ -447,7 +497,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         for (const item of created ? items : []) {
             if (!item.hasBlocker) continue;
             const blockerTitle = item.issueKey;
-            const existing = await findByTitle<BlockerFields>('blockers', blockerTitle).catch(() => null);
+            const existing = await findByTitle<BlockerFields>('blockers', blockerTitle);
             const fields = {
                 Title: blockerTitle,
                 StandupId: standupId,
@@ -469,9 +519,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     // Push the raw update + blocker text back to Jira as a comment on each issue.
     // Fire-and-forget: a Jira 4xx / network failure must not block the standup submit
     // (the SharePoint state is already durable at this point).
-    const responderDisplayName =
-        context.activity.from?.name?.trim() || response.userAadId;
-    const commentDateLocal = formatLocal(nowUtc, getScheduleConfig().timezone);
+    const commentDateLocal = formatLocal(new Date(response.submittedUtc), getScheduleConfig().timezone);
     if (created) setImmediate(async () => {
         const jira = getJiraClient();
         for (const item of items) {
@@ -492,17 +540,12 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         }
     });
 
-    // Ack the user.
-    await acknowledgeStandupSubmission(context, session, acceptedResponse);
+    await reply(ctx => acknowledgeStandupSubmission(ctx, session, acceptedResponse));
 
     // Fire-and-forget the downstream summarize/reconcile/chase chain.
     //
-    // Rationale: Teams gives ~15s for our card-submit invoke response. The chain
-    // does Jira REST + SharePoint writes + multiple proactive card sends — easily
-    // exceeds the timeout, which surfaces as a spurious "Something went wrong"
-    // toast in Teams. Returning immediately means the ack card completes the
-    // invoke inside the deadline; the summarizer runs in the background and can
-    // safely take as long as it needs.
+    // The invoke already returned its recording acknowledgement; finalization
+    // waits for reserved submissions, including their blocker writes.
     if (session && allExpectedResponded(session)) {
         console.log(`[standup] All expected responded for ${standupId} — kicking off summarize in background.`);
         setImmediate(() => {
@@ -670,14 +713,22 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
         console.error('[standup] Summary delivered, but completion persistence failed; check the StandupSessions row before restarting:', (e as Error).message);
     }
 
-    // Chase runs AFTER summary post (blocker DMs to SM / owner pings can wait).
+    await finishStandupChase(session);
+}
+
+async function finishStandupChase(session: StandupSession): Promise<void> {
+    if (session.chaseState === 'running' || session.chaseState === 'complete') return;
+    session.chaseState = 'running';
     try {
         const { chaseAfterStandup } = await import('./chase');
         await chaseAfterStandup(session);
     } catch (e) {
-        console.error('[standup] chase failed (non-fatal):', (e as Error).message);
+        session.chaseState = 'failed';
+        console.error('[standup] Summary delivered, but blocker follow-up failed. Session retained; retry /standup to retry only blocker follow-up:', (e as Error).message);
+        return;
     }
 
+    session.chaseState = 'complete';
     // Release heavy response data but retain today's duplicate-fan-out guard.
     completeSession(session);
     mockTurnContexts.delete(session.standupId);

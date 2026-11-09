@@ -37,9 +37,15 @@ function submitContext(session, user = 'dev', blocked = false) {
                 'update_SCRUM-1': 'Accepted update before cutoff',
                 'blocker_SCRUM-1': String(blocked), 'blockerText_SCRUM-1': 'Dependency',
             },
+            getConversationReference: () => ({ messages }),
         },
         sendActivity: async message => { messages.push(message); },
     };
+}
+
+async function settleSubmission(session) {
+    await sessions.waitForSessionSubmissions(session);
+    for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
 }
 
 async function withStandup(overrides, run) {
@@ -60,8 +66,8 @@ async function withStandup(overrides, run) {
         '../services/jira': { getJiraClient: () => ({ addComment: async () => {} }) },
         '../services/team-roster': { listTeamMembers: async () => [] },
         '../services/proactive': {
-            sendProactive: async (_reference, logic) => {
-                await logic({ sendActivity: async () => {} });
+            sendProactive: async (reference, logic) => {
+                await logic({ sendActivity: async message => { reference.messages?.push(message); } });
                 return { ok: true };
             },
         },
@@ -263,6 +269,46 @@ test('cutoff delivery failures retry three times at sixty-second intervals then 
     } finally { console.error = original; }
 });
 
+test('a roster lookup failure spanning cutoff leaves an automatic retry armed', async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-06T09:00:00Z') });
+    const id = ++sprintId;
+    const entered = deferred(), release = deferred();
+    let lookups = 0, summaries = 0;
+    await withStandup({
+        '../config': { getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: 1 }) },
+        '../services/jira': { getJiraClient: () => ({
+            getActiveSprint: async () => ({ id, name: 'Roster recovery' }),
+            searchSprintIssues: async () => [], getSprintSubtasks: async () => [],
+        }) },
+        '../services/team-roster': { listTeamMembers: async () => {
+            if (++lookups === 2) {
+                entered.resolve();
+                await release.promise;
+                throw new Error('Temporary roster failure');
+            }
+            if (lookups === 3) throw new Error('Cutoff roster failure');
+            return [];
+        } },
+        '../cards/standup-summary.card': { buildStandupSummaryCard: value => { summaries++; return value; } },
+    }, async standup => {
+        const result = await standup.triggerStandup({ source: 'http' });
+        const session = sessions.getSession(result.standupId);
+        const early = standup.summarizeStandup(session);
+        await entered.promise;
+        t.mock.timers.tick(3600_000);
+        for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve));
+        release.resolve();
+        await assert.rejects(early, /Temporary roster/);
+        assert.equal(session.state, 'open');
+        assert.ok(session.cutoffTimer);
+        t.mock.timers.tick(60_000);
+        for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+        assert.equal(summaries, 1);
+        assert.ok(sessions.getCompletedSession(session.standupId));
+        assert.equal(session.cutoffTimer, undefined);
+    });
+});
+
 test('completion lookup or write failure cannot skip chase, cleanup or the summary delivery guard', async () => {
     for (const failure of ['lookup', 'write']) {
         const session = makeSession([]);
@@ -367,7 +413,11 @@ test('submission guard releases on blocker failure and preserves the accepted re
         } },
         '../cards/standup-summary.card': { buildStandupSummaryCard: value => { summary = value; return value; } },
     }, async standup => {
-        await assert.rejects(standup.handleStandupSubmit(submitContext(session, 'dev', true)), /Blocker insert/);
+        const context = submitContext(session, 'dev', true);
+        await standup.handleStandupSubmit(context);
+        await settleSubmission(session);
+        assert.match(context.messages[0], /Recording/);
+        assert.match(context.messages[1], /recorded, but follow-up failed/);
         await standup.summarizeStandup(session);
         assert.equal(summary.respondedCount, 1);
         assert.equal(session.state, 'summarized');
@@ -398,6 +448,7 @@ test('concurrent and sequential response replays return the original ack without
         assert.equal(responses, 1);
         persist.resolve();
         await Promise.all([initial, concurrent]);
+        await settleSubmission(session);
         const changed = submitContext(session, 'dev', true);
         changed.activity.value['update_SCRUM-1'] = 'Should not overwrite the accepted response';
         await standup.handleStandupSubmit(changed);
@@ -406,7 +457,7 @@ test('concurrent and sequential response replays return the original ack without
         assert.equal(blockers, 1);
         assert.equal(comments, 1);
         assert.deepEqual(replay.messages, first.messages);
-        assert.deepEqual(changed.messages, first.messages);
+        assert.deepEqual(changed.messages, first.messages.slice(1));
         assert.equal(session.responses.size, 1);
     });
     sessions.removeSession(session.standupId);
@@ -424,13 +475,17 @@ test('a failed durable response insert remains retryable and never produces a su
         },
     }, async standup => {
         const failed = submitContext(session);
-        await assert.rejects(standup.handleStandupSubmit(failed), /Storage unavailable/);
+        await standup.handleStandupSubmit(failed);
+        await settleSubmission(session);
         assert.equal(session.responses.size, 0);
-        assert.deepEqual(failed.messages, []);
+        assert.match(failed.messages[0], /Recording/);
+        assert.match(failed.messages[1], /could not be confirmed.*retry/i);
+        assert.ok(failed.messages.every(message => typeof message === 'string'));
         const retry = submitContext(session);
         await standup.handleStandupSubmit(retry);
+        await settleSubmission(session);
         assert.equal(attempts, 2);
-        assert.equal(retry.messages.length, 1);
+        assert.equal(retry.messages.length, 2);
     });
     sessions.removeSession(session.standupId);
 });
@@ -451,12 +506,80 @@ test('an existing durable response is acknowledged without repeating blockers or
     }, async standup => {
         const replay = submitContext(session);
         await standup.handleStandupSubmit(replay);
-        await new Promise(resolve => setImmediate(resolve));
+        await settleSubmission(session);
         assert.equal(mutations, 0);
         assert.deepEqual(session.responses.get('dev').items, storedItems);
-        assert.deepEqual(replay.messages[0].attachments[0].items, storedItems);
+        assert.deepEqual(replay.messages[1].attachments[0].items, storedItems);
     });
     sessions.removeSession(session.standupId);
+});
+
+test('slow response claims and blocker writes never hold the submit invoke open', async () => {
+    const session = makeSession(['dev', 'pending']);
+    const claiming = deferred(), claim = deferred(), blocking = deferred(), blocker = deferred();
+    let comments = 0;
+    await withStandup({
+        '../services/sharepoint': {
+            claimStandupResponse: async fields => {
+                claiming.resolve();
+                await claim.promise;
+                return { created: true, item: { id: 'response', fields } };
+            },
+            createItem: async () => {
+                blocking.resolve();
+                await blocker.promise;
+                return { id: 'blocker' };
+            },
+        },
+        '../services/jira': { getJiraClient: () => ({ addComment: async () => { comments++; } }) },
+    }, async standup => {
+        const context = submitContext(session, 'dev', true);
+        await standup.handleStandupSubmit(context);
+        assert.deepEqual(context.messages, ['Recording your standup response…']);
+        assert.equal(session.responses.size, 0);
+        await claiming.promise;
+        claim.resolve();
+        await blocking.promise;
+        assert.equal(context.messages.length, 1);
+        assert.equal(comments, 0);
+        blocker.resolve();
+        await settleSubmission(session);
+        assert.equal(context.messages.length, 2);
+        assert.ok(context.messages[1].attachments);
+        assert.equal(comments, 1);
+    });
+    sessions.removeSession(session.standupId);
+});
+
+test('failed blocker follow-up retries independently without repeating summary, reconciliation or fan-out', async () => {
+    const session = makeSession([]);
+    let summaries = 0, reconciliations = 0, chases = 0;
+    await withStandup({
+        '../services/jira': { getJiraClient: () => ({ getActiveSprint: async () => ({
+            id: session.sprintId, name: session.sprintName,
+        }) }) },
+        '../cards/standup-summary.card': { buildStandupSummaryCard: value => { summaries++; return value; } },
+        './reconcile': { reconcileAfterStandup: async () => {
+            reconciliations++;
+            return { autoApplied: [], needsConfirm: [], errors: [] };
+        } },
+        './chase': { chaseAfterStandup: async () => {
+            if (++chases === 1) throw new Error('SharePoint 503');
+        } },
+    }, async standup => {
+        await standup.summarizeStandup(session);
+        assert.equal(session.state, 'summarized');
+        assert.equal(session.chaseState, 'failed');
+        assert.equal(sessions.getSession(session.standupId), session);
+        assert.equal(sessions.getCompletedSession(session.standupId), undefined);
+        const retry = await standup.triggerStandup({ source: 'http' });
+        assert.match(retry.note, /follow-up completed without repeating/);
+        assert.equal(chases, 2);
+        assert.equal(summaries, 1);
+        assert.equal(reconciliations, 1);
+        assert.equal(sessions.getSession(session.standupId), undefined);
+        assert.ok(sessions.getCompletedSession(session.standupId));
+    });
 });
 
 test('finalization guard releases when summary construction fails before delivery', async () => {
