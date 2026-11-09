@@ -131,7 +131,7 @@ export function buildSprintReportMarkdown(opts: {
     lines.push('');
 
     // === Deployments ===
-    lines.push('✅ **Deployments**');
+    lines.push('✅ **Completed Deployment-related Tasks**');
     lines.push('');
     if (deploymentTasks.length === 0) {
         lines.push('- _No deployment tasks completed._');
@@ -206,10 +206,10 @@ export function buildSprintReportMarkdown(opts: {
     lines.push(`| User Stories Delivered | **${doneStories.length}** of ${stories.filter(i => i.issueType === 'Story').length} committed |`);
     lines.push(`| Tasks Completed | **${allTasksDone.length}** of ${allTasksTotal} |`);
     lines.push(`| Bugs Resolved | **${doneBugs.length}** |`);
-    lines.push(`| Deployments | **${deploymentTasks.length}** |`);
-    lines.push(`| Production / UAT Releases | **${prodDeployments.length}** |`);
-    lines.push(`| Accessibility Reviews | **${accessibilityTasks.length}** |`);
-    lines.push(`| E2E Test Executions | **${e2eTasks.length}** |`);
+    lines.push(`| Deployment-related Tasks Completed | **${deploymentTasks.length}** |`);
+    lines.push(`| Production / UAT-related Tasks Completed | **${prodDeployments.length}** |`);
+    lines.push(`| Accessibility-related Tasks Completed | **${accessibilityTasks.length}** |`);
+    lines.push(`| E2E-related Tasks Completed | **${e2eTasks.length}** |`);
     if (blockers.length > 0) {
         lines.push(`| Blockers Encountered | **${blockers.length}** |`);
     }

@@ -114,6 +114,7 @@ test('report quotes completed work instead of inventing compliance, deployment o
             issue('T-2', 'Task', 'Done', 'Create CI/CD pipeline'),
             issue('T-3', 'Bug', 'Done', 'Fix local test fixture'),
             issue('T-4', 'Task', 'To Do', 'Achieve accessibility compliance'),
+            issue('T-6', 'Task', 'Done', 'Create UAT deployment checklist'),
         ],
         subtasks: [issue('T-5', 'Sub-task', 'Done', 'Investigate E2E testing')],
         blockers: [], tz: 'UTC',
@@ -123,6 +124,8 @@ test('report quotes completed work instead of inventing compliance, deployment o
     assert.match(markdown, /Fix local test fixture \(\[T-3\]/);
     assert.match(markdown, /Investigate E2E testing \(\[T-5\]/);
     assert.doesNotMatch(markdown, /Accessibility compliance \(WCAG|Deployed across environments|production issue|safeguarding critical flows|Accessible and inclusive UI/);
+    assert.doesNotMatch(markdown, /\| (Deployments|Production \/ UAT Releases|Accessibility Reviews|E2E Test Executions) \|/);
+    assert.match(markdown, /\| Production \/ UAT-related Tasks Completed \| \*\*1\*\*/);
     const improvements = markdown.split('**Improvements**')[1].split('**Bug Fixes**')[0];
     assert.doesNotMatch(improvements, /Achieve accessibility compliance/);
 });
