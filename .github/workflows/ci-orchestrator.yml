@@ -64,6 +64,11 @@ jobs:
     name: Observability Offline Tests
     uses: ./.github/workflows/ci-observability.yml
 
+  # Scenario Jobs
+  scenario-chief-of-staff:
+    name: Chief of Staff Scenario
+    uses: ./.github/workflows/ci-scenario-chief-of-staff.yml
+
   # This aggregate check is required in branch protection.
   ci-status:
     name: CI Status
@@ -81,12 +86,13 @@ jobs:
       - python-openai
       - python-claude
       - observability
+      - scenario-chief-of-staff
     if: always()
     steps:
       - name: Check CI Status
         run: |
           echo "Checking CI job results..."
-          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.nodejs-scrum-master.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }} ${{ needs.observability.result }}"
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.nodejs-scrum-master.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }} ${{ needs.observability.result }} ${{ needs.scenario-chief-of-staff.result }}"
           echo "Job results: $results"
           if echo "$results" | grep -qE "failure|cancelled"; then
             echo "❌ One or more CI jobs failed or were cancelled"

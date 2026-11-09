@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.bak-*
+.env.local
+# Chat/session transcripts — capture raw env values including secrets.
+chat.json
+*.log
+.DS_Store
+# In-process state (pending captures, follow-ups, conversation refs, planner
+# baseline). Regenerated at runtime — never commit.
+.cos-state/
