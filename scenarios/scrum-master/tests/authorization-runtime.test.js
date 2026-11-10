@@ -185,6 +185,48 @@ test('channel configuration requires the configured SM and the deployment allowe
     }
 });
 
+test('empty availability and lookup failures notify the SM without offering bookable slots', async () => {
+    await withAuthorization(async (authorization, members) => {
+        for (const fails of [false, true]) {
+            const messages = [];
+            await withModule('../src/handlers/chase.ts', {
+                '../services/authorization': authorization,
+                '../services/jira': {},
+                '../services/team-roster': { getMemberByAadId: async () => members[1] },
+                '../services/sharepoint': { findByField: async () => [{
+                    id: 'blocker-1', fields: { Title: 'TEAM-1', State: 'open', OwnerAadId: 'dev', ReporterAadId: 'dev' },
+                }] },
+                '../services/proactive': { sendProactive: async (_ref, callback) => {
+                    try {
+                        await callback({ sendActivity: async message => { messages.push(message); } });
+                        return { ok: true };
+                    } catch (error) {
+                        return { ok: false, error: error.message };
+                    }
+                } },
+                '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+                '../services/helperMatcher': { findHelperForBlocker: async () => null },
+                '../services/calendar': {
+                    findUnblockSlots: async () => {
+                        if (fails) throw new Error('Calendar unavailable');
+                        return [];
+                    },
+                    createUnblockMeeting: async () => { assert.fail('No meeting may be booked'); },
+                },
+                '../agent': { agentApplication: { authorization: {} } },
+            }, async chase => {
+                await chase.handleBlockerSubmit(context('sm', {
+                    action: 'blocker.proposeSlots', blockerId: 'blocker-1', issueKey: 'TEAM-1',
+                }));
+                await drain();
+                assert.equal(messages.length, 1);
+                assert.match(messages[0], fails ? /availability lookup failed/ : /No valid meeting slots/);
+                assert.ok(messages.every(message => typeof message === 'string'));
+            });
+        }
+    });
+});
+
 test('blocker and meeting actions enforce SM role, proposal ownership, offered slots, expiry and single consumption', async t => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T09:00:00Z') });
     await withAuthorization(async (authorization, members) => {

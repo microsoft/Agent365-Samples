@@ -51,6 +51,91 @@ function agentStubs(overrides = {}) {
     };
 }
 
+test('standup entry acknowledges without waiting for token warmup or conversation-reference Graph work', async () => {
+    const sessions = require('../src/services/session-store');
+    const standupFilename = require.resolve('../src/handlers/standup.ts');
+    const originalStandup = require.cache[standupFilename];
+    let responseClaims = 0;
+    await withModule('../src/handlers/standup.ts', {
+        '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+        '../services/sharepoint': {
+            claimStandupResponse: async fields => {
+                responseClaims++;
+                return { created: true, item: { id: 'response', fields } };
+            },
+        },
+        '../services/jira': { getJiraClient: () => ({ addComment: async () => {} }) },
+        '../services/team-roster': {},
+        '../services/proactive': { sendProactive: async (_ref, logic) => {
+            await logic({ sendActivity: async () => {} });
+            return { ok: true };
+        } },
+        '../cards/standup-request.card': { buildStandupSubmittedCard: value => value },
+    }, async standup => {
+        for (const blocked of ['tokens', 'reference']) {
+            const session = sessions.upsertSession({
+                standupId: `entry-${blocked}`, sprintName: 'Entry test', state: 'open',
+                expectedResponders: new Set(['dev', 'pending']),
+                itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1' }]]]),
+                responses: new Map(),
+            });
+            let release, entered, referenceWrites = 0, tokenCalls = 0, baggages = 0;
+            const pending = new Promise(resolve => { release = resolve; });
+            const started = new Promise(resolve => { entered = resolve; });
+            const messages = [];
+            await withModule('../src/agent.ts', agentStubs({
+                './client': {},
+                './handlers/standup': standup,
+                './observability': {
+                    ensureObservabilityToken: async () => {
+                        tokenCalls++;
+                        if (blocked === 'tokens') { entered(); await pending; }
+                    },
+                    runWithTurnBaggage: async (_context, work) => { baggages++; return work(); },
+                },
+                './services/team-roster': { upsertConversationReference: async () => {
+                    referenceWrites++;
+                    if (blocked === 'reference') { entered(); await pending; }
+                } },
+            }), async ({ MyAgent }) => {
+                const agent = new MyAgent();
+                agent.preloadObservabilityToken = async () => {};
+                const context = {
+                    activity: {
+                        from: { aadObjectId: 'dev' },
+                        value: { action: 'standup.submit', standupId: session.standupId,
+                            assigneeAadId: 'dev', 'update_TEAM-1': 'Working' },
+                        getConversationReference: () => ({ conversation: { id: 'dm' } }),
+                    },
+                    sendActivity: async message => { messages.push(message); },
+                };
+                const invoke = agent.handleAgentMessageActivity(context, {});
+                const firstTurn = await Promise.race([
+                    invoke.then(() => 'returned'),
+                    new Promise(resolve => setImmediate(() => resolve('blocked'))),
+                ]);
+                try {
+                    assert.equal(firstTurn, 'returned', `invoke waited for ${blocked}`);
+                    assert.deepEqual(messages, ['Recording your standup response…']);
+                    assert.equal(baggages, 1);
+                    await started;
+                    await sessions.waitForSessionSubmissions(session);
+                    assert.equal(session.responses.size, 1);
+                } finally {
+                    release();
+                    await invoke;
+                    for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+                    sessions.removeSession(session.standupId);
+                }
+                assert.equal(tokenCalls, 1);
+                assert.equal(referenceWrites, 1);
+            });
+        }
+        assert.equal(responseClaims, 2);
+    });
+    if (originalStandup) require.cache[standupFilename] = originalStandup;
+});
+
 test('email draft client has no tools, MCP servers or handoffs and never registers them', async () => {
     const builder = {
         withService() { return this; },

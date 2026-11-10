@@ -30,15 +30,18 @@ const offlineClient = new OpenAI({
 });
 sdk.setDefaultOpenAIClient(offlineClient);
 
-function loadCalendar() {
+function loadCalendar(overrides = {}) {
     const filename = path.resolve(__dirname, '../src/services/calendar.ts');
     const original = Module._load;
     delete require.cache[filename];
     Module._load = function (request, parent, isMain) {
         if (parent?.filename === filename) {
+            if (request === '@openai/agents' && overrides.run) return { ...sdk, run: overrides.run };
             if (request === '@microsoft/agents-a365-tooling-extensions-openai') {
                 return { McpToolRegistrationService: class {
-                    async addToolServersToAgent() {}
+                    async addToolServersToAgent() {
+                        if (overrides.registrationError) throw overrides.registrationError;
+                    }
                 } };
             }
             if (request === '../openai-config') return { getModelName: () => 'gpt-4o' };
@@ -52,6 +55,27 @@ function loadCalendar() {
 test('direct Zod resolves to a patched release', () => {
     const [major, minor, patch] = require('zod/package.json').version.split('.').map(Number);
     assert.ok(major > 4 || (major === 4 && (minor > 6 || (minor === 6 && patch >= 6))));
+});
+
+test('calendar preserves empty availability instead of fabricating bookable slots', async () => {
+    answer = { slots: [] };
+    const { findUnblockSlots } = loadCalendar();
+    assert.deepEqual(await findUnblockSlots({}, [{ email: 'busy@example.test' }], 30, 'UTC'), []);
+});
+
+test('calendar lookup and malformed output failures propagate without synthetic fallback', async () => {
+    const failure = new Error('Calendar unavailable');
+    for (const overrides of [
+        { run: async () => { throw failure; } },
+        { registrationError: failure },
+    ]) {
+        const { findUnblockSlots } = loadCalendar(overrides);
+        await assert.rejects(findUnblockSlots({}, [], 30, 'UTC'), error => error === failure);
+    }
+    for (const finalOutput of [undefined, {}, { slots: 'invalid' }, { slots: [{ startIso: 'missing fields' }] }]) {
+        const { findUnblockSlots } = loadCalendar({ run: async () => ({ finalOutput }) });
+        await assert.rejects(findUnblockSlots({}, [], 30, 'UTC'), /invalid|expected/i);
+    }
 });
 
 test('real Agents SDK constructs and executes the Jira Zod 4 tools offline', async () => {

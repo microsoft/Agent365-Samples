@@ -421,13 +421,19 @@ async function proposeSlotsAsync(
 
     const durationMinutes = 30;
     // Do the calendar lookup + card send inside one proactive turn for MCP auth.
-    await sendProactive(ref, async ctx => {
+    const result = await sendProactive(ref, async ctx => {
         const cc: CalendarContext = {
             turnContext: ctx,
             authorization: agentApplication.authorization,
             authHandlerName: AUTH_HANDLER,
         };
-        const slots = await findUnblockSlots(cc, attendees, durationMinutes, getScheduleConfig().timezone);
+        let slots;
+        try {
+            slots = await findUnblockSlots(cc, attendees, durationMinutes, getScheduleConfig().timezone);
+        } catch (error) {
+            await ctx.sendActivity('The calendar availability lookup failed. No meeting was booked. Please retry proposing slots.');
+            throw error;
+        }
         const allowedSlots = slots.filter(slot => Number.isFinite(Date.parse(slot.startIso)) &&
             Date.parse(slot.endIso) > Date.parse(slot.startIso));
         if (!allowedSlots.length) {
@@ -463,6 +469,7 @@ async function proposeSlotsAsync(
             throw error;
         }
     });
+    if (!result.ok) throw new Error(`Meeting slot proposal failed: ${result.error ?? 'delivery failed'}`);
 }
 
 async function updateBlockerState(blockerId: string, state: string, meetingEventId?: string): Promise<void> {

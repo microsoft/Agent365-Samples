@@ -17,7 +17,7 @@ The agent runs Express on `:3978` behind a dev tunnel (dev) or App Service / Con
 
 ## Prerequisites
 
-- Node.js 18.x or higher
+- Node.js 20 or higher; **Node.js 22 recommended** to match the scenario CI.
 - [Azure Functions Core Tools v4](https://aka.ms/azfunc-install) — `func --version` should print `4.x.x`.
 - Azure CLI — `az --version`.
 - An Azure subscription + resource group.
@@ -71,7 +71,7 @@ az storage account create --name $stg --location $loc --resource-group $rg --sku
 az functionapp create `
   --resource-group $rg `
   --consumption-plan-location $loc `
-  --runtime node --runtime-version 20 `
+  --runtime node --runtime-version 22 `
   --functions-version 4 `
   --name $app `
   --storage-account $stg

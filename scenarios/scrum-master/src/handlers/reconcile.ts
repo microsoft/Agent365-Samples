@@ -85,7 +85,7 @@ export function classifyUpdateText(text: string, hasBlocker: boolean): TargetSta
     if (hasBlocker) return 'unchanged';
     const t = (text ?? '').trim();
     if (!t) return 'unchanged';
-    if (/\b(not|never|no|cannot|can't|can’t|couldn't|couldn’t|isn't|isn’t|aren't|aren’t|wasn't|wasn’t|weren't|weren’t|haven't|haven’t|hasn't|hasn’t|didn't|didn’t|don't|don’t|doesn't|doesn’t|won't|won’t|will|tomorrow)\b|\b(going to|plan to|planning to|hope to|expect to)\b/i.test(t)) {
+    if (/\b(not|nothing|none|nobody|neither|nor|never|no|cannot|can't|can’t|couldn't|couldn’t|isn't|isn’t|aren't|aren’t|wasn't|wasn’t|weren't|weren’t|haven't|haven’t|hasn't|hasn’t|didn't|didn’t|don't|don’t|doesn't|doesn’t|won't|won’t|will|tomorrow)\b|\b(going to|plan to|planning to|hope to|expect to)\b/i.test(t)) {
         return 'unchanged';
     }
     const matches = RULES.filter(rule => rule.patterns.some(p => p.test(t)));

@@ -114,7 +114,7 @@ or handoffs to summarize/draft a response. The generic tool-enabled client never
 receives the email body. Other notification types receive a generic
 notification-type response. Installation updates send welcome/farewell text.
 
-## 6. Calendar tools, fallback and connection lifecycle
+## 6. Calendar tools, availability and connection lifecycle
 
 [`services/calendar.ts`](src/services/calendar.ts) creates a separate
 `Scrum Master — Calendar` agent with Zod-structured output and the same MCP
@@ -123,8 +123,9 @@ event creation through the configured Calendar server.
 
 - In mock mode the meeting-booking handler returns an offline notice rather
   than attempting Graph-backed booking; it does not create a real event.
-- If slot lookup or structured output is unusable, it returns synthetic
-  candidate slots. These are **not verified free/busy availability**.
+- Empty availability stays empty and the handler reports that no slots were
+  found. Lookup, MCP registration and malformed structured-output failures
+  propagate and produce an explicit retry notice, never synthetic bookable slots.
 - Booking failures are errors; suggested slots alone do not prove an event
   was created. Successful booking requires the returned event details.
 - The booking handler conditionally claims the blocker `open → booking`

@@ -37,7 +37,9 @@ Every design decision below reflects one or more of these six principles:
    submits validate the local assignment, send a non-success recording ack,
    and defer the response claim, blocker writes and Jira comments with
    `setImmediate`. The submitted card arrives proactively only after recording
-   succeeds. Other handlers defer selected long operations such as booking;
+   succeeds. The agent entry path also defers token warming and roster-reference
+   refresh for standup submits; neither blocks that acknowledgement. SDK
+   authentication still runs before the handler. Other handlers defer selected long operations such as booking;
    authorization and some lookups still run inline. There is no universal
    sub-200 ms acknowledgement guarantee.
 3. **Graceful degradation, never a crash.** Every scheduled path is wrapped
@@ -497,6 +499,9 @@ also model-driven and is never used for inbound email.
   response lists require the paused-worker migration described in the README.
 - **Standup submits defer Graph work.** After local validation the invoke sends
   `Recording your standup response…` and returns without awaiting SharePoint.
+  The agent entry path schedules observability token warming and roster-reference
+  refresh separately in the background for these submits, preserving baggage
+  wrapping without awaiting those network calls before dispatch.
   The reserved background submission records the response and blockers before
   sending a submitted card proactively against the captured conversation
   reference (the local turn in mock mode). Storage failures send a retry

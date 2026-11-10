@@ -60,6 +60,25 @@ export class MyAgent extends AgentApplication<TurnState> {
  * Handles incoming user messages and sends responses.
  */
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
+    const value = turnContext.activity.value as { action?: string } | undefined;
+    if (value?.action?.startsWith('standup.')) {
+      setImmediate(() => {
+        this.prepareTurn(turnContext, true).catch(error =>
+          console.warn('[SMA] Background standup turn preparation failed:', (error as Error).message));
+      });
+    } else {
+      await this.prepareTurn(turnContext);
+    }
+
+    // Every dispatch branch must run inside baggage so spans carry identity.
+    await runWithTurnBaggage(
+      turnContext,
+      () => this.dispatchTurn(turnContext, state),
+      'Initial onboarding session'
+    );
+  }
+
+  private async prepareTurn(turnContext: TurnContext, refreshReference = false): Promise<void> {
     // Warm the observability token cache for both blueprint + agentic-instance
     // identities before any handler runs so spans this turn have a chance of
     // binding to MAC Activity.
@@ -75,14 +94,15 @@ export class MyAgent extends AgentApplication<TurnState> {
       console.warn('[SMA] preloadObservabilityToken failed (non-fatal).');
     }
 
-    // Every dispatch branch below — cards, slash commands, Answer, and the
-    // generic LLM path — must run inside this baggage scope, otherwise its
-    // spans carry no identity and the exporter drops them.
-    await runWithTurnBaggage(
-      turnContext,
-      () => this.dispatchTurn(turnContext, state),
-      'Initial onboarding session'
-    );
+    if (refreshReference) await this.refreshConversationReference(turnContext);
+  }
+
+  private async refreshConversationReference(turnContext: TurnContext): Promise<void> {
+    try {
+      await upsertConversationReference(turnContext);
+    } catch (e) {
+      console.warn('[SMA] upsertConversationReference failed (non-fatal):', (e as Error).message);
+    }
   }
 
   private async dispatchTurn(turnContext: TurnContext, state: TurnState): Promise<void> {
@@ -92,20 +112,15 @@ export class MyAgent extends AgentApplication<TurnState> {
     console.log(`Turn received from user — DisplayName: '${from?.name ?? "(unknown)"}', UserId: '${from?.id ?? "(unknown)"}', AadObjectId: '${from?.aadObjectId ?? "(none)"}'`);
     const displayName = from?.name ?? 'unknown';
 
-    // SMA: capture / refresh the conversation reference so proactive DMs work later.
-    // Best-effort — SharePoint may not be provisioned yet during Phase 0 setup.
-    try {
-      await upsertConversationReference(turnContext);
-    } catch (e) {
-      console.warn('[SMA] upsertConversationReference failed (non-fatal):', (e as Error).message);
-    }
-
     // SMA: Adaptive Card submits arrive as Message activities with `activity.value` populated.
     const value = turnContext.activity.value as { action?: string } | undefined;
     if (value?.action?.startsWith('standup.')) {
       await handleStandupSubmit(turnContext);
       return;
     }
+    // Standup submits capture their own reply reference and refresh the roster in
+    // background; other turns retain the existing best-effort roster refresh.
+    await this.refreshConversationReference(turnContext);
     if (value?.action?.startsWith('reconcile.')) {
       await handleReconcileSubmit(turnContext);
       return;

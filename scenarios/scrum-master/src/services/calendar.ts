@@ -15,8 +15,7 @@
  *   - Consistent with how every other tool in this sample is invoked.
  *
  * We use `outputType` with a Zod schema so the model returns structured JSON,
- * not free text. Fallback synthetic slots are still generated if the tool call
- * or LLM response is unusable.
+ * not free text. Empty availability stays empty; lookup failures propagate.
  */
 
 import { z } from 'zod';
@@ -91,7 +90,8 @@ async function buildCalendarAgent(
             process.env.BEARER_TOKEN || '',
         );
     } catch (err) {
-        console.warn('[calendar] MCP registration warning:', (err as Error).message);
+        console.error('[calendar] MCP registration failed:', (err as Error).message);
+        throw err;
     }
     return agent as unknown as Agent<any, any>;
 }
@@ -155,7 +155,7 @@ export async function findUnblockSlots(
         `2. Return **up to 3** distinct slot suggestions inside the requested window.\n` +
         `3. Each slot must be exactly ${durationMinutes} minutes long.\n` +
         `4. Prefer business hours in the ${timezone} timezone.\n` +
-        `5. Do not invent times without checking availability when possible.\n`;
+        `5. Only return times confirmed available by the calendar tools. If none are available, return an empty slots array. Never invent times.\n`;
 
     const prompt =
         `Find up to 3 candidate ${durationMinutes}-minute meeting slots.\n` +
@@ -166,30 +166,12 @@ export async function findUnblockSlots(
     try {
         const agent = await buildCalendarAgent(cc, instructions, SlotArraySchema);
         const result = await withServers(agent, () => run(agent, prompt));
-        const out = (result as any).finalOutput as z.infer<typeof SlotArraySchema> | undefined;
-        const slots = out?.slots?.filter(s => s.startIso && s.endIso) ?? [];
-        if (slots.length > 0) return slots;
+        const out = SlotArraySchema.parse(result.finalOutput);
+        return out.slots;
     } catch (err) {
-        console.warn('[calendar] findUnblockSlots MCP path failed, using fallback:', (err as Error).message);
+        console.error('[calendar] Availability lookup failed:', (err as Error).message);
+        throw err;
     }
-    return synthesizeFallbackSlots(durationMinutes, timezone);
-}
-
-function synthesizeFallbackSlots(durationMinutes: number, timezone: string): MeetingSlot[] {
-    const nowUtc = DateTime.now().toUTC();
-    const roundedStart = nowUtc.set({ minute: nowUtc.minute < 30 ? 30 : 0, second: 0, millisecond: 0 })
-        .plus({ hours: nowUtc.minute < 30 ? 0 : 1 });
-    const slots: MeetingSlot[] = [];
-    for (let i = 1; i <= 3; i++) {
-        const start = roundedStart.plus({ hours: i });
-        const end = start.plus({ minutes: durationMinutes });
-        slots.push({
-            startIso: start.toISO() ?? '',
-            endIso: end.toISO() ?? '',
-            label: start.setZone(timezone).toFormat('ccc d LLL, h:mm a ZZZZ'),
-        });
-    }
-    return slots;
 }
 
 // --- createUnblockMeeting -------------------------------------------------
@@ -274,4 +256,3 @@ function dedupeAttendees(attendees: Attendee[]): Attendee[] {
     }
     return out;
 }
-
