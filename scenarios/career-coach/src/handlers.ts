@@ -38,6 +38,9 @@ import { getAgenticGraphClient, getMyManager, getMyProfile, sendMail } from './g
 import { getQuiz, getQuizGenerationId, getOrCreateQuiz, bumpAttempts, clearQuiz, clearAllQuizzes, markGraded, unmarkGraded, wasGraded, queueQuizzes, dequeueQuiz, peekQueuedQuizzes, getSubmission, saveSubmission, clearSubmission } from './quiz-cache';
 import { createHash } from 'crypto';
 import { withUserLock } from './user-lock';
+import {
+    getCompletionEmailReceipt, saveCompletionEmailReceipt, clearCompletionEmailReceipt,
+} from './completion-email-receipts';
 
 // ============================================================================
 // STAGE 1 helper — build a skillPath card for a role name (LLM path calls this too).
@@ -799,25 +802,21 @@ async function handleQuizSubmitInner(
             attempts,
         };
 
-        // WRITE #1 — QuizResponses row, once per submission: after it succeeds, a retry of the plan
-        // update below never appends it again.
+        // WRITE #1 — QuizResponses row, once per submission. If it fails, propagate the error before
+        // updating UserState so the recorded submission remains available for a safe retry.
         if (!submission.auditWritten) {
-            try {
-                await appendQuizResponse(graph, {
-                    userAADId: input.userAADId,
-                    courseId: input.courseId,
-                    courseTitle,
-                    skillId: input.skillId || (String(course.SkillIds ?? '').split(';')[0] ?? ''),
-                    attemptDate: quizResult.attemptDate,
-                    score: summary.score,
-                    passed: summary.passed,
-                    attempts,
-                    feedback: graded,
-                }, userRecord.siteId);
-                submission.auditWritten = true;
-            } catch (err) {
-                console.warn('[QuizSubmit] appendQuizResponse failed (non-fatal):', (err as any)?.message ?? err);
-            }
+            await appendQuizResponse(graph, {
+                userAADId: input.userAADId,
+                courseId: input.courseId,
+                courseTitle,
+                skillId: input.skillId || (String(course.SkillIds ?? '').split(';')[0] ?? ''),
+                attemptDate: quizResult.attemptDate,
+                score: summary.score,
+                passed: summary.passed,
+                attempts,
+                feedback: graded,
+            }, userRecord.siteId);
+            submission.auditWritten = true;
         }
 
         // WRITE #2 — UserState update. If this throws, the submission record stays so the retry resumes here.
@@ -985,86 +984,107 @@ async function sendCompletion(
         return;
     }
     const state = fresh.state;
-
-    // Aggregate stats deterministically.
-    const completedCourses = (state.LearningProgress ?? [])
-        .filter((lp) => lp.status === 'Complete')
-        .map((lp) => ({ title: lp.courseTitle, url: lp.url }));
-    const portal = await readLearningPortalStatus(graph, userAADId);
-    const portalMinutes = portalMinutesForCourses(portal, (state.LearningProgress ?? []).map((lp) => lp.courseId));
-    const lpMinutes = (state.LearningProgress ?? [])
-        .filter((lp) => lp.status === 'Complete')
-        .reduce((sum, lp) => sum + Number(lp.timeSpentMinutes ?? 0), 0);
-    const totalMinutes = portalMinutes > 0 ? portalMinutes : lpMinutes;
-
-    // Compose the email (LLM sub-call for prose).
+    const receipt = getCompletionEmailReceipt(userAADId, itemId);
+    const completedCourses = (state.LearningProgress ?? []).filter((lp) => lp.status === 'Complete');
+    let totalMinutes = 0;
+    let coursesCompleted = completedCourses.length;
     let subject = `🎉 ${state.Title} completed the ${state.TargetRole} career plan`;
-    let htmlBody = `<p>Congratulations to ${state.Title} on completing the ${state.TargetRole} career plan.</p>`;
-
-    // Resolve the manager from the directory right before sending. The address cached when the plan was
-    // saved is never used as a recipient: the manager may have changed (or been removed) since then, and
-    // career progress must not go to a former manager. If the lookup fails, only the employee is mailed.
+    let userEmail: string | undefined;
     let managerName: string | undefined;
     let managerEmail: string | undefined;
     let managerResolved = false;
-    try {
-        const mgr = await getMyManager(graph, userAADId);
-        managerResolved = true;
-        if (mgr) {
-            managerName = mgr.displayName;
-            managerEmail = mgr.mail;
-        }
-    } catch (err) {
-        console.warn('[Completion100] Manager lookup failed — the manager will not be copied:', (err as any)?.message ?? err);
-    }
-
-    try {
-        const email = await composeCompletionEmail({
-            userName: state.Title,
-            managerName,
-            targetRole: state.TargetRole,
-            completedCourses,
-            totalMinutes,
-            planStartDate: state.PlanCreatedDate,
-        });
-        subject = email.subject || subject;
-        htmlBody = email.htmlBody || htmlBody;
-    } catch (err) {
-        console.warn('[Completion100] composeCompletionEmail failed; using fallback body:', (err as any)?.message ?? err);
-    }
-
-    // The employee's own address is required: the wrap-up is addressed to them. If it can't be resolved
-    // (after one retry for a transient lookup failure) nothing is sent and the goal stays Active, so
-    // "check my progress" tries again — the manager is never made the sole recipient.
-    let userEmail: string | undefined;
-    for (let attempt = 1; attempt <= 2 && !userEmail; attempt++) {
-        try {
-            const profile = await getMyProfile(graph, userAADId);
-            userEmail = profile.mail || profile.userPrincipalName || undefined;
-        } catch (err) {
-            if (attempt === 2) console.warn('[Completion100] Could not resolve the employee address:', (err as any)?.message ?? err);
-        }
-    }
-
-    // Send the email deterministically. Convention:
-    //   To: the user (they see the celebration too + a copy lands in their Sent Items).
-    //   Cc: the manager (informed but not addressed).
     let sent = false;
     let note: string | undefined;
-    const to: string[] = [];
     const cc: string[] = [];
-    if (userEmail) to.push(userEmail);
-    if (userEmail && managerEmail && managerEmail.toLowerCase() !== userEmail.toLowerCase()) cc.push(managerEmail);
 
-    if (to.length === 0) {
-        note = "I couldn't look up your email address just now, so nothing was sent. Say \"check my progress\" in a moment and I'll try again.";
+    if (receipt) {
+        console.log('[Completion100] Found the sent-email receipt; retrying goal persistence without resending.');
+        totalMinutes = receipt.totalMinutes;
+        coursesCompleted = receipt.coursesCompleted;
+        subject = receipt.subject;
+        userEmail = receipt.userEmail;
+        managerName = receipt.managerName;
+        managerEmail = receipt.managerEmail;
+        managerResolved = receipt.managerResolved;
+        sent = true;
+        if (managerEmail && managerEmail.toLowerCase() !== userEmail.toLowerCase()) cc.push(managerEmail);
     } else {
+        // Aggregate stats deterministically.
+        const portal = await readLearningPortalStatus(graph, userAADId);
+        const portalMinutes = portalMinutesForCourses(portal, (state.LearningProgress ?? []).map((lp) => lp.courseId));
+        const lpMinutes = completedCourses.reduce((sum, lp) => sum + Number(lp.timeSpentMinutes ?? 0), 0);
+        totalMinutes = portalMinutes > 0 ? portalMinutes : lpMinutes;
+
+        let htmlBody = `<p>Congratulations to ${state.Title} on completing the ${state.TargetRole} career plan.</p>`;
+
+        // Resolve the manager from the directory right before sending. The address cached when the plan was
+        // saved is never used as a recipient: the manager may have changed (or been removed) since then, and
+        // career progress must not go to a former manager. If the lookup fails, only the employee is mailed.
         try {
-            await sendMail({ to, cc, subject, htmlBody, fromUserId: userAADId, graph });
-            sent = true;
-            console.log(`[Completion100] Email sent. To=${to.length} Cc=${cc.length}`);
+            const mgr = await getMyManager(graph, userAADId);
+            managerResolved = true;
+            if (mgr) {
+                managerName = mgr.displayName;
+                managerEmail = mgr.mail;
+            }
         } catch (err) {
-            note = `Email send failed: ${(err as any)?.message ?? err}`;
+            console.warn('[Completion100] Manager lookup failed — the manager will not be copied:', (err as any)?.message ?? err);
+        }
+
+        try {
+            const email = await composeCompletionEmail({
+                userName: state.Title,
+                managerName,
+                targetRole: state.TargetRole,
+                completedCourses: completedCourses.map((lp) => ({ title: lp.courseTitle, url: lp.url })),
+                totalMinutes,
+                planStartDate: state.PlanCreatedDate,
+            });
+            subject = email.subject || subject;
+            htmlBody = email.htmlBody || htmlBody;
+        } catch (err) {
+            console.warn('[Completion100] composeCompletionEmail failed; using fallback body:', (err as any)?.message ?? err);
+        }
+
+        // The employee's own address is required: the wrap-up is addressed to them. If it can't be resolved
+        // (after one retry for a transient lookup failure) nothing is sent and the goal stays Active, so
+        // "check my progress" tries again — the manager is never made the sole recipient.
+        for (let attempt = 1; attempt <= 2 && !userEmail; attempt++) {
+            try {
+                const profile = await getMyProfile(graph, userAADId);
+                userEmail = profile.mail || profile.userPrincipalName || undefined;
+            } catch (err) {
+                if (attempt === 2) console.warn('[Completion100] Could not resolve the employee address:', (err as any)?.message ?? err);
+            }
+        }
+
+        // Send the email deterministically: the employee is the recipient and their manager is copied.
+        const to = userEmail ? [userEmail] : [];
+        if (userEmail && managerEmail && managerEmail.toLowerCase() !== userEmail.toLowerCase()) cc.push(managerEmail);
+
+        if (to.length === 0) {
+            note = "I couldn't look up your email address just now, so nothing was sent. Say \"check my progress\" in a moment and I'll try again.";
+        } else {
+            try {
+                await sendMail({ to, cc, subject, htmlBody, fromUserId: userAADId, graph });
+                sent = true;
+                console.log(`[Completion100] Email sent. To=${to.length} Cc=${cc.length}`);
+            } catch (err) {
+                note = `Email send failed: ${(err as any)?.message ?? err}`;
+            }
+        }
+
+        if (sent) {
+            if (!userEmail) throw new Error('Completion email was sent without a resolved employee address; refusing to lose its retry receipt.');
+            try {
+                saveCompletionEmailReceipt({
+                    userAADId, itemId, userEmail, managerName, managerEmail, managerResolved,
+                    subject, totalMinutes, coursesCompleted, recordedAt: new Date().toISOString(),
+                });
+            } catch (err) {
+                console.error('[Completion100] Email was sent, but saving its retry receipt failed:', (err as any)?.message ?? err);
+                throw new Error('The completion email was sent, but its retry receipt could not be saved. Retry "check my progress" before restarting the agent.');
+            }
         }
     }
 
@@ -1075,6 +1095,7 @@ async function sendCompletion(
     // Only the goal this email was sent for is closed; if it was replaced while sending, the new goal
     // stays Active. Once Completed, the goal stays in UserState as history ("show my previous goals").
     if (sent) {
+        let statePersisted = false;
         const persistCompleted = (): Promise<void> => withUserLock(userAADId, async () => {
             const record = await readUserState(graph, userAADId);
             if (record && record.itemId === itemId) {
@@ -1086,6 +1107,7 @@ async function sendCompletion(
                     // Keep the cached manager in step with the directory result used for this send.
                     ...(managerResolved ? { ManagerName: managerName ?? '', ManagerEmail: managerEmail ?? '' } : {}),
                 }, record);
+                statePersisted = true;
                 console.log(`[Completion100] Goal "${record.state.TargetRole}" marked Completed.`);
             }
         });
@@ -1094,6 +1116,13 @@ async function sendCompletion(
         } catch (err) {
             console.warn('[Completion100] Saving the completed state failed; retrying once:', (err as any)?.message ?? err);
             await persistCompleted();
+        }
+        if (statePersisted) {
+            try {
+                clearCompletionEmailReceipt(userAADId, itemId);
+            } catch (err) {
+                console.warn('[Completion100] Goal completed, but its sent-email receipt could not be cleared:', (err as any)?.message ?? err);
+            }
         }
     } else {
         console.warn('[Completion100] Email not sent — leaving Completion100Fired=false so a retry can succeed.');
@@ -1106,7 +1135,7 @@ async function sendCompletion(
         managerEmail: copiedManager ? managerEmail : undefined,
         userEmail,
         totalTimeMinutes: totalMinutes,
-        coursesCompleted: completedCourses.length,
+        coursesCompleted,
         subject,
         sent,
         note,

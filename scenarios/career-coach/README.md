@@ -81,7 +81,7 @@ This sample uses the following Microsoft Agents and Agent 365 packages:
       --scopes "Mail.ReadWrite,Mail.Send,Chat.ReadWrite,User.Read.All,Sites.Read.All,Sites.ReadWrite.All,Files.ReadWrite.All,ChannelMessage.Read.All,ChannelMessage.Send"
     ```
 - **WorkIQ (Mail / Calendar) permissions:** the MCP servers in `ToolingManifest.json` need an extra grant. A **Global Administrator** runs `a365 setup permissions mcp` from this folder once. Until then the agent still works but its Mail / Calendar tools fail (403 or timeouts, logged as `[WorkIQ] Could not connect MCP server …`).
-- **Observability permission:** `Agent365.Observability.OtelWrite` (delegated and application) on the blueprint — granted by `a365 setup all`. Verify with the read-only `a365 query-entra blueprint-scopes` and `a365 query-entra inheritance`.
+- **Observability permission:** this sample is an AI Teammate. Complete the `Agent365.Observability.OtelWrite` application-role step printed by `a365 setup all --aiteammate`. A delegated grant does not put `roles` on the app-only export token, and AI Teammate S2S export without that step has not been validated. Verify with the read-only `a365 query-entra blueprint-scopes` and `a365 query-entra inheritance`.
 
 **SharePoint site**
 - Any modern team/comm site works. This repo assumes `https://<tenant>.sharepoint.com/sites/CareerCoach`.
@@ -245,7 +245,7 @@ The agent's tenant / instance / user ids are learned from the first message it r
 - **`NODE_ENV=production`:** background Graph work never uses a developer sign-in. Until the ids are known the attempt fails and retries; once they arrive the subscription is created as the agent user.
 - **Otherwise (local development):** an attempt made before the ids are known may use `.mstoken-cache.json` if it exists. That subscription is recorded as developer-created and is **replaced** by an agent-user one (deleted with the identity that created it) as soon as the ids arrive.
 
-When a change notification arrives, the agent reads rows updated since the **last fully successful scan** (a watermark saved in `.portal-queue.json`, minus a 10-minute overlap, never further back than 24 hours) with a server-side `LastUpdated` filter and a full-scan fallback — not just the minutes before the notification. SharePoint list notifications can arrive hours late, so a window relative to arrival would miss the row. Each user's row is turned into a DM once — a later notification for someone else's update doesn't re-send it. A failed pass keeps the watermark, so the same rows are scanned again.
+When a change notification arrives, the agent reads rows updated since the **last fully successful scan** (a watermark saved in `.portal-queue.json`, minus a 10-minute overlap, never further back than 24 hours) with a server-side `LastUpdated` filter and a full-scan fallback — not just the minutes before the notification. Before the first successful scan establishes a watermark, it scans the full bounded 24-hour lookback. SharePoint list notifications can arrive hours late, so a window relative to arrival would miss the row. Each user's row is turned into a DM once — a later notification for someone else's update doesn't re-send it. A failed pass keeps the watermark, so the same rows are scanned again.
 
 ---
 
@@ -383,7 +383,7 @@ When 3+ of the 5 goals reach 100%, `OverallProgress` crosses 80%. The **mileston
 When all goals hit 100%, the **completionSummary** card fires. The app handles this on its own (`fireCompletion100` in `handlers.ts`), not the LLM. It runs from the `handleQuizSubmit` cascade or from `check my progress`:
 1. An LLM sub-call writes a warm HTML email body listing every completed course + total time
 2. Code sends via `/me/sendMail` from the agent's own mailbox — **To:** the test user, **Cc:** their manager (from Entra ID)
-3. `Completion100Fired` is set only after a successful send, so `check my progress` retries a failed email
+3. `Completion100Fired` is set only after a successful send. If the email succeeds but saving the completed state fails, a local per-goal receipt lets `check my progress` retry the state update without sending the email again.
 4. The goal is then marked **Completed** (`PlanStatus`, `PlanCompletedDate`). The next "hi" gets the welcome card and a fresh goal (see 8.7)
 
 The chat LLM is told never to send this email itself (it has WorkIQ Mail tools, see below).
@@ -486,6 +486,7 @@ Email (A365 ─────┘     ├─ 🚦 Card + message + email router
 - **Email conversations** keep their history per email thread (keyed on the agent instance, the verified sender and the stable `emailNotification.conversationId`, so two members in one thread never share a conversation or pending plan). If the agent has no history for a thread (e.g. after a restart), the quoted reply history in the email is passed to the LLM as context. The email text and quoted history are passed inside `<untrusted_email>` fences (delimiter tags inside them are neutralised) and the model is told never to follow instructions in them. The sender is looked up by object id / UPN first, then — for an internal member whose mail address differs from their UPN — by an exact `mail` / `proxyAddresses` match (`directory-lookup.ts`); no match or more than one match means the sender is ignored. Replying **"Save it"** saves the plan from the thread's latest plan-review card using the same code as the Teams **Save my plan** button (pending plans are kept in `.email-plans.json`). Quizzes still need Teams.
 - **Mail / Calendar are limited in code** — `mail-guard.ts` wraps the WorkIQ Mail and Calendar servers. Every employee uses the same Career Coach mailbox, so Mail is **send-only**: reading, searching, replying, forwarding, updating and deleting are hidden from the model and refused. Every address in a send or invite must belong to the sender (or their manager, only when the sender's own message asks for the manager), unverifiable recipients are refused, Calendar reads must name a verified address, and the check fails closed if the sender's addresses can't be resolved. If a transient error follows a send, the run is not replayed (no second email).
 - **Guarded writes** — `sharepoint-tools.ts` stops the LLM from marking a course Complete or raising a skill level without a passed quiz (`[ProgressGuard]`), requires every plan course to carry a `courseId` that exists in the catalog, merges quiz-earned progress from the freshly read row into stale writes (passed courses stay Complete, skill levels never go down, goals/overall are recomputed), enforces the goal lifecycle (§8.7), limits chat writes to `UserState`, scopes every personal list to the caller's own rows, and verifies row ownership before an update. Every `UserState` read-modify-write runs under a per-user lock (`user-lock.ts`). A quiz only counts for the current plan and question generation (the server-issued `generationId` on its card must still match); a grading outage never records a failed attempt, and the completion email is sent once per goal.
+- **Quiz audit writes are required** — if appending a `QuizResponses` row fails, the matching `UserState` update is not attempted. The graded submission stays queued with its attempt number and grading so a retry can finish both writes without counting or grading it again.
 - **Resilient card actions** — button steps run after the invoke returns; on failure `runDeferred` in `agent.ts` tells the user, and unlocks the card when it is safe to retry.
 - **Observability** — `telemetry.ts` initialises `@microsoft/opentelemetry` (A365 exporter on the S2S route). `observability/app-token-resolver.ts` does the 3-hop FMI token exchange for the runtime agent identity; every turn (LLM, card action, email) is wrapped in `invoke_agent` / `chat` / `execute_tool` spans. `observability/conversation-id.ts` groups an email thread into one conversation.
 - **Agentic auth** — the A365 platform hands the agent its own agentic-user Graph token per turn, so `/me` is the Career Coach agent user (its own mailbox). No manual token refreshes. Background work with no turn (the change subscription, the notification row scan, startup warm-up) mints the same agent user's token from the hosting connection (`getAgenticUserToken`, using the ids captured from the first message).
@@ -508,6 +509,7 @@ src/
 ├── sharepoint-column-map.ts  Display-name ↔ internal-name translation
 ├── career-coach-types.ts     Shared types + SP_CONFIG + goal lifecycle (PlanStatus)
 ├── quiz-cache.ts             In-memory quiz answer key store (one in-flight generation per user/course)
+├── completion-email-receipts.ts Durable per-goal receipt so a successful email is not resent if state persistence fails
 ├── user-lock.ts              Per-user async mutex around every UserState read-modify-write
 ├── file-storage.ts           Disk-backed SDK Storage impl for Proactive subsystem
 ├── email-conversation.ts     Email turn prompt, quoted-history fallback, card → HTML rendering
@@ -546,7 +548,7 @@ src/
 | `[UserState] Column "PlanStatus" is missing` warning in the log | `setup:sharepoint` wasn't re-run after the goal-lifecycle upgrade | Run `npm run setup:sharepoint`. |
 | Email to the agent gets no reply | Sender outside the organization, a bounce message, or the Teams Developer Portal notification URL isn't set | See `[Email] Ignored …` lines in `dev.log`; check §6.1 step 2. |
 | Code change has no effect | `npm start` runs the compiled build in `dist/` | Run `npm run build` again before `npm start`, or use `npm run dev`. |
-| Telemetry doesn't appear in Defender / MAC Activity | Exporter off, wrong agent ID, or tenant not onboarded | Check `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `A365_OBSERVABILITY_LOG_LEVEL=info\|warn\|error` and look for `[A365 Observability]` lines; run `a365 query-entra inheritance`. Defender `CloudAppEvents` needs the right licence / portal; allow ~5 min for indexing. |
+| Telemetry doesn't appear in Defender / MAC Activity | Exporter off, wrong agent ID, missing AI Teammate `OtelWrite` application role, or tenant not onboarded | Check `ENABLE_A365_OBSERVABILITY_EXPORTER=true`, set `A365_OBSERVABILITY_LOG_LEVEL=info\|warn\|error` and look for `[A365 Observability]` lines. Complete the `Agent365.Observability.OtelWrite` application-role step printed by `a365 setup all --aiteammate` (a delegated grant is insufficient for the app-only S2S token), then run `a365 query-entra blueprint-scopes` and `a365 query-entra inheritance`. Defender `CloudAppEvents` needs the right licence / portal; allow ~5 min for indexing. |
 
 For anything else, grep `dev.log` — every subsystem prefixes its logs (`[Proactive]`, `[Sync]`, `[Quiz]`, `[SavePlan]`, `[SharePointTools]`, `[sub-mgr]`, `[Completion100]`, `[Email]`, `[WorkIQ]`, `[ProgressGuard]`, `[GoalLifecycle]`, `[A365 Observability]`).
 
@@ -600,7 +602,7 @@ Set the cloud env vars (Azure OpenAI, agentic auth, observability, SharePoint) a
 | `.env.template` | Template for the runtime config. Copy to `.env` and fill in the values. |
 | `package.json` / `tsconfig.json` | Standard Node/TS build config. |
 
-**Regenerated / never committed:** `.env`, `a365.config.json`, `a365.generated.config.json`, `.a365-workspace-detection.local.json`, `node_modules/`, `dist/`, `*.log`, `.mstoken-cache.json`, `.proactive-storage.json`, `.proactive-refs.json`, `.sp-subscription.json`, `.email-plans.json`, `.agent-identity.json`, `.portal-queue.json`, `backups/`, `manifest/manifest.zip`.
+**Regenerated / never committed:** `.env`, `a365.config.json`, `a365.generated.config.json`, `.a365-workspace-detection.local.json`, `node_modules/`, `dist/`, `*.log`, `.mstoken-cache.json`, `.proactive-storage.json`, `.proactive-refs.json`, `.sp-subscription.json`, `.email-plans.json`, `.agent-identity.json`, `.portal-queue.json`, `.completion-email-receipts.json`, `backups/`, `manifest/manifest.zip`.
 
 ---
 

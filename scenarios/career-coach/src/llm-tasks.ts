@@ -60,7 +60,7 @@ async function chatJson<T = any>(system: string, user: string, opts: { temperatu
     const raw = res?.choices?.[0]?.message?.content ?? '{}';
     try { return JSON.parse(raw) as T; }
     catch (err) {
-        console.warn('[llm-tasks] Non-JSON response from LLM, returning empty object:', raw?.slice?.(0, 300));
+        console.warn('[llm-tasks] Non-JSON response from LLM, returning empty object (responseLength=%d).', raw.length);
         return {} as T;
     }
 }

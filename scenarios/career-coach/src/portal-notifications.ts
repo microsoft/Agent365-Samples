@@ -19,9 +19,10 @@
  * What to scan is decided by a persisted PROCESSING WATERMARK — the start time of the last fully
  * successful pass — not by when a notification happened to arrive. SharePoint-list notifications can
  * be delayed by hours (documented latency of up to 6 h), so a window relative to arrival would miss a
- * completion whose notification shows up late, and an empty result would then clear the work. Each
- * pass scans from `watermark - overlap` (the overlap absorbs clock skew; the per-user checkpoint stops
- * it re-sending), bounded by `maxLookback` so a very old watermark can't trigger an unbounded scan.
+ * completion whose notification shows up late, and an empty result would then clear the work. Before
+ * the first successful pass establishes a watermark, scan the full bounded lookback. Later passes
+ * scan from `watermark - overlap` (the overlap absorbs clock skew; the per-user checkpoint stops it
+ * re-sending), bounded by `maxLookback` so a very old watermark can't trigger an unbounded scan.
  */
 
 import * as fs from 'fs';
@@ -172,10 +173,10 @@ export class PortalQueue {
     }
 
     private scanCutoff(startedAt: number): number {
-        // Start from the last fully successful pass (or, the very first time, when the first notification
-        // arrived), re-scan a short overlap for clock skew, and never look further back than maxLookback.
-        const base = this.watermark ?? this.pending?.since ?? startedAt;
-        return Math.max(base - this.windowMs, startedAt - this.maxLookbackMs);
+        // There is no trustworthy baseline on first use: notification arrival can lag the list update
+        // by hours. Scan the full bounded lookback until a successful pass establishes a watermark.
+        if (this.watermark === null) return startedAt - this.maxLookbackMs;
+        return Math.max(this.watermark - this.windowMs, startedAt - this.maxLookbackMs);
     }
 
     private async runOnce(): Promise<boolean> {

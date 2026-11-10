@@ -159,8 +159,9 @@ server.post('/api/portal-event', async (req: Request, res: Response) => {
 /**
  * Graph change notifications are queued durably BEFORE they are acknowledged and processed with bounded
  * retry (see portal-notifications.ts), so a Graph / Teams outage right after the 202 can't lose the
- * final course-completion update. Each pass reads the recently-updated LearningPortalStatus rows
- * (list subscriptions only say "something changed") and DMs each affected user once per change.
+ * final course-completion update. The first pass scans the bounded lookback; later passes use the
+ * persisted processing watermark. Each reads changed LearningPortalStatus rows (list subscriptions
+ * only say "something changed") and DMs each affected user once per change.
  */
 async function readRecentPortalRows(cutoffMs: number): Promise<Array<{ id: string; fields: Record<string, any> }>> {
   const { getSiteId, getListIdByName, getListItems, getBackgroundGraphClient } = await import('./graph-service');
