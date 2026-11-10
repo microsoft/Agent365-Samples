@@ -85,12 +85,12 @@ export function extractQuotedHistory(activityText: string | undefined, htmlBody:
     return history.length > MAX_HISTORY_TEXT ? `${history.slice(0, MAX_HISTORY_TEXT)}…` : history;
 }
 
-/** "Save it" / "yes, save my plan" style replies (short, not negated, not a question). */
+/** Only explicit save confirmations ("Save it", "Yes, save my plan") enter the save path. */
 export function isSavePlanIntent(emailText: string): boolean {
-    const t = emailText.toLowerCase().replace(/[’']/g, "'").trim();
-    if (!t || t.length > 120 || t.endsWith('?')) return false;
-    if (/\b(don't|dont|do not|not|never|no|wait|later|cancel|change|instead)\b/.test(t)) return false;
-    return /\bsave\b/.test(t);
+    const text = emailText.toLowerCase().replace(/[’']/g, "'").trim();
+    if (!text || text.length > 120 || /[?!]/.test(text)) return false;
+    const normalized = text.replace(/[,.!]+$/, '').replace(/\s+/g, ' ');
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok|confirmed|i confirm),?\s+)?(?:please\s+)?save\s+(?:it|this plan|my plan|the plan)$/.test(normalized);
 }
 
 /** Delimiter tags inside untrusted text are neutralized so an email cannot close its own fence. */

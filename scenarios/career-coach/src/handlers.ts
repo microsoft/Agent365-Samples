@@ -911,32 +911,53 @@ async function handleQuizSubmitInner(
 // STAGE 6 — 80% milestone (deterministic)
 // ============================================================================
 
+const milestone80InFlight = new Set<string>();
+
 async function fireMilestone80(
     context: TurnContext,
     authorization: Authorization,
     userAADId: string,
-    state: UserState,
+    _triggeredState: UserState,
     itemId: string,
 ): Promise<void> {
-    const graph = getAgenticGraphClient(context, authorization);
-    const responses = await readAllQuizResponsesForUser(graph, userAADId);
-    const agg = computeMilestoneAggregate(state, responses);
-    await sendCard(context, {
-        type: 'milestone80',
-        roleTitle: state.TargetRole,
-        overall: state.OverallProgress,
-        stillToClose: agg.stillToClose,
-        areasToStrengthen: agg.areasToStrengthen,
-        footer: `You're at ${state.OverallProgress}% — an incredible milestone. Keep the momentum going! 🚀`,
-    });
-    // Persist the guard (re-read under the user lock so it can't clobber a concurrent update), and only
-    // on the goal that reached the milestone — not on a goal that replaced it while the card was sent.
-    await withUserLock(userAADId, async () => {
-        const record = await readUserState(graph, userAADId);
-        if (record && record.itemId === itemId) {
-            await upsertUserState(graph, { ...record.state, Milestone80Fired: true }, record);
-        }
-    });
+    const claimKey = `${userAADId.toLowerCase()}:${itemId}`;
+    if (milestone80InFlight.has(claimKey)) {
+        console.log('[Milestone80] Already in progress for this goal — skipping the duplicate trigger.');
+        return;
+    }
+    milestone80InFlight.add(claimKey);
+    try {
+        const graph = getAgenticGraphClient(context, authorization);
+        // Claim and re-check persisted state before reading data or sending. The in-flight set handles
+        // overlapping callers in this process; the locked re-read prevents stale snapshots from firing
+        // a milestone that another turn already recorded.
+        const current = await withUserLock(userAADId, async () => {
+            const record = await readUserState(graph, userAADId);
+            if (!record || record.itemId !== itemId || record.state.Milestone80Fired || record.state.OverallProgress < 80) return null;
+            return record.state;
+        });
+        if (!current) return;
+
+        const responses = await readAllQuizResponsesForUser(graph, userAADId);
+        const agg = computeMilestoneAggregate(current, responses);
+        await sendCard(context, {
+            type: 'milestone80',
+            roleTitle: current.TargetRole,
+            overall: current.OverallProgress,
+            stillToClose: agg.stillToClose,
+            areasToStrengthen: agg.areasToStrengthen,
+            footer: `You're at ${current.OverallProgress}% — an incredible milestone. Keep the momentum going! 🚀`,
+        });
+        // Persist only after the card is delivered; failures release the claim so a retry remains possible.
+        await withUserLock(userAADId, async () => {
+            const record = await readUserState(graph, userAADId);
+            if (record && record.itemId === itemId && !record.state.Milestone80Fired && record.state.OverallProgress >= 80) {
+                await upsertUserState(graph, { ...record.state, Milestone80Fired: true }, record);
+            }
+        });
+    } finally {
+        milestone80InFlight.delete(claimKey);
+    }
 }
 
 // ============================================================================

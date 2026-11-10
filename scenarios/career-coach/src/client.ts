@@ -83,6 +83,8 @@ export interface Client {
 
 // Cache clients per conversation to maintain conversation history
 const clientCache = new Map<string, Client>();
+const MAX_HISTORY_CHARS = 16_000;
+const MAX_HISTORY_MESSAGES = 20;
 
 /** True if a client (and so conversation history) already exists for this cache key. */
 export function hasClient(cacheKey: string): boolean {
@@ -463,6 +465,20 @@ class OpenAIClient implements Client {
     this.agent.mcpServers = [];
   }
 
+  private trimConversationHistory(preserve?: { role: string; content: string }): void {
+    let retainedChars = this.conversationHistory.reduce((total, message) => total + message.content.length, 0);
+    while (
+      (this.conversationHistory.length > MAX_HISTORY_MESSAGES || retainedChars > MAX_HISTORY_CHARS)
+      && this.conversationHistory.length > 0
+    ) {
+      if (this.conversationHistory[0] === preserve) break;
+      const removeCount = this.conversationHistory[0].role === 'user'
+        && this.conversationHistory[1]?.role === 'assistant' ? 2 : 1;
+      const removed = this.conversationHistory.splice(0, removeCount);
+      retainedChars -= removed.reduce((total, message) => total + message.content.length, 0);
+    }
+  }
+
   /**
    * Sends a user message to the OpenAI SDK and returns the AI's response.
    * The LLM calls the SharePoint function tools as needed. The RunCtx carries the
@@ -474,6 +490,7 @@ class OpenAIClient implements Client {
     // exactly this message, whatever else touches the history.
     const userMessage = { role: 'user', content: prompt };
     this.conversationHistory.push(userMessage);
+    this.trimConversationHistory(userMessage);
     this.externalWriteAttempted = false;
 
     // Build input: format as AgentInputItem array
@@ -505,6 +522,7 @@ class OpenAIClient implements Client {
 
           // Add assistant response to history
           this.conversationHistory.push({ role: 'assistant', content: output });
+          this.trimConversationHistory();
 
           return output;
         } catch (error) {
@@ -530,7 +548,12 @@ class OpenAIClient implements Client {
       // next turn knows to check rather than repeat.
       const note = "I hit a temporary problem right after sending an email or calendar invite on your behalf, so I didn't retry it (to avoid sending it twice). Please check your inbox or calendar before asking me again.";
       this.conversationHistory.push({ role: 'assistant', content: note });
+      this.trimConversationHistory(userMessage);
       return note;
+    }
+    if (OpenAIClient.isContextLengthError(lastError)) {
+      this.conversationHistory = [];
+      return "This conversation exceeded the model's context limit. I reset its saved history so future messages can continue; please resend your last request.";
     }
     if (OpenAIClient.isTransientNetworkError(lastError)) {
       // Roll back the unanswered user message so history stays consistent for the next turn.
@@ -552,6 +575,14 @@ class OpenAIClient implements Client {
     const transientCodes = ['UND_ERR_CONNECT_TIMEOUT', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'];
     if (transientCodes.includes(code)) return true;
     return /fetch failed|connect timeout|network|socket hang up|timed out/i.test(message);
+  }
+
+  private static isContextLengthError(error: unknown): boolean {
+    const err = error as any;
+    const code = String(err?.code ?? err?.error?.code ?? err?.body?.error?.code ?? '').toLowerCase();
+    const message = `${err?.message ?? ''} ${err?.error?.message ?? ''} ${err?.body?.error?.message ?? ''}`;
+    return code === 'context_length_exceeded'
+      || /maximum context length|context length exceeded|context window|too many tokens|prompt is too long/i.test(message);
   }
 
   /** Runs one invocation at a time per conversation client; a failed run never blocks the next one. */

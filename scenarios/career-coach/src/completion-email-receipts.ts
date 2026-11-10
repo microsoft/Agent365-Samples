@@ -59,8 +59,13 @@ function ensureLoaded(): void {
 
 function persist(): void {
     const temporaryPath = `${filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(temporaryPath, JSON.stringify(Object.fromEntries(receipts)), 'utf-8');
-    fs.renameSync(temporaryPath, filePath);
+    try {
+        fs.writeFileSync(temporaryPath, JSON.stringify(Object.fromEntries(receipts)), 'utf-8');
+        fs.renameSync(temporaryPath, filePath);
+    } catch (err) {
+        if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+        throw err;
+    }
 }
 
 export function getCompletionEmailReceipt(userAADId: string, itemId: string): CompletionEmailReceipt | null {

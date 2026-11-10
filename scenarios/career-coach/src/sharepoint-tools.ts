@@ -226,6 +226,103 @@ function parseJsonArray(value: unknown): any[] {
     return [];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+    return typeof value === 'string';
+}
+
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
+}
+
+function validGoal(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isString(value.goalId)
+        && isString(value.competencyId)
+        && isString(value.competencyName)
+        && ['Not Started', 'In Progress', 'Complete'].includes(String(value.status))
+        && isFiniteNumber(value.progressPct)
+        && isString(value.createdDate)
+        && (value.targetDate === undefined || isString(value.targetDate))
+        && (value.notes === undefined || isString(value.notes));
+}
+
+function validSkill(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isString(value.competencyId)
+        && isString(value.competencyName)
+        && isFiniteNumber(value.currentLevel)
+        && isFiniteNumber(value.targetLevel)
+        && isFiniteNumber(value.gap)
+        && ['Strong', 'Growing', 'To Build'].includes(String(value.gapCategory))
+        && ['Self-reported', 'Course completion'].includes(String(value.source))
+        && isString(value.lastUpdated)
+        && (value.evidence === undefined || isString(value.evidence));
+}
+
+function validQuizSummary(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isString(value.attemptDate)
+        && isFiniteNumber(value.score)
+        && typeof value.passed === 'boolean'
+        && Array.isArray(value.topicTagsWrong)
+        && value.topicTagsWrong.every(isString)
+        && (value.attempts === undefined || isFiniteNumber(value.attempts));
+}
+
+function validLearningRecord(value: unknown): boolean {
+    if (!isRecord(value)) return false;
+    return isString(value.courseId)
+        && isString(value.courseTitle)
+        && isString(value.skillId)
+        && ['Recommended', 'In Progress', 'Complete'].includes(String(value.status))
+        && isString(value.recommendedDate)
+        && isString(value.url)
+        && (value.completedDate === undefined || isString(value.completedDate))
+        && (value.percentComplete === undefined || isFiniteNumber(value.percentComplete))
+        && (value.timeSpentMinutes === undefined || isFiniteNumber(value.timeSpentMinutes))
+        && (value.quizResult === undefined || validQuizSummary(value.quizResult));
+}
+
+const USERSTATE_COLLECTIONS: Array<{ name: 'Goals' | 'Skills' | 'LearningProgress'; validate: (value: unknown) => boolean }> = [
+    { name: 'Goals', validate: validGoal },
+    { name: 'Skills', validate: validSkill },
+    { name: 'LearningProgress', validate: validLearningRecord },
+];
+
+function validateUserStateCollections(
+    fields: Record<string, unknown>,
+    requireAll = false,
+): Record<string, unknown> {
+    const validated = { ...fields };
+    for (const { name, validate } of USERSTATE_COLLECTIONS) {
+        if (!(name in fields)) {
+            if (requireAll) throw new Error(`BLOCKED — nothing was written. UserState.${name} must be an array.`);
+            continue;
+        }
+        let value: unknown = fields[name];
+        if (typeof value === 'string') {
+            try {
+                value = JSON.parse(value);
+            } catch {
+                throw new Error(`BLOCKED — nothing was written. UserState.${name} must contain valid JSON array data.`);
+            }
+        }
+        if (!Array.isArray(value)) {
+            throw new Error(`BLOCKED — nothing was written. UserState.${name} must be an array.`);
+        }
+        const invalidIndex = value.findIndex((entry) => !validate(entry));
+        if (invalidIndex >= 0) {
+            throw new Error(`BLOCKED — nothing was written. UserState.${name}[${invalidIndex}] does not match the expected record format.`);
+        }
+        validated[name] = value;
+    }
+    return validated;
+}
+
 /** The list's display name (lower-cased). Falls back to Graph when the list cache is cold, so a raw GUID can't bypass the rules. */
 async function listNameOf(graph: MsGraphClient, siteId: string, listId: string): Promise<string> {
     let name = listCacheBySite.get(siteId)?.byId.get(listId);
@@ -615,7 +712,10 @@ const createListItemTool: FunctionTool<any, any, any> = makeTool({
                     `TargetRole "${active.state.TargetRole}"). Update that row with updateListItem instead of creating a new one.`,
                 );
             }
-            displayFields = dropMissingLifecycleColumns({ ...withoutAppManagedFields(displayFields), PlanStatus: 'Active' }, colMap);
+            displayFields = validateUserStateCollections(
+                dropMissingLifecycleColumns({ ...withoutAppManagedFields(displayFields), PlanStatus: 'Active' }, colMap),
+                true,
+            );
             guardUserStateWrite(ctx, displayFields, null);
             await requireCatalogCourses(graph, siteId, displayFields, null);
             const internalFields = toInternalFields(displayFields, colMap);
@@ -669,7 +769,7 @@ const updateListItemTool: FunctionTool<any, any, any> = makeTool({
         }
         const colMap = await getColumnMap(graph, siteId, listId);
         // Canonical (display) names first, so no guard below can be bypassed with an internal-name alias.
-        let displayFields = canonicalizeFields(normalizeFields(args.fields), colMap);
+        let displayFields = validateUserStateCollections(canonicalizeFields(normalizeFields(args.fields), colMap));
 
         return withUserLock(callerId, async () => {
             // Fail closed: a row that can't be read, or that belongs to someone else, is never written.

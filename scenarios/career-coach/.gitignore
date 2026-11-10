@@ -27,6 +27,7 @@ a365.generated.config.json
 .agent-identity.json
 .portal-queue.json
 .completion-email-receipts.json
+.completion-email-receipts.json.*.tmp
 backups/
 
 # dev logs
