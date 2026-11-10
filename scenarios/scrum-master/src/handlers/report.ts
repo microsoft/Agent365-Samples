@@ -309,7 +309,8 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
     ]);
     const parentKeys = stories.map(s => s.key);
     const subtasks = await jira.getSprintSubtasks(sprint.id, parentKeys);
-    const blockers = blockersRows.map(r => r.fields);
+    const blockers = blockersRows.map(r => r.fields)
+        .filter(blocker => blocker.StandupId?.startsWith(`${sprint.id}#`));
 
     const following = jira.getSprints
         ? (await Promise.all([jira.getSprints('future'), jira.getSprints('active')])).flat()

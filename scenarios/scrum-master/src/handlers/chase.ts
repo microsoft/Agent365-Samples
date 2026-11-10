@@ -78,6 +78,12 @@ function getMeetingProposal(proposalId: string, callerId: string): MeetingPropos
     return proposal?.approverAadId.toLowerCase() === callerId.toLowerCase() ? proposal : undefined;
 }
 
+function isFutureSlot(startIso: string, endIso: string): boolean {
+    const start = Date.parse(startIso);
+    const end = Date.parse(endIso);
+    return Number.isFinite(start) && Number.isFinite(end) && start > Date.now() && end > start;
+}
+
 async function findBlocker(blockerId: string, issueKey: string) {
     const rows = await findByField<BlockerFields>('blockers', 'Title', issueKey);
     return rows.find(row => row.id === blockerId && row.fields.Title === issueKey);
@@ -223,6 +229,12 @@ export async function handleMeetingSubmit(context: TurnContext): Promise<void> {
         await context.sendActivity('Select one of the offered slots. No meeting was booked.');
         return;
     }
+    const [startIso, endIso] = slotRaw.split('|');
+    if (!isFutureSlot(startIso, endIso)) {
+        console.warn('[chase] Rejected an elapsed or invalid meeting slot.');
+        await context.sendActivity('This meeting slot has elapsed or is invalid. Request fresh availability; no meeting was booked.');
+        return;
+    }
     meetingProposals.delete(proposalId);
 
     // Ack immediately so Teams doesn't fire "Something went wrong" while we do the
@@ -252,8 +264,13 @@ async function bookMeetingAsync(
     }
     const { issueKey, blockerId } = proposal;
     const [startIso, endIso] = slotRaw.split('|');
-    if (!blockerId || !Number.isFinite(Date.parse(startIso)) ||
-        !Number.isFinite(Date.parse(endIso)) || Date.parse(endIso) <= Date.parse(startIso)) return;
+    if (!blockerId || !isFutureSlot(startIso, endIso)) {
+        console.warn('[chase] Booking stopped: meeting slot is no longer in the future.');
+        await sendProactive(ref, async ctx => {
+            await ctx.sendActivity('This meeting slot has elapsed or is invalid. Request fresh availability; no meeting was booked.');
+        });
+        return;
+    }
 
     const row = await findBlocker(blockerId, issueKey);
     const b = row?.fields;
@@ -302,18 +319,33 @@ async function bookMeetingAsync(
         );
     }
 
-    if (!await claimItemState('blockers', row.id, 'open', 'booking')) return;
+    if (!isFutureSlot(startIso, endIso)) {
+        await sendProactive(ref, async ctx => {
+            await ctx.sendActivity('This meeting slot has elapsed. Request fresh availability; no meeting was booked.');
+        });
+        return;
+    }
+    if (!await claimItemState('blockers', row.id, 'open', 'booking')) {
+        await sendProactive(ref, async ctx => {
+            await ctx.sendActivity('The blocker changed while booking. No additional meeting was created.');
+        });
+        return;
+    }
     let calendarAttempted = false;
     let meetingRecorded = false;
     // Do the calendar work + follow-up message inside one proactive turn so the
     // MCP registration has a live TurnContext to authenticate against.
-    await sendProactive(ref, async ctx => {
+    const result = await sendProactive(ref, async ctx => {
         const cc: CalendarContext = {
             turnContext: ctx,
             authorization: agentApplication.authorization,
             authHandlerName: AUTH_HANDLER,
         };
         try {
+            if (!isFutureSlot(startIso, endIso)) {
+                await ctx.sendActivity('This meeting slot has elapsed. Request fresh availability; no meeting was booked.');
+                return;
+            }
             calendarAttempted = true;
             const created = await createUnblockMeeting(cc, {
                 subject: `Unblock ${issueKey}`,
@@ -361,6 +393,7 @@ async function bookMeetingAsync(
     }).finally(async () => {
         if (!calendarAttempted) await claimItemState('blockers', row.id, 'booking', 'open');
     });
+    if (!result.ok) throw new Error(`Meeting booking delivery failed: ${result.error ?? 'delivery failed'}`);
 }
 
 // --- helpers -------------------------------------------------------------
@@ -434,8 +467,8 @@ async function proposeSlotsAsync(
             await ctx.sendActivity('The calendar availability lookup failed. No meeting was booked. Please retry proposing slots.');
             throw error;
         }
-        const allowedSlots = slots.filter(slot => Number.isFinite(Date.parse(slot.startIso)) &&
-            Date.parse(slot.endIso) > Date.parse(slot.startIso));
+        const allowedSlots = slots.filter(slot => isFutureSlot(slot.startIso, slot.endIso) &&
+            Date.parse(slot.endIso) - Date.parse(slot.startIso) === durationMinutes * 60_000);
         if (!allowedSlots.length) {
             await ctx.sendActivity('No valid meeting slots were found. No meeting was booked.');
             return;

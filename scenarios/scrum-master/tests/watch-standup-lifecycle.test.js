@@ -125,6 +125,40 @@ test('transient roster failure leaves finalization retryable and concurrent retr
     });
 });
 
+test('multi-day standup cutoffs fire once through the maximum Node timer delay', async t => {
+    for (const durationMs of [86_400_000, 2 * 86_400_000, 2_147_483_647]) {
+        t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-03T09:00:00Z') });
+        const id = ++sprintId;
+        let summaries = 0;
+        await withStandup({
+            '../config': { getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: durationMs / 3600_000 }) },
+            '../services/jira': { getJiraClient: () => ({
+                getActiveSprint: async () => ({ id, name: 'Multi-day cutoff sprint' }),
+                searchSprintIssues: async () => [],
+                getSprintSubtasks: async () => [],
+            }) },
+            '../services/proactive': { sendProactive: async () => { summaries++; return { ok: true }; } },
+        }, async standup => {
+            const result = await standup.triggerStandup({ source: 'http' });
+            const session = sessions.getSession(result.standupId);
+            assert.ok(session.cutoffTimer);
+            assert.equal(Date.parse(session.cutoffUtc) - Date.parse(session.startedUtc), durationMs);
+            t.mock.timers.tick(durationMs - 1);
+            assert.equal(summaries, 0);
+            t.mock.timers.tick(1);
+            for (let i = 0; i < 10 && !sessions.getCompletedSession(result.standupId); i++) {
+                await new Promise(resolve => setImmediate(resolve));
+            }
+            assert.equal(summaries, 1);
+            assert.equal(session.cutoffTimer, undefined);
+            assert.equal(sessions.getSession(result.standupId), undefined);
+            await standup.summarizeStandup(session);
+            assert.equal(summaries, 1);
+        });
+        t.mock.timers.reset();
+    }
+});
+
 test('failed early delivery preserves the future cutoff and recovery finalizes exactly once automatically', async t => {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date('2026-11-03T09:00:00Z') });
     const id = ++sprintId;

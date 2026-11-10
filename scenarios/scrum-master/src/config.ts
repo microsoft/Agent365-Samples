@@ -29,6 +29,14 @@ function numeric(name: string, fallback: number): number {
     return Number.isFinite(n) ? n : fallback;
 }
 
+function boundedNumeric(name: string, fallback: number, min: number, max: number): number {
+    const n = Number(optional(name, String(fallback)));
+    if (!Number.isFinite(n) || n < min || n > max) {
+        throw new Error(`${name} must be a finite number between ${min} and ${max}`);
+    }
+    return n;
+}
+
 export type JiraMode = 'live' | 'mock';
 
 export function getJiraMode(): JiraMode {
@@ -65,8 +73,16 @@ export function getJiraConfig(): JiraConfig {
         email: required('JIRA_EMAIL'),
         apiToken: required('JIRA_API_TOKEN'),
         projectKey: required('JIRA_PROJECT_KEY'),
-        boardId: numeric('JIRA_BOARD_ID', 1),
+        boardId: requiredBoardId(),
     };
+}
+
+function requiredBoardId(): number {
+    const boardId = Number(required('JIRA_BOARD_ID'));
+    if (!Number.isSafeInteger(boardId) || boardId <= 0) {
+        throw new Error('JIRA_BOARD_ID must be a positive safe integer');
+    }
+    return boardId;
 }
 
 export interface SharePointConfig {
@@ -105,7 +121,8 @@ export function getScheduleConfig(): ScheduleConfig {
     return {
         standupCron: optional('STANDUP_CRON', '0 30 3 * * 1-5'),
         nightlyCron: optional('NIGHTLY_CRON', '0 0 19 * * *'),
-        cutoffHours: numeric('STANDUP_CUTOFF_HOURS', 4),
+        // Node timers support delays from 1 through 2^31-1 milliseconds.
+        cutoffHours: boundedNumeric('STANDUP_CUTOFF_HOURS', 4, 1 / 3600_000, 2_147_483_647 / 3600_000),
         timezone: optional('TIMEZONE', 'Asia/Kolkata'),
         localCron: optional('LOCAL_CRON', 'true').toLowerCase() === 'true',
     };
@@ -117,11 +134,9 @@ export interface WarnConfig {
 }
 
 export function getWarnConfig(): WarnConfig {
-    // Use numeric() so non-numeric env values fall back to defaults instead of silently
-    // producing NaN (which would make every risk comparison return false).
     return {
-        todoPct: numeric('WARN_TODO_PCT', 0.40),
-        sprintProgressPct: numeric('WARN_SPRINT_PROGRESS_PCT', 0.50),
+        todoPct: boundedNumeric('WARN_TODO_PCT', 0.40, 0, 1),
+        sprintProgressPct: boundedNumeric('WARN_SPRINT_PROGRESS_PCT', 0.50, 0, 1),
     };
 }
 

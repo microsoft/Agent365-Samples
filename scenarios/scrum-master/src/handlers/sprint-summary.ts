@@ -121,7 +121,8 @@ export function buildSprintSummaryMarkdown(opts: {
     const startLocal = sprint.startDate ? DateTime.fromISO(sprint.startDate).setZone(tz).toFormat('ccc d LLL') : '—';
     const endLocal = sprint.endDate ? DateTime.fromISO(sprint.endDate).setZone(tz).toFormat('ccc d LLL yyyy') : '—';
 
-    const totalUserStories = parentStoriesByKey.size;
+    const totalUserStories = Array.from(parentStoriesByKey.values())
+        .filter(issue => issue.issueType === 'Story' && !issue.parentKey).length;
     const totalTasks = tasks.length;
     const completedTasks = tasks.filter(t => t.status === 'Done').length;
     const pendingTasks = tasks.filter(t => t.status !== 'Done');
@@ -267,16 +268,17 @@ export async function runSprintSummary(opts?: {
 
     // Fetch parent stories + sub-tasks in parallel.
     const parents = await jira.searchSprintIssues(sprint.id);
-    const parentKeys = parents.map(p => p.key);
+    const parentKeys = parents.filter(p => !p.parentKey).map(p => p.key);
     const subtasks = await jira.getSprintSubtasks(sprint.id, parentKeys);
 
     // Build lookup for parent summaries.
     const parentByKey = new Map<string, JiraIssue>();
     for (const p of parents) parentByKey.set(p.key, p);
 
-    // Classify. If a sprint has zero sub-tasks (e.g. flat structure), classify
-    // parents as tasks so the report is still useful.
-    const rawTasks: JiraIssue[] = subtasks.length > 0 ? subtasks : parents;
+    // Classify leaf work, retaining standalone issues in mixed hierarchies.
+    const allIssues = Array.from(new Map([...parents, ...subtasks].map(issue => [issue.key, issue])).values());
+    const expandedParents = new Set(allIssues.map(issue => issue.parentKey).filter(Boolean));
+    const rawTasks = allIssues.filter(issue => !expandedParents.has(issue.key));
     const todayIso = now.toISODate() ?? new Date().toISOString().slice(0, 10);
     const classified = rawTasks.map(t => classify(t, parentByKey.get(t.parentKey ?? '')?.summary ?? '', todayIso));
 

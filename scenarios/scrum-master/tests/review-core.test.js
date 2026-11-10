@@ -29,10 +29,21 @@ test('reconciliation rejects unsafe inference and preserves clear single-status 
         "We aren't done yet", "We weren't finished", 'We aren’t done yet', 'They weren’t deployed',
         "I couldn't get it done", 'I couldn’t get it done', "Couldn't deploy", 'Couldn’t finish',
         'Nothing is done yet', 'None of the changes are completed', 'Nobody has finished',
-        'Neither task is done', 'Neither merged nor deployed']) {
+        'Neither task is done', 'Neither merged nor deployed',
+        'Unable to get this done', 'Unable to deploy', 'Still trying to get it done',
+        'Failed to get the task finished', 'Almost done', 'Partially completed',
+        'If approved this can be closed', 'Can this be marked done?', 'Done?',
+        'Needs to be completed', 'It should be done', 'I wish it was finished',
+        'I got the tests done but the task remains', 'The review is done, implementation is pending',
+        'Done except for testing', 'Ready to close once approved']) {
         assert.equal(classifyUpdateText(text, false), 'unchanged', text);
     }
-    assert.equal(classifyUpdateText('Merged', false), 'Done');
+    for (const text of ['Merged', 'Done!', 'I have completed it.', 'We finished the task',
+        'The issue is closed', 'It has been deployed', 'Ready to close', 'This is ready to close.',
+        "I'm done", 'I’m done', 'I am done', "We're finished", 'We’re finished', 'We are finished',
+        "It's completed"]) {
+        assert.equal(classifyUpdateText(text, false), 'Done', text);
+    }
     assert.equal(classifyUpdateText('Working on the fix', false), 'In Progress');
     assert.equal(classifyUpdateText('PR up', false), 'In Review');
     assert.equal(classifyUpdateText('done', true), 'unchanged');
@@ -53,6 +64,7 @@ test('reconciliation authorizes the SM and consumes a server-side proposal once'
     const applied = [];
     const members = [{ Role: 'SM', AadObjectId: 'sm-aad', conversationReference: {} }];
     const jira = {
+        getIssue: async () => ({ status: 'To Do' }),
         getTransitions: async () => [{ id: '31', toStatus: 'Done' }],
         transitionIssue: async (...args) => { applied.push(args); },
     };
@@ -99,6 +111,39 @@ test('reconciliation authorizes the SM and consumes a server-side proposal once'
     assert.equal(applied[0][0], 'SCRUM-1');
     assert.equal(applied[0][1], '31');
     assert.ok(approved.messages.some(message => /unavailable/.test(message)));
+});
+
+test('reconciliation never moves negative prose and uses fresh Jira state instead of the standup snapshot', async () => {
+    let status = 'In Review', reads = 0, transitions = 0;
+    const jira = {
+        getIssue: async () => { reads++; return { status }; },
+        getTransitions: async () => [{ id: '31', toStatus: 'Done' }],
+        transitionIssue: async () => { transitions++; },
+    };
+    const { runReconciliation } = loadWithMocks('../src/handlers/reconcile.ts', {
+        '../services/jira': { getJiraClient: () => jira },
+        '../services/team-roster': {}, '../services/proactive': {},
+    });
+    const run = update => runReconciliation({
+        standupId: 'fresh-state',
+        responses: new Map([['dev', { userAadId: 'dev', items: [{ issueKey: 'TEAM-1', update, hasBlocker: false }] }]]),
+        itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'In Review' }]]]),
+    });
+    for (const text of ['Unable to get this done', 'Almost done', 'Can this be closed?', 'Finished except for testing']) {
+        const outcome = await run(text);
+        assert.deepEqual(outcome, { autoApplied: [], needsConfirm: [], errors: [] });
+    }
+    assert.equal(reads, 0);
+    assert.equal(transitions, 0);
+    status = 'To Do';
+    const skippedStep = await run('Done');
+    assert.equal(skippedStep.autoApplied.length, 0);
+    assert.equal(skippedStep.needsConfirm[0].statusFrom, 'To Do');
+    status = 'Done';
+    assert.equal((await run('Done')).autoApplied.length, 0);
+    status = 'In Review';
+    assert.equal((await run('Done')).autoApplied.length, 1);
+    assert.equal(transitions, 1);
 });
 
 test('Graph client defaults to the documented public client', () => {

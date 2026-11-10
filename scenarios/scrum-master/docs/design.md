@@ -247,20 +247,29 @@ cannot accept updates via a client-provided standup ID.
 ### 5.2 Reconcile (MVP 2)
 
 Free-text updates are classified by a deterministic phrase table in
-[`handlers/reconcile.ts`](../src/handlers/reconcile.ts). Completion inference
-is conservatively refused when negation is present; otherwise the first
-matching rule wins.
+[`handlers/reconcile.ts`](../src/handlers/reconcile.ts). Exactly one status
+candidate must match, and a blocker or negation keeps the issue unchanged.
+`Done` additionally requires a whole-statement assertion from a finite grammar,
+such as `Done`, `I have completed it`, `The issue is closed`, or `Ready to close`.
+Arbitrary prose containing a completion keyword is not proof: questions,
+conditional plans, partial completion and unseen negative phrasings such as
+`Unable to get this done` leave Jira unchanged. This intentionally favors missed
+automation over an incorrect completion transition.
 
 | Target | Trigger patterns (case-insensitive) |
 |---|---|
-| `Done` | `done`, `completed`, `finished`, `merged`, `shipped`, `deployed`, `closed`, `ready to close` |
+| `Done` | Whole-statement completion assertions using `done`, `completed`, `finished`, `merged`, `shipped`, `deployed`, `closed`, or `ready to close`; optional supported subject/object, no arbitrary trailing prose |
 | `In Review` | `in review`, `code review`, `pr up`, `pull request`, `reviewing`, `waiting for/on review` |
 | `In Progress` | `started`, `starting`, `began`, `beginning`, `kicked off`, `working on`, `in progress`, `picked up`, `am/i'm/now implementing/building/coding/writing` |
 
 A blocker toggle on any item forces `unchanged`. Any classifier output that
 maps to a **safe forward step** on `To Do → In Progress → In Review → Done`
-auto-applies. Anything else (backwards, skip, ambiguous) becomes a confirm
-card DM to the SM, who approves per-row and clicks **Apply approved**. The
+auto-applies. Inferred backwards/skipped steps or unavailable Jira transitions
+become a confirm card DM to the SM, who approves per-row and clicks **Apply approved**.
+The safe-step decision uses a fresh Jira issue read rather than the status
+cached when the standup started; a changed board cannot silently turn a
+previously safe step into a skip.
+Unrecognized/ambiguous text remains unchanged; no transition is guessed. The
 LLM is *not* involved in reconcile — a demo run has 100 % deterministic
 behaviour on this path.
 
@@ -278,6 +287,12 @@ contains only a random proposal ID and the selected slot; the server retains the
 blocker, authorized approver and offered slots for 30 minutes. Book/cancel consumes
 the proposal once. Forged, expired and post-restart proposals require new slots.
 Booking rechecks the SM role and blocker state before any calendar side effect.
+Only future, correctly ordered 30-minute slots are offered. The selected start
+must remain in the future at submission, after roster/helper lookups, and inside
+the proactive callback immediately before creating the event. An elapsed slot
+produces an explicit request for fresh availability, never a backdated invitation.
+If it elapses while acquiring the claim or starting the proactive turn, the
+unused `booking` claim is conditionally released back to `open`.
 
 Booking uses a conditional SharePoint state claim, `open → booking → booked`,
 so repeated submissions cannot independently create the same meeting.
@@ -378,6 +393,9 @@ classified:
 
 The output is a prioritised markdown table posted inline to the configured
 channel — no attachments, no SharePoint upload.
+Story metrics count actual Jira Stories. Executable work includes standalone
+Tasks/Bugs and subtasks, deduplicated by issue key; the presence of a subtask
+must not hide an unrelated overdue Task from the RAG table.
 
 This path has no durable delivery guard. A repeated eligible invocation,
 including a retry of the nightly HTTP call after another check throws, can
@@ -402,6 +420,8 @@ Demo highlights and release-note improvements quote completed Jira summaries
 with issue links. Keyword matches categorize work; they do not establish
 accessibility compliance, successful deployment, test coverage or production
 impact.
+Blocker metrics and retrospective suggestions use only rows whose `StandupId`
+belongs to the selected sprint, not the site's accumulated blocker history.
 Automatic selection checks ended active and closed sprints newest-first,
 skipping existing `sent`/`claimed` records before choosing an unreported or
 explicitly failed candidate. The selected candidate must still acquire the
@@ -486,6 +506,10 @@ also model-driven and is never used for inbound email.
 
 - **Early finalization preserves the cutoff.** The synchronous finalization
   claim prevents concurrent summaries but keeps the future deadline armed.
+  Configured cutoff hours must produce a positive supported Node timer delay
+  (1–2,147,483,647 ms); multi-day cutoffs are scheduled rather than silently
+  dropping the timer. Missing/blank settings use the default; explicit invalid
+  durations fail configuration validation.
   Failed early delivery reopens the session, so the cutoff can retry without
   manual intervention. If the deadline fires while a finalizer is running, it
   checks again after 60 seconds instead of dropping the timer. Failed cutoff

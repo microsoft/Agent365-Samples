@@ -28,7 +28,7 @@ An autonomous **Scrum Master** built on the [Microsoft Agent 365 SDK](https://gi
 Seven capabilities, each a handler under [`src/handlers/`](src/handlers). Live mode uses proactive DMs, SharePoint records, and grounded Jira tools. Standup aggregation and daily deduplication are process-local; they do not survive restart or coordinate replicas.
 
 1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary card posted to the configured channel. See [`handlers/standup.ts`](src/handlers/standup.ts).
-2. **Board reconciliation** — A deterministic phrase classifier reads each update, maps it to a Jira status, and either auto-applies safe forward transitions or DMs the Scrum Master an approval card for ambiguous moves. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
+2. **Board reconciliation** — A deterministic phrase classifier reads each update and auto-applies safe forward transitions using current Jira state, or DMs the Scrum Master an approval card for inferred skips/backwards moves. Completion requires an explicit whole-statement assertion; negative, partial, conditional or ambiguous completion prose leaves Jira unchanged. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
 3. **Blocker chase** — When someone flags a blocker, the agent matches a subject-matter expert from the helper roster, calls the MCP Calendar tool for open slots, and books an unblock meeting on its own mailbox with the SM + owner + reporter as attendees. See [`handlers/chase.ts`](src/handlers/chase.ts).
 4. **Sprint risk warn** — Nightly check: if the sprint is past the halfway mark and too many points are still in "To Do", DMs the SM with a risk assessment. See [`handlers/warn.ts`](src/handlers/warn.ts).
 5. **Grounded Q&A** — Free-text questions ("what's the status of Task-14?", "latest update on Task-6?") go to a scenario-specific OpenAI Agent whose tools read only the configured Jira project. Rolling history is isolated by caller and conversation, so follow-ups stay within the same audience. See [`handlers/answer.ts`](src/handlers/answer.ts).
@@ -249,7 +249,7 @@ Every scenario-specific env var — see [`.env.template`](.env.template) for the
 | `JIRA_EMAIL` | *(none)* | live | Atlassian account email |
 | `JIRA_API_TOKEN` | *(none)* | live | Personal API token |
 | `JIRA_PROJECT_KEY` | `SCRUM` (mock) | live | Keep `SCRUM` for the bundled mock; replace with your real project key in live mode |
-| `JIRA_BOARD_ID` | *(none)* | live | Numeric board id |
+| `JIRA_BOARD_ID` | *(none)* | live | Required positive safe integer board id; missing, blank, placeholder and invalid values fail startup instead of selecting board 1 |
 | `SHAREPOINT_SITE_URL` | *(none)* | live | Site that hosts all `SMA_*` lists |
 | `SHAREPOINT_LISTS_PREFIX` | `SMA_` | live | Namespace prefix on every list |
 | `GRAPH_TENANT_ID` | `common` | live | Set to a single tenant guid to pin the sign-in |
@@ -257,10 +257,10 @@ Every scenario-specific env var — see [`.env.template`](.env.template) for the
 | `SMA_ALLOWED_TEAM_ID` | *(none)* | `/config channel` | Allowed Teams team GUID; only configured SMs can set a reporting channel within this team. Missing value denies changes. |
 | `STANDUP_CRON` | `0 30 3 * * 1-5` | Local scheduler | UTC cron — default = 09:00 IST weekdays |
 | `NIGHTLY_CRON` | `0 0 19 * * *` | Local scheduler | UTC cron — default = 00:30 IST daily |
-| `STANDUP_CUTOFF_HOURS` | `4` | Standup | Give people this long to respond before the summary posts anyway |
+| `STANDUP_CUTOFF_HOURS` | `4` | Standup | Positive hours before automatic summary; must convert to a Node timer delay of 1–2,147,483,647 ms. Multi-day cutoffs are supported; invalid explicit values fail startup |
 | `TIMEZONE` | `Asia/Kolkata` | Local dates | Card labels, mid-sprint date gate, meeting-slot search; both cron schedulers evaluate in UTC independently of this setting |
-| `WARN_TODO_PCT` | `0.40` | Warn | Trip if this fraction of committed points is still `To Do` |
-| `WARN_SPRINT_PROGRESS_PCT` | `0.50` | Warn | Trip only after this fraction of sprint duration has elapsed |
+| `WARN_TODO_PCT` | `0.40` | Warn | Trip if this fraction of committed points is still `To Do`; finite fraction in `[0,1]`, not a whole-number percentage |
+| `WARN_SPRINT_PROGRESS_PCT` | `0.50` | Warn | Trip only after this fraction of sprint duration has elapsed; finite fraction in `[0,1]` |
 | `LOCAL_CRON` | `true` | Dev | Set `false` in prod once Azure Function timers are wired up |
 | `INTERNAL_TRIGGER_TOKEN` | *(none)* | Timer endpoints | Shared secret in the `x-internal-token` header |
 

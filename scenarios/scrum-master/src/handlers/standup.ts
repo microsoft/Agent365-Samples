@@ -261,9 +261,9 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     upsertSession(session);
     if (getJiraMode() === 'mock' && opts.turnContext) mockTurnContexts.set(standupId, opts.turnContext);
 
-    // Schedule the cutoff timer only if the cutoff falls today (dev cron loop only).
+    // Keep multi-day cutoffs within Node's supported timer range.
     const msUntilCutoff = cutoffUtc.getTime() - nowUtc.getTime();
-    if (msUntilCutoff > 0 && msUntilCutoff < 86_400_000) {
+    if (msUntilCutoff > 0 && msUntilCutoff <= 2_147_483_647) {
         scheduleStandupCutoff(session, msUntilCutoff);
     }
 

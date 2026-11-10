@@ -227,6 +227,82 @@ test('empty availability and lookup failures notify the SM without offering book
     });
 });
 
+test('meeting slots must remain future-dated through submission, roster lookup, claim and proactive delivery', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T10:00:00Z') });
+    await withAuthorization(async (authorization, members) => {
+        for (const elapsedAt of ['submit', 'roster', 'claim', 'delivery', 'never']) {
+            let state = 'open', armed = false, claims = 0, invitations = 0, slot, proposalId;
+            const messages = [];
+            await withModule('../src/handlers/chase.ts', {
+                '../services/authorization': authorization,
+                '../services/jira': {},
+                '../services/team-roster': { getMemberByAadId: async () => {
+                    if (armed && elapsedAt === 'roster') t.mock.timers.tick(10 * 60_000);
+                    return members[1];
+                } },
+                '../services/sharepoint': {
+                    findByField: async () => [{ id: 'blocker-1', fields: {
+                        Title: 'TEAM-1', State: state, OwnerAadId: 'dev', ReporterAadId: 'dev',
+                    } }],
+                    claimItemState: async (_key, _id, expected, next) => {
+                        assert.equal(state, expected);
+                        state = next;
+                        if (next === 'booking') {
+                            claims++;
+                            if (elapsedAt === 'claim') t.mock.timers.tick(10 * 60_000);
+                        }
+                        return true;
+                    },
+                    updateItem: async (_key, _id, fields) => { state = fields.State; },
+                },
+                '../services/proactive': { sendProactive: async (_ref, callback) => {
+                    if (armed && elapsedAt === 'delivery') t.mock.timers.tick(10 * 60_000);
+                    await callback({ sendActivity: async message => {
+                        if (message?.attachments) proposalId = message.attachments[0].proposalId;
+                        else messages.push(message);
+                    } });
+                    return { ok: true };
+                } },
+                '../cards/meeting-propose.card': { buildMeetingProposeCard: value => value },
+                '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+                '../services/helperMatcher': { findHelperForBlocker: async () => null },
+                '../services/calendar': {
+                    findUnblockSlots: async () => {
+                        slot = `${new Date(Date.now() + 10 * 60_000).toISOString()}|${new Date(Date.now() + 40 * 60_000).toISOString()}`;
+                        const [startIso, endIso] = slot.split('|');
+                        return [{ startIso, endIso, label: 'Offered' }];
+                    },
+                    createUnblockMeeting: async () => {
+                        invitations++;
+                        return { id: 'event-1', webLink: 'https://outlook.invalid/event' };
+                    },
+                },
+                '../agent': { agentApplication: { authorization: {} } },
+            }, async chase => {
+                await chase.handleBlockerSubmit(context('sm', {
+                    action: 'blocker.proposeSlots', blockerId: 'blocker-1', issueKey: 'TEAM-1',
+                }));
+                await drain();
+                assert.ok(proposalId);
+                armed = true;
+                if (elapsedAt === 'submit') t.mock.timers.tick(10 * 60_000);
+                const submit = context('sm', { action: 'meeting.book', proposalId, slot });
+                await chase.handleMeetingSubmit(submit);
+                await drain();
+                if (elapsedAt === 'never') {
+                    assert.equal(invitations, 1);
+                    assert.equal(state, 'booked');
+                } else {
+                    assert.equal(invitations, 0, elapsedAt);
+                    assert.equal(state, 'open', elapsedAt);
+                    assert.equal(claims, ['claim', 'delivery'].includes(elapsedAt) ? 1 : 0);
+                    assert.match([...submit.messages, ...messages].join(' '), /elapsed.*fresh availability/i);
+                }
+            });
+        }
+    });
+});
+
 test('blocker and meeting actions enforce SM role, proposal ownership, offered slots, expiry and single consumption', async t => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-05T09:00:00Z') });
     await withAuthorization(async (authorization, members) => {

@@ -10,7 +10,7 @@
  * Design:
  *  - Rules-based classifier maps free-text updates to one of the four states
  *    { To Do, In Progress, In Review, Done }. Explainable in a demo ("saw the
- *    word 'done' so I moved it") and cheap — no extra LLM tokens per issue.
+ *    explicit completion assertion") and cheap — no extra LLM tokens per issue.
  *  - Only *safe forward transitions* on the whitelist
  *    `To Do → In Progress → In Review → Done` are auto-applied.
  *  - Backwards moves, skips, or unknown targets are batched into an Adaptive
@@ -50,9 +50,8 @@ interface PendingProposal {
 const pendingProposals = new Map<string, PendingProposal>();
 
 /**
- * Rules ordered by strength — first match wins.
- * Patterns are intentionally loose (word-boundary case-insensitive) so real
- * standup phrasing hits them consistently.
+ * Keywords identify candidates, but only a single status can match.
+ * Completion additionally requires a whole-statement assertion.
  */
 const RULES: Array<{ target: Exclude<TargetStatus, 'unchanged'>; patterns: RegExp[] }> = [
     {
@@ -79,6 +78,9 @@ const RULES: Array<{ target: Exclude<TargetStatus, 'unchanged'>; patterns: RegEx
     },
 ];
 
+const EXPLICIT_COMPLETION = /^(?:(?:i|we)\s+(?:have\s+)?|(?:i\s+am|we\s+are|i['’]m|we['’]re|it['’]s)\s+|(?:it|this|that|the\s+(?:task|issue|work|change|pr))\s+(?:is|was|has\s+been)\s+)?(?:done|completed|finished|merged|shipped|deployed|closed)(?:\s+(?:it|this|that|the\s+(?:task|issue|work|change|pr)))?[.!]?$/i;
+const EXPLICIT_READY_TO_CLOSE = /^(?:(?:it|this|the\s+(?:task|issue|work|change|pr))\s+is\s+)?ready to close[.!]?$/i;
+
 export function classifyUpdateText(text: string, hasBlocker: boolean): TargetStatus {
     // Blocker flag freezes any inferred movement — status should reflect reality,
     // not the update text alone.
@@ -89,7 +91,14 @@ export function classifyUpdateText(text: string, hasBlocker: boolean): TargetSta
         return 'unchanged';
     }
     const matches = RULES.filter(rule => rule.patterns.some(p => p.test(t)));
-    return matches.length === 1 ? matches[0].target : 'unchanged';
+    if (matches.length !== 1) return 'unchanged';
+    const target = matches[0].target;
+    // A finite assertion grammar avoids treating arbitrary prose, questions,
+    // conditional plans or previously unseen negations as proof of completion.
+    if (target === 'Done' && !EXPLICIT_COMPLETION.test(t) && !EXPLICIT_READY_TO_CLOSE.test(t)) {
+        return 'unchanged';
+    }
+    return target;
 }
 
 /** Is the transition `from → to` a single forward step on our whitelist? */
@@ -126,30 +135,32 @@ export async function runReconciliation(session: StandupSession): Promise<Reconc
             if (!issue) continue;
 
             const target = classifyUpdateText(item.update, item.hasBlocker);
-            if (target === 'unchanged' || target === issue.status) continue;
+            if (target === 'unchanged') continue;
 
             try {
+                const current = await jira.getIssue(issue.key);
+                if (target === current.status) continue;
                 const transitions = await jira.getTransitions(issue.key);
                 const trans = findTransition(transitions, target);
                 if (!trans) {
                     outcome.needsConfirm.push({
                         issueKey: issue.key, url: issue.url, summary: issue.summary,
-                        statusFrom: issue.status, statusTo: target,
+                        statusFrom: current.status, statusTo: target,
                         transitionId: 'unknown',
-                        reason: `Jira does not offer a "${target}" transition from "${issue.status}"`,
+                        reason: `Jira does not offer a "${target}" transition from "${current.status}"`,
                     });
                     continue;
                 }
 
-                if (isSafeForwardTransition(issue.status, target)) {
+                if (isSafeForwardTransition(current.status, target)) {
                     await jira.transitionIssue(issue.key, trans.id, `Auto-updated by Scrum Master (standup ${session.standupId}).`);
-                    outcome.autoApplied.push({ issueKey: issue.key, from: issue.status, to: target });
+                    outcome.autoApplied.push({ issueKey: issue.key, from: current.status, to: target });
                 } else {
                     outcome.needsConfirm.push({
                         issueKey: issue.key, url: issue.url, summary: issue.summary,
-                        statusFrom: issue.status, statusTo: target,
+                        statusFrom: current.status, statusTo: target,
                         transitionId: trans.id,
-                        reason: pickReason(issue.status, target),
+                        reason: pickReason(current.status, target),
                     });
                 }
             } catch (e) {

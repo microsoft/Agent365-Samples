@@ -66,8 +66,11 @@ toggles. The handler requires the Scrum Master's AAD object id and uses a
 server-side pending proposal with a 24-hour lifetime; caller-supplied issue
 transitions are not authoritative. Apply/skip consumes the proposal.
 Expired, replayed or post-restart submissions fail closed and need a new
-proposal. The deterministic classifier refuses completion inference when
-negation is present.
+proposal. The deterministic classifier requires a whole-statement completion
+assertion such as `Done` or `I have completed it`; arbitrary prose with `done`
+is not sufficient. Negative, partial, conditional or ambiguous completion text
+remains unchanged. Safe forward steps use the current Jira status, not the
+cached standup snapshot.
 
 `/standup` and `/help` do not require LLM inference. In mock mode the first
 personal Playground caller becomes the mock Alex (SM) persona and receives
