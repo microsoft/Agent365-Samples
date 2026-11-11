@@ -396,6 +396,8 @@ A sign-in acknowledgement resumes the same session and saved task. Corrections a
 
 Ready hosted-human follow-up turns retain the existing conversation history. A task is staged for resumption only when authorization or session readiness interrupts it; ordinary follow-ups do not reset prior instructions and responses.
 
+Every turn accessing a hosted-human conversation requires the same verified chat owner, including non-desktop replies and intent classification that reads the saved task. Activity-supplied conversation/sender IDs are not proof of ownership. The verified owner can still send ordinary chat messages while W365 authorization is pending or expired, without connecting to W365 or changing the saved task.
+
 If startup allocates a session but returns invalid sign-in metadata (such as a missing or non-HTTPS `connectivityUrl`), the sample reports the error and retains the session, original task, and selected options. Retry with "continue" to check readiness or say "end my session" to cancel; the sample does not allocate another session to recover.
 
 Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also attempts `EndSession` for retained pending sessions, subject to usable human authorization for hosted human sessions. An explicitly ended session cannot be reused.
