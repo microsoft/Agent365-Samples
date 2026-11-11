@@ -101,15 +101,33 @@ class CrewAIAgent(AgentInterface):
 ```bash
 # LLM Configuration (used by CrewAI)
 OPENAI_API_KEY=sk-...
+AZURE_API_KEY=...
+AZURE_API_BASE=https://your-resource.openai.azure.com/
+AZURE_API_VERSION=2025-01-01-preview
+AZURE_OPENAI_DEPLOYMENT=azure/gpt-4.1
+OPENAI_MODEL_NAME=azure/gpt-4.1
 
 # Authentication
 BEARER_TOKEN=...
+USE_AGENTIC_AUTH=false
 AUTH_HANDLER_NAME=AGENTIC
-CLIENT_ID=...
-TENANT_ID=...
+AGENTIC_AUTH_SCOPE=https://api.powerplatform.com/.default
+AGENT_ID=...
+AGENTIC_APP_ID=crewai-agent
+
+# Weather Search
+TAVILY_API_KEY=tvly-...
 
 # Observability
-OBSERVABILITY_SERVICE_NAME=crewai-sample-agent
+OBSERVABILITY_SERVICE_NAME=crewai-agent-sample
+OBSERVABILITY_SERVICE_NAMESPACE=agent365-samples
+ENABLE_OBSERVABILITY=true
+ENABLE_A365_OBSERVABILITY_EXPORTER=false
+PYTHON_ENVIRONMENT=development
+
+# Server
+PORT=3978
+LOG_LEVEL=INFO
 ```
 
 ## Message Flow
@@ -127,12 +145,19 @@ OBSERVABILITY_SERVICE_NAME=crewai-sample-agent
 ```toml
 [project]
 dependencies = [
-    "crewai>=0.30.0",
-    "microsoft-agents-hosting-aiohttp>=0.0.1",
-    "microsoft-agents-hosting-core>=0.0.1",
-    "microsoft_agents_a365_observability_core>=0.0.1",
-    "microsoft_agents_a365_tooling_core>=0.0.1",
+    "crewai[azure-ai-inference,tools]==1.4.1",
+    "tavily-python>=0.3.0",
     "python-dotenv>=1.0.0",
+    "microsoft-agents-hosting-aiohttp>=0.9.0",
+    "microsoft-agents-hosting-core>=0.9.0",
+    "microsoft-agents-authentication-msal>=0.9.0",
+    "microsoft-agents-activity>=0.9.0",
+    "aiohttp",
+    "microsoft_agents_a365_tooling>=0.1.0",
+    "microsoft_agents_a365_observability_core>=0.1.0",
+    "microsoft_agents_a365_observability_hosting>=0.1.0",
+    "microsoft_agents_a365_notifications>=0.1.0",
+    "microsoft_agents_a365_runtime>=0.1.0",
 ]
 ```
 
