@@ -599,9 +599,11 @@ public class ComputerUseOrchestrator
                     return "The pending human W365 request has been cancelled. No Cloud PC session was allocated.";
                 }
                 session.PendingTermination = ending;
-                session.PendingTask ??= effectiveTask;
                 if (_humanAuthorizationStore == null || _humanAuthenticationOptions == null)
+                {
+                    session.PendingTask ??= effectiveTask;
                     return "Configure the human W365 authorization store and HumanW365Authentication options before using human sign-in. Your request is saved; say \"end my session\" to cancel.";
+                }
                 Uri origin;
                 try
                 {
@@ -609,12 +611,17 @@ public class ComputerUseOrchestrator
                 }
                 catch (InvalidOperationException ex)
                 {
+                    session.PendingTask ??= effectiveTask;
                     return $"{ex.Message} Your desktop task and session options are saved; say \"end my session\" to cancel.";
                 }
                 if (session.HumanOwner.TenantId != Guid.Parse(_humanAuthenticationOptions.Value.TenantId!))
+                {
+                    session.PendingTask ??= effectiveTask;
                     return "Sign in with the configured HumanW365Authentication:TenantId tenant using the same account as this chat. Your request is saved; say \"end my session\" to cancel.";
+                }
                 if (!_humanAuthorizationStore.TryGet(conversationId, session.HumanOwner, out var credential))
                 {
+                    session.PendingTask ??= effectiveTask;
                     await DiscardDirectW365ClientAsync(session);
                     var guidance = HumanAuthorizationGuidance(session, conversationId, session.HumanOwner, origin, humanTurn);
                     return humanTurn?.ChatAction?.Kind == HumanW365ChatActionKind.Continue

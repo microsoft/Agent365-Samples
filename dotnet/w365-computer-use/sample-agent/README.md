@@ -394,6 +394,8 @@ When `awaitingHumanLogin` is true, the sample immediately replies with **Sign in
 
 A sign-in acknowledgement resumes the same session and saved task. Corrections amend that task, and a new computer-use request replaces it without allocating another session. A request that explicitly selects session options instead receives the end-first guidance while the active session and task are retained. Greetings, unrelated questions, and non-desktop function-tool requests follow the normal non-CUA path while the pending task is retained. The intent classifier does not run remote actions; if classification fails, the sample logs a warning and reports the error without modifying the saved task or starting another session.
 
+Ready hosted-human follow-up turns retain the existing conversation history. A task is staged for resumption only when authorization or session readiness interrupts it; ordinary follow-ups do not reset prior instructions and responses.
+
 Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also attempts `EndSession` for retained pending sessions, subject to usable human authorization for hosted human sessions. An explicitly ended session cannot be reused.
 
 Once ready, remote discovery uses `tools/list` with `params._meta.sessionId`, and every remote call includes `sessionId` in its arguments. The ordinary no-options session still waits until ready, and existing additive response fields remain accepted.
