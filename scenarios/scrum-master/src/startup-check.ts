@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Boot-time config summary. Prints a one-shot banner covering every env var
+// Boot-time config validation and summary. Prints a one-shot banner covering every env var
 // the agent depends on so misconfig surfaces immediately — not five minutes
 // into a demo when a Graph call 401s.
 //
@@ -9,10 +9,34 @@
 // module that reads config is imported, so the output is the first useful
 // line in `npm run dev`.
 
+import { validate } from 'node-cron';
+import { getJiraConfig, getScheduleConfig, getWarnConfig } from './config';
+
+/**
+ * Validate required runtime settings without constructing clients or doing I/O.
+ * Explicit invalid settings fail in every environment, even with local cron off.
+ * Mock Jira intentionally needs no live credentials.
+ */
+export function validateStartupConfiguration(): void {
+    const schedule = getScheduleConfig();
+    getJiraConfig();
+    getWarnConfig();
+    for (const [name, expression] of [
+        ['STANDUP_CRON', schedule.standupCron],
+        ['NIGHTLY_CRON', schedule.nightlyCron],
+    ]) {
+        if (!validate(expression)) throw new Error(`${name} must be a valid cron expression`);
+    }
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone: schedule.timezone });
+    } catch {
+        throw new Error('TIMEZONE must be a valid time zone');
+    }
+}
+
 /**
  * Print a boxed startup banner covering config critical for the scrum-master
- * scenario. Non-fatal — never throws — so misconfig doesn't prevent boot; the
- * per-module errors that follow are more actionable anyway.
+ * scenario. Informational only; validateStartupConfiguration enforces requirements.
  */
 export function printStartupBanner(): void {
     const line = '─'.repeat(64);

@@ -219,7 +219,7 @@ test('internal endpoints fail closed outside explicit development mode', async (
             dotenv: { configDotenv() {} },
             './util/logger': { installConsoleLogging() {} },
             './util/httpLogger': { installHttpLogging() {} },
-            './startup-check': { printStartupBanner() {} },
+            './startup-check': { printStartupBanner() {}, validateStartupConfiguration() {} },
             '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => ({}), authorizeJWT: () => () => {} },
             express, './agent': {},
             './handlers/standup': { triggerStandup: async () => ({ sentTo: 1 }) },
@@ -230,7 +230,7 @@ test('internal endpoints fail closed outside explicit development mode', async (
             } },
             './handlers/report': { runSprintCloseReport: async () => { calls.push('close'); return {}; } },
             './handlers/sprint-summary': { runSprintSummary: async () => { calls.push('summary'); return {}; } },
-            './cron/local-scheduler': {}, './config': { getInternalTriggerToken: () => token },
+            './cron/local-scheduler': { startLocalScheduler() {} }, './config': { getInternalTriggerToken: () => token },
         };
         let exit;
         try {

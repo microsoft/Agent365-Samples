@@ -173,6 +173,11 @@ npm run dev
 
 You should see the startup banner listing all resolved config, followed by the Express server binding to `:3978`. In another terminal, either connect via the Agents Playground:
 
+The banner is diagnostic, not validation. Before listening, the host validates
+schedule bounds and required live Jira settings without making network calls.
+Invalid configuration exits nonzero rather than exposing a healthy endpoint
+with missing timers. Mock mode keeps its documented Jira defaults.
+
 ```powershell
 npm run test-tool
 ```
@@ -348,7 +353,8 @@ To reset Jira sprint issues, use the Atlassian UI or `POST /rest/agile/1.0/sprin
 | Duplicate standup summary cards. | Both local `node-cron` and the Azure Function timer fired the same day. | Set `LOCAL_CRON=false` once the Function is deployed. |
 | Email notification returns `Unable to process your email`. | The agent's delegated Graph `Mail.Read` scope is missing or the notified message cannot be read. | Grant `Mail.Read` to the blueprint's agentic connection and verify access to the agent mailbox. Email retrieval does not use the SharePoint user's cache. Drafting uses a tool-less agent, not the generic MCP assistant. |
 | `Summary delivered, but completion persistence failed` in logs. | The SharePoint completion lookup, PATCH, or refresh GET failed after summary delivery. | Blocker follow-up and in-memory cleanup still run without resending the summary. Inspect the daily `SMA_StandupSessions` row and repair its State to `summarized` before restarting; do not delete the daily claim. |
-| `Summary delivered, but blocker follow-up failed` in logs. | SharePoint lookup or blocker notification delivery failed. | Retry `/standup` in the same process and UTC day. Only pending blocker follow-up runs; the summary is not resent and successful blocker notifications are skipped. After restart, inspect blocker records and delivery logs for manual recovery; pending follow-up is process-local. Do not delete the daily claim. |
+| `Summary delivered, but blocker follow-up failed` in logs. | SharePoint lookup or blocker notification delivery failed. | Use `/standup retry <standupId>` in the same process, including for a previous day/sprint. Only pending blocker follow-up runs; the summary is not resent and successful blocker notifications are skipped. After restart, inspect blocker records and delivery logs for manual recovery; pending follow-up is process-local. Do not delete the daily claim. |
+| `Automatic summary retries exhausted` in logs. | Summary delivery still failed after the cutoff retries. | Once delivery recovers, use `/standup retry <sprintId>#<yyyy-mm-dd>` with the retained run ID printed in the log. This targets that run even after midnight or the sprint ends; it does not create today's run. Unknown/post-restart IDs require manual record inspection. |
 
 ### Enable HTTP tracing
 

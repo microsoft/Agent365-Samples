@@ -99,6 +99,55 @@ async function withStandup(overrides, run) {
     }
 }
 
+test('explicit retained-session retries recover a previous-day run without querying or creating today', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T09:00:00Z') });
+    const session = makeSession(['absent']);
+    let summaries = 0, chases = 0, succeeds = false;
+    session.cutoffUtc = '2026-11-11T09:00:00Z';
+    await withStandup({
+        '../services/jira': { getJiraClient: () => { throw new Error('Retry must not require an active sprint'); } },
+        '../services/sharepoint': {
+            claimStandupSession: async () => { assert.fail('Retry must not start a new run'); },
+        },
+        '../services/proactive': { sendProactive: async () => { summaries++; return { ok: succeeds }; } },
+        './chase': { chaseAfterStandup: async () => { chases++; } },
+    }, async standup => {
+        t.mock.timers.tick(24 * 3600_000);
+        await assert.rejects(standup.summarizeStandup(session), /not delivered/);
+        assert.equal(session.state, 'open');
+        succeeds = true;
+        const options = { source: 'command', retryStandupId: session.standupId };
+        const retry = await standup.triggerStandup(options);
+        assert.equal(retry.standupId, session.standupId);
+        assert.match(retry.note, /without starting a new daily run/);
+        assert.equal(summaries, 2);
+        assert.equal(chases, 1);
+        const completed = await standup.triggerStandup(options);
+        assert.match(completed.note, /not retained.*No new run/);
+        assert.equal(summaries, 2);
+    });
+});
+
+test('explicit prior-day retries do not finalize early or repeat an already delivered summary', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T09:00:00Z') });
+    const session = makeSession(['absent']);
+    session.cutoffUtc = '2026-11-12T09:00:00Z';
+    let chases = 0;
+    await withStandup({
+        '../services/jira': { getJiraClient: () => { assert.fail('No active sprint lookup expected'); } },
+        '../services/proactive': { sendProactive: async () => { assert.fail('Summary must not be sent'); } },
+        './chase': { chaseAfterStandup: async () => { chases++; } },
+    }, async standup => {
+        t.mock.timers.tick(24 * 3600_000);
+        const options = { source: 'command', retryStandupId: session.standupId };
+        assert.match((await standup.triggerStandup(options)).note, /still collecting/);
+        session.state = 'summarized';
+        session.chaseState = 'failed';
+        assert.match((await standup.triggerStandup(options)).note, /without repeating its summary/);
+        assert.equal(chases, 1);
+    });
+});
+
 test('transient roster failure leaves finalization retryable and concurrent retries finalize once', async () => {
     const session = makeSession([]);
     let lookups = 0, summaries = 0, reconciliations = 0;

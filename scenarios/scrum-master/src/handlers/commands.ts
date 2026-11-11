@@ -17,6 +17,7 @@ import { handleConfigChannel } from './config';
 const HELP_TEXT = [
     'Available commands:',
     '`/standup` — kick off today\'s standup for the active sprint',
+    '`/standup retry <standupId>` — retry a retained run, including a previous day or sprint',
     '`/config channel` — (run from a Teams channel) set the channel I post summaries to',
     '`/help` — show this message',
 ].join('\n');
@@ -32,10 +33,17 @@ export async function tryHandleCommand(context: TurnContext): Promise<boolean> {
 
     switch (cmd.toLowerCase()) {
         case 'standup':
+            if (rest.length > 0) {
+                if (rest.length !== 2 || rest[0].toLowerCase() !== 'retry' || !/^\d+#\d{4}-\d{2}-\d{2}$/.test(rest[1])) {
+                    await context.sendActivity('Use `/standup` or `/standup retry <sprintId>#<yyyy-mm-dd>`.');
+                    return true;
+                }
+            }
             await triggerStandup({
                 initiatedByAadId: from?.aadObjectId ?? undefined,
                 turnContext: context,
                 source: 'command',
+                retryStandupId: rest.length > 0 ? rest[1] : undefined,
             });
             return true;
 

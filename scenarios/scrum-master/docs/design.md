@@ -166,7 +166,10 @@ message handlers but not code. They only touch each other through those stores.
 5. Import `agent.ts`, which wires the router.
 6. Mount `/api/health` (unauthenticated), `/api/internal/*` (shared-secret
    guarded), then the JWT middleware, then `/api/messages`.
-7. Bind to `PORT` (default `3978`), then start the local scheduler if enabled.
+7. Validate schedule bounds and required live Jira settings before binding;
+   configuration errors terminate startup nonzero, even when local cron is
+   disabled. Validation is local and does not probe Jira or SharePoint.
+8. Bind to `PORT` (default `3978`), then start the local scheduler if enabled.
 
 ### 4.2 Every user turn
 
@@ -269,6 +272,8 @@ become a confirm card DM to the SM, who approves per-row and clicks **Apply appr
 The safe-step decision uses a fresh Jira issue read rather than the status
 cached when the standup started; a changed board cannot silently turn a
 previously safe step into a skip.
+Every successful current-status read refreshes the summary snapshot, including
+the no-op case where Jira already has the inferred target.
 Unrecognized/ambiguous text remains unchanged; no transition is guessed. The
 LLM is *not* involved in reconcile — a demo run has 100 % deterministic
 behaviour on this path.
@@ -514,7 +519,7 @@ also model-driven and is never used for inbound email.
   manual intervention. If the deadline fires while a finalizer is running, it
   checks again after 60 seconds instead of dropping the timer. Failed cutoff
   attempts get up to three further retries, 60 seconds apart; exhaustion logs
-  an explicit manual `/standup` recovery instruction and retains the session.
+  an explicit `/standup retry <standupId>` recovery instruction and retains the session.
   Successful delivery cancels the timer before cleanup.
 - **Response replay is first-write-wins.** A responder-scoped in-memory claim
   serializes submissions; a unique durable `ResponseKey` protects the canonical
@@ -535,8 +540,9 @@ also model-driven and is never used for inbound email.
   promised.
 - **Failed chase is not an empty chase.** Blocker lookup and notification
   delivery failures leave a summarized session with failed follow-up retained
-  in memory. Retry `/standup` in the same process and UTC day to retry only
-  chase, without reposting the summary, reconciling again or repeating fan-out.
+  in memory. Use `/standup retry <standupId>` in the same process to retry only
+  chase, including for prior days/sprints, without reposting the summary,
+  reconciling again or repeating fan-out.
   Successfully sent blocker notifications are skipped on retry. After a
   restart, inspect the persisted blocker rows and manually recover follow-up;
   neither pending chase nor notification progress is reconstructed.
@@ -563,8 +569,10 @@ also model-driven and is never used for inbound email.
   finalization releases the in-memory `summarizing` claim; SharePoint stores
   `open` or `summarized`, not `summarizing`. Explicitly failed summary
   delivery leaves the session `open` and does not mark it completed. In the
-  same process, retry `/standup` after cutoff or when all responses are
-  collected to resend the summary without repeating fan-out. After a restart,
+  same process, use `/standup retry <standupId>` after cutoff or when all responses
+  are collected to resend the summary without repeating fan-out. An explicit
+  retry addresses the retained ID without looking up today's active sprint or
+  creating a new daily run; unknown IDs never fall back to creation. After a restart,
   inspect existing records before manually recovering a run.
   Roster lookup occurs before the finalization claim, so a failed lookup
   leaves the session retryable. Accepted response writes reserve the session
@@ -583,7 +591,8 @@ DM can cause a duplicate on retry.
 
 - **Startup banner** — [`src/startup-check.ts`](../src/startup-check.ts)
   prints a one-shot config summary at boot with `[MISSING]` markers for
-  unset vars. Runs before any handler is imported.
+  unset vars. Runs before any handler is imported. It is diagnostic only;
+  separate fail-fast configuration validation runs before the server listens.
 - **Level-based logger** — [`src/util/logger.ts`](../src/util/logger.ts)
   installs console level filtering via `LOG_LEVEL`
   (`error|warn|info|debug|trace`). Calls made through its `log` helper also

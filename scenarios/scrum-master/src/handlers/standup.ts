@@ -97,6 +97,7 @@ interface StandupTriggerOptions {
     initiatedByAadId?: string;
     turnContext?: TurnContext;
     source: 'command' | 'cron' | 'http';
+    retryStandupId?: string;
 }
 interface StandupTriggerResult {
     standupId: string; sentTo: number; skipped: number; note?: string;
@@ -140,6 +141,27 @@ export function triggerStandup(opts: StandupTriggerOptions): Promise<StandupTrig
 }
 
 async function startStandup(opts: StandupTriggerOptions): Promise<StandupTriggerResult> {
+    if (opts.retryStandupId) {
+        const session = getSession(opts.retryStandupId);
+        let note: string;
+        if (!session) {
+            note = `Standup ${opts.retryStandupId} is not retained in this process. No new run was started; inspect persisted records before manual recovery.`;
+        } else if (session.state === 'summarized') {
+            await finishStandupChase(session);
+            note = session.chaseState === 'complete'
+                ? `Blocker follow-up completed for ${session.standupId} without repeating its summary.`
+                : `Blocker follow-up for ${session.standupId} is still pending. Retry /standup retry ${session.standupId}.`;
+        } else if (session.state === 'open' &&
+            (allExpectedResponded(session) || Date.now() >= Date.parse(session.cutoffUtc))) {
+            await summarizeStandup(session);
+            note = `Retried retained standup ${session.standupId} without starting a new daily run.`;
+        } else {
+            note = `Standup ${session.standupId} is still collecting responses or being summarized; no additional work was started.`;
+        }
+        console.log(`[standup] ${note}`);
+        if (opts.turnContext) await opts.turnContext.sendActivity(note);
+        return { standupId: opts.retryStandupId, sentTo: session?.sentTo.size ?? 0, skipped: 0, note };
+    }
     const src = opts.source;
     const jira = getJiraClient();
     const schedule = getScheduleConfig();
@@ -318,7 +340,7 @@ function scheduleStandupCutoff(session: StandupSession, delayMs: number, retries
             if (session.state === 'open' && retries < 3) {
                 scheduleStandupCutoff(session, 60_000, retries + 1);
             } else {
-                console.error('[standup] Automatic summary retries exhausted. Retry /standup manually; the session is retained.');
+                console.error(`[standup] Automatic summary retries exhausted. Retry /standup retry ${session.standupId}; the session is retained.`);
             }
         }
     }, delayMs);
@@ -724,7 +746,7 @@ async function finishStandupChase(session: StandupSession): Promise<void> {
         await chaseAfterStandup(session);
     } catch (e) {
         session.chaseState = 'failed';
-        console.error('[standup] Summary delivered, but blocker follow-up failed. Session retained; retry /standup to retry only blocker follow-up:', (e as Error).message);
+        console.error(`[standup] Summary delivered, but blocker follow-up failed. Session retained; retry /standup retry ${session.standupId} to retry only blocker follow-up:`, (e as Error).message);
         return;
     }
 

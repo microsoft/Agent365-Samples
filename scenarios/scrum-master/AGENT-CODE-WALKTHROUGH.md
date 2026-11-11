@@ -8,6 +8,9 @@ for flow diagrams, see [`docs/design.md`](docs/design.md).
 
 [`src/index.ts`](src/index.ts) loads `.env`, installs scenario logging,
 prints the startup configuration summary and creates the Express server.
+Before listening it validates schedule bounds and required live Jira settings;
+invalid configuration exits nonzero rather than serving a misleading healthy
+response. The banner itself remains diagnostic and non-fatal.
 
 - `GET /api/health` is public.
 - `/api/internal/*` routes run **before** JWT middleware. They check the raw
@@ -71,12 +74,24 @@ assertion such as `Done` or `I have completed it`; arbitrary prose with `done`
 is not sufficient. Negative, partial, conditional or ambiguous completion text
 remains unchanged. Safe forward steps use the current Jira status, not the
 cached standup snapshot.
+Successfully read statuses also refresh that snapshot when reconciliation is a
+no-op, so the summary can display a change made during the response window.
+Live Jira comments and transitions resolve and revalidate the issue's current
+project before posting, then use its validated canonical key. An assigned issue
+moved out of the configured project is rejected rather than written through an
+old-key alias.
 
 `/standup` and `/help` do not require LLM inference. In mock mode the first
 personal Playground caller becomes the mock Alex (SM) persona and receives
 Alex's issue card; other mock assignees are separate identities, not silently
 merged into the caller. Live delivery requires real roster mappings and prior
 conversations.
+
+`/standup retry <sprintId>#<yyyy-mm-dd>` targets a run retained in the current
+process, even after midnight or the sprint ends. It retries an eligible failed
+summary or pending blocker follow-up without creating a new daily run. It cannot
+reconstruct a session after restart. Summary cards preserve an empty optional
+blocker description as `Blocked (no details provided)` and still mention the SM.
 
 ## 4. Grounded Jira Q&A
 

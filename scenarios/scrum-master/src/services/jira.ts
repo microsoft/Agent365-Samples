@@ -222,6 +222,8 @@ export class LiveJiraClient implements JiraClient {
     }
 
     async transitionIssue(issueKey: string, transitionId: string, comment?: string): Promise<void> {
+        // Resolve moved aliases and validate both project keys before any write.
+        issueKey = (await this.getIssue(issueKey)).key;
         // Note: Jira Cloud silently drops `update.comment` embedded in the transitions payload
         // on some tenants (transition still applies, comment is lost). Do them as two calls to
         // guarantee both land.
@@ -236,6 +238,7 @@ export class LiveJiraClient implements JiraClient {
     }
 
     async addComment(issueKey: string, body: string): Promise<void> {
+        issueKey = (await this.getIssue(issueKey)).key;
         await this.http.post(`/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
             body: adfText(body),
         }).catch(this.wrap(`addComment(${issueKey})`));

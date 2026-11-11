@@ -26,7 +26,7 @@ export interface StandupSummaryUpdateItem {
     statusFrom: string;
     statusTo?: string | null;
     update: string;
-    /** Blocker text if the user flagged one on this item; empty/undefined otherwise. */
+    /** Undefined means unblocked; an empty string means blocked without details. */
     blockerText?: string;
 }
 
@@ -117,7 +117,7 @@ export function buildStandupSummaryCard(p: StandupSummaryParams): Attachment {
                     cell(item.title || '(no title)'),
                     cell(statusCellText(item)),
                     cell(item.update),
-                    cell(item.blockerText ?? ''),
+                    cell(item.blockerText === undefined ? '' : item.blockerText.trim() || 'Blocked (no details provided)'),
                 ],
             });
         }

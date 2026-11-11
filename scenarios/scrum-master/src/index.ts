@@ -16,9 +16,15 @@ import { installHttpLogging } from './util/httpLogger';
 installHttpLogging();
 
 // Print boot-time config summary so misconfig shows up before Jira/SharePoint
-// clients start swallowing/complaining. Non-fatal — never throws.
-import { printStartupBanner } from './startup-check';
+// clients initialize. Invalid runtime settings are fatal, including in development.
+import { printStartupBanner, validateStartupConfiguration } from './startup-check';
 printStartupBanner();
+try {
+  validateStartupConfiguration();
+} catch (e) {
+  console.error('[startup] Invalid configuration:', (e as Error).message);
+  process.exit(1);
+}
 
 // Last-resort safety nets. Without these, an unhandled rejection from the
 // connector (e.g. a 502 trying to send an outbound Activity, or an axios error
@@ -188,14 +194,17 @@ const port = Number(process.env.PORT) || 3978
 // Host is configurable; default to localhost for development, 0.0.0.0 for everything else
 const host = process.env.HOST ?? (isDevelopment ? 'localhost' : '0.0.0.0');
 
-server.listen(port, host, async () => {
+// Finish startup before exposing health or accepting requests. The global
+// exception handlers deliberately keep runtime failures alive, so exit explicitly.
+try {
+  startLocalScheduler();
+} catch (e) {
+  console.error('[startup] Failed to start local scheduler:', (e as Error).message);
+  process.exit(1);
+}
+
+server.listen(port, host, () => {
   console.log(`\nServer listening on ${host}:${port} for appId ${authConfig.clientId} debug ${process.env.DEBUG}`)
-  // SMA: kick off the in-process cron (no-op when LOCAL_CRON=false).
-  try {
-    startLocalScheduler();
-  } catch (e) {
-    console.warn('[cron] Failed to start local scheduler (non-fatal):', (e as Error).message);
-  }
 }).on('error', async (err: unknown) => {
   console.error(err);
   process.exit(1);

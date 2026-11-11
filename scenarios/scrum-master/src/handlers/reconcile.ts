@@ -139,6 +139,7 @@ export async function runReconciliation(session: StandupSession): Promise<Reconc
 
             try {
                 const current = await jira.getIssue(issue.key);
+                issue.status = current.status;
                 if (target === current.status) continue;
                 const transitions = await jira.getTransitions(issue.key);
                 const trans = findTransition(transitions, target);
