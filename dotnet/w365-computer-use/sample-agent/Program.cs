@@ -3,6 +3,7 @@
 
 using W365ComputerUseSample;
 using W365ComputerUseSample.Agent;
+using W365ComputerUseSample.Authentication;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
@@ -15,6 +16,7 @@ using Microsoft.Agents.Core;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Logging.AzureAppServices;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,8 +32,21 @@ builder.Services.AddW365ComputerUseOpenTelemetry(
     observabilityTokens is null ? null : observabilityTokens.ResolveAsync);
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
+builder.Services.AddTransient<W365McpHttpLoggingHandler>();
+builder.Services.AddHttpClient("W365Mcp")
+    .RemoveAllLoggers()
+    .AddHttpMessageHandler<W365McpHttpLoggingHandler>();
 builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
+builder.Logging.AddAzureWebAppDiagnostics();
+builder.Logging.AddFilter<FileLoggerProvider>((category, level) =>
+    category == typeof(W365McpHttpLoggingHandler).FullName && level >= LogLevel.Warning);
+builder.Services.Configure<AzureFileLoggerOptions>(options =>
+{
+    options.FileName = "w365-mcp-";
+    options.FileSizeLimit = 1024 * 1024;
+    options.RetainedFileCountLimit = 2;
+});
 
 // **********  Configure A365 Services **********
 // Add A365 Tooling Server integration
@@ -54,6 +69,18 @@ builder.Services.Configure<ScreenShareOptions>(
 // for multi-instance hosts swap for a distributed store (Redis, etc.).
 builder.Services.AddSingleton<HandoffStore>();
 
+builder.Services.Configure<HumanW365AuthenticationOptions>(
+    builder.Configuration.GetSection(HumanW365AuthenticationOptions.SectionName));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<HumanW365AuthorizationStore>();
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = "__Host-W365HumanAuth";
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+});
+
 // Add AspNet token validation
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
@@ -62,6 +89,22 @@ builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, cancellationToken) =>
+    {
+        if (context.HttpContext.Request.Path == HumanW365AuthenticationEndpoints.CompletionPath)
+            HumanW365AuthenticationEndpoints.SetResponseHeaders(context.HttpContext);
+        return ValueTask.CompletedTask;
+    };
+    options.AddPolicy(HumanW365AuthenticationEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
     options.AddPolicy("ScreenShareToken", httpContext =>
     {
         var sid = httpContext.Request.RouteValues["sid"]?.ToString() ?? "unknown";
@@ -157,6 +200,7 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseStaticFiles();
+app.MapHumanW365Authentication();
 
 // Map the /api/messages endpoint to the AgentApplication
 app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
@@ -168,6 +212,14 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
 
     await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
+        if (app.Configuration.GetValue<bool>("HumanW365Authentication:Enabled"))
+        {
+            var reason = await HumanW365IncomingIdentity.BindAsync(request.HttpContext).ConfigureAwait(false);
+            if (reason != null)
+                app.Logger.LogWarning("Human W365 incoming JWT proof unavailable. ReasonCode={ReasonCode}", reason);
+            else
+                app.Logger.LogInformation("Human W365 incoming JWT proof bound. ReasonCode={ReasonCode}", "incoming_jwt_identity_bound");
+        }
         await adapter.ProcessAsync(request, response, agent, cancellationToken);
     }).ConfigureAwait(false);
 });

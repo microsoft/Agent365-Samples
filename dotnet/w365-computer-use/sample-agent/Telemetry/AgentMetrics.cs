@@ -62,12 +62,12 @@ public static class AgentMetrics
         activity?.Dispose();
     }
 
-    public static Task InvokeObservedHttpOperation(string operationName, Action func)
+    public static async Task InvokeObservedHttpOperation(string operationName, Func<Task> func)
     {
         using var activity = ActivitySource.StartActivity(operationName);
         try
         {
-            func();
+            await func().ConfigureAwait(false);
             activity?.SetStatus(ActivityStatusCode.Ok);
         }
         catch (Exception ex)
@@ -81,8 +81,6 @@ public static class AgentMetrics
             }));
             throw;
         }
-
-        return Task.CompletedTask;
     }
 
     public static async Task InvokeObservedAgentOperation(string operationName, ITurnContext context, Func<Task> func)

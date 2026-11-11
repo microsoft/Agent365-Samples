@@ -10,7 +10,9 @@ using System.Text.RegularExpressions;
 using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Client;
+using W365ComputerUseSample.Authentication;
 using W365ComputerUseSample.ComputerUse.Models;
 using W365ComputerUseSample.Telemetry;
 
@@ -95,6 +97,8 @@ public class ComputerUseOrchestrator
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly HttpClient _httpClient;
     private readonly ILogger<ComputerUseOrchestrator> _logger;
+    private readonly HumanW365AuthorizationStore? _humanAuthorizationStore;
+    private readonly IOptions<HumanW365AuthenticationOptions>? _humanAuthenticationOptions;
     private readonly int _maxIterations;
     private readonly string? _screenshotPath;
     private readonly string? _oneDriveFolder;
@@ -203,12 +207,16 @@ public class ComputerUseOrchestrator
         ICuaModelProvider modelProvider,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<ComputerUseOrchestrator> logger)
+        ILogger<ComputerUseOrchestrator> logger,
+        HumanW365AuthorizationStore? humanAuthorizationStore = null,
+        IOptions<HumanW365AuthenticationOptions>? humanAuthenticationOptions = null)
     {
         _modelProvider = modelProvider;
         _httpClientFactory = httpClientFactory;
         _httpClient = httpClientFactory.CreateClient("WebClient");
         _logger = logger;
+        _humanAuthorizationStore = humanAuthorizationStore;
+        _humanAuthenticationOptions = humanAuthenticationOptions;
 
         // The steering addendum is only included when W365 tools are actually exposed to the model.
         _systemInstructions = SystemInstructions;
@@ -486,11 +494,23 @@ public class ComputerUseOrchestrator
         string? telemetryChannelId = null,
         CancellationToken cancellationToken = default,
         PendingTaskAction pendingTaskAction = PendingTaskAction.Resume,
-        W365SessionOptions? sessionOptions = null)
+        W365SessionOptions? sessionOptions = null,
+        HumanW365Turn? humanTurn = null,
+        Action<string>? onCloudPcSignInRequired = null)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}", conversationId);
 
-        var session = GetConversationSession(conversationId);
+        ConversationSession session;
+        if (humanTurn?.ChatAction != null)
+        {
+            if (!_sessions.TryGetValue(conversationId, out var existingSession))
+                return StaleHumanActionGuidance;
+            session = existingSession;
+        }
+        else
+        {
+            session = GetConversationSession(conversationId);
+        }
         // Serialize turns for the same conversation. Concurrent turns (e.g. Bot Framework
         // redelivering an activity during a slow CUA turn) could each append an input_image to
         // the shared ConversationHistory, producing the Azure OpenAI 400 "Computer tool cannot
@@ -499,6 +519,17 @@ public class ComputerUseOrchestrator
         var effectiveTask = session.PendingTask ?? userMessage;
         try
         {
+            if (humanTurn?.ChatAction is { } chatAction)
+            {
+                if (!includeCuaTool || session.HumanOwner != humanTurn.Owner
+                    || session.HumanAuthorizationActionId == null
+                    || !string.Equals(session.HumanAuthorizationActionId, chatAction.RequestId, StringComparison.Ordinal)
+                    || chatAction.Kind is not (HumanW365ChatActionKind.Continue or HumanW365ChatActionKind.Cancel))
+                    return StaleHumanActionGuidance;
+                userMessage = chatAction.Kind == HumanW365ChatActionKind.Cancel ? "end my session" : "continue";
+                pendingTaskAction = PendingTaskAction.Resume;
+                sessionOptions = null;
+            }
             if (includeCuaTool)
             {
                 var options = sessionOptions ?? new W365SessionOptions();
@@ -506,16 +537,40 @@ public class ComputerUseOrchestrator
                 if (options.HasExplicitOptions)
                 {
                     if (!string.IsNullOrEmpty(session.W365SessionId)
+                        || session.HumanOwner != null
                         || !string.IsNullOrWhiteSpace(prestartedW365SessionId)
                         || TryExtractSessionId(userMessage, out _))
                     {
                         return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, or browser mode.";
                     }
                 }
-                if (string.IsNullOrEmpty(session.W365SessionId))
+                if (session.HumanOwner is { } pinnedOwner)
+                {
+                    if (humanTurn == null)
+                        return "This human W365 request requires a verified chat identity. Use the same account as this chat to continue or end the session.";
+                    if (humanTurn.Owner != pinnedOwner)
+                        return "Use the same account as this chat's original human W365 request. This session cannot be used or changed by another account.";
+                    if ((!string.IsNullOrWhiteSpace(prestartedW365SessionId)
+                        && !session.W365SessionIds.Contains(prestartedW365SessionId))
+                        || (TryExtractSessionId(userMessage, out var selectedId)
+                        && !session.W365SessionIds.Contains(selectedId)))
+                        return "A human W365 request is already selected. End that session first before selecting another session.";
+                }
+                else if (humanTurn != null)
+                {
+                    if (!string.IsNullOrEmpty(session.W365SessionId) || session.W365SessionIds.Count > 0
+                        || !string.IsNullOrWhiteSpace(prestartedW365SessionId)
+                        || TryExtractSessionId(userMessage, out _))
+                        return "A W365 session is already active or selected. End that session first before requesting a human session.";
+                    if (options.SessionKind != "human")
+                        return "Request an explicit human session kind to authorize W365 as yourself. No session was started.";
+                }
+                if (string.IsNullOrEmpty(session.W365SessionId) && session.HumanOwner == null)
                     session.RequestedSessionOptions = options;
+                session.HumanAuthorizationActionId = null;
             }
             if (includeCuaTool && session.PendingTask is { } pendingTask
+                && !session.PendingTermination
                 && !IsEndSessionRequest(userMessage, session.HasPendingWork))
             {
                 session.PendingTask = pendingTaskAction switch
@@ -534,6 +589,48 @@ public class ComputerUseOrchestrator
                 ? null
                 : telemetryChannelId;
 
+            if (includeCuaTool && (humanTurn != null || session.HumanOwner != null))
+            {
+                session.HumanOwner ??= humanTurn!.Owner;
+                var ending = session.PendingTermination || IsEndSessionRequest(userMessage, session.HasPendingWork);
+                if (ending && string.IsNullOrEmpty(session.W365SessionId))
+                {
+                    await ForgetSelectedSessionAsync(session, conversationId);
+                    return "The pending human W365 request has been cancelled. No Cloud PC session was allocated.";
+                }
+                session.PendingTermination = ending;
+                session.PendingTask ??= effectiveTask;
+                if (_humanAuthorizationStore == null || _humanAuthenticationOptions == null)
+                    return "Configure the human W365 authorization store and HumanW365Authentication options before using human sign-in. Your request is saved; say \"end my session\" to cancel.";
+                Uri origin;
+                try
+                {
+                    origin = HumanW365Hosting.GetOrigin(_humanAuthenticationOptions.Value);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return $"{ex.Message} Your desktop task and session options are saved; say \"end my session\" to cancel.";
+                }
+                if (session.HumanOwner.TenantId != Guid.Parse(_humanAuthenticationOptions.Value.TenantId!))
+                    return "Sign in with the configured HumanW365Authentication:TenantId tenant using the same account as this chat. Your request is saved; say \"end my session\" to cancel.";
+                if (!_humanAuthorizationStore.TryGet(conversationId, session.HumanOwner, out var credential))
+                {
+                    await DiscardDirectW365ClientAsync(session);
+                    var guidance = HumanAuthorizationGuidance(session, conversationId, session.HumanOwner, origin, humanTurn);
+                    return humanTurn?.ChatAction?.Kind == HumanW365ChatActionKind.Continue
+                        ? "Sign-in has not been completed or has expired. Sign in again, finish the browser confirmation, then select Continue after sign-in.\n\n" + guidance
+                        : guidance;
+                }
+
+                (w365Tools, mcpClient) = await ConnectDirectW365CoreAsync(session,
+                    humanTurn!.GatewayUrl, credential!.AccessToken, null, humanTurn.TurnContext.Activity, cancellationToken);
+                additionalTools = null;
+                graphAccessToken = null;
+                onFolderLinkReady = null;
+                onCuaStarting = null;
+                if (ending) userMessage = "end my session";
+            }
+
             return await RunTurnAsync(
                 session,
                 conversationId,
@@ -549,24 +646,33 @@ public class ComputerUseOrchestrator
                 includeCuaTool,
                 prestartedW365SessionId,
                 prestartedScreenShareUrl,
-                cancellationToken);
+                cancellationToken,
+                onCloudPcSignInRequired);
         }
-        catch (W365HumanLoginRequiredException)
+        catch (W365HumanLoginRequiredException) when (includeCuaTool || session.HumanOwner == null)
         {
             if (string.IsNullOrEmpty(session.W365SessionId))
                 throw new InvalidOperationException("W365 reported pending human sign-in without a sessionId. No session can be resumed.");
             session.Lifecycle.MarkPending();
             session.PendingTask ??= effectiveTask;
             session.ConversationHistory.Clear();
-            return HumanLoginGuidance(session);
+            return HumanLoginGuidance(session, onCloudPcSignInRequired);
         }
-        catch (W365SessionEndedException)
+        catch (W365SessionEndedException) when (includeCuaTool || session.HumanOwner == null)
         {
-            ForgetSelectedSession(session);
+            await ForgetSelectedSessionAsync(session, conversationId);
             return "The W365 service reports that this session has ended. It cannot be reused. Send a new computer-use request to start another session.";
         }
-        catch (Exception ex) when (IsUnauthorizedMcpTransportFailure(ex))
+        catch (Exception ex) when ((includeCuaTool || session.HumanOwner == null) && IsUnauthorizedMcpTransportFailure(ex))
         {
+            if (session.HumanOwner is { } owner)
+            {
+                session.PendingTask ??= effectiveTask;
+                _humanAuthorizationStore!.InvalidateCredential(conversationId);
+                await DiscardDirectW365ClientAsync(session);
+                return HumanAuthorizationGuidance(session, conversationId, owner,
+                    HumanW365Hosting.GetOrigin(_humanAuthenticationOptions!.Value), humanTurn);
+            }
             await DisposeW365McpClientAsync(session.W365SessionId);
             session.McpClient = null;
             session.RemoteTools = null;
@@ -594,7 +700,8 @@ public class ComputerUseOrchestrator
         bool includeCuaTool,
         string? prestartedW365SessionId,
         string? prestartedScreenShareUrl,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<string>? onCloudPcSignInRequired)
     {
         if (session.SessionStarted)
         {
@@ -641,10 +748,11 @@ public class ComputerUseOrchestrator
                 if (string.IsNullOrEmpty(session.W365SessionId)) return "There is no active W365 session to end.";
                 await InvokeW365ToolAsync(w365Tools, mcpClient, W365EndSessionToolName,
                     new Dictionary<string, object?> { ["sessionId"] = session.W365SessionId }, session, cancellationToken);
-                ForgetSelectedSession(session);
+                await ForgetSelectedSessionAsync(session, conversationId);
                 return "The W365 session has been ended.";
             }
 
+            var acquiringSession = string.IsNullOrEmpty(session.W365SessionId);
             try
             {
                 await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, cancellationToken);
@@ -656,9 +764,9 @@ public class ComputerUseOrchestrator
 
             if (session.Lifecycle.AwaitingHumanLogin)
             {
-                var firstPendingTurn = session.PendingTask == null;
+                var firstPendingTurn = acquiringSession || session.PendingTask == null;
                 session.PendingTask ??= userMessage;
-                if (firstPendingTurn) return HumanLoginGuidance(session);
+                if (firstPendingTurn) return HumanLoginGuidance(session, onCloudPcSignInRequired);
                 var ready = await session.Lifecycle.CheckReadinessAsync(
                     async (id, ct) =>
                     {
@@ -683,7 +791,7 @@ public class ComputerUseOrchestrator
                             return false;
                         }
                     });
-                if (!ready) return HumanLoginGuidance(session);
+                if (!ready) return HumanLoginGuidance(session, onCloudPcSignInRequired);
             }
             if (session.Lifecycle.ScreenShareUrl is { } shareUrl && session.W365SessionId is { } readyId)
                 session.ScreenShareUrlsBySessionId[readyId] = shareUrl;
@@ -1004,6 +1112,17 @@ public class ComputerUseOrchestrator
                             }
 
                             var sessionIdToEnd = ExtractSessionIdFromFunctionCall(item) ?? session.W365SessionId;
+                            if (session.HumanOwner != null)
+                            {
+                                if (sessionIdToEnd == null || !session.W365SessionIds.Contains(sessionIdToEnd))
+                                    throw new InvalidOperationException("Only a tracked session belonging to this human W365 request can be ended.");
+                                session.PendingTermination = true;
+                                await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
+                                    W365EndSessionToolName, new Dictionary<string, object?> { ["sessionId"] = sessionIdToEnd },
+                                    session, cancellationToken);
+                                await ForgetSelectedSessionAsync(session, conversationId, sessionIdToEnd);
+                                return "The W365 session has been ended.";
+                            }
                             await EndSessionAsync(
                                 w365Tools,
                                 _logger,
@@ -1233,6 +1352,42 @@ public class ComputerUseOrchestrator
     {
         foreach (var (convId, session) in _sessions)
         {
+            if (session.HumanOwner is { } owner)
+            {
+                await session.TurnLock.WaitAsync();
+                try
+                {
+                    if (session.W365SessionIds.Count > 0
+                        && (_humanAuthorizationStore == null
+                            || !_humanAuthorizationStore.TryGet(convId, owner, out _)
+                            || session.McpClient == null))
+                    {
+                        _logger.LogWarning("Cannot confirm cleanup of human W365 sessions for conversation {ConversationId}: human authorization is missing or expired. Sign in again and end the session; Cloud PC release is not confirmed.", convId);
+                        continue;
+                    }
+                    foreach (var id in session.W365SessionIds.ToArray())
+                    {
+                        try
+                        {
+                            await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
+                                W365EndSessionToolName, new Dictionary<string, object?> { ["sessionId"] = id },
+                                session, CancellationToken.None);
+                            await ForgetSelectedSessionAsync(session, convId, id);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Cannot confirm cleanup of human W365 session {SessionId} ({ErrorType}). Sign in again and end the session; Cloud PC release is not confirmed.", id, ex.GetType().Name);
+                        }
+                    }
+                    if (session.W365SessionIds.Count == 0)
+                        await ForgetSelectedSessionAsync(session, convId);
+                }
+                finally
+                {
+                    session.TurnLock.Release();
+                }
+                continue;
+            }
             foreach (var sessionId in session.W365SessionIds.ToArray())
             {
                 _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
@@ -1249,7 +1404,13 @@ public class ComputerUseOrchestrator
             }
         }
 
-        _sessions.Clear();
+        foreach (var (convId, session) in _sessions)
+        {
+            if (session.HumanOwner != null && session.W365SessionIds.Count > 0)
+                await DiscardDirectW365ClientAsync(session);
+            else
+                _sessions.TryRemove(convId, out _);
+        }
         _cachedTools = null;
         _w365McpClientsBySessionId.Clear();
 
@@ -1393,6 +1554,9 @@ public class ComputerUseOrchestrator
     internal bool HasPendingW365Task(string conversationId) =>
         _sessions.TryGetValue(conversationId, out var session) && session.HasPendingWork;
 
+    internal bool UsesHumanW365Authentication(string conversationId) =>
+        _sessions.TryGetValue(conversationId, out var session) && session.HumanOwner != null;
+
     private ConversationSession GetConversationSession(string conversationId) =>
         _sessions.GetOrAdd(conversationId, key =>
         {
@@ -1404,27 +1568,71 @@ public class ComputerUseOrchestrator
         Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:end|close|release|disconnect(?:\s+from)?|abandon|cancel)\s+(?:(?:my|the|this|w365)\s+)*(?:session|cloud\s*pc|vm)[.!]?$", RegexOptions.IgnoreCase)
         || (pending && Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:cancel|stop|abandon)[.!]?$", RegexOptions.IgnoreCase));
 
-    private static string HumanLoginGuidance(ConversationSession session)
+    private static string HumanLoginGuidance(ConversationSession session, Action<string>? onCloudPcSignInRequired)
     {
-        var link = Uri.TryCreate(session.Lifecycle.ConnectivityUrl, UriKind.Absolute, out var url)
-            && url.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(url.UserInfo)
-            ? $"[Open W365 sign-in](<{url.AbsoluteUri}>)"
-            : "The service has not supplied a valid sign-in URL; request session details again or end this session.";
-        return $"This W365 session is waiting for human sign-in. {link}\n\n"
-            + "Open the sign-in link promptly and use your own credentials. This is separate from screen sharing. "
+        var link = "The service has not supplied a valid sign-in URL; request session details again or end this session.";
+        if (Uri.TryCreate(session.Lifecycle.ConnectivityUrl, UriKind.Absolute, out var url)
+            && url.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(url.UserInfo))
+        {
+            onCloudPcSignInRequired?.Invoke(url.AbsoluteUri);
+            link = onCloudPcSignInRequired == null
+                ? $"[Sign in](<{url.AbsoluteUri}>)"
+                : "Select **Sign in** below.";
+        }
+        return $"**Sign in to your Cloud PC**\n\nThis W365 session is waiting for human sign-in. {link}\n\n"
+            + "Sign in promptly with your work or school account. Enter credentials only in the service's sign-in experience. "
+            + "This is separate from signing in to let the agent call W365 as you, and from screen sharing. "
+            + (onCloudPcSignInRequired == null ? string.Empty : MissingSignInCardGuidance)
             + "After signing in, reply to resume the same session and task, or say \"end my session\" to release it. "
             + "The local readiness check does not imply a guaranteed service timeout.";
     }
 
-    private void ForgetSelectedSession(ConversationSession session)
+    private const string MissingSignInCardGuidance =
+        "If the sign-in action is missing, open this same chat in a client that supports cards. ";
+
+    private const string StaleHumanActionGuidance =
+        "These request actions are no longer current. No W365 request was started or changed. Use the latest card in the original chat, or send a new computer-use request.";
+
+    private string HumanAuthorizationGuidance(
+        ConversationSession session, string conversationId, HumanW365Owner owner, Uri origin, HumanW365Turn? humanTurn)
     {
-        if (session.W365SessionId is { } id) _w365McpClientsBySessionId.TryRemove(id, out _);
-        session.RemoveSession(session.W365SessionId);
+        var link = _humanAuthorizationStore!.Issue(conversationId, owner, origin);
+        session.HumanAuthorizationActionId = Guid.NewGuid().ToString("N");
+        humanTurn?.OnAuthorizationRequired?.Invoke(session.HumanAuthorizationActionId, link);
+        var signIn = humanTurn?.OnAuthorizationRequired == null
+            ? $"[Sign in with Microsoft](<{link}>)"
+            : "**Sign in with Microsoft** below";
+        return $"**Sign in for Windows 365 computer use**\n\nSelect {signIn} to let this agent call W365 as you. "
+            + "Use the same work or school account as this chat. The action opens this sample's entry page; select Sign in with Microsoft there to use Microsoft's hosted sign-in. "
+            + "Finish the confirmation in your browser, then return here. Your desktop task and session options are saved. "
+            + "This is separate from signing in to the Cloud PC. "
+            + "Use **Continue after sign-in** to resume, or **Cancel request** to cancel. "
+            + (humanTurn?.OnAuthorizationRequired == null ? string.Empty : MissingSignInCardGuidance)
+            + "You can also reply \"continue\" or \"end my session\" for the request controls. Never send credentials in chat.";
+    }
+
+    private async Task ForgetSelectedSessionAsync(ConversationSession session, string conversationId, string? sessionId = null)
+    {
+        sessionId ??= session.W365SessionId;
+        if (sessionId is { } id) _w365McpClientsBySessionId.TryRemove(id, out _);
+        session.RemoveSession(sessionId);
         session.Lifecycle = new W365SessionState(session.W365SessionId);
         session.PendingTask = null;
+        session.PendingTermination = false;
+        session.HumanAuthorizationActionId = null;
         session.RemoteTools = null;
         session.ScreenShareLinkEmitted = false;
         session.ConversationHistory.Clear();
+        if (session.W365SessionIds.Count == 0)
+        {
+            session.RequestedSessionOptions = new W365SessionOptions();
+            if (session.HumanOwner != null)
+            {
+                _humanAuthorizationStore?.Remove(conversationId);
+                await DiscardDirectW365ClientAsync(session);
+                session.HumanOwner = null;
+            }
+        }
     }
 
     private static async Task<IList<AITool>> DiscoverW365ToolsAsync(
@@ -1492,7 +1700,11 @@ public class ComputerUseOrchestrator
 
         var mcpClient = _w365McpClientsBySessionId.TryGetValue(sessionId, out var perSessionClient)
             ? perSessionClient
-            : _cachedMcpClient;
+            : session.HumanOwner != null ? session.McpClient : _cachedMcpClient;
+        if (session.HumanOwner is { } owner
+            && (_humanAuthorizationStore == null || !_humanAuthorizationStore.TryGet(conversationId, owner, out _)
+                || mcpClient == null))
+            return (false, string.Empty, string.Empty);
         if (mcpClient == null && _cachedTools == null)
         {
             return (false, string.Empty, string.Empty);
@@ -1502,7 +1714,7 @@ public class ComputerUseOrchestrator
         {
             var args = new Dictionary<string, object?> { ["sessionId"] = sessionId };
             var resultStr = await InvokeW365ToolAsync(
-                _cachedTools ?? [],
+                session.HumanOwner != null ? session.LifecycleTools ?? [] : _cachedTools ?? [],
                 mcpClient,
                 W365GetSessionDetailsToolName,
                 args,
@@ -1540,36 +1752,55 @@ public class ComputerUseOrchestrator
         await session.TurnLock.WaitAsync(cancellationToken);
         try
         {
-            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{url}\n{agentId}\n{accessToken}")));
-            if (session.McpClient != null && session.ConnectionFingerprint == fingerprint)
-            {
-                var existingTools = new W365McpSessionClient(session.McpClient).CreateLifecycleTools(
-                    turnContext.Activity.Conversation?.Id, turnContext.Activity.ChannelId);
-                return (existingTools, session.McpClient);
-            }
-            if (session.McpClient is { } previousClient)
-            {
-                session.McpClient = null;
-                _allMcpClients.Remove(previousClient);
-                foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId.TryRemove(id, out _);
-                await previousClient.DisposeAsync();
-            }
-            var transport = new SseClientTransport(
-                CreateW365TransportOptions(url, accessToken, agentId, turnContext.Activity),
-                _httpClientFactory.CreateClient());
-            var client = await McpClientFactory.CreateAsync(transport, cancellationToken: cancellationToken);
-            session.McpClient = client;
-            session.ConnectionFingerprint = fingerprint;
-            session.RemoteTools = null;
-            foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId[id] = client;
-            _allMcpClients.Add(client);
-            var tools = new W365McpSessionClient(client).CreateLifecycleTools(
-                turnContext.Activity.Conversation?.Id, turnContext.Activity.ChannelId);
-            return (tools, client);
+            if (session.HumanOwner != null)
+                throw new InvalidOperationException("This request uses human W365 authorization. A verified human turn is required; agent or development tokens cannot replace its transport.");
+            return await ConnectDirectW365CoreAsync(session, url, accessToken, agentId, turnContext.Activity, cancellationToken);
         }
         finally
         {
             session.TurnLock.Release();
+        }
+    }
+
+    // Caller owns the conversation's TurnLock.
+    private async Task<(IList<AITool> Tools, IMcpClient Client)> ConnectDirectW365CoreAsync(
+        ConversationSession session, string url, string accessToken, string? agentId,
+        IActivity activity, CancellationToken ct)
+    {
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{url}\n{agentId}\n{accessToken}")));
+        if (session.McpClient != null && session.ConnectionFingerprint == fingerprint)
+        {
+            var existingTools = new W365McpSessionClient(session.McpClient).CreateLifecycleTools(
+                activity.Conversation?.Id, activity.ChannelId);
+            return (existingTools, session.McpClient);
+        }
+        await DiscardDirectW365ClientAsync(session);
+        var transport = new SseClientTransport(
+            CreateW365TransportOptions(url, accessToken, agentId, activity),
+            _httpClientFactory.CreateClient("W365Mcp"));
+        var client = await McpClientFactory.CreateAsync(transport, cancellationToken: ct);
+        session.McpClient = client;
+        session.ConnectionFingerprint = fingerprint;
+        session.RemoteTools = null;
+        foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId[id] = client;
+        _allMcpClients.Add(client);
+        var tools = new W365McpSessionClient(client).CreateLifecycleTools(
+            activity.Conversation?.Id, activity.ChannelId);
+        return (tools, client);
+    }
+
+    private async Task DiscardDirectW365ClientAsync(ConversationSession session)
+    {
+        var previousClient = session.McpClient;
+        session.McpClient = null;
+        session.ConnectionFingerprint = null;
+        session.RemoteTools = null;
+        session.LifecycleTools = null;
+        foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId.TryRemove(id, out _);
+        if (previousClient != null)
+        {
+            _allMcpClients.Remove(previousClient);
+            await previousClient.DisposeAsync();
         }
     }
 
@@ -2423,6 +2654,16 @@ public class ComputerUseOrchestrator
     {
         logger.LogWarning("Session lost. Recovering — releasing stale session before starting a new one.");
 
+        if (session.HumanOwner != null)
+        {
+            await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
+                W365EndSessionToolName, new Dictionary<string, object?> { ["sessionId"] = session.W365SessionId },
+                session, ct);
+            if (session.W365SessionId is { } id) _w365McpClientsBySessionId.TryRemove(id, out _);
+            session.RemoveSession(session.W365SessionId);
+            return;
+        }
+
         try
         {
             await EndSessionAsync(
@@ -2480,7 +2721,8 @@ public class ComputerUseOrchestrator
     /// Invokes an exposed W365 tool requested by the model via a function_call, returning the tool's
     /// result string for the model's function_call_output. Starts a session if needed, injects the
     /// sessionId, and recovers on a lost session. Tool errors are returned as text (not thrown) so a
-    /// single bad call does not abort the turn.
+    /// single bad call does not abort the turn. Human-session unauthorized transport failures
+    /// propagate to RunAsync for credential invalidation and reauthorization.
     /// </summary>
     private async Task<string> InvokeExposedW365ToolAsync(
         JsonElement functionCall,
@@ -2547,7 +2789,8 @@ public class ComputerUseOrchestrator
             return result;
         }
         catch (Exception ex) when (ex is not OperationCanceledException
-            && ex is not W365HumanLoginRequiredException && ex is not W365SessionEndedException)
+            && ex is not W365HumanLoginRequiredException && ex is not W365SessionEndedException
+            && !(session.HumanOwner != null && IsUnauthorizedMcpTransportFailure(ex)))
         {
             _logger.LogError(ex, "Exposed W365 tool '{Tool}' failed", toolName);
             return $"Error calling tool '{toolName}': {ex.Message}";
@@ -3026,6 +3269,9 @@ public class ComputerUseOrchestrator
         public string? TelemetryChannelId { get; set; }
         public W365SessionState Lifecycle { get; set; } = new();
         public string? PendingTask { get; set; }
+        public HumanW365Owner? HumanOwner { get; set; }
+        public string? HumanAuthorizationActionId { get; set; }
+        public bool PendingTermination { get; set; }
         public bool HasPendingWork => PendingTask != null || Lifecycle.AwaitingHumanLogin;
         public IMcpClient? McpClient { get; set; }
         public string? ConnectionFingerprint { get; set; }
