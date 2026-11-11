@@ -345,10 +345,27 @@ public class ComputerUseOrchestrator
     /// Routes a chat turn and extracts explicitly requested session options before session acquisition.
     /// </summary>
     internal async Task<TurnIntent> ClassifyTurnAsync(
-        string conversationId, string userMessage, CancellationToken cancellationToken)
+        string conversationId, string userMessage, CancellationToken cancellationToken,
+        HumanW365Owner? humanOwner = null)
     {
         _sessions.TryGetValue(conversationId, out var session);
-        var pending = session?.HasPendingWork == true;
+        var pending = false;
+        string? pendingTask = null;
+        if (session != null)
+        {
+            await session.TurnLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (GetHumanOwnerRejection(session, humanOwner) is { } ownerRejection)
+                    throw new InvalidOperationException(ownerRejection);
+                pending = session.HasPendingWork;
+                pendingTask = pending ? session.PendingTask : null;
+            }
+            finally
+            {
+                session.TurnLock.Release();
+            }
+        }
         if (pending && IsEndSessionRequest(userMessage, pending: true))
         {
             return new TurnIntent(true, PendingTaskAction.Resume, new W365SessionOptions());
@@ -426,7 +443,7 @@ public class ComputerUseOrchestrator
             {
                 Model = _modelProvider.ModelName,
                 Instructions = (pending ? pendingInstructions : classifierInstructions) + "\n\n" + sessionOptionsInstructions,
-                Input = [CreateUserMessage(JsonSerializer.Serialize(new { pendingTask = pending ? session?.PendingTask : null, userMessage }))],
+                Input = [CreateUserMessage(JsonSerializer.Serialize(new { pendingTask, userMessage }))],
                 Tools = [],
                 Truncation = "auto"
             }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
@@ -468,6 +485,20 @@ public class ComputerUseOrchestrator
             throw new InvalidOperationException(
                 "I couldn't determine the desktop request and session options reliably. Please retry with explicit options: local, human, or agentic session kind; positive-integer displayWidth/displayHeight; and chromium or legacy browserMode. No W365 session was started for this turn.", ex);
         }
+    }
+
+    private string? GetHumanOwnerRejection(ConversationSession? session, HumanW365Owner? owner)
+    {
+        if (session?.HumanOwner is not { } pinnedOwner)
+            return null;
+        if (owner == pinnedOwner)
+            return null;
+
+        _logger.LogWarning("Human W365 conversation access rejected. ReasonCode={ReasonCode}",
+            owner == null ? "verified_chat_identity_missing" : "human_conversation_owner_mismatch");
+        return owner == null
+            ? "This human W365 request requires a verified chat identity. Use the same account as this chat to continue or end the session."
+            : "Use the same account as this chat's original human W365 request. This session cannot be used or changed by another account.";
     }
 
     /// <summary>
@@ -530,6 +561,8 @@ public class ComputerUseOrchestrator
                 pendingTaskAction = PendingTaskAction.Resume;
                 sessionOptions = null;
             }
+            if (GetHumanOwnerRejection(session, humanTurn?.Owner) is { } ownerRejection)
+                return ownerRejection;
             if (includeCuaTool)
             {
                 var options = sessionOptions ?? new W365SessionOptions();
@@ -544,12 +577,8 @@ public class ComputerUseOrchestrator
                         return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, or browser mode.";
                     }
                 }
-                if (session.HumanOwner is { } pinnedOwner)
+                if (session.HumanOwner != null)
                 {
-                    if (humanTurn == null)
-                        return "This human W365 request requires a verified chat identity. Use the same account as this chat to continue or end the session.";
-                    if (humanTurn.Owner != pinnedOwner)
-                        return "Use the same account as this chat's original human W365 request. This session cannot be used or changed by another account.";
                     if ((!string.IsNullOrWhiteSpace(prestartedW365SessionId)
                         && !session.W365SessionIds.Contains(prestartedW365SessionId))
                         || (TryExtractSessionId(userMessage, out var selectedId)

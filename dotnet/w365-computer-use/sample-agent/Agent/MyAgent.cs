@@ -214,10 +214,18 @@ public class MyAgent : AgentApplication
     private Task<ComputerUseOrchestrator.TurnIntent> ClassifyTurnOnceAsync(
         ITurnContext turnContext, string localSessionKey, string userText, CancellationToken cancellationToken)
     {
+        HumanW365Owner? humanOwner = null;
+        if (_orchestrator.UsesHumanW365Authentication(localSessionKey))
+        {
+            var (owner, failureReason) = TryGetHumanW365Owner(turnContext);
+            if (owner == null)
+                throw new InvalidOperationException($"{HumanIdentityGuidance} Diagnostic code: `{failureReason}`.");
+            humanOwner = owner;
+        }
         var intent = turnContext.Services.Get<Task<ComputerUseOrchestrator.TurnIntent>>(TurnIntentCacheKey);
         if (intent == null)
         {
-            intent = _orchestrator.ClassifyTurnAsync(localSessionKey, userText, cancellationToken);
+            intent = _orchestrator.ClassifyTurnAsync(localSessionKey, userText, cancellationToken, humanOwner);
             turnContext.Services.Set(TurnIntentCacheKey, intent);
         }
         return intent;
@@ -395,6 +403,18 @@ public class MyAgent : AgentApplication
 
                     if (!intent.NeedsCua)
                     {
+                        HumanW365Turn? humanTurn = null;
+                        if (_orchestrator.UsesHumanW365Authentication(localSessionKey))
+                        {
+                            var (owner, failureReason) = TryGetHumanW365Owner(turnContext);
+                            if (owner == null)
+                            {
+                                var guidance = $"{HumanIdentityGuidance} Diagnostic code: `{failureReason}`.";
+                                turnContext.StreamingResponse.QueueTextChunk(guidance);
+                                return guidance;
+                            }
+                            humanTurn = new HumanW365Turn(owner, _w365GatewayUrl, turnContext);
+                        }
                         // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
                         // discovery entirely so chit-chat never touches W365.
                         var (_, nonCuaAdditionalTools, _, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
@@ -409,6 +429,7 @@ public class MyAgent : AgentApplication
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
+                            humanTurn: humanTurn,
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
                             cancellationToken: cancellationToken);
