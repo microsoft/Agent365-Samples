@@ -768,6 +768,11 @@ public class ComputerUseOrchestrator
             {
                 // StartSession recorded the pending session before returning control here.
             }
+            catch (InvalidOperationException) when (acquiringSession && !string.IsNullOrEmpty(session.W365SessionId))
+            {
+                session.PendingTask ??= userMessage;
+                throw;
+            }
 
             if (session.Lifecycle.AwaitingHumanLogin)
             {
