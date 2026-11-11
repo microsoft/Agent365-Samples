@@ -1,0 +1,107 @@
+/* Copyright (c) Microsoft Corporation.
+   Licensed under the MIT License. */
+
+:root {
+    color-scheme: light dark;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: #242424;
+    background: #f5f5f5;
+    --surface: #fff;
+    --secondary: #616161;
+    --border: #d1d1d1;
+    --notice: #f0f6ff;
+    --accent: #0f6cbd;
+    --link: #0f548c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 48px 20px;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 560px;
+    padding: 40px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 8px 32px rgb(0 0 0 / 8%);
+    overflow-wrap: anywhere;
+}
+
+.product {
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+}
+
+p { line-height: 1.6; margin: 0 0 16px; }
+.product-family, .step, footer { font-size: 0.875rem; color: var(--secondary); }
+.product-family { margin-bottom: 4px; }
+.product-name { font-size: 1.125rem; font-weight: 600; margin: 0; }
+.step { margin-bottom: 8px; }
+h1 { margin: 0 0 16px; font-size: 1.75rem; line-height: 1.25; font-weight: 600; }
+h2 { font-size: 1rem; margin: 0 0 8px; font-weight: 600; }
+a { color: var(--link); text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+a:focus-visible, button:focus-visible {
+    outline: 3px solid var(--link);
+    outline-offset: 4px;
+}
+
+.microsoft-sign-in {
+    display: inline-flex;
+    margin: 8px 0 24px;
+    min-height: 44px;
+    align-items: center;
+}
+
+.microsoft-sign-in img { display: block; width: 215px; height: 41px; }
+form { margin: 24px 0 12px; }
+button {
+    min-height: 44px;
+    padding: 10px 20px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    cursor: pointer;
+}
+
+button:hover { filter: brightness(0.9); }
+button:disabled { opacity: 0.6; cursor: wait; }
+.notice { padding: 20px; margin-top: 28px; border-radius: 8px; background: var(--notice); }
+.notice p, footer p { margin: 0; }
+footer { margin-top: 24px; }
+#status:empty { display: none; }
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        color: #f5f5f5;
+        background: #141414;
+        --surface: #1f1f1f;
+        --secondary: #d1d1d1;
+        --border: #616161;
+        --notice: #112840;
+        --accent: #115ea3;
+        --link: #77b7f7;
+    }
+}
+
+@media (max-width: 480px) {
+    body { padding: 20px 12px; }
+    .auth-card { padding: 24px; }
+}
+
+@media (forced-colors: active) {
+    .auth-card, .notice, button { border: 1px solid CanvasText; }
+    a:focus-visible, button:focus-visible { outline-color: Highlight; }
+}
