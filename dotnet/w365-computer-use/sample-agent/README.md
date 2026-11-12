@@ -102,8 +102,6 @@ Create `appsettings.Development.json` (this file is gitignored):
 
 `DeploymentName` is treated as the model identifier fallback for compatibility with existing local settings. Azure OpenAI requests are sent to the v1 Responses endpoint (`/openai/v1/responses`), not the legacy deployment-style Responses URL. The selected `ModelName` or fallback `DeploymentName` is sent as the request body `model`.
 
-When the model provider is first constructed, it logs the winning configuration sources for the API key and endpoint, the effective request URL, and whether the key matches `AIServices__AzureOpenAI__ApiKey` in the process environment. It never logs the key. An absent environment key produces a null match result.
-
 The sample loads user secrets after environment variables, so a saved user secret overrides the corresponding environment variable. Restart the agent after changing configuration.
 
 **For `gpt-5.4-mini` model:**
@@ -232,12 +230,30 @@ $env:GRAPH_TOKEN = "<optional-graph-token-for-onedrive-upload>"
 dotnet run
 ```
 
-### 7. Test with Agent Builder
+### 7. Test with Microsoft 365 Agents Playground
 
 1. Open [Microsoft 365 Agents Playground](https://dev.agents.cloud.microsoft/)
 2. Connect to `http://localhost:3978/api/messages`
 3. Send a message like: *"Open Notepad and type Hello World"*
 4. Screenshots are saved under `./Screenshots/<session-id>/` automatically
+
+#### V3 session examples
+
+V3 adds optional session kinds, display/browser settings, and human sign-in readiness. Try the following chat prompts **one session at a time**. Say **"end my session"** before trying another startup example; options cannot be changed on an active or pending session. These are explicit chat choices, not appsettings or environment-variable defaults.
+
+| Scenario | Playground message | Expected `StartSession` arguments |
+|----------|--------------------|-----------------------------------|
+| Existing default behavior | "Open Notepad and type Hello World" | `{}` |
+| Properties only; default agentic kind retained | "Start a W365 session with a display 1280 pixels wide by 720 pixels tall using legacy browser mode and open Notepad" | `{"sessionProperties":{"displayWidth":1280,"displayHeight":720,"browserMode":"legacy"}}` |
+| Explicit agentic session | "Start an agentic W365 session with a display 1920 pixels wide by 1080 pixels tall using chromium browser mode and open Notepad" | `{"sessionKind":"agentic","sessionProperties":{"displayWidth":1920,"displayHeight":1080,"browserMode":"chromium"}}` |
+| Explicit local session | "Start a local W365 session and open Notepad" | `{"sessionKind":"local"}` |
+| Human session with settings | "Start a human W365 session with a display 1600 pixels wide by 900 pixels tall using chromium browser mode and open Notepad" | `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}` |
+
+Use an agentic `BEARER_TOKEN` for default/agentic tests. For the human example, follow [Development human bearer token](#development-human-bearer-token): use a compatible **human-user** W365 token and restart the local Development process after changing it. `local` supports compatible human or agent callers; app-only callers cannot select explicit kinds. Playground does not turn an agent token into a human token. The hosted EasyAuth flow requires validated channel sender attribution and should be tested separately using the [hosted human live verification](#hosted-human-live-verification-only-after-approval) steps.
+
+For a human session, a successful start can still return `awaitingHumanLogin: true`. Open the separate **Cloud PC sign-in** action (`connectivityUrl`) promptly, complete sign-in, then reply **"continue my pending request"** without repeating session options. The sample retains the same session/task and checks readiness before desktop actions. If still pending, continue waiting on that session; do not send another startup request. End the session when finished or abandoning sign-in.
+
+The table describes requested settings, not proof of effective desktop dimensions or browser behavior. Where available, verify the session's actual details/display after readiness; a browser viewport size is not the desktop resolution. Invalid options, unavailable kinds, and incompatible callers must produce guidance/errors rather than silently switching kinds.
 
 ## Authentication to the W365 Computer Use MCP server
 
@@ -273,7 +289,7 @@ Only one header is required: `Authorization: Bearer <token>` for the resource ab
 
 ### Minimal request example
 
-The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. By default, `mcp_W365ComputerUse_StartSession` receives no arguments and waits until ready. Optional `sessionKind` and `sessionProperties` are described below. Every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes the returned `sessionId`.
+The MCP client library performs the standard `initialize` handshake first; after that, calling a tool is a normal JSON-RPC `tools/call`. **V3 is an additive session contract, not a new JSON-RPC version or endpoint:** keep `"jsonrpc": "2.0"` and the same tool names. By default, `mcp_W365ComputerUse_StartSession` receives `{}` and waits until ready, preserving existing agentic behavior. Every subsequent tool call (`mcp_W365ComputerUse_GetSessionDetails`, `mcp_W365ComputerUse_EndSession`, and the desktop/browser tools) passes the returned `sessionId`.
 
 ```http
 POST /agents/servers/mcp_W365ComputerUse HTTP/1.1
@@ -293,7 +309,30 @@ Accept: application/json, text/event-stream
 }
 ```
 
-The response includes a `sessionId` and may include `screenShareUrl`, `connectivityUrl` and `awaitingHumanLogin`. A successful human-session start is **not** necessarily ready for remote tools. Pass the same `sessionId` when inspecting progress:
+To use the V3 human-session options, send the following **instead of** the default `StartSession` body, using a compatible human-user bearer token:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_StartSession",
+    "arguments": {
+      "sessionKind": "human",
+      "sessionProperties": {
+        "displayWidth": 1600,
+        "displayHeight": 900,
+        "browserMode": "chromium"
+      }
+    }
+  }
+}
+```
+
+`sessionProperties` is nested, dimensions are positive integers, and `browserMode` is `chromium` or `legacy`. Omit unrequested fields. For example, `"arguments": {"sessionProperties": {"browserMode": "legacy"}}` selects only the browser mode and retains the **default agentic** session kind; supplying properties does not select a human session. Human callers can explicitly request `human` or `local`, agent callers `agentic` or `local`; app-only callers cannot select explicit kinds. Do not retry an unavailable/incompatible kind as a different kind without an explicit decision.
+
+The response retains its existing fields, includes a `sessionId`, and may include `screenShareUrl`, `connectivityUrl` and `awaitingHumanLogin`. A successful human-session start is **not** necessarily ready for remote tools. If `awaitingHumanLogin` is true, present `connectivityUrl` to the human and ask them to open it and sign in promptly; it is not `screenShareUrl`. Retain the same `sessionId` and use bounded progress checks rather than creating another session. Pass that ID when inspecting progress:
 
 ```json
 {
@@ -306,6 +345,37 @@ The response includes a `sessionId` and may include `screenShareUrl`, `connectiv
   }
 }
 ```
+
+After sign-in, discover the remote tools with the session ID in **`params._meta`**, not tool arguments:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/list",
+  "params": {
+    "_meta": { "sessionId": "<sessionId-from-StartSession>" }
+  }
+}
+```
+
+Pending-login guidance from details/discovery is non-fatal: wait and check the same session again. If details omit the optional readiness flag, successful session-aware discovery confirms readiness before remote actions. Include `sessionId` in the **arguments** of every discovered remote tool call. If the service explicitly reports the session ended, stop using that ID.
+
+Finish with `EndSession`, including when abandoning a session that is still awaiting sign-in:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "tools/call",
+  "params": {
+    "name": "mcp_W365ComputerUse_EndSession",
+    "arguments": { "sessionId": "<sessionId-from-StartSession>" }
+  }
+}
+```
+
+For clients managing `x-ms-authorization-auxiliary`, it remains an HTTP header, never a V3 tool argument: `local` rejects it, `human` accepts an optional single raw token, and `agentic` ignores a caller-supplied value. It does not replace the required primary caller identity.
 
 In .NET, the sample attaches headers via `SseClientTransportOptions.AdditionalHeaders` and uses the MCP SDK's `SendRequestAsync` for session-aware discovery and tool calls (see `ComputerUse/W365McpSessionClient.cs`). Keeping the raw result preserves additive fields such as `structuredContent` that the pinned SDK's typed tool result would discard:
 
@@ -353,20 +423,132 @@ The hosted flow is implemented in `Authentication/HumanW365Authentication.cs`, `
 
 `TenantId` must be the Entra tenant GUID. `ApplicationBaseUrl` is an optional canonical HTTPS root URL, without a path, query, or fragment; when omitted, the sample uses App Service's `WEBSITE_HOSTNAME`. These settings configure authentication only. **Session kind, display dimensions, and browser mode remain chat-only**; do not add session defaults to configuration.
 
-**Administrator prerequisites (verify existing settings; not an infrastructure-change script):**
+##### Keep the identities and audiences separate
 
-- The existing Microsoft Entra sign-in app must have the W365 resource's **delegated** `Tools.ListInvoke.All` permission and appropriate user/admin consent under your tenant policy. This is separate from the agentic `w365` handler's grants.
-- App Service Authentication **authsettingsV2 (EasyAuth v2)** must use that Entra provider, with the **token store enabled** and a valid provider credential reference. Verify the reference without printing, copying, or disclosing the credential. Keep the existing callback URLs, tenant issuer and allowed-audience restrictions, authentication-required policy (`requireAuthentication`), and messaging/health exclusions intact. `/api/w365/human/complete` must remain **protected**, never an anonymous/excluded route. The completion code checks header/token consistency, not JWT signatures; its trust boundary is EasyAuth authenticating requests and stripping/replacing incoming identity headers, not caller-supplied headers or App Service environment markers alone.
-- The dedicated entry page must be visible **before** authentication. Add only `/w365/sign-in`, `/w365-auth/sign-in.css`, `/w365-auth/ms-signin-light.svg`, `/w365-auth/ms-signin-dark.svg`, `/w365-auth/ms-symbol.svg`, and `/w365-auth/ms-symbol.png` to EasyAuth v2's `globalValidation.excludedPaths`, preserving existing entries. These are a read-only entry page and public branding assets, not credential or session endpoints. The PNG is the Microsoft icon used by chat cards; it must be publicly retrievable by the chat renderer without an EasyAuth redirect. Do **not** disable authentication globally, exclude `/api/w365/human/complete`, or add a broad `/api/*` exclusion. Code deployment alone does not apply these routing settings; without them, EasyAuth intercepts the landing page and assets. Review and approve the routing changes separately.
-- The Entra provider's `loginParameters` must request `openid profile offline_access da81128c-e5b5-4f9e-8d89-50d906f107c5/Tools.ListInvoke.All` in its scope parameter, preserving other existing parameters. The W365 provider access token is not a Graph token or the sign-in app's ID token. See [Work with OAuth tokens in Azure App Service authentication](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-oauth-tokens).
-- Independently enable incoming-message `TokenValidation` and configure the **actual channel's expected issuers and audiences**. The shipped `TokenValidation:Enabled=false` is not sufficient for hosted human authorization. EasyAuth browser authentication alone does not verify a chat sender. The code requires GUID `Activity.Conversation.TenantId` and `Activity.From.AadObjectId`, plus successful validation by the named JWT bearer middleware. Validation proof and a claims snapshot are attached to the incoming identity before the SDK queues the turn; background turns do not depend on a live HTTP context. Sender attribution follows these paths:
-  - A validated `https://api.botframework.com` issuer retains its existing channel-attributed sender behavior.
-  - For Teams (`msteams` or `msteams:*`), Agent365 delivery must have a matching validated tenant claim, that tenant's commercial Entra v1/v2 issuer, and exactly one caller claim identifying the allowlisted Agent365 platform application. `azp` takes precedence; `appid` is used only when `azp` is absent. Missing, invalid, or multiple caller claims cannot authorize channel attribution. The platform token's `oid` need not identify the human sender. This follows the [Teams SDK platform-caller validation pattern](https://github.com/microsoft/teams.net/pull/695); it does not add an Azure Bot Service dependency.
-  - Other validated JWTs retain direct-user verification: both tenant and object claims must match the activity. A Teams channel name, valid audience, or arbitrary tenant-issued token alone cannot attest another human.
-  - All paths still bind the handoff to the attributed chat human and conversation. EasyAuth must independently confirm that same human before any W365 credential is accepted. No agent token is substituted for human credentials.
-- Keep chat turns and browser completion on the same process: use a **single instance**, or ensure sticky routing for both paths to the same instance. Stickiness alone is insufficient if the channel and browser land on different workers. Handoffs, human credentials, task/options, and session tracking are in memory; restart loses them. EasyAuth's provider token store does not make the sample's state durable, and this sample has no durable human credential store.
+| Identity / resource | Used for |
+|---------------------|----------|
+| Hosting/service-connection app, often the agent blueprint | Existing SDK connection under `Connections:ServiceConnection:Settings:ClientId`. It can also be the registered audience for incoming Agent365 delivery. |
+| Agent instance / agent user | Default or explicit agentic W365 access. This is not the browser sign-in app or a human credential. |
+| EasyAuth browser sign-in app | `authsettingsV2.identityProviders.azureActiveDirectory.registration.clientId`, its Web callback, and its own provider credential. Reuse the web app's existing sign-in registration when appropriate. |
+| W365 MCP resource | Production resource `da81128c-e5b5-4f9e-8d89-50d906f107c5`; the browser app requests its delegated `Tools.ListInvoke.All` permission. |
+| Incoming channel audience | The intended recipient of the JWT delivered to `/api/messages`, configured under `TokenValidation:Audiences`. Verify it from the channel registration; it is not automatically the EasyAuth or W365 resource ID. |
 
-Settings changes, consent changes, and deployment each require separate approval. This README describes source behavior, not proof of deployment or completed human authorization. After deployment, verify the full chat/browser/W365 sequence with a live smoke test.
+These are different roles even if a deployment deliberately reuses an app registration. Do not copy IDs between settings merely because each field is called a client ID or audience. OBS-only credentials and Graph/ARI permissions remain separate.
+
+##### 1. Configure the Entra browser sign-in app
+
+In **App Service > Authentication**, identify the Microsoft identity provider's application/client ID, then open that exact app in **Microsoft Entra ID > App registrations**. For a new setup, follow [Configure Microsoft Entra authentication for App Service](https://learn.microsoft.com/azure/app-service/configure-authentication-provider-aad) and use a workforce, single-tenant registration for this sample's configured tenant.
+
+1. Under **Authentication**, register a **Web** redirect URI of `https://<<YOUR_WEBAPP_HOSTNAME>>/.auth/login/aad/callback`. Register the appropriate callback for each approved slot/custom hostname. This is the EasyAuth OAuth callback, **not** `/api/w365/human/complete`: EasyAuth completes sign-in first, then redirects to that protected application endpoint. Keep existing valid callback URIs.
+2. Under **Certificates & secrets**, provide a valid credential for the provider. The client-secret setup stores the secret **value**, not the secret ID, in an App Service application setting, commonly `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET`, or a supported Key Vault reference. `registration.clientSecretSettingName` must name that setting; it must not contain the secret itself. Check expiration and reference resolution privately. Do not use the agent blueprint's secret unless it is intentionally the same registration.
+3. If the configured EasyAuth flow requests `response_type=code id_token`, enable **ID tokens** under the registration's implicit/hybrid settings. This does not require enabling implicit **access tokens**, a public-client flow, or a SPA redirect. Browser sign-in without a usable provider credential is insufficient for this sample's downstream W365 access-token acquisition.
+4. Under **API permissions > Add a permission > APIs my organization uses**, find the W365 resource by application ID `da81128c-e5b5-4f9e-8d89-50d906f107c5` and add **Delegated permissions > Tools.ListInvoke.All**. Its display name can be the GUID. Do not substitute an application permission, Graph `User.Read`, or the agentic handler's existing grants.
+5. Obtain the user/admin consent required by tenant policy. A permission listed in `requiredResourceAccess` is only a request, not proof of consent. Verify the corresponding **Enterprise application > Permissions** grant. For an administrator audit, the delegated `oauth2PermissionGrant` must link the EasyAuth **service-principal object ID** (`clientId`) to the W365 **service-principal object ID** (`resourceId`) and include `Tools.ListInvoke.All` in `scope`; these fields are not application/client IDs. An `AllPrincipals` grant represents tenant-wide consent; otherwise check the applicable user grant. Also check enterprise-app assignment and Conditional Access requirements for the actual human.
+
+##### 2. Configure App Service EasyAuth v2
+
+Use **App Service > Authentication** for provider selection and authentication policy. Advanced settings such as login scopes and exact path exclusions can be inspected through **Azure portal > API Playground** using:
+
+```text
+subscriptions/<<SUBSCRIPTION_ID>>/resourceGroups/<<RESOURCE_GROUP>>/providers/Microsoft.Web/sites/<<WEBAPP_NAME>>/config/authsettingsV2?api-version=2024-11-01
+```
+
+Read the current configuration with **GET** first. For an approved change, edit a copy of the complete current configuration and apply **PUT**, preserving unrelated providers, restrictions, routes, and existing exclusions. The fragments and tables here are **not a replacement PUT payload**. An older `az webapp auth show` command can expose a legacy schema; missing v2 fields there do not prove the token store or provider is disabled.
+
+| `authsettingsV2.properties` setting | Required configuration / check |
+|-----------------------------------|--------------------------------|
+| `platform.enabled` | `true`; EasyAuth must authenticate requests and strip/replace caller-supplied identity headers. |
+| `httpSettings.requireHttps` | `true`; use HTTPS for the canonical host, callback, and browser confirmation. |
+| `globalValidation.requireAuthentication` | `true`; retain the existing authentication-required policy. |
+| `globalValidation.unauthenticatedClientAction` | Browser sign-in uses `RedirectToLoginPage`; keep the Microsoft provider selected and confirm unauthenticated completion is blocked or redirected. |
+| `identityProviders.azureActiveDirectory.enabled` | `true`. |
+| `identityProviders.azureActiveDirectory.registration.clientId` | The browser sign-in app from step 1, not the W365 resource. |
+| `identityProviders.azureActiveDirectory.registration.openIdIssuer` | Tenant-specific issuer, normally `https://login.microsoftonline.com/<<YOUR_TENANT_ID>>/v2.0`. Preserve tenant restrictions; do not broaden to `common` to bypass a rejection. |
+| `identityProviders.azureActiveDirectory.registration.clientSecretSettingName` | The existing, valid provider credential setting reference from step 1. |
+| `identityProviders.azureActiveDirectory.validation.allowedAudiences` | Preserve the browser app's intended audiences, such as its configured `api://<<EASYAUTH_CLIENT_ID>>` identifier. This is separate from incoming chat audiences and the downstream W365 token audience. |
+| `login.tokenStore.enabled` | `true`; browser authentication alone does not supply a W365 provider access token to application code. |
+
+Configure the provider's `identityProviders.azureActiveDirectory.login` scope parameter as follows, retaining other approved login parameters and any required OIDC scopes:
+
+```json
+{
+  "loginParameters": [
+    "scope=openid profile offline_access da81128c-e5b5-4f9e-8d89-50d906f107c5/Tools.ListInvoke.All"
+  ]
+}
+```
+
+`offline_access` enables provider refresh tokens. Request the **W365** resource here, not a Graph access token or only an ID token. Do not combine Graph and W365 resource scopes into one access-token request. After changing scopes/consent, sign out and start a fresh sign-in from the latest chat link so an old EasyAuth session does not retain the previous token. See [Work with OAuth tokens in App Service](https://learn.microsoft.com/azure/app-service/configure-authentication-oauth-tokens).
+
+Keep `/api/messages` and `/api/health` in this sample's existing exact EasyAuth exclusions: the message endpoint performs its own channel JWT validation, and health probes must still work. Add the following **exact public paths** to `globalValidation.excludedPaths`, preserving other approved entries:
+
+```json
+[
+  "/w365/sign-in",
+  "/w365-auth/sign-in.css",
+  "/w365-auth/ms-signin-light.svg",
+  "/w365-auth/ms-signin-dark.svg",
+  "/w365-auth/ms-symbol.svg",
+  "/w365-auth/ms-symbol.png"
+]
+```
+
+The entry page must load before authentication, and chat renderers must retrieve the PNG without a login redirect. **Never exclude `/api/w365/human/complete`, add `/api/*` or `/w365-auth/*` wildcards, or disable authentication globally.** The confirmation script `/w365-human-auth.js` is loaded after authentication and need not be public. The completion code checks header/token consistency, not JWT signatures; it relies on EasyAuth's protected-route and trusted-header boundary, not environment markers or headers supplied by a caller.
+
+##### 3. Configure the web app and incoming chat validation
+
+Under **App Service > Settings > Environment variables**, add the authentication settings below (or use the equivalent JSON configuration shown earlier). Replace every placeholder before enabling:
+
+| Application setting | Value / source |
+|---------------------|----------------|
+| `HumanW365Authentication__Enabled` | `true`. |
+| `HumanW365Authentication__TenantId` | Your Entra tenant GUID, matching the browser provider and chat tenant. |
+| `HumanW365Authentication__ApplicationBaseUrl` | `https://<<YOUR_WEBAPP_HOSTNAME>>`, or omit to use `WEBSITE_HOSTNAME`; no path, query, or fragment. Use the same canonical host throughout the handoff. |
+| `TokenValidation__Enabled` | `true`; the checked-in `false` is not suitable for hosted human authorization. |
+| `TokenValidation__TenantId` | Your channel's tenant GUID; used to add tenant issuers when `ValidIssuers` is not explicitly supplied. |
+| `TokenValidation__Audiences__0` | The existing approved recipient/client GUID for incoming channel delivery. Replace the shipped `{{ClientId}}` placeholder. |
+| `TokenValidation__Audiences__1` | Only if the channel also legitimately targets a different hosting/service-connection client GUID; retain the existing accepted audience rather than overwriting it. Do not add a second ID without verifying the channel registration. |
+| Provider credential setting named by `clientSecretSettingName` | The browser app's valid secret value or approved Key Vault reference, managed separately; never put it in this README or source control. |
+
+`TokenValidation:Audiences` is a .NET array: environment keys use `__0`, `__1`, etc., not one comma-separated value. This sample requires **GUID audience entries**, not `api://` strings. If an incoming token actually uses a URI-form audience, this validator/configuration contract needs investigation; removing the prefix in configuration does not make that JWT match. `TokenValidation:ValidIssuers`, when explicitly supplied, replaces the built-in issuer list; include all and only the issuers your delivery path requires. Signature, issuer, audience, and lifetime validation must stay enabled. Keep the existing service connection and agentic auth handlers intact.
+
+EasyAuth browser authentication alone does not verify a chat sender. The code requires GUID `Activity.Conversation.TenantId` and `Activity.From.AadObjectId`, plus successful validation by the named JWT bearer middleware. Validation proof and a claims snapshot are attached to the incoming identity before the SDK queues the turn; background turns do not depend on a live HTTP context. Sender attribution follows these paths:
+
+- A validated `https://api.botframework.com` issuer retains its existing channel-attributed sender behavior. The Agent365-to-Web-App path does not require creating an Azure Bot Service resource merely to use EasyAuth.
+- For Teams (`msteams` or `msteams:*`), Agent365 delivery must have a matching validated tenant claim, that tenant's commercial Entra v1/v2 issuer, and exactly one caller claim identifying the allowlisted Agent365 platform application. `azp` takes precedence; `appid` is used only when `azp` is absent. Missing, invalid, or multiple caller claims cannot authorize channel attribution. The platform token's `oid` need not identify the human sender. This follows the [Teams SDK platform-caller validation pattern](https://github.com/microsoft/teams.net/pull/695).
+- Other validated JWTs retain direct-user verification: both tenant and object claims must match the activity. A Teams channel name, valid audience, or arbitrary tenant-issued token alone cannot attest another human.
+- All paths bind the handoff to the attributed chat human and conversation. EasyAuth must independently confirm that same human before any W365 credential is accepted. No agent token is substituted for human credentials.
+
+Keep chat turns and browser completion on the **same process**: use a single instance, or verify routing of both paths to the same worker. Browser affinity alone is insufficient if the channel lands on another worker. Check actual App Service instances rather than interpreting a plan's `sku.capacity` as the running worker count. Handoffs, human credentials, tasks/options, and session tracking are in memory; restarts and deployments lose them. EasyAuth's provider token store does not make this state durable. Save/restart after configuration changes, then request a new handoff in chat.
+
+##### 4. Inspect and verify without exposing credentials
+
+For a read-only EasyAuth audit, the following projection retrieves configuration metadata, not secret values or user tokens:
+
+```powershell
+$siteId = az webapp show --subscription "<<SUBSCRIPTION_ID>>" `
+  --resource-group "<<RESOURCE_GROUP>>" --name "<<WEBAPP_NAME>>" --query id --output tsv
+
+az resource show --ids "$siteId/config/authsettingsV2" --api-version 2024-11-01 `
+  --query "{enabled:properties.platform.enabled,https:properties.httpSettings.requireHttps,requireAuthentication:properties.globalValidation.requireAuthentication,unauthenticatedAction:properties.globalValidation.unauthenticatedClientAction,excludedPaths:properties.globalValidation.excludedPaths,providerEnabled:properties.identityProviders.azureActiveDirectory.enabled,clientId:properties.identityProviders.azureActiveDirectory.registration.clientId,issuer:properties.identityProviders.azureActiveDirectory.registration.openIdIssuer,credentialSetting:properties.identityProviders.azureActiveDirectory.registration.clientSecretSettingName,allowedAudiences:properties.identityProviders.azureActiveDirectory.validation.allowedAudiences,loginParameters:properties.identityProviders.azureActiveDirectory.login.loginParameters,tokenStoreEnabled:properties.login.tokenStore.enabled}" `
+  --output json
+```
+
+Inspect the referenced registration's Web callbacks and delegated permissions, verify actual consent separately, and check credential presence/expiry privately. Do not dump application-setting values, `/.auth/me` responses, authentication cookies, raw JWTs, or a full unredacted HAR into logs or issues. The temporary MCP payload/header capture was removed from this revision; historical `W365__Diagnostics__*` settings do not enable it here.
+
+| Smoke check | Expected result / what it proves |
+|-------------|---------------------------------|
+| Anonymous **GET** `/api/health` | Healthy response; does not prove human authorization. |
+| Anonymous **GET** `/w365/sign-in` without a code | Branded invalid-link page (400), not an EasyAuth sign-in redirect. This checks the public entry route, not a valid handoff. |
+| Anonymous **GET** `/w365-auth/ms-symbol.png` | 200 with an image, not HTML or a login redirect; check the other public assets too. |
+| Anonymous **GET** `/api/w365/human/complete` | Authentication challenge/redirect or denial, never a usable anonymous confirmation page. |
+| Fresh human request in a real Teams/M365 chat | Dedicated Microsoft sign-in action plus separate Continue/Cancel controls, after validated sender attribution. |
+| Sign in as that same human and select **Confirm authorization** | `/.auth/refresh` and the completion POST succeed; GET alone does not authorize. Keep any one-time code private. |
+| Continue in the original chat | Starts/resumes as the human; a separate Cloud PC sign-in action may still be required. Complete it promptly, check readiness with the same session ID, and explicitly end the session afterward. |
+
+Use GET rather than `curl -I`/HEAD for the application routes: these handlers map GET/POST, and a HEAD 405 is not evidence that browser authentication failed. A successful generic EasyAuth login followed by "The sign-in link is invalid" without a chat-issued code proves only browser sign-in/protected-route access, not delegated W365-token acceptance, pool availability, or desktop readiness.
+
+Settings changes, consent changes, and deployment each require separate approval. This README describes source behavior and setup checks, not proof of current cloud configuration or a successful end-to-end run. After any deployment or restart, request a fresh chat handoff and verify the full chat/browser/W365 sequence.
 
 **Chat and browser sequence:**
 
@@ -534,14 +716,25 @@ This is a verification recipe, not authorization to change infrastructure, conse
 | Session orphaned after crash | End known sessions when possible; backend expiration is service-controlled, not a guaranteed fixed timeout |
 | Multiple sessions started | Ensure only one agent instance is running per MCP server |
 | Waiting for human sign-in | Open `connectivityUrl` promptly, sign in, then reply to resume; do not start another session |
+| Resume says session options cannot be changed | Use the separate **Continue after sign-in** action, or say "continue my pending request" without repeating `human`, dimensions, or browser options. Explicit options are blocked while a session/request is pinned, even when the repeated values are unchanged. To change options, end the existing session first |
 | Invalid display/browser option | Use positive integer dimensions and `chromium` or `legacy` |
 | Unavailable kind / incompatible caller | Check service availability and token identity; an agentic token cannot request `human`, and app-only callers cannot select explicit kinds |
+| W365 gateway HTTP 403 | Check the selected gateway environment against the access token's intended resource and delegated scope. A production-resource token against a test gateway was an observed configuration mismatch; a 403 alone does not establish missing consent or its exact cause. Do not copy test overrides into production or broaden token validation |
+| No free W365 sessions / no pools found | Ask the administrator to check pool discovery and eligibility for the actual caller as well as free checkout capacity. An observed human call returned an empty `/me/cloudPcPools` collection before any pool checkout; the capacity message did not mean all existing pools were full. Agent-pool provisioning/assignment alone does not establish human eligibility |
+| Windows App stays on its loading screen | Open the exact current `connectivityUrl` in a full, updated browser with the original human account/tenant. Check browser errors and resource/feed discovery separately from EasyAuth. Successful HTTP asset requests or a telemetry SDK error alone do not prove the cause of the spinner. Retain the same session while checking readiness unless the service explicitly reports it ended |
+| `BitBlt failed` / display DC unavailable | This is a remote Windows desktop-capture failure, not by itself a W365 OAuth rejection or invalid display setting. Correlate lifecycle responses and the failed tool's correlation ID/timestamp with the W365 backend to check readiness, lock/disconnect state, and capture-worker session attachment. A previously ready session does not guarantee its desktop remains capturable; do not change app permissions based on this error alone |
+| Metadata-only request fails taking a screenshot | This revision can capture an initial screenshot before model execution, including a request to return session details. A capture failure can prevent later details tools from running; it does not prove `StartSession` failed or that no session was allocated. Use lifecycle/backend evidence rather than the model's inferred explanation |
 | Session ended while signing in | The old ID cannot be reused; send a new computer-use request |
 | W365 authentication expired | Refresh the W365 token and retry; the service session ID is retained |
 | Hosted human sign-in unavailable/disabled | Verify the opt-in authentication settings, tenant GUID, canonical HTTPS origin (or `WEBSITE_HOSTNAME`), and App Service EasyAuth boundary; do not add session defaults |
+| Branded entry/card icon redirects to login or is missing | Check the exact public EasyAuth exclusions listed above and deployed `wwwroot` assets. Code deployment does not apply EasyAuth exclusions. Keep completion protected; do not solve this with wildcard exclusions |
+| Entra redirect mismatch / `AADSTS50011` | Compare the sign-in app's **Web** callback with the actual canonical host/slot: `https://<<HOSTNAME>>/.auth/login/aad/callback`. Do not register the application completion route as the OAuth callback |
+| Invalid/expired provider secret / `AADSTS7000215` or `AADSTS7000222` | Check the EasyAuth registration and its referenced App Service credential setting, not just the agent's service-connection secret. Use the current secret value, not its ID; rotate through the approved secret store and reauthenticate. Never print the value |
 | Consent denied | Have an administrator review the sign-in app's delegated W365 permission and tenant consent policy; retry the latest chat link only after appropriate consent |
+| Permission configured but consent still required / `AADSTS65001` | Verify an actual delegated grant to W365 for the browser sign-in enterprise application, the relevant user/tenant, and `Tools.ListInvoke.All`. A configured permission is not a grant. Reauthenticate after consent and scope changes |
 | Missing provider token / confirmation refresh fails | Verify EasyAuth v2 token store, valid provider credential reference, and `loginParameters` scopes; sign in again. Do not copy tokens into chat, logs, or configuration |
 | Access denied after clicking Confirm authorization | Keep the confirmation page's `Referrer-Policy: strict-origin`: `no-referrer` makes normal form submissions send `Origin: null`, conflicting with EasyAuth and the endpoint's same-origin checks. `strict-origin` preserves the HTTPS origin without disclosing the handoff path or query. Do not disable EasyAuth, origin validation, or antiforgery protection |
+| Confirmation 400 / 403 / 410 / 429 | 400: reload the latest confirmation page for a fresh valid form/antiforgery cookie; a missing/invalid link code is also 400. 403: check the exact canonical HTTPS origin and original account/tenant. 410: the handoff expired, was consumed, was superseded, or was lost on restart; request a fresh link in the original chat. 429: wait before retrying; completion POSTs are limited to five per minute per IP |
 | Wrong token audience/scope or expired authorization | The completion endpoint fails closed. Request a W365 access token for `da81128c-e5b5-4f9e-8d89-50d906f107c5` (also accepts `api://` prefix) with delegated `Tools.ListInvoke.All`; Graph/ID/app-only tokens are not substitutes |
 | Wrong account / expired or reused authorization link | Use the original chat human in the configured tenant and the latest link within five minutes; request a fresh link in the original chat if necessary |
 | Unverified chat sender | Check the reply's diagnostic code and the matching `ReasonCode` warning. `activity_tenant_id_missing_or_invalid` / `activity_sender_object_id_missing_or_invalid` identify missing or invalid activity IDs; `incoming_jwt_identity_unavailable` means the queued identity has no proof of successful named JWT bearer validation at HTTP ingress; `jwt_tenant_does_not_match_activity` / `jwt_sender_does_not_match_activity` identify absent or mismatched validated identity claims when no supported channel-attribution path applies. Enable incoming JWT `TokenValidation` with the actual channel's expected issuers/audiences and verify sender attribution. Diagnostics contain no tokens, personal IDs, or message content. Unknown Agent365 callers/channels remain fail-closed |
