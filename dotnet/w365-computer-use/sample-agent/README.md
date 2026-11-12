@@ -386,6 +386,8 @@ Authorization links are single-use, expire after **five minutes**, and only the 
 
 Credentials are treated as expired within two minutes of expiry. Expiry or a W365 transport HTTP 401 discards the human connection/credential and requests authorization again, without substituting an agent, environment, Graph, or ARI token. The existing session ID, saved task/options, and pending **EndSession** intent are retained: authorize as the same human, then return to chat to resume or finish ending that session. Successful end/explicit service-ended responses clear the associated state. Shutdown attempts cleanup with usable human authorization, but cannot confirm release when that authorization is missing/expired or cleanup fails; do not assume shutdown or a restart released the Cloud PC.
 
+Shutdown continues past expected network, timeout, protocol, and tool-state failures, retaining unconfirmed sessions for retry. Cancellation and unexpected exceptions propagate.
+
 The hosted human flow does **not** support human Graph/ARI acquisition: no agent-authenticated screenshare links or OneDrive screenshot uploads are provided. The W365 `connectivityUrl` remains available when required; it is not replaced by an agent-authenticated viewer.
 
 #### Cloud PC sign-in and readiness

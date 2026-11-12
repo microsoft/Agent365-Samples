@@ -11,6 +11,7 @@ using Microsoft.Agents.Builder;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using W365ComputerUseSample.Authentication;
 using W365ComputerUseSample.ComputerUse.Models;
@@ -1408,6 +1409,9 @@ public class ComputerUseOrchestrator
                     }
                     foreach (var id in session.W365SessionIds.ToArray())
                     {
+                        void LogCleanupFailure(Exception ex) =>
+                            _logger.LogWarning("Cannot confirm cleanup of human W365 session {SessionId} ({ErrorType}). Sign in again and end the session; Cloud PC release is not confirmed.", id, ex.GetType().Name);
+
                         try
                         {
                             await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
@@ -1415,9 +1419,25 @@ public class ComputerUseOrchestrator
                                 session, CancellationToken.None);
                             await ForgetSelectedSessionAsync(session, convId, id);
                         }
-                        catch (Exception ex)
+                        catch (HttpRequestException ex)
                         {
-                            _logger.LogWarning("Cannot confirm cleanup of human W365 session {SessionId} ({ErrorType}). Sign in again and end the session; Cloud PC release is not confirmed.", id, ex.GetType().Name);
+                            LogCleanupFailure(ex);
+                        }
+                        catch (TimeoutException ex)
+                        {
+                            LogCleanupFailure(ex);
+                        }
+                        catch (InvalidOperationException ex)
+                        {
+                            LogCleanupFailure(ex);
+                        }
+                        catch (IOException ex)
+                        {
+                            LogCleanupFailure(ex);
+                        }
+                        catch (McpException ex)
+                        {
+                            LogCleanupFailure(ex);
                         }
                     }
                     if (session.W365SessionIds.Count == 0)
