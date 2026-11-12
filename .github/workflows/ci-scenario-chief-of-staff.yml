@@ -1,0 +1,41 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI - Build Chief of Staff Scenario
+
+on:
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  scenario-chief-of-staff:
+    name: Chief of Staff Scenario
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./scenarios/chief-of-staff
+
+    strategy:
+      matrix:
+        node-version: ['20', '22']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build and run regression tests
+      run: npm test
+
+    - name: Run offline bootstrap login tests
+      shell: pwsh
+      run: ./tests/bootstrap-graph-app.test.ps1
