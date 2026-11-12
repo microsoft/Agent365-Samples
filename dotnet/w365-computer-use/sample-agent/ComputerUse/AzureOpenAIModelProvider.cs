@@ -29,29 +29,6 @@ public class AzureOpenAIModelProvider : ICuaModelProvider
         var options = AzureOpenAIModelProviderOptions.FromConfiguration(configuration);
         ModelName = options.ModelName;
         _url = options.Url;
-
-        if (configuration is IConfigurationRoot root)
-        {
-            foreach (var key in new[] { "AIServices:AzureOpenAI:ApiKey", "AIServices:AzureOpenAI:Endpoint" })
-            {
-                var provider = root.Providers.Reverse().First(p => p.TryGet(key, out _));
-                var source = provider is Microsoft.Extensions.Configuration.Json.JsonConfigurationProvider json
-                    ? $"{provider.GetType().Name} ({json.Source.Path})"
-                    : provider.GetType().Name;
-                _logger.LogInformation("Azure OpenAI configuration source for {ConfigurationKey}: {ConfigurationSource}", key, source);
-            }
-        }
-        else
-        {
-            _logger.LogWarning("Azure OpenAI configuration sources cannot be inspected: configuration is not IConfigurationRoot.");
-        }
-
-        var environmentKey = Environment.GetEnvironmentVariable("AIServices__AzureOpenAI__ApiKey");
-        _logger.LogInformation(
-            "Azure OpenAI API key matches process environment: {MatchesEnvironmentKey}; environment key present: {EnvironmentKeyPresent}",
-            environmentKey is null ? (bool?)null : string.Equals(_apiKey, environmentKey, StringComparison.Ordinal),
-            environmentKey is not null);
-        _logger.LogInformation("Azure OpenAI effective request URL: {Url}", _url);
     }
 
     public async Task<string> SendAsync(string requestBody, CancellationToken cancellationToken)

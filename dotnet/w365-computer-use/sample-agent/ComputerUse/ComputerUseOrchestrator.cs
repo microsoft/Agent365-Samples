@@ -1817,8 +1817,7 @@ public class ComputerUseOrchestrator
         }
         await DiscardDirectW365ClientAsync(session);
         var transport = new SseClientTransport(
-            CreateW365TransportOptions(url, accessToken, agentId, activity),
-            _httpClientFactory.CreateClient("W365Mcp"));
+            CreateW365TransportOptions(url, accessToken, agentId, activity));
         var client = await McpClientFactory.CreateAsync(transport, cancellationToken: ct);
         session.McpClient = client;
         session.ConnectionFingerprint = fingerprint;

@@ -16,7 +16,6 @@ using Microsoft.Agents.Core;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.Logging.AzureAppServices;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,21 +31,8 @@ builder.Services.AddW365ComputerUseOpenTelemetry(
     observabilityTokens is null ? null : observabilityTokens.ResolveAsync);
 builder.Services.AddControllers();
 builder.Services.AddHttpClient("WebClient", client => client.Timeout = TimeSpan.FromSeconds(600));
-builder.Services.AddTransient<W365McpHttpLoggingHandler>();
-builder.Services.AddHttpClient("W365Mcp")
-    .RemoveAllLoggers()
-    .AddHttpMessageHandler<W365McpHttpLoggingHandler>();
 builder.Services.AddHttpContextAccessor();
 builder.Logging.AddConsole();
-builder.Logging.AddAzureWebAppDiagnostics();
-builder.Logging.AddFilter<FileLoggerProvider>((category, level) =>
-    category == typeof(W365McpHttpLoggingHandler).FullName && level >= LogLevel.Warning);
-builder.Services.Configure<AzureFileLoggerOptions>(options =>
-{
-    options.FileName = "w365-mcp-";
-    options.FileSizeLimit = 1024 * 1024;
-    options.RetainedFileCountLimit = 2;
-});
 
 // **********  Configure A365 Services **********
 // Add A365 Tooling Server integration
