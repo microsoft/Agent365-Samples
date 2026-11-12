@@ -567,15 +567,13 @@ public class ComputerUseOrchestrator
             {
                 var options = sessionOptions ?? new W365SessionOptions();
                 _ = options.CreateStartArguments();
-                if (options.HasExplicitOptions)
-                {
-                    if (!string.IsNullOrEmpty(session.W365SessionId)
+                if (options.HasExplicitOptions
+                    && (!string.IsNullOrEmpty(session.W365SessionId)
                         || session.HumanOwner != null
                         || !string.IsNullOrWhiteSpace(prestartedW365SessionId)
-                        || TryExtractSessionId(userMessage, out _))
-                    {
-                        return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, or browser mode.";
-                    }
+                        || TryExtractSessionId(userMessage, out _)))
+                {
+                    return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, or browser mode.";
                 }
                 if (session.HumanOwner != null)
                 {
