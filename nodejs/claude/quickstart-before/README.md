@@ -105,7 +105,7 @@ npm run start:anon
 ## Documentation
 
 - [Claude Agent SDK](https://docs.claude.com/en/docs/agent-sdk/typescript)
-- [Microsoft 365 Agents SDK](https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/)
+- [Microsoft 365 Agents SDK](https://learn.microsoft.com/microsoft-365/agents-sdk/)
 
 ## License
 

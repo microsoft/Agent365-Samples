@@ -1,3 +1,15 @@
+<!--
+---
+name: "Agent Framework Sample Agent - Python"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Build an Agent Framework agent in Python with Agent 365 observability, notifications, and MCP tools."
+---
+-->
+
 # Agent Framework Sample Agent - Python
 
 This sample demonstrates how to build an agent using Agent Framework in Python with the Microsoft Agent 365 SDK. It covers:
@@ -7,9 +19,20 @@ This sample demonstrates how to build an agent using Agent Framework in Python w
 - **Tools**: Model Context Protocol tools for building advanced agent solutions
 - **Hosting Patterns**: Hosting with Microsoft 365 Agents SDK
 
-This sample uses the [Microsoft Agent 365 SDK for Python](https://github.com/microsoft/Agent365-python).
+This sample uses the following Microsoft Agents and Agent 365 packages:
 
-For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+- [microsoft-agents-activity · PyPI](https://pypi.org/project/microsoft-agents-activity/)
+- [microsoft-agents-authentication-msal · PyPI](https://pypi.org/project/microsoft-agents-authentication-msal/)
+- [microsoft-agents-hosting-aiohttp · PyPI](https://pypi.org/project/microsoft-agents-hosting-aiohttp/)
+- [microsoft-agents-hosting-core · PyPI](https://pypi.org/project/microsoft-agents-hosting-core/)
+- [microsoft-agents-a365-notifications · PyPI](https://pypi.org/project/microsoft-agents-a365-notifications/)
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-runtime · PyPI](https://pypi.org/project/microsoft-agents-a365-runtime/)
+- [microsoft-agents-a365-tooling · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling/)
+- [microsoft-agents-a365-tooling-extensions-agentframework · PyPI](https://pypi.org/project/microsoft-agents-a365-tooling-extensions-agentframework/)
+- [microsoft-opentelemetry · PyPI](https://pypi.org/project/microsoft-opentelemetry/)
+
+For comprehensive documentation and guidance on building agents with the Microsoft Agent 365 SDK, including how to add tooling, observability, and notifications, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Prerequisites
 >
@@ -144,7 +167,7 @@ Each `send_activity` call produces a separate Teams message. You can call it as 
 
 ## Running the Agent
 
-To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
+To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing?tabs=python) guide for complete instructions.
 
 For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](AGENT-CODE-WALKTHROUGH.md).
 
@@ -153,7 +176,7 @@ For a detailed explanation of the agent code and implementation, see the [Agent 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-python/issues) section
-- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agents 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](SECURITY.md)
 
 ## Contributing

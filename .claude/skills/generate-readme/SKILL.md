@@ -34,7 +34,7 @@ The README MUST contain the following sections in this exact order. Do not add, 
 
 <1–3 sentence description of what the sample demonstrates. State whether it is interactive or autonomous, what SDK/orchestrator it uses, and what makes it a useful reference.>
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 ```
 
 ### 2. What This Sample Demonstrates
@@ -56,7 +56,7 @@ A table of patterns demonstrated and their file locations:
 
 - <Runtime/SDK version>
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
+- [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 - <Any additional prerequisites specific to the sample>
@@ -125,7 +125,7 @@ For Python and Node.js samples, include `ENABLE_A365_OBSERVABILITY_EXPORTER`, `E
 <Full setup with A365 credentials and observability export.>
 ```
 
-For interactive agents, reference the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing) guide and Microsoft 365 Agents Playground.
+For interactive agents, reference the [Configure Agent Testing](https://learn.microsoft.com/microsoft-agent-365/developer/testing) guide and Microsoft 365 Agents Playground.
 
 ### 7. Deploying the Agent
 
@@ -143,7 +143,7 @@ For interactive agents, reference the [Configure Agent Testing](https://learn.mi
 <Describe the tracing spans produced by the agent (e.g., InvokeAgentScope, InferenceScope, ExecuteToolScope). For agents with a custom token flow, describe the FMI chain briefly. Link to the observability guide.>
 ```
 
-Keep this section concise — no ASCII art diagrams. Reference the [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability) for details.
+Keep this section concise — no ASCII art diagrams. Reference the [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability) for details.
 
 ### 9. Support
 
@@ -153,7 +153,7 @@ Keep this section concise — no ASCII art diagrams. Reference the [Agent observ
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 ```
 
@@ -174,8 +174,8 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 ```markdown
 ## Additional Resources
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability)
 - <Language-specific SDK repository link>
 - <Any other relevant links>
 ```

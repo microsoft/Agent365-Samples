@@ -20,22 +20,22 @@ Cursor works best when you reference Microsoft Learn documentation directly in y
 
 When crafting your prompt, reference these Microsoft Learn pages by URL. Cursor will read them when you submit your prompt:
 
-- **Agent 365 Developer Overview**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/?tabs=nodejs
-- **Notifications**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/notification?tabs=nodejs  
-- **Tooling (MCP)**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling?tabs=nodejs
-- **Observability**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability?tabs=nodejs
-- **Node.js + Claude Quickstart**: https://learn.microsoft.com/en-us/microsoft-agent-365/developer/quickstart-nodejs-claude
+- **Agent 365 Developer Overview**: https://learn.microsoft.com/microsoft-agent-365/developer/?tabs=nodejs
+- **Notifications**: https://learn.microsoft.com/microsoft-agent-365/developer/notification?tabs=nodejs  
+- **Tooling (MCP)**: https://learn.microsoft.com/microsoft-agent-365/developer/tooling?tabs=nodejs
+- **Observability**: https://learn.microsoft.com/microsoft-agent-365/developer/observability?tabs=nodejs
+- **Node.js + Claude Quickstart**: https://learn.microsoft.com/microsoft-agent-365/developer/quickstart-nodejs-claude
 
 ## 4. Prompting Cursor
 Open the Composer and paste a prompt like this, including the Microsoft Learn documentation URLs:
 
 ```
 Using these documentations:
-https://learn.microsoft.com/en-us/microsoft-agent-365/developer/?tabs=nodejs
-https://learn.microsoft.com/en-us/microsoft-agent-365/developer/notification?tabs=nodejs
-https://learn.microsoft.com/en-us/microsoft-agent-365/developer/tooling?tabs=nodejs
-https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability?tabs=nodejs
-https://learn.microsoft.com/en-us/microsoft-agent-365/developer/quickstart-nodejs-claude
+https://learn.microsoft.com/microsoft-agent-365/developer/?tabs=nodejs
+https://learn.microsoft.com/microsoft-agent-365/developer/notification?tabs=nodejs
+https://learn.microsoft.com/microsoft-agent-365/developer/tooling?tabs=nodejs
+https://learn.microsoft.com/microsoft-agent-365/developer/observability?tabs=nodejs
+https://learn.microsoft.com/microsoft-agent-365/developer/quickstart-nodejs-claude
 
 Create a Microsoft Agent 365 agent in TypeScript with Claude as the orchestrator that can summarize unread emails and draft helpful email responses. The agent must:
 - Receive a user message

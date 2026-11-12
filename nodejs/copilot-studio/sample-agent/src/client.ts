@@ -105,6 +105,7 @@ class McsClient implements Client {
     const inferenceDetails: InferenceDetails = {
       operationName: InferenceOperationType.CHAT,
       model: 'copilot-studio-agent',
+      providerName: 'microsoft-copilot-studio',
     };
 
     const agentDetails: AgentDetails = {
