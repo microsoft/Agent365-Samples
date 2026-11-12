@@ -620,7 +620,9 @@ public class ComputerUseOrchestrator
 
             if (includeCuaTool && (humanTurn != null || session.HumanOwner != null))
             {
-                session.HumanOwner ??= humanTurn!.Owner;
+                if (humanTurn == null)
+                    return "This human W365 request requires a verified chat identity. Use the same account as this chat to continue or end the session.";
+                session.HumanOwner ??= humanTurn.Owner;
                 var ending = session.PendingTermination || IsEndSessionRequest(userMessage, session.HasPendingWork);
                 if (ending && string.IsNullOrEmpty(session.W365SessionId))
                 {
@@ -659,7 +661,7 @@ public class ComputerUseOrchestrator
                 }
 
                 (w365Tools, mcpClient) = await ConnectDirectW365CoreAsync(session,
-                    humanTurn!.GatewayUrl, credential!.AccessToken, null, humanTurn.TurnContext.Activity, cancellationToken);
+                    humanTurn.GatewayUrl, credential!.AccessToken, null, humanTurn.TurnContext.Activity, cancellationToken);
                 additionalTools = null;
                 graphAccessToken = null;
                 onFolderLinkReady = null;
