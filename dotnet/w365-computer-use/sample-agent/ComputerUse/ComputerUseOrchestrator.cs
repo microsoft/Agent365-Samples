@@ -654,7 +654,7 @@ public class ComputerUseOrchestrator
                     session.PendingTask ??= effectiveTask;
                     await DiscardDirectW365ClientAsync(session);
                     var guidance = HumanAuthorizationGuidance(session, conversationId, session.HumanOwner, origin, humanTurn);
-                    return humanTurn?.ChatAction?.Kind == HumanW365ChatActionKind.Continue
+                    return humanTurn.ChatAction?.Kind == HumanW365ChatActionKind.Continue
                         ? "Sign-in has not been completed or has expired. Sign in again, finish the browser confirmation, then select Continue after sign-in.\n\n" + guidance
                         : guidance;
                 }
