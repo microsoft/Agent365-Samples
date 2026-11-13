@@ -642,7 +642,8 @@ public class MyAgent : AgentApplication
             .Select(c => c.Value).Distinct(StringComparer.Ordinal).ToArray();
         if (issuers.Length != 1 || string.IsNullOrWhiteSpace(issuers[0]))
             return Reject("jwt_issuer_missing_or_ambiguous");
-        if (issuers[0] == "https://api.botframework.com")
+        if (issuers[0] == "https://api.botframework.com"
+            && HumanW365IncomingIdentity.IsTeamsChannel(turnContext.Activity.ChannelId))
             return (new HumanW365Owner(tenantId, objectId), null);
 
         // JwtBearer can map the Entra claims to their schema names. Require one unambiguous

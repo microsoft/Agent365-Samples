@@ -23,15 +23,17 @@ internal sealed class HumanW365IncomingIdentity : ClaimsIdentity
 
     internal bool AttestsTeamsSender(string issuer, Guid tenantId, string? channelId)
     {
-        if (!IsAuthenticated || tenantId == Guid.Empty
-            || !(string.Equals(channelId, "msteams", StringComparison.OrdinalIgnoreCase)
-                || channelId?.StartsWith("msteams:", StringComparison.OrdinalIgnoreCase) == true))
+        if (!IsAuthenticated || tenantId == Guid.Empty || !IsTeamsChannel(channelId))
             return false;
 
         var entraIssuer = string.Equals(issuer, $"https://sts.windows.net/{tenantId:D}/", StringComparison.OrdinalIgnoreCase)
             || string.Equals(issuer, $"https://login.microsoftonline.com/{tenantId:D}/v2.0", StringComparison.OrdinalIgnoreCase);
         return entraIssuer && IsAgent365PlatformCaller(GetCallerClaims());
     }
+
+    internal static bool IsTeamsChannel(string? channelId) =>
+        string.Equals(channelId, "msteams", StringComparison.OrdinalIgnoreCase)
+        || channelId?.StartsWith("msteams:", StringComparison.OrdinalIgnoreCase) == true;
 
     private Claim[] GetCallerClaims()
     {

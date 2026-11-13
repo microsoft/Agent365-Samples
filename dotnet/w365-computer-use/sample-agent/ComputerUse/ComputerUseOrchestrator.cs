@@ -122,32 +122,30 @@ public class ComputerUseOrchestrator
     private readonly ConcurrentDictionary<string, IMcpClient> _w365McpClientsBySessionId = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Primary MCP client (W365 server) — used for direct screenshot calls.
+    /// Shared W365 tools and their client are published together after discovery.
     /// </summary>
-    private IMcpClient? _cachedMcpClient;
+    private sealed record McpConnection(IList<AITool> Tools, IMcpClient? Client);
+    private volatile McpConnection? _cachedW365Connection;
+    private readonly SemaphoreSlim _mcpConnectionLock = new(1, 1);
 
     /// <summary>
     /// All MCP clients — one per connected server, for cleanup on shutdown.
     /// </summary>
-    private readonly List<IMcpClient> _allMcpClients = [];
-
-    /// <summary>
-    /// Shared tool list — merged tools from all connected servers.
-    /// </summary>
-    private IList<AITool>? _cachedTools;
+    private enum McpClientScope { Shared, Conversation }
+    private readonly ConcurrentDictionary<IMcpClient, McpClientScope> _allMcpClients = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Tool list from non-W365 MCP servers (mail, calendar, etc.). Cached separately so that
     /// non-CUA messages can be served without loading the W365 server's lifecycle tools.
     /// </summary>
-    private IList<AITool>? _cachedNonW365Tools;
+    private volatile IList<AITool>? _cachedNonW365Tools;
 
     /// <summary>
     /// True when this orchestrator has already loaded lifecycle tools for the W365 MCP server in
     /// the current process. The explicit W365 lifecycle requires StartSession before remote
     /// computer-use tool calls.
     /// </summary>
-    public bool HasCachedW365Tools => _cachedTools != null && _cachedTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
+    public bool HasCachedW365Tools => _cachedW365Connection != null;
 
     private const string SystemInstructions = """
         You are a helpful assistant that can also control a Windows desktop computer.
@@ -710,7 +708,7 @@ public class ComputerUseOrchestrator
                 return HumanAuthorizationGuidance(session, conversationId, owner,
                     HumanW365Hosting.GetOrigin(_humanAuthenticationOptions!.Value), humanTurn);
             }
-            await DisposeW365McpClientAsync(session.W365SessionId);
+            await DisposeW365McpClientAsync(session, session.W365SessionId, invalidateSharedCache: true);
             session.McpClient = null;
             session.RemoteTools = null;
             _logger.LogWarning("W365 authentication expired; retaining the service session for reconnection with a fresh token.");
@@ -1173,7 +1171,7 @@ public class ComputerUseOrchestrator
                                 session.TelemetryConversationId,
                                 session.TelemetryChannelId,
                                 endSessionCallId);
-                            await DisposeW365McpClientAsync(sessionIdToEnd);
+                            await DisposeW365McpClientAsync(session, sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
                             {
@@ -1454,7 +1452,7 @@ public class ComputerUseOrchestrator
                 _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
                 var tools = session.McpClient != null
                     ? new W365McpSessionClient(session.McpClient).CreateLifecycleTools(session.TelemetryConversationId, session.TelemetryChannelId)
-                    : session.LifecycleTools ?? _cachedTools ?? [];
+                    : session.LifecycleTools ?? _cachedW365Connection?.Tools ?? [];
                 await EndSessionAsync(
                     tools,
                     _logger,
@@ -1472,17 +1470,25 @@ public class ComputerUseOrchestrator
             else
                 _sessions.TryRemove(convId, out _);
         }
-        _cachedTools = null;
-        _w365McpClientsBySessionId.Clear();
-
-        foreach (var client in _allMcpClients)
+        await _mcpConnectionLock.WaitAsync();
+        try
         {
+            _cachedW365Connection = null;
+            _cachedNonW365Tools = null;
+            _w365McpClientsBySessionId.Clear();
+        }
+        finally
+        {
+            _mcpConnectionLock.Release();
+        }
+
+        foreach (var client in _allMcpClients.Keys)
+        {
+            if (!_allMcpClients.TryRemove(client, out _))
+                continue;
             try { await client.DisposeAsync(); }
             catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
         }
-
-        _allMcpClients.Clear();
-        _cachedMcpClient = null;
     }
 
     /// <summary>
@@ -1494,36 +1500,27 @@ public class ComputerUseOrchestrator
     public async Task<(IList<AITool> Tools, IMcpClient? Client)> GetOrCreateMcpConnectionAsync(
         IList<string> mcpUrls, string accessToken)
     {
-        // Only reuse the cache if it actually contains W365 CUA tools. If the previous attempt landed
-        // on ATG's synthetic "Error" tool (W365 session acquisition failed upstream), a subsequent
-        // message should re-hit ATG rather than silently reuse the failure. Otherwise the sample
-        // agent becomes permanently wedged on a single bad connect.
-        if (_cachedTools != null && _cachedTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name)))
-            return (_cachedTools, _cachedMcpClient);
-
-        // Stale caches from a failed prior attempt — clear before reconnecting.
-        if (_cachedTools != null)
+        await _mcpConnectionLock.WaitAsync();
+        try
         {
-            _cachedTools = null;
-            _cachedMcpClient = null;
+            if (_cachedW365Connection is { } cached)
+                return (cached.Tools, cached.Client);
+
+            var connection = await LoadToolsFromUrlsAsync(mcpUrls, accessToken);
+            // ATG can return an Error tool when session acquisition fails. Leave that result
+            // uncached so the next message retries discovery rather than reusing the failure.
+            if (connection.Tools.Any(t => IsW365CuaTool((t as AIFunction)?.Name)))
+                _cachedW365Connection = connection;
+            else
+                _logger.LogWarning("Not caching MCP tool list — no W365 CUA tools found (total {Count}). Next message will reconnect.", connection.Tools.Count);
+
+            _logger.LogInformation("Total tools from {ServerCount} MCP server(s): {ToolCount}", mcpUrls.Count, connection.Tools.Count);
+            return (connection.Tools, connection.Client);
         }
-
-        var allTools = await LoadToolsFromUrlsAsync(mcpUrls, accessToken);
-
-        // Only cache when we got at least one W365 CUA tool. Otherwise leave _cachedTools null so
-        // the next message retries the MCP connection and gives ATG another shot at session acquisition.
-        var cachingIsSafe = allTools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
-        if (cachingIsSafe)
+        finally
         {
-            _cachedTools = allTools;
+            _mcpConnectionLock.Release();
         }
-        else
-        {
-            _logger.LogWarning("Not caching MCP tool list — no W365 CUA tools found (total {Count}). Next message will reconnect.", allTools.Count);
-        }
-
-        _logger.LogInformation("Total tools from {ServerCount} MCP server(s): {ToolCount}", mcpUrls.Count, allTools.Count);
-        return (allTools, _cachedMcpClient);
     }
 
     /// <summary>
@@ -1535,32 +1532,35 @@ public class ComputerUseOrchestrator
     public async Task<IList<AITool>> GetOrCreateNonW365McpConnectionAsync(
         IList<string> mcpUrls, string accessToken)
     {
-        if (_cachedNonW365Tools != null)
+        await _mcpConnectionLock.WaitAsync();
+        try
         {
+            if (_cachedNonW365Tools != null)
+                return _cachedNonW365Tools;
+
+            var tools = mcpUrls.Count == 0
+                ? []
+                : (await LoadToolsFromUrlsAsync(mcpUrls, accessToken)).Tools;
+            _cachedNonW365Tools = tools;
+            _logger.LogInformation("Loaded {Count} non-W365 MCP tools from {ServerCount} server(s).", tools.Count, mcpUrls.Count);
             return _cachedNonW365Tools;
         }
-
-        if (mcpUrls.Count == 0)
+        finally
         {
-            _cachedNonW365Tools = [];
-            return _cachedNonW365Tools;
+            _mcpConnectionLock.Release();
         }
-
-        var tools = await LoadToolsFromUrlsAsync(mcpUrls, accessToken);
-        _cachedNonW365Tools = tools;
-        _logger.LogInformation("Loaded {Count} non-W365 MCP tools from {ServerCount} server(s).", tools.Count, mcpUrls.Count);
-        return tools;
     }
 
     /// <summary>
     /// Opens SSE connections to each MCP server URL and merges their tools/list responses.
-    /// Side effects: adds each connected client to <see cref="_allMcpClients"/> for shutdown
-    /// cleanup, and sets <see cref="_cachedMcpClient"/> to the first client whose tools match
-    /// the W365 CUA set (used for direct screenshot calls in the CUA loop).
+    /// Registers connected clients for shutdown cleanup and returns a matching W365 client
+    /// alongside the tools, without mutating another discovery path's cache.
     /// </summary>
-    private async Task<List<AITool>> LoadToolsFromUrlsAsync(IList<string> mcpUrls, string accessToken)
+    private async Task<McpConnection> LoadToolsFromUrlsAsync(IList<string> mcpUrls, string accessToken)
     {
         var allTools = new List<AITool>();
+        IMcpClient? primaryClient = null;
+        IMcpClient? firstClient = null;
 
         foreach (var url in mcpUrls)
         {
@@ -1581,13 +1581,14 @@ public class ComputerUseOrchestrator
                 var client = await McpClientFactory.CreateAsync(transport);
                 var tools = (await client.ListToolsAsync()).Cast<AITool>().ToList();
 
-                _allMcpClients.Add(client);
+                _allMcpClients.TryAdd(client, McpClientScope.Shared);
+                firstClient ??= client;
                 allTools.AddRange(tools);
 
                 // Use the W365 server's client for direct screenshot calls.
                 var hasW365Tools = tools.Any(t => IsW365CuaTool((t as AIFunction)?.Name));
                 if (hasW365Tools)
-                    _cachedMcpClient = client;
+                    primaryClient = client;
 
                 _logger.LogInformation("Connected to MCP server at {Url}, loaded {Count} tools: {Names}",
                     url, tools.Count, string.Join(", ", tools.Select(t => (t as AIFunction)?.Name ?? "?")));
@@ -1598,10 +1599,7 @@ public class ComputerUseOrchestrator
             }
         }
 
-        // Fallback: use first client if no W365 server found
-        _cachedMcpClient ??= _allMcpClients.FirstOrDefault();
-
-        return allTools;
+        return new McpConnection(allTools, primaryClient ?? firstClient);
     }
 
     internal string? GetSelectedW365SessionId(string? conversationId)
@@ -1748,25 +1746,56 @@ public class ComputerUseOrchestrator
     public async Task<(bool Found, string SessionId, string ScreenShareUrl)> TryGetActiveScreenShareAsync(
         string conversationId, CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(conversationId)
+            || !_sessions.TryGetValue(conversationId, out var session))
+            return (false, string.Empty, string.Empty);
+
+        await session.TurnLock.WaitAsync(ct);
+        try
+        {
+            return await TryGetActiveScreenShareCoreAsync(conversationId, session, ct);
+        }
+        finally
+        {
+            session.TurnLock.Release();
+        }
+    }
+
+    private async Task<(bool Found, string SessionId, string ScreenShareUrl)> TryGetActiveScreenShareCoreAsync(
+        string conversationId, ConversationSession session, CancellationToken ct)
+    {
         if (TryGetActiveScreenShare(conversationId, out var cachedSid, out var cachedUrl))
         {
             return (true, cachedSid, cachedUrl);
         }
 
-        if (string.IsNullOrWhiteSpace(conversationId)) return (false, string.Empty, string.Empty);
-        if (!_sessions.TryGetValue(conversationId, out var session)) return (false, string.Empty, string.Empty);
-
         var sessionId = session.W365SessionId;
         if (string.IsNullOrWhiteSpace(sessionId)) return (false, string.Empty, string.Empty);
 
-        var mcpClient = _w365McpClientsBySessionId.TryGetValue(sessionId, out var perSessionClient)
-            ? perSessionClient
-            : session.HumanOwner != null ? session.McpClient : _cachedMcpClient;
+        var cachedConnection = _cachedW365Connection;
+        var mcpClient = session.McpClient;
+        if (mcpClient == null && session.HumanOwner == null)
+        {
+            if (_w365McpClientsBySessionId.TryGetValue(sessionId, out var perSessionClient))
+            {
+                mcpClient = perSessionClient;
+                if (_allMcpClients.TryGetValue(perSessionClient, out var scope)
+                    && scope == McpClientScope.Shared && cachedConnection?.Client is { } currentClient)
+                {
+                    mcpClient = currentClient;
+                    _w365McpClientsBySessionId.TryUpdate(sessionId, currentClient, perSessionClient);
+                }
+            }
+            else
+            {
+                mcpClient = cachedConnection?.Client;
+            }
+        }
         if (session.HumanOwner is { } owner
             && (_humanAuthorizationStore == null || !_humanAuthorizationStore.TryGet(conversationId, owner, out _)
                 || mcpClient == null))
             return (false, string.Empty, string.Empty);
-        if (mcpClient == null && _cachedTools == null)
+        if (mcpClient == null && cachedConnection == null)
         {
             return (false, string.Empty, string.Empty);
         }
@@ -1775,7 +1804,7 @@ public class ComputerUseOrchestrator
         {
             var args = new Dictionary<string, object?> { ["sessionId"] = sessionId };
             var resultStr = await InvokeW365ToolAsync(
-                session.HumanOwner != null ? session.LifecycleTools ?? [] : _cachedTools ?? [],
+                session.HumanOwner != null ? session.LifecycleTools ?? [] : cachedConnection?.Tools ?? [],
                 mcpClient,
                 W365GetSessionDetailsToolName,
                 args,
@@ -1843,7 +1872,7 @@ public class ComputerUseOrchestrator
         session.ConnectionFingerprint = fingerprint;
         session.RemoteTools = null;
         foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId[id] = client;
-        _allMcpClients.Add(client);
+        _allMcpClients.TryAdd(client, McpClientScope.Conversation);
         var tools = new W365McpSessionClient(client).CreateLifecycleTools(
             activity.Conversation?.Id, activity.ChannelId);
         return (tools, client);
@@ -1857,9 +1886,8 @@ public class ComputerUseOrchestrator
         session.RemoteTools = null;
         session.LifecycleTools = null;
         foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId.TryRemove(id, out _);
-        if (previousClient != null)
+        if (previousClient != null && _allMcpClients.TryRemove(previousClient, out _))
         {
-            _allMcpClients.Remove(previousClient);
             await previousClient.DisposeAsync();
         }
     }
@@ -1934,51 +1962,34 @@ public class ComputerUseOrchestrator
         }
     }
 
-    private async Task DisposeW365McpClientAsync(string? sessionId)
+    // Caller owns this conversation's TurnLock. Shared transports remain alive until shutdown.
+    private async Task DisposeW365McpClientAsync(
+        ConversationSession session, string? sessionId, bool invalidateSharedCache = false)
     {
-        if (string.IsNullOrWhiteSpace(sessionId))
+        if (session.McpClient != null)
+        {
+            await DiscardDirectW365ClientAsync(session);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(sessionId)
+            || !_w365McpClientsBySessionId.TryRemove(sessionId, out var client))
         {
             return;
         }
 
-        if (!_w365McpClientsBySessionId.TryRemove(sessionId, out var client))
+        if (invalidateSharedCache)
         {
-            return;
-        }
-
-        foreach (var mapping in _w365McpClientsBySessionId)
-        {
-            if (ReferenceEquals(mapping.Value, client))
+            await _mcpConnectionLock.WaitAsync();
+            try
             {
-                ((ICollection<KeyValuePair<string, IMcpClient>>)_w365McpClientsBySessionId).Remove(mapping);
+                if (ReferenceEquals(_cachedW365Connection?.Client, client))
+                    _cachedW365Connection = null;
             }
-        }
-
-        foreach (var session in _sessions.Values)
-        {
-            if (ReferenceEquals(session.McpClient, client))
+            finally
             {
-                session.McpClient = null;
-                session.ConnectionFingerprint = null;
-                session.RemoteTools = null;
-                session.LifecycleTools = null;
+                _mcpConnectionLock.Release();
             }
-        }
-
-        _allMcpClients.Remove(client);
-        if (ReferenceEquals(_cachedMcpClient, client))
-        {
-            _cachedMcpClient = null;
-            _cachedTools = null;
-        }
-
-        try
-        {
-            await client.DisposeAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to dispose W365 MCP client for session {SessionId}", sessionId);
         }
     }
 
@@ -2733,7 +2744,7 @@ public class ComputerUseOrchestrator
                 ct,
                 session.TelemetryConversationId,
                 session.TelemetryChannelId);
-            await DisposeW365McpClientAsync(session.W365SessionId);
+            await DisposeW365McpClientAsync(session, session.W365SessionId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

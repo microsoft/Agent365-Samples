@@ -126,6 +126,7 @@ public static class HumanW365AuthenticationEndpoints
         owner = null;
         failure = null;
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_INSTANCE_ID")) ||
+            !string.Equals(Environment.GetEnvironmentVariable("WEBSITE_AUTH_ENABLED"), "True", StringComparison.OrdinalIgnoreCase) ||
             !context.Request.IsHttps)
         {
             failure = Page(context, 503, Outcome.Unavailable,
