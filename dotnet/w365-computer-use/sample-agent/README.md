@@ -590,7 +590,7 @@ If startup allocates a session but returns invalid sign-in metadata (such as a m
 
 Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also attempts `EndSession` for retained pending sessions, subject to usable human authorization for hosted human sessions. An explicitly ended session cannot be reused.
 
-If `GetSessionDetails` explicitly inspects another session ID and reports that it has ended, the sample returns that inspection error without clearing the selected session, its conversation state, or its shutdown tracking. An ended response for the selected session still clears that session's state.
+If `GetSessionDetails` explicitly inspects another session ID and reports that it has ended or is awaiting human sign-in, the sample returns that inspection error without changing the selected session's readiness, conversation state, or shutdown tracking. An ended response for the selected session still clears that session's state; pending-login guidance for the selected session still enters its sign-in flow.
 
 Once ready, remote discovery uses `tools/list` with `params._meta.sessionId`, and every remote call includes `sessionId` in its arguments. The ordinary no-options session still waits until ready, and existing additive response fields remain accepted.
 

@@ -1235,8 +1235,9 @@ public class ComputerUseOrchestrator
                                     cancellationToken,
                                     getSessionDetailsCallId);
                             }
-                            catch (W365SessionEndedException ex) when (
-                                !string.IsNullOrEmpty(sessionIdToInspect)
+                            catch (Exception ex) when (
+                                ex is W365SessionEndedException or W365HumanLoginRequiredException
+                                && !string.IsNullOrEmpty(sessionIdToInspect)
                                 && !string.Equals(sessionIdToInspect, session.W365SessionId, StringComparison.OrdinalIgnoreCase))
                             {
                                 result = $"Error inspecting W365 session '{sessionIdToInspect}': {ex.Message}";
