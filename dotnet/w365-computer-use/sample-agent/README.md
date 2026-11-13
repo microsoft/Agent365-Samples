@@ -655,7 +655,7 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 ## Session Management
 
 - Sessions are started with `mcp_W365ComputerUse_StartSession`; multiple session IDs can be cached for one conversation
-- If a user references a known `sessionId`, the orchestrator selects that session before taking screenshots or sending remote W365 tool calls
+- To select a session, begin the message with `Use session <UUID>`, `Switch to W365 session <UUID>`, or `session <UUID>`; a UUID sent alone also selects it. UUIDs elsewhere in task data do not select sessions or block startup. Hosted-human ownership and end-first restrictions still apply.
 - Conversation history accumulates across messages, giving the model context for follow-up tasks
 - On app shutdown (`Ctrl+C`), the agent attempts `EndSession` for cached sessions; hosted human sessions require usable human authorization, and cleanup failures leave release unconfirmed
 - If the app crashes, backend expiration is service-controlled; do not rely on a fixed timeout, especially while sign-in is pending

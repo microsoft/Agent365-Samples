@@ -46,8 +46,8 @@ public class ComputerUseOrchestrator
     internal const string W365GetSessionDetailsToolName = "mcp_W365ComputerUse_GetSessionDetails";
     internal const string W365EndSessionToolName = "mcp_W365ComputerUse_EndSession";
     private static readonly Regex SessionIdRegex = new(
-        @"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
-        RegexOptions.Compiled);
+        @"^\s*(?:(?:please\s+)?(?:(?:use|select|switch\s+to|resume|continue\s+with|inspect|end|close)\s+)?(?:the\s+)?(?:W365\s+)?session(?:\s+ID)?\s*[:=]?\s+[`""]?(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b|(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     internal static readonly HashSet<string> W365CuaToolNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -3105,7 +3105,7 @@ public class ComputerUseOrchestrator
             return false;
         }
 
-        sessionId = match.Value;
+        sessionId = match.Groups["sessionId"].Value;
         return true;
     }
 
