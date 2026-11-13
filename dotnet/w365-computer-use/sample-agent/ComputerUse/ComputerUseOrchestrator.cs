@@ -1112,7 +1112,8 @@ public class ComputerUseOrchestrator
                             session.ConversationHistory.Add(await HandleComputerCallAsync(item, w365Tools, additionalTools, mcpClient, session, graphAccessToken, onStatusUpdate, onFolderLinkReady, cancellationToken));
                         }
                         catch (InvalidOperationException toolEx) when (toolEx is not W365HumanLoginRequiredException
-                            && toolEx is not W365SessionEndedException)
+                            && toolEx is not W365SessionEndedException
+                            && !IsUnauthorizedMcpTransportFailure(toolEx))
                         {
                             _logger.LogError(toolEx, "Tool call in CUA iteration failed for conversation {ConversationId}", conversationId);
                             // Pop the unpaired computer_call we added above so the next turn's conversation
@@ -1173,7 +1174,6 @@ public class ComputerUseOrchestrator
                         if (funcName == "EndSession")
                         {
                             var endSessionCallId = item.GetProperty("call_id").GetString()!;
-                            session.ConversationHistory.Add(CreateFunctionOutput(endSessionCallId));
                             _logger.LogInformation("EndSession requested by model for conversation {ConversationId}", conversationId);
                             if (onStatusUpdate != null)
                             {
@@ -1192,14 +1192,17 @@ public class ComputerUseOrchestrator
                                 await ForgetSelectedSessionAsync(session, conversationId, sessionIdToEnd);
                                 return "The W365 session has been ended.";
                             }
-                            await EndSessionAsync(
+                            await InvokeW365ToolAsync(
                                 w365Tools,
-                                _logger,
-                                sessionIdToEnd,
+                                mcpClient,
+                                W365EndSessionToolName,
+                                string.IsNullOrEmpty(sessionIdToEnd)
+                                    ? new Dictionary<string, object?>()
+                                    : new Dictionary<string, object?> { ["sessionId"] = sessionIdToEnd },
+                                session,
                                 cancellationToken,
-                                session.TelemetryConversationId,
-                                session.TelemetryChannelId,
                                 endSessionCallId);
+                            session.ConversationHistory.Add(CreateFunctionOutput(endSessionCallId));
                             await DisposeW365McpClientAsync(session, sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
@@ -1382,7 +1385,8 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// End the W365 session. Called by the agent on shutdown or explicit end.
+    /// Best-effort termination for shutdown or stale-session recovery.
+    /// Interactive termination uses strict invocation so failed release remains retryable.
     /// </summary>
     public static async Task EndSessionAsync(
         IList<AITool> tools,
