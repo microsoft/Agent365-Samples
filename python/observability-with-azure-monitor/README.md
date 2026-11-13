@@ -12,7 +12,12 @@ description: "Add Agent 365 observability to a Python app that already exports O
 
 # Observability — Agent 365 SDK alongside Azure Monitor
 
-This sample shows how to add the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app that **already** uses [Azure Monitor / Application Insights OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-overview). After running this, both Azure Monitor and the Agent 365 backend receive your agent's spans.
+This sample shows how to add the Microsoft Agent 365 Python SDK to an app that **already** uses [Azure Monitor / Application Insights OpenTelemetry](https://learn.microsoft.com/azure/azure-monitor/app/opentelemetry-overview). After running this, both Azure Monitor and the Agent 365 backend receive your agent's spans.
+
+This sample uses the following Agent 365 packages:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
+- [microsoft-agents-a365-observability-extensions-openai · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-extensions-openai/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 
@@ -78,14 +83,14 @@ To diff against your own app: copy Steps 1, 2, and 2b into the file where your a
 
 ## Going further
 
-- Integration patterns and pitfalls: [Integrating with existing OpenTelemetry](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md) (in the SDK repo)
+- Integration patterns and pitfalls: [Use existing OpenTelemetry instrumentation with the distro](https://learn.microsoft.com/microsoft-agent-365/developer/microsoft-opentelemetry#use-existing-opentelemetry-instrumentation-with-the-distro)
 - Manual instrumentation example (no agent framework): [`python/observability-with-otlp`](../observability-with-otlp)
 
 ## Troubleshooting
 
 - **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **`SystemExit: APPLICATIONINSIGHTS_CONNECTION_STRING is not set`** — set the env var via `.env`. The connection string is on your App Insights resource → **Overview** → **Connection String**.
-- **No spans visible in App Insights** — wait 1–2 minutes for ingestion; confirm the connection string targets the right resource. If the agent ran successfully but spans never appear, temporarily add a `ConsoleSpanExporter` (see [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration)) to prove the SDK is producing them.
+- **No spans visible in App Insights** — wait 1–2 minutes for ingestion; confirm the connection string targets the right resource. If the agent ran successfully but spans never appear, temporarily add a `ConsoleSpanExporter` to prove the SDK is producing them.
 - **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step and the dedicated OBS prerequisites below.
 - **OpenAI auth errors** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The OpenAI Agents SDK reads these directly.
 
@@ -114,7 +119,7 @@ Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` w
 `idtyp`; any `scp` claim is rejected.
 
 The sample-local `observability_token_service.py` adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow).
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow).
 Blueprint credentials with `fmi_path=agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance exchanges T1 as its client assertion
 for `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are

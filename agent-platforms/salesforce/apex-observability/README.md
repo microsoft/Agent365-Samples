@@ -12,7 +12,7 @@ description: "Emit native Agent 365 telemetry from Salesforce Apex with correlat
 
 # Salesforce Apex — Native Agent 365 Observability
 
-This sample shows how **Salesforce Apex** can participate in [Microsoft Agent 365](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+This sample shows how **Salesforce Apex** can participate in [Microsoft Agent 365](https://learn.microsoft.com/microsoft-agent-365/developer/)
 observability as a **first-class telemetry emitter**. When an Agent 365 agent calls into Salesforce
 (or an Agentforce agent runs a Salesforce action), the Apex code emits its **own** Agent 365 OTLP
 spans — correlated to the agent turn by a shared W3C trace id — so Salesforce proves it ran from
@@ -31,7 +31,7 @@ identity, audience, registration and service policy instead of switching to OBO
 or automatically adding OBS permissions. Apex runtime tests require an authorized
 Salesforce test org; an offline source audit is not live authorization validation.
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
 
@@ -107,7 +107,7 @@ for the exact per-hop requests and Named Credentials.
   via a Dev Hub, or a Developer Edition org)
 - An Entra tenant onboarded to Agent 365, with at minimum the **Agent ID Developer** role
 - An Agent 365 **agent** and its **blueprint** app registration (the blueprint sponsors the FMI chain).
-  See the [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli)
+  See the [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli)
   (`a365 setup all`) for provisioning the blueprint + agent identity.
 
 ## Project Layout
@@ -264,12 +264,12 @@ trace. `A365ObsSpan` emits the Agent 365 exporter wire shape exactly — see
 [OTLP wire shape](docs/design.md#otlp-wire-shape) for the field-level contract.
 
 For details on the observability SDK and instrumentation patterns, see the
-[Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+[Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
 
 ## Support
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../SECURITY.md)
 
 ## Contributing
@@ -288,8 +288,8 @@ or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any addi
 
 ## Additional Resources
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability)
 - [Design notes](docs/design.md)
 
 ## Trademarks

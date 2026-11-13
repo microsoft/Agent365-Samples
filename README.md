@@ -30,7 +30,7 @@ compatible SDK releases. Legacy Node.js samples pin their tested SDK family to
 preserve compatible tracing APIs and S2S exporter options.
 
 > #### Note:
-> Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+> Use the information in this README to contribute to this open-source project. To learn about using this SDK in your projects, refer to the [Microsoft Agent 365 Developer documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## Survey
 
@@ -44,7 +44,7 @@ This samples repository is currently in active development and contains:
 
 ## Documentation
 
-For comprehensive documentation and guides, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation and guides, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ### Microsoft Agent 365 SDK
 

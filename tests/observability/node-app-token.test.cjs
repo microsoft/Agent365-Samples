@@ -103,10 +103,10 @@ for (const sample of samples) {
       path.join(root, `nodejs/${sample}/sample-agent/package.json`),
       'utf8',
     ));
-    assert.equal(packageJson.dependencies['@microsoft/agents-a365-observability'], '1.0.0');
+    assert.equal(packageJson.dependencies['@microsoft/agents-a365-observability'], '2.0.0');
     for (const [name, version] of Object.entries(packageJson.dependencies)) {
       if (name.startsWith('@microsoft/agents-a365-')) {
-        assert.equal(version, '1.0.0', `${sample}: ${name} must stay on the same 1.0.0 family`);
+        assert.equal(version, '2.0.0', `${sample}: ${name} must stay on the same 2.0.0 family`);
       }
     }
   });

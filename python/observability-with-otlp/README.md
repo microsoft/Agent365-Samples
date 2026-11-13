@@ -37,7 +37,7 @@ Absent or empty `roles` are accepted only with `idtyp=app`, or without `idtyp` w
 `idtyp`; any `scp` claim is rejected.
 
 The standalone `observability_token_service.py` adapts the autonomous sample's
-[two-step FMI flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+[two-step FMI flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint client credentials with `fmi_path=agent instance client ID` acquire T1 for
 `api://AzureADTokenExchange/.default`; the instance uses T1 as its client assertion for
 `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. Both grants are
@@ -54,8 +54,12 @@ blueprint assertion flow.
 
 This sample shows two patterns at once:
 
-1. Adding the [Microsoft Agent 365 Python SDK](https://github.com/microsoft/Agent365-python) to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
+1. Adding the Microsoft Agent 365 Python SDK to an app with an **already-configured OpenTelemetry SDK** (vendor-neutral / OTLP).
 2. **Manual instrumentation** using `InvokeAgentScope`, `InferenceScope`, and `ExecuteToolScope` — useful when you don't use an agent framework, or when you want explicit control over which calls produce spans.
+
+This sample uses the following Agent 365 package:
+
+- [microsoft-agents-a365-observability-core · PyPI](https://pypi.org/project/microsoft-agents-a365-observability-core/)
 
 > This is **not** a from-scratch tracing setup. For a full agent host with Microsoft 365 Agents SDK, see the [`python/openai/sample-agent`](../openai/sample-agent) sample.
 
@@ -134,7 +138,7 @@ To diff against your own app: copy Step 1 (replace with whatever exporter / reso
 
 ## Going further
 
-- Integration patterns and pitfalls: [Integrating with existing OpenTelemetry](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md) (in the SDK repo)
+- Integration patterns and pitfalls: [Use existing OpenTelemetry instrumentation with the distro](https://learn.microsoft.com/microsoft-agent-365/developer/microsoft-opentelemetry#use-existing-opentelemetry-instrumentation-with-the-distro)
 - Auto-instrumented OpenAI Agents SDK example: [`python/observability-with-azure-monitor`](../observability-with-azure-monitor)
 
 ## Troubleshooting
@@ -142,5 +146,5 @@ To diff against your own app: copy Step 1 (replace with whatever exporter / reso
 - **Sample runs without errors but no spans appear** — most commonly `ENABLE_OBSERVABILITY` is not set to a truthy value. The SDK gates span creation behind this env var and produces zero spans silently when it's missing. The sample's `.env.template` includes it; if you assembled `.env` manually, add `ENABLE_OBSERVABILITY=true`.
 - **No spans printed to stdout** — `BatchSpanProcessor` may not have flushed; the sample calls `force_flush()` on exit, so make sure the script ran to completion. If the model answered without calling the tool, the sample skips the `execute_tool` span and returns the model's text directly.
 - **`KeyError` or auth error from OpenAI** — verify `OPENAI_API_KEY` (or `AZURE_OPENAI_*` variables) in `.env`. The raw `openai` client reads these directly.
-- **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. See [the integration guide's verify recipe](https://github.com/microsoft/Agent365-python/blob/main/docs/integrating-with-existing-opentelemetry.md#verifying-the-integration).
+- **Spans missing from your OTLP backend (after swap)** — temporarily fall back to `ConsoleSpanExporter` to confirm the SDK is producing spans. If they appear on stdout but not in your backend, the issue is in the exporter / collector / network. 
 - **`SystemExit: Agent 365 observability configuration failed`** — check logs for the failing step.

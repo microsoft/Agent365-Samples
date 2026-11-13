@@ -55,7 +55,7 @@ Response to User
 - Azure OpenAI resource with a CUA-capable model deployment:
   - `computer-use-preview` or `gpt-5.4` / `gpt-5.4-mini`
   - [Request access to gpt-5.4](https://aka.ms/OAI/gpt54access) if needed
-- Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/))
+- Access to the W365 Computer Use MCP server (via [Agent 365 MCP Platform](https://learn.microsoft.com/microsoft-agent-365/developer/))
 - A bearer token with `Tools.ListInvoke.All` scope
 
 ## Setup
@@ -189,7 +189,7 @@ client ID. For local development use `UseManagedIdentity=false` and supply
 `Agent365Observability__BlueprintClientSecret` through the environment. All keys support the .NET
 double-underscore environment format. Do not store a secret in checked-in configuration.
 
-The sample-local provider implements the [documented app-only token flow](https://learn.microsoft.com/en-us/entra/agent-id/autonomous-agent-authentication-authorization-flow):
+The sample-local provider implements the [documented app-only token flow](https://learn.microsoft.com/entra/agent-id/autonomous-agent-authentication-authorization-flow):
 blueprint `client_credentials` with `fmi_path=AgentId` and `api://AzureADTokenExchange/.default`
 produces T1; agent `client_credentials` uses T1 as `client_assertion` for
 `api://9b975845-388f-4429-889e-eab1ef63949c/.default`. No user token, `user_fic`, or OBO is used for OBS.
@@ -425,6 +425,6 @@ The in-memory handoff store is single-process. If the web app is scaled out to m
 
 ## Links
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - [Microsoft 365 Agents SDK](https://learn.microsoft.com/microsoft-365/agents-sdk/)
-- [Azure OpenAI Computer Use Guide](https://learn.microsoft.com/en-us/azure/foundry-classic/openai/how-to/computer-use)
+- [Azure OpenAI Computer Use Guide](https://learn.microsoft.com/azure/foundry-classic/openai/how-to/computer-use)
