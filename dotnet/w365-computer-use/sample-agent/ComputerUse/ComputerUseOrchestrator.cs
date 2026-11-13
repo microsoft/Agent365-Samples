@@ -793,8 +793,6 @@ public class ComputerUseOrchestrator
 
         if (includeCuaTool && TryExtractSessionId(userMessage, out var requestedSessionId))
         {
-            if (!string.Equals(session.W365SessionId, requestedSessionId, StringComparison.OrdinalIgnoreCase))
-                session.RequestedSessionOptions = new W365SessionOptions();
             session.TrackAndSelectSession(requestedSessionId);
             _logger.LogInformation("Selected W365 session {SessionId} from user message for conversation {ConversationId}", requestedSessionId, conversationId);
         }
@@ -2846,8 +2844,10 @@ public class ComputerUseOrchestrator
         IMcpClient? mcpClient,
         CancellationToken ct)
     {
+        var options = session.RequestedSessionOptions;
         await RecoverSessionAsync(session, w365Tools, _logger, ct);
         session.ClearActiveSession();
+        session.RequestedSessionOptions = options;
         await StartW365SessionAsync(session, w365Tools, additionalTools, mcpClient, ct);
     }
 
@@ -3410,6 +3410,7 @@ public class ComputerUseOrchestrator
         public bool SessionStarted { get; set; }
         public string? W365SessionId { get; private set; }
         public W365SessionOptions RequestedSessionOptions { get; set; } = new();
+        private readonly Dictionary<string, W365SessionOptions> sessionOptionsById = new(StringComparer.OrdinalIgnoreCase);
         public HashSet<string> W365SessionIds { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<JsonElement> ConversationHistory { get; } = [];
         public int ScreenshotCounter { get; set; }
@@ -3454,7 +3455,15 @@ public class ComputerUseOrchestrator
                 return;
             }
 
-            W365SessionId = sessionId.Trim();
+            if (W365SessionId is { } previousId)
+                sessionOptionsById[previousId] = RequestedSessionOptions;
+            var nextId = sessionId.Trim();
+            if (sessionOptionsById.TryGetValue(nextId, out var options))
+                RequestedSessionOptions = options;
+            else if (W365SessionId != null)
+                RequestedSessionOptions = new W365SessionOptions();
+            W365SessionId = nextId;
+            sessionOptionsById[W365SessionId] = RequestedSessionOptions;
             W365SessionIds.Add(W365SessionId);
             if (!string.Equals(Lifecycle.SessionId, W365SessionId, StringComparison.OrdinalIgnoreCase))
             {
@@ -3470,11 +3479,14 @@ public class ComputerUseOrchestrator
             if (!string.IsNullOrWhiteSpace(sessionId))
             {
                 W365SessionIds.Remove(sessionId);
+                sessionOptionsById.Remove(sessionId);
             }
 
             if (string.Equals(W365SessionId, sessionId, StringComparison.OrdinalIgnoreCase))
             {
                 W365SessionId = W365SessionIds.LastOrDefault();
+                if (W365SessionId != null)
+                    RequestedSessionOptions = sessionOptionsById.GetValueOrDefault(W365SessionId) ?? new W365SessionOptions();
                 Lifecycle = new W365SessionState(W365SessionId);
                 RemoteTools = null;
                 ScreenShareLinkEmitted = false;

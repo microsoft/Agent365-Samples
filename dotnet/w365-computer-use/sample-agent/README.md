@@ -401,6 +401,8 @@ Without explicit chat options, `StartSession` still receives `{}`. The first exa
 
 For `computer-use-preview`, chat-selected dimensions also override the model's view for that conversation's session. `ComputerUse:DisplayWidth` / `DisplayHeight` remain model-only defaults for dimensions not selected in chat; they are never sent to `StartSession`. The bare `computer` tool still derives dimensions from screenshots. Model defaults and other conversations are not modified.
 
+Requested options are retained per tracked session ID and restored when switching back to that session, so its preview geometry does not revert to defaults. Selecting an external session with no recorded options uses model defaults; ending/removing a session removes its recorded options.
+
 Omitting a kind in chat retains the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds or dropping properties. Chat options are scoped to the conversation's session and retained for in-turn recovery, not applied as defaults to later new sessions.
 
 #### Development human bearer token
