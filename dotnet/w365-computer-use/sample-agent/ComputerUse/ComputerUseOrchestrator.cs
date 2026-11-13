@@ -614,6 +614,13 @@ public class ComputerUseOrchestrator
                     if (options.SessionKind != "human")
                         return "Request an explicit human session kind to authorize W365 as yourself. No session was started.";
                 }
+                if (session.HasPendingWork
+                    && !IsEndSessionRequest(userMessage, session.HasPendingWork)
+                    && TryExtractSessionId(userMessage, out var pendingSelection)
+                    && !string.Equals(pendingSelection, session.W365SessionId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "Resume or end the pending W365 request before selecting another session. No session was changed.";
+                }
                 if (string.IsNullOrEmpty(session.W365SessionId) && session.HumanOwner == null)
                     session.RequestedSessionOptions = options;
                 session.HumanAuthorizationActionId = null;
