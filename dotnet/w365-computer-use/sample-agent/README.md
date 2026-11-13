@@ -590,6 +590,8 @@ If startup allocates a session but returns invalid sign-in metadata (such as a m
 
 Pending-login guidance is non-fatal. The sample retains the ID when discovery or a remote call reports pending sign-in, and clears it only when the service explicitly reports an ended/expired session. Say **end my session** to abandon sign-in or release a ready session; shutdown also attempts `EndSession` for retained pending sessions, subject to usable human authorization for hosted human sessions. An explicitly ended session cannot be reused.
 
+If `GetSessionDetails` explicitly inspects another session ID and reports that it has ended, the sample returns that inspection error without clearing the selected session, its conversation state, or its shutdown tracking. An ended response for the selected session still clears that session's state.
+
 Once ready, remote discovery uses `tools/list` with `params._meta.sessionId`, and every remote call includes `sessionId` in its arguments. The ordinary no-options session still waits until ready, and existing additive response fields remain accepted.
 
 For integrations managing `x-ms-authorization-auxiliary`, this is an **HTTP request header**, never a tool argument: `local` rejects a supplied header, `human` accepts an optional single raw token, and `agentic` ignores a caller-supplied value. This sample does not configure or store auxiliary tokens. An auxiliary token cannot change the primary bearer-token caller or turn an agentic caller into a human.

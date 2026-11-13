@@ -1223,14 +1223,24 @@ public class ComputerUseOrchestrator
                             }
 
                             var getSessionDetailsCallId = item.GetProperty("call_id").GetString()!;
-                            var result = await InvokeW365ToolAsync(
-                                w365Tools,
-                                mcpClient,
-                                W365GetSessionDetailsToolName,
-                                args,
-                                session,
-                                cancellationToken,
-                                getSessionDetailsCallId);
+                            string result;
+                            try
+                            {
+                                result = await InvokeW365ToolAsync(
+                                    w365Tools,
+                                    mcpClient,
+                                    W365GetSessionDetailsToolName,
+                                    args,
+                                    session,
+                                    cancellationToken,
+                                    getSessionDetailsCallId);
+                            }
+                            catch (W365SessionEndedException ex) when (
+                                !string.IsNullOrEmpty(sessionIdToInspect)
+                                && !string.Equals(sessionIdToInspect, session.W365SessionId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                result = $"Error inspecting W365 session '{sessionIdToInspect}': {ex.Message}";
+                            }
                             if (string.Equals(sessionIdToInspect, session.W365SessionId, StringComparison.OrdinalIgnoreCase))
                             {
                                 session.Lifecycle.Apply(result);
