@@ -762,6 +762,7 @@ public class ComputerUseOrchestrator
         CancellationToken cancellationToken,
         Action<string>? onCloudPcSignInRequired)
     {
+        var resumingPendingTask = false;
         if (session.SessionStarted)
         {
             _logger.LogInformation("Reusing session for conversation {ConversationId}, W365SessionId={SessionId}", conversationId, session.W365SessionId);
@@ -870,14 +871,15 @@ public class ComputerUseOrchestrator
             if (session.PendingTask != null)
             {
                 userMessage = session.PendingTask;
-                session.PendingTask = null;
-                session.ConversationHistory.Clear();
+                resumingPendingTask = true;
             }
             await EmitScreenShareLinkIfReadyAsync();
         }
 
         // For "computer" tool type (gpt-5.4+), include a screenshot with the FIRST user message if session already active
-        if (includeCuaTool && _toolType == "computer" && session.ConversationHistory.Count == 0)
+        JsonElement userInput;
+        if (includeCuaTool && _toolType == "computer"
+            && (session.ConversationHistory.Count == 0 || resumingPendingTask))
         {
             var initialScreenshot = await CaptureScreenshotWithRecoveryAsync(w365Tools, session, additionalTools, mcpClient, onStatusUpdate, cancellationToken);
             var convIdPrefix = conversationId.Length > 8 ? conversationId[..8] : conversationId;
@@ -886,7 +888,7 @@ public class ComputerUseOrchestrator
             var folderUrlReuse = await UploadScreenshotToOneDriveAsync(initialScreenshot!, $"{initialName}.png", graphAccessToken, session.ScreenshotSubfolder, session, cancellationToken);
             if (folderUrlReuse != null && onFolderLinkReady != null)
                 await onFolderLinkReady(folderUrlReuse);
-            session.ConversationHistory.Add(ToJsonElement(new
+            userInput = ToJsonElement(new
             {
                 type = "message",
                 role = "user",
@@ -895,12 +897,17 @@ public class ComputerUseOrchestrator
                     new { type = "input_text", text = userMessage },
                     new { type = "input_image", image_url = $"data:image/png;base64,{initialScreenshot}" }
                 }
-            }));
+            });
         }
         else
         {
-            session.ConversationHistory.Add(CreateUserMessage(userMessage));
+            userInput = CreateUserMessage(userMessage);
         }
+        if (resumingPendingTask)
+            session.ConversationHistory.Clear();
+        session.ConversationHistory.Add(userInput);
+        if (resumingPendingTask)
+            session.PendingTask = null;
 
         // Build the model's tools list — computer + OnTaskComplete + any additional function tools.
         // When includeCuaTool is false (non-CUA fast path), skip all CUA-specific tools entirely
