@@ -1399,7 +1399,7 @@ public class ComputerUseOrchestrator
                 ct,
                 conversationId,
                 channelId,
-                toolCallId).ConfigureAwait(false);
+                toolCallId).WaitAsync(ct).ConfigureAwait(false);
             logger.LogInformation("W365 session ended");
         }
         catch (ObjectDisposedException)
@@ -1419,13 +1419,29 @@ public class ComputerUseOrchestrator
     /// <summary>
     /// End all active sessions on shutdown.
     /// </summary>
-    public async Task EndSessionOnShutdownAsync()
+    public async Task EndSessionOnShutdownAsync(CancellationToken cancellationToken = default)
     {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await EndSessionOnShutdownCoreAsync(budget.Token);
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
+        {
+            _logger.LogWarning("W365 shutdown cleanup was cancelled or exceeded its time budget. Cloud PC release is not confirmed for remaining sessions.");
+        }
+    }
+
+    private async Task EndSessionOnShutdownCoreAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         foreach (var (convId, session) in _sessions)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (session.HumanOwner is { } owner)
             {
-                await session.TurnLock.WaitAsync();
+                await session.TurnLock.WaitAsync(cancellationToken);
                 try
                 {
                     if (session.W365SessionIds.Count > 0
@@ -1445,8 +1461,8 @@ public class ComputerUseOrchestrator
                         {
                             await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
                                 W365EndSessionToolName, new Dictionary<string, object?> { ["sessionId"] = id },
-                                session, CancellationToken.None);
-                            await ForgetSelectedSessionAsync(session, convId, id);
+                                session, cancellationToken).WaitAsync(cancellationToken);
+                            await ForgetSelectedSessionAsync(session, convId, id, cancellationToken);
                         }
                         catch (HttpRequestException ex)
                         {
@@ -1470,7 +1486,7 @@ public class ComputerUseOrchestrator
                         }
                     }
                     if (session.W365SessionIds.Count == 0)
-                        await ForgetSelectedSessionAsync(session, convId);
+                        await ForgetSelectedSessionAsync(session, convId, cancellationToken: cancellationToken);
                 }
                 finally
                 {
@@ -1478,30 +1494,46 @@ public class ComputerUseOrchestrator
                 }
                 continue;
             }
-            foreach (var sessionId in session.W365SessionIds.ToArray())
+            await session.TurnLock.WaitAsync(cancellationToken);
+            try
             {
-                _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
-                var tools = session.McpClient != null
-                    ? new W365McpSessionClient(session.McpClient).CreateLifecycleTools(session.TelemetryConversationId, session.TelemetryChannelId)
-                    : session.LifecycleTools ?? _cachedW365Connection?.Tools ?? [];
-                await EndSessionAsync(
-                    tools,
-                    _logger,
-                    sessionId,
-                    CancellationToken.None,
-                    session.TelemetryConversationId,
-                    session.TelemetryChannelId);
+                foreach (var sessionId in session.W365SessionIds.ToArray())
+                {
+                    _logger.LogInformation("Ending session for conversation {ConversationId}, W365SessionId={SessionId}", convId, sessionId);
+                    var tools = session.McpClient != null
+                        ? new W365McpSessionClient(session.McpClient).CreateLifecycleTools(session.TelemetryConversationId, session.TelemetryChannelId)
+                        : session.LifecycleTools ?? _cachedW365Connection?.Tools ?? [];
+                    await EndSessionAsync(
+                        tools,
+                        _logger,
+                        sessionId,
+                        cancellationToken,
+                        session.TelemetryConversationId,
+                        session.TelemetryChannelId);
+                }
+            }
+            finally
+            {
+                session.TurnLock.Release();
             }
         }
 
         foreach (var (convId, session) in _sessions)
         {
-            if (session.HumanOwner != null && session.W365SessionIds.Count > 0)
-                await DiscardDirectW365ClientAsync(session);
-            else
-                _sessions.TryRemove(convId, out _);
+            await session.TurnLock.WaitAsync(cancellationToken);
+            try
+            {
+                if (session.HumanOwner != null && session.W365SessionIds.Count > 0)
+                    await DiscardDirectW365ClientAsync(session, cancellationToken);
+                else
+                    _sessions.TryRemove(convId, out _);
+            }
+            finally
+            {
+                session.TurnLock.Release();
+            }
         }
-        await _mcpConnectionLock.WaitAsync();
+        await _mcpConnectionLock.WaitAsync(cancellationToken);
         try
         {
             _cachedW365Connection = null;
@@ -1515,9 +1547,11 @@ public class ComputerUseOrchestrator
 
         foreach (var client in _allMcpClients.Keys)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!_allMcpClients.TryRemove(client, out _))
                 continue;
-            try { await client.DisposeAsync(); }
+            try { await client.DisposeAsync().AsTask().WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
         }
     }
@@ -1701,7 +1735,9 @@ public class ComputerUseOrchestrator
             + "You can also reply \"continue\" or \"end my session\" for the request controls. Never send credentials in chat.";
     }
 
-    private async Task ForgetSelectedSessionAsync(ConversationSession session, string conversationId, string? sessionId = null)
+    private async Task ForgetSelectedSessionAsync(
+        ConversationSession session, string conversationId, string? sessionId = null,
+        CancellationToken cancellationToken = default)
     {
         sessionId ??= session.W365SessionId;
         if (sessionId is { } id) _w365McpClientsBySessionId.TryRemove(id, out _);
@@ -1719,7 +1755,7 @@ public class ComputerUseOrchestrator
             if (session.HumanOwner != null)
             {
                 _humanAuthorizationStore?.Remove(conversationId);
-                await DiscardDirectW365ClientAsync(session);
+                await DiscardDirectW365ClientAsync(session, cancellationToken);
                 session.HumanOwner = null;
             }
         }
@@ -1909,7 +1945,8 @@ public class ComputerUseOrchestrator
         return (tools, client);
     }
 
-    private async Task DiscardDirectW365ClientAsync(ConversationSession session)
+    private async Task DiscardDirectW365ClientAsync(
+        ConversationSession session, CancellationToken cancellationToken = default)
     {
         var previousClient = session.McpClient;
         session.McpClient = null;
@@ -1919,7 +1956,7 @@ public class ComputerUseOrchestrator
         foreach (var id in session.W365SessionIds) _w365McpClientsBySessionId.TryRemove(id, out _);
         if (previousClient != null && _allMcpClients.TryRemove(previousClient, out _))
         {
-            await previousClient.DisposeAsync();
+            await previousClient.DisposeAsync().AsTask().WaitAsync(cancellationToken);
         }
     }
 

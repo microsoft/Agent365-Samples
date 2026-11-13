@@ -45,6 +45,7 @@ builder.Services.AddCuaModelProvider(builder.Configuration);
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
+builder.Services.AddHostedService<ComputerUseShutdownService>();
 
 // Bind ScreenShare options consumed by the link the agent posts in chat and by the
 // screenshare SPA / token-exchange endpoint.
@@ -287,13 +288,6 @@ else
 {
     app.MapControllers();
 }
-
-// End active W365 session on shutdown to release the VM back to the pool
-app.Lifetime.ApplicationStopping.Register(() =>
-{
-    var orchestrator = app.Services.GetRequiredService<ComputerUseOrchestrator>();
-    orchestrator.EndSessionOnShutdownAsync().GetAwaiter().GetResult();
-});
 
 app.Run();
 
