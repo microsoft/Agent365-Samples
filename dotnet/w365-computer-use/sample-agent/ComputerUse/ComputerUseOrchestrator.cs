@@ -1773,9 +1773,9 @@ public class ComputerUseOrchestrator
             if (session.HumanOwner != null)
             {
                 _humanAuthorizationStore?.Remove(conversationId);
-                await DiscardDirectW365ClientAsync(session, cancellationToken);
-                session.HumanOwner = null;
             }
+            await DiscardDirectW365ClientAsync(session, cancellationToken);
+            session.HumanOwner = null;
         }
     }
 
@@ -2880,8 +2880,8 @@ public class ComputerUseOrchestrator
     /// Invokes an exposed W365 tool requested by the model via a function_call, returning the tool's
     /// result string for the model's function_call_output. Starts a session if needed, injects the
     /// sessionId, and recovers on a lost session. Tool errors are returned as text (not thrown) so a
-    /// single bad call does not abort the turn. Human-session unauthorized transport failures
-    /// propagate to RunAsync for credential invalidation and reauthorization.
+    /// single bad call does not abort the turn. Unauthorized transport failures propagate to
+    /// RunAsync for connection invalidation and, for hosted human sessions, reauthorization.
     /// </summary>
     private async Task<string> InvokeExposedW365ToolAsync(
         JsonElement functionCall,
@@ -2949,7 +2949,7 @@ public class ComputerUseOrchestrator
         }
         catch (Exception ex) when (ex is not OperationCanceledException
             && ex is not W365HumanLoginRequiredException && ex is not W365SessionEndedException
-            && !(session.HumanOwner != null && IsUnauthorizedMcpTransportFailure(ex)))
+            && !IsUnauthorizedMcpTransportFailure(ex))
         {
             _logger.LogError(ex, "Exposed W365 tool '{Tool}' failed", toolName);
             return $"Error calling tool '{toolName}': {ex.Message}";
