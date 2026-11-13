@@ -1192,23 +1192,36 @@ public class ComputerUseOrchestrator
                             {
                                 if (sessionIdToEnd == null || !session.W365SessionIds.Contains(sessionIdToEnd))
                                     throw new InvalidOperationException("Only a tracked session belonging to this human W365 request can be ended.");
-                                session.PendingTermination = true;
-                                await InvokeW365ToolAsync(session.LifecycleTools ?? [], session.McpClient,
-                                    W365EndSessionToolName, new Dictionary<string, object?> { ["sessionId"] = sessionIdToEnd },
-                                    session, cancellationToken);
+                                session.PendingTermination = string.Equals(sessionIdToEnd, session.W365SessionId,
+                                    StringComparison.OrdinalIgnoreCase);
+                            }
+                            try
+                            {
+                                await InvokeW365ToolAsync(
+                                    session.HumanOwner == null ? w365Tools : session.LifecycleTools ?? [],
+                                    session.HumanOwner == null ? mcpClient : session.McpClient,
+                                    W365EndSessionToolName,
+                                    string.IsNullOrEmpty(sessionIdToEnd)
+                                        ? new Dictionary<string, object?>()
+                                        : new Dictionary<string, object?> { ["sessionId"] = sessionIdToEnd },
+                                    session,
+                                    cancellationToken,
+                                    endSessionCallId);
+                            }
+                            catch (W365SessionEndedException) when (!string.IsNullOrEmpty(sessionIdToEnd)
+                                && !string.Equals(sessionIdToEnd, session.W365SessionId, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _w365McpClientsBySessionId.TryRemove(sessionIdToEnd, out _);
+                                session.RemoveSession(sessionIdToEnd);
+                                var endedResult = $"W365 session {sessionIdToEnd} is already ended.";
+                                session.ConversationHistory.Add(CreateFunctionOutput(endSessionCallId, endedResult));
+                                return endedResult;
+                            }
+                            if (session.HumanOwner != null)
+                            {
                                 await ForgetSelectedSessionAsync(session, conversationId, sessionIdToEnd);
                                 return "The W365 session has been ended.";
                             }
-                            await InvokeW365ToolAsync(
-                                w365Tools,
-                                mcpClient,
-                                W365EndSessionToolName,
-                                string.IsNullOrEmpty(sessionIdToEnd)
-                                    ? new Dictionary<string, object?>()
-                                    : new Dictionary<string, object?> { ["sessionId"] = sessionIdToEnd },
-                                session,
-                                cancellationToken,
-                                endSessionCallId);
                             session.ConversationHistory.Add(CreateFunctionOutput(endSessionCallId));
                             await DisposeW365McpClientAsync(session, sessionIdToEnd);
                             session.RemoveSession(sessionIdToEnd);
