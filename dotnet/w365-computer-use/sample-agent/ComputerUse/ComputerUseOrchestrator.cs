@@ -33,7 +33,10 @@ public class ComputerUseOrchestrator
         Replace
     }
 
-    internal sealed record TurnIntent(bool NeedsCua, PendingTaskAction TaskAction, W365SessionOptions SessionOptions);
+    internal sealed record TurnIntent(bool NeedsCua, PendingTaskAction TaskAction, W365SessionOptions SessionOptions)
+    {
+        internal Guid? StateVersion { get; init; }
+    }
 
     /// <summary>
     /// Names of the remote CUA tools exposed by the W365 MCP server, plus ATG's local EndSession
@@ -350,6 +353,7 @@ public class ComputerUseOrchestrator
         _sessions.TryGetValue(conversationId, out var session);
         var pending = false;
         string? pendingTask = null;
+        var stateVersion = Guid.Empty;
         if (session != null)
         {
             await session.TurnLock.WaitAsync(cancellationToken);
@@ -359,12 +363,20 @@ public class ComputerUseOrchestrator
                     throw new InvalidOperationException(ownerRejection);
                 pending = session.HasPendingWork;
                 pendingTask = pending ? session.PendingTask : null;
+                stateVersion = session.StateVersion;
             }
             finally
             {
                 session.TurnLock.Release();
             }
         }
+        return (await ClassifyTurnCoreAsync(userMessage, pending, pendingTask, cancellationToken))
+            with { StateVersion = stateVersion };
+    }
+
+    private async Task<TurnIntent> ClassifyTurnCoreAsync(
+        string userMessage, bool pending, string? pendingTask, CancellationToken cancellationToken)
+    {
         if (pending && IsEndSessionRequest(userMessage, pending: true))
         {
             return new TurnIntent(true, PendingTaskAction.Resume, new W365SessionOptions());
@@ -526,7 +538,8 @@ public class ComputerUseOrchestrator
         PendingTaskAction pendingTaskAction = PendingTaskAction.Resume,
         W365SessionOptions? sessionOptions = null,
         HumanW365Turn? humanTurn = null,
-        Action<string>? onCloudPcSignInRequired = null)
+        Action<string>? onCloudPcSignInRequired = null,
+        Guid? classifiedStateVersion = null)
     {
         _logger.LogInformation("Processing message for conversation {ConversationId}", conversationId);
 
@@ -562,6 +575,16 @@ public class ComputerUseOrchestrator
             }
             if (GetHumanOwnerRejection(session, humanTurn?.Owner) is { } ownerRejection)
                 return ownerRejection;
+            if (humanTurn?.ChatAction == null && classifiedStateVersion is { } version
+                && version != session.StateVersion)
+            {
+                var refreshed = await ClassifyTurnCoreAsync(
+                    userMessage, session.HasPendingWork, session.PendingTask, cancellationToken);
+                if (refreshed.NeedsCua != includeCuaTool
+                    || refreshed.SessionOptions != (sessionOptions ?? new W365SessionOptions()))
+                    return "The pending W365 request changed while this message was being routed. Please retry your latest instruction. No action was taken for this turn.";
+                pendingTaskAction = refreshed.TaskAction;
+            }
             if (includeCuaTool)
             {
                 var options = sessionOptions ?? new W365SessionOptions();
@@ -716,6 +739,7 @@ public class ComputerUseOrchestrator
         }
         finally
         {
+            session.StateVersion = Guid.NewGuid();
             session.TurnLock.Release();
         }
     }
@@ -3340,6 +3364,7 @@ public class ComputerUseOrchestrator
         public string? TelemetryChannelId { get; set; }
         public W365SessionState Lifecycle { get; set; } = new();
         public string? PendingTask { get; set; }
+        public Guid StateVersion { get; set; }
         public HumanW365Owner? HumanOwner { get; set; }
         public string? HumanAuthorizationActionId { get; set; }
         public bool PendingTermination { get; set; }

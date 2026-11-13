@@ -432,6 +432,7 @@ public class MyAgent : AgentApplication
                             humanTurn: humanTurn,
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
+                            classifiedStateVersion: intent.StateVersion,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
                         return directResponse;
@@ -531,6 +532,7 @@ public class MyAgent : AgentApplication
                             cancellationToken: cancellationToken,
                             pendingTaskAction: intent.TaskAction,
                             sessionOptions: intent.SessionOptions,
+                            classifiedStateVersion: intent.StateVersion,
                             onCloudPcSignInRequired: url => cloudPcSignInUrl = url);
 
                         if (cloudPcSignInUrl != null)
@@ -594,6 +596,7 @@ public class MyAgent : AgentApplication
             cancellationToken: cancellationToken,
             pendingTaskAction: intent.TaskAction,
             sessionOptions: intent.SessionOptions,
+            classifiedStateVersion: intent.StateVersion,
             humanTurn: new HumanW365Turn(owner, _w365GatewayUrl, turnContext, chatAction, (id, link) =>
             {
                 actionRequestId = id;
