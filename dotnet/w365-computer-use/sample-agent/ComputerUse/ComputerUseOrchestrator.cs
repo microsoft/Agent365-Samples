@@ -1223,10 +1223,12 @@ public class ComputerUseOrchestrator
                                 return "The W365 session has been ended.";
                             }
                             session.ConversationHistory.Add(CreateFunctionOutput(endSessionCallId));
-                            await DisposeW365McpClientAsync(session, sessionIdToEnd);
+                            if (sessionIdToEnd is { } endedId)
+                                _w365McpClientsBySessionId.TryRemove(endedId, out _);
                             session.RemoveSession(sessionIdToEnd);
                             if (session.W365SessionIds.Count == 0)
                             {
+                                await DiscardDirectW365ClientAsync(session);
                                 _sessions.TryRemove(conversationId, out _);
                             }
 
