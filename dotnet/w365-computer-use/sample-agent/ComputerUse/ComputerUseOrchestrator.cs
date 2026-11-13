@@ -46,7 +46,7 @@ public class ComputerUseOrchestrator
     internal const string W365GetSessionDetailsToolName = "mcp_W365ComputerUse_GetSessionDetails";
     internal const string W365EndSessionToolName = "mcp_W365ComputerUse_EndSession";
     private static readonly Regex SessionIdRegex = new(
-        @"^\s*(?:(?:please\s+)?(?:(?:use|select|switch\s+to|resume|continue\s+with|inspect|end|close)\s+)?(?:the\s+)?(?:W365\s+)?session(?:\s+ID)?\s*[:=]?\s+[`""]?(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b|(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$)",
+        @"^\s*(?:(?:please\s+)?(?:(?<action>use|select|switch\s+to|resume|continue\s+with|inspect|end|close)\s+)?(?:the\s+)?(?:W365\s+)?session(?:\s+ID)?\s*[:=]?\s+[`""]?(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b|(?<sessionId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     internal static readonly HashSet<string> W365CuaToolNames = new(StringComparer.OrdinalIgnoreCase)
@@ -1697,9 +1697,18 @@ public class ComputerUseOrchestrator
             return new ConversationSession { ScreenshotSubfolder = $"{DateTime.UtcNow:yyyyMMdd}_{safeId}" };
         });
 
-    private static bool IsEndSessionRequest(string message, bool pending) =>
-        Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:end|close|release|disconnect(?:\s+from)?|abandon|cancel)\s+(?:(?:my|the|this|w365)\s+)*(?:session|cloud\s*pc|vm)[.!]?$", RegexOptions.IgnoreCase)
-        || (pending && Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:cancel|stop|abandon)[.!]?$", RegexOptions.IgnoreCase));
+    private static bool IsEndSessionRequest(string message, bool pending)
+    {
+        var selection = SessionIdRegex.Match(message);
+        var action = selection.Groups["action"].Value;
+        var targetedEnd = selection.Success
+            && (string.Equals(action, "end", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(action, "close", StringComparison.OrdinalIgnoreCase))
+            && Regex.IsMatch(message[(selection.Index + selection.Length)..].Trim(), @"^[`""]?[.!]?$");
+        return targetedEnd
+            || Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:end|close|release|disconnect(?:\s+from)?|abandon|cancel)\s+(?:(?:my|the|this|w365)\s+)*(?:session|cloud\s*pc|vm)[.!]?$", RegexOptions.IgnoreCase)
+            || (pending && Regex.IsMatch(message.Trim(), @"^(?:please\s+)?(?:cancel|stop|abandon)[.!]?$", RegexOptions.IgnoreCase));
+    }
 
     private static string HumanLoginGuidance(ConversationSession session, Action<string>? onCloudPcSignInRequired)
     {

@@ -658,6 +658,7 @@ The tool type is auto-derived from the model name (`gpt-*` -> `computer`, otherw
 
 - Sessions are started with `mcp_W365ComputerUse_StartSession`; multiple session IDs can be cached for one conversation
 - To select a session, begin the message with `Use session <UUID>`, `Switch to W365 session <UUID>`, or `session <UUID>`; a UUID sent alone also selects it. UUIDs elsewhere in task data do not select sessions or block startup. Hosted-human ownership and end-first restrictions still apply.
+- `end session <UUID>` and `close W365 session <UUID>` end the owned session without requiring Cloud PC sign-in or readiness. If human API authorization needs renewal, the end intent is retained until authorization completes. UUIDs in task data are not cancellation targets.
 - Conversation history accumulates across messages, giving the model context for follow-up tasks
 - On app shutdown (`Ctrl+C`), the agent attempts `EndSession` for cached sessions; hosted human sessions require usable human authorization, and cleanup failures leave release unconfirmed
 - If the app crashes, backend expiration is service-controlled; do not rely on a fixed timeout, especially while sign-in is pending
