@@ -229,11 +229,15 @@ internal sealed class W365McpSessionClient
             return response.Result?.ToJsonString()
                 ?? throw new InvalidOperationException($"W365 {name} did not return a result.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsPendingLoginMessage(ex.Message))
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && !ComputerUseOrchestrator.IsUnauthorizedMcpTransportFailure(ex)
+            && W365SessionState.IsPendingLoginMessage(ex.Message))
         {
             throw new W365HumanLoginRequiredException();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsEndedMessage(ex.Message))
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && !ComputerUseOrchestrator.IsUnauthorizedMcpTransportFailure(ex)
+            && W365SessionState.IsEndedMessage(ex.Message))
         {
             throw new W365SessionEndedException(ex.Message);
         }

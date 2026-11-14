@@ -1814,11 +1814,15 @@ public class ComputerUseOrchestrator
                 session.W365SessionId!, cancellationToken, session.TelemetryConversationId, session.TelemetryChannelId);
             return result.Tools;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsPendingLoginMessage(ex.Message))
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && !IsUnauthorizedMcpTransportFailure(ex)
+            && W365SessionState.IsPendingLoginMessage(ex.Message))
         {
             throw new W365HumanLoginRequiredException();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException && W365SessionState.IsEndedMessage(ex.Message))
+        catch (Exception ex) when (ex is not OperationCanceledException
+            && !IsUnauthorizedMcpTransportFailure(ex)
+            && W365SessionState.IsEndedMessage(ex.Message))
         {
             throw new W365SessionEndedException(ex.Message);
         }
@@ -2017,7 +2021,7 @@ public class ComputerUseOrchestrator
         return IsUnauthorizedMcpTransportFailure(exception);
     }
 
-    private static bool IsUnauthorizedMcpTransportFailure(Exception exception)
+    internal static bool IsUnauthorizedMcpTransportFailure(Exception exception)
     {
         if (exception is HttpRequestException httpRequestException
             && httpRequestException.StatusCode == System.Net.HttpStatusCode.Unauthorized)
@@ -2804,7 +2808,9 @@ public class ComputerUseOrchestrator
             resultStr = await InvokeW365ToolAsync(tools, mcpClient, name, args, session, ct, toolCallId);
         }
         catch (InvalidOperationException ex) when (ex is not W365SessionEndedException
-            && ex is not W365HumanLoginRequiredException && IsSessionNotFoundError(ex.Message))
+            && ex is not W365HumanLoginRequiredException
+            && !IsUnauthorizedMcpTransportFailure(ex)
+            && IsSessionNotFoundError(ex.Message))
         {
             return (ex.Message, true);
         }
@@ -2985,6 +2991,8 @@ public class ComputerUseOrchestrator
     /// <summary>True when an exception (or any inner exception) indicates a recoverable lost session.</summary>
     private static bool IsRecoverableSessionLoss(Exception exception)
     {
+        if (IsUnauthorizedMcpTransportFailure(exception))
+            return false;
         for (var ex = exception; ex != null; ex = ex.InnerException)
         {
             if (IsSessionNotFoundError(ex.Message))
