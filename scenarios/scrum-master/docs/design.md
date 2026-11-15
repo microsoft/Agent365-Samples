@@ -338,8 +338,12 @@ The event is created on the **agent's own** mailbox; SM + owner + reporter
 are attached as attendees and receive Teams meeting invitations. No
 delegated user-calendar consent is required.
 
-Fallback: if `findMeetingTimes` yields no candidates, the code synthesizes
-three consecutive hour slots so the demo still moves forward.
+Each availability or booking operation owns the fresh MCP wrappers created by
+A365 registration. It closes all registered servers on success or failure,
+including partial registration/connection failure; it does not close the Q&A
+client's servers or reuse a previous calendar operation's transport. Cleanup
+failures are logged without masking the original error or a confirmed booking.
+Empty availability remains empty; lookup failures propagate without invented slots.
 
 ### 5.4 Warn (MVP 4)
 
@@ -572,7 +576,9 @@ also model-driven and is never used for inbound email.
   same process, use `/standup retry <standupId>` after cutoff or when all responses
   are collected to resend the summary without repeating fan-out. An explicit
   retry addresses the retained ID without looking up today's active sprint or
-  creating a new daily run; unknown IDs never fall back to creation. After a restart,
+  creating a new daily run; unknown IDs never fall back to creation. Summaries
+  display the retained run's start date in the configured timezone, not the
+  finalization date, even with multi-day cutoffs. After a restart,
   inspect existing records before manually recovering a run.
   Roster lookup occurs before the finalization claim, so a failed lookup
   leaves the session retryable. Accepted response writes reserve the session

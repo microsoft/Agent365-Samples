@@ -100,19 +100,26 @@ async function withStandup(overrides, run) {
 }
 
 test('explicit retained-session retries recover a previous-day run without querying or creating today', async t => {
-    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T09:00:00Z') });
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T23:30:00Z') });
     const session = makeSession(['absent']);
+    const cards = [];
     let summaries = 0, chases = 0, succeeds = false;
     session.cutoffUtc = '2026-11-11T09:00:00Z';
     await withStandup({
+        '../config': { getScheduleConfig: () => ({ timezone: 'Asia/Kolkata', cutoffHours: 24 }) },
+        '../cards/standup-summary.card': require('../src/cards/standup-summary.card'),
         '../services/jira': { getJiraClient: () => { throw new Error('Retry must not require an active sprint'); } },
         '../services/sharepoint': {
             claimStandupSession: async () => { assert.fail('Retry must not start a new run'); },
         },
-        '../services/proactive': { sendProactive: async () => { summaries++; return { ok: succeeds }; } },
+        '../services/proactive': { sendProactive: async (_reference, logic) => {
+            summaries++;
+            if (succeeds) await logic({ sendActivity: async message => { cards.push(message.attachments[0].content); } });
+            return { ok: succeeds };
+        } },
         './chase': { chaseAfterStandup: async () => { chases++; } },
     }, async standup => {
-        t.mock.timers.tick(24 * 3600_000);
+        t.mock.timers.tick(48 * 3600_000);
         await assert.rejects(standup.summarizeStandup(session), /not delivered/);
         assert.equal(session.state, 'open');
         succeeds = true;
@@ -122,6 +129,9 @@ test('explicit retained-session retries recover a previous-day run without query
         assert.match(retry.note, /without starting a new daily run/);
         assert.equal(summaries, 2);
         assert.equal(chases, 1);
+        const subtitle = cards[0].body.find(part => part.text?.includes('**Date:**')).text;
+        assert.match(subtitle, /\*\*Date:\*\* Wednesday, 11 November/);
+        assert.doesNotMatch(subtitle, /13 November|10 November/);
         const completed = await standup.triggerStandup(options);
         assert.match(completed.note, /not retained.*No new run/);
         assert.equal(summaries, 2);

@@ -61,17 +61,18 @@ export interface CalendarContext {
 const toolService = new McpToolRegistrationService();
 
 /**
- * Build a scenario-specific Agent bound to the A365 MCP servers (which includes
- * `mcp_CalendarTools` from `ToolingManifest.json`).
+ * Run with a scenario-specific Agent and operation-owned A365 MCP servers
+ * (including `mcp_CalendarTools` from `ToolingManifest.json`).
  *
  * `outputType` requires a Zod object schema per the Agents SDK; we accept any
  * `ZodObject<any>` so callers can plug their own structured shape.
  */
-async function buildCalendarAgent(
+async function withCalendarAgent<T>(
     cc: CalendarContext,
     instructions: string,
     outputType: z.ZodObject<any>,
-): Promise<Agent<any, any>> {
+    fn: (agent: Agent<any, any>) => Promise<T>,
+): Promise<T> {
     const agent = new Agent({
         name: 'Scrum Master — Calendar',
         model: getModelName(),
@@ -79,49 +80,44 @@ async function buildCalendarAgent(
         outputType,
     });
     try {
-        // The MCP service's typing pins the agent to the default text-output Agent
-        // shape; with `outputType` set our Agent is a different generic instantiation,
-        // so cast through `any` here. Runtime just needs the mcpServers array set.
-        await toolService.addToolServersToAgent(
-            agent as any,
-            cc.authorization,
-            cc.authHandlerName,
-            cc.turnContext,
-            process.env.BEARER_TOKEN || '',
-        );
-    } catch (err) {
-        console.error('[calendar] MCP registration failed:', (err as Error).message);
-        throw err;
-    }
-    return agent as unknown as Agent<any, any>;
-}
-
-async function withServers<T>(agent: Agent<any, any>, fn: () => Promise<T>): Promise<T> {
-    const servers = (agent as any).mcpServers as Array<{ connect(): Promise<void>; close(): Promise<void> }> | undefined;
-    const connectAll = async () => {
-        if (servers?.length) for (const s of servers) await s.connect().catch(() => { /* idempotent */ });
-    };
-    await connectAll();
-    // Intentionally NO close() in a finally block. The Streamable-HTTP MCP session
-    // that `mcp_CalendarTools` uses is meant to be long-lived and is reused across
-    // agent turns. Closing it here caused subsequent calls (e.g. clicking "Book it"
-    // after "Propose unblock meeting") to fail with:
-    //   {"error":{"code":-32001,"message":"Session not found"}}
-    // because the module-level McpToolRegistrationService handed the new agent
-    // a reference to the already-closed transport.
-    //
-    // If the transport has gone idle server-side we still get -32001 — retry once
-    // by re-connecting and re-running.
-    try {
-        return await fn();
-    } catch (e) {
-        const msg = String((e as Error)?.message ?? e);
-        if (msg.includes('Session not found') || msg.includes('-32001')) {
-            console.warn('[calendar] MCP session lost — reconnecting and retrying once.');
-            await connectAll();
-            return await fn();
+        try {
+            // Registration's typing pins the agent to the default text-output shape.
+            await toolService.addToolServersToAgent(
+                agent as any,
+                cc.authorization,
+                cc.authHandlerName,
+                cc.turnContext,
+                process.env.BEARER_TOKEN || '',
+            );
+        } catch (err) {
+            console.error('[calendar] MCP registration failed:', (err as Error).message);
+            throw err;
         }
-        throw e;
+        const connectAll = async () => {
+            for (const server of agent.mcpServers) await server.connect();
+        };
+        await connectAll();
+        try {
+            return await fn(agent);
+        } catch (e) {
+            const msg = String((e as Error)?.message ?? e);
+            if (msg.includes('Session not found') || msg.includes('-32001')) {
+                console.warn('[calendar] MCP session lost — reconnecting and retrying once.');
+                await connectAll();
+                return await fn(agent);
+            }
+            throw e;
+        }
+    } finally {
+        // Registration creates fresh wrappers for this operation, not shared clients.
+        await Promise.all(agent.mcpServers.map(async server => {
+            try {
+                await server.close();
+            } catch (error) {
+                // A cleanup error must not make a confirmed booking appear retryable.
+                console.warn('[calendar] MCP cleanup failed:', error);
+            }
+        }));
     }
 }
 
@@ -164,8 +160,7 @@ export async function findUnblockSlots(
         `Timezone for display labels: ${timezone}`;
 
     try {
-        const agent = await buildCalendarAgent(cc, instructions, SlotArraySchema);
-        const result = await withServers(agent, () => run(agent, prompt));
+        const result = await withCalendarAgent(cc, instructions, SlotArraySchema, agent => run(agent, prompt));
         const out = SlotArraySchema.parse(result.finalOutput);
         return out.slots;
     } catch (err) {
@@ -221,8 +216,7 @@ export async function createUnblockMeeting(cc: CalendarContext, opts: {
         `Attendees:\n${attendeeLines}\n` +
         `Body (HTML):\n${opts.body}`;
 
-    const agent = await buildCalendarAgent(cc, instructions, CreatedEventSchema);
-    const result = await withServers(agent, () => run(agent, prompt));
+    const result = await withCalendarAgent(cc, instructions, CreatedEventSchema, agent => run(agent, prompt));
     const out = (result as any).finalOutput as z.infer<typeof CreatedEventSchema> | undefined;
     if (!out || !out.webLink) {
         throw new Error(`Calendar tool returned no event link. Raw: ${JSON.stringify(out)}`);

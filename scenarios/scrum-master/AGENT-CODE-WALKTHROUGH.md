@@ -150,11 +150,13 @@ event creation through the configured Calendar server.
   before attempting Calendar and records `booked` afterwards. Uncertain
   results retain a duplicate-prevention claim; inspect Outlook before
   manually recovering it, rather than automatically retrying invitations.
-- `withServers()` connects available transports and retries once on
-  `Session not found` / `-32001`.
-- Neither the calendar helper nor `OpenAIClient.invokeAgent()` closes servers
-  after each call. The module-level tooling service reuses Streamable-HTTP
-  sessions; adding `finally { closeServers(); }` would break later turns.
+- `withCalendarAgent()` owns registration, connection and execution and retries
+  once on `Session not found` / `-32001`. Each availability or booking call
+  receives fresh MCP wrappers and closes them in `finally`, including on
+  registration or connection failure. Cleanup failures are logged without
+  masking the operation's outcome.
+- Calendar cleanup does not change `OpenAIClient.invokeAgent()` or close its
+  servers; ownership is limited to the calendar operation's own wrappers.
 
 ## 7. Observability and logging
 

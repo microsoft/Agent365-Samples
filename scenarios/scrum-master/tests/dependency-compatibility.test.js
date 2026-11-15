@@ -39,7 +39,8 @@ function loadCalendar(overrides = {}) {
             if (request === '@openai/agents' && overrides.run) return { ...sdk, run: overrides.run };
             if (request === '@microsoft/agents-a365-tooling-extensions-openai') {
                 return { McpToolRegistrationService: class {
-                    async addToolServersToAgent() {
+                    async addToolServersToAgent(...args) {
+                        if (overrides.register) return overrides.register(...args);
                         if (overrides.registrationError) throw overrides.registrationError;
                     }
                 } };
@@ -75,6 +76,117 @@ test('calendar lookup and malformed output failures propagate without synthetic 
     for (const finalOutput of [undefined, {}, { slots: 'invalid' }, { slots: [{ startIso: 'missing fields' }] }]) {
         const { findUnblockSlots } = loadCalendar({ run: async () => ({ finalOutput }) });
         await assert.rejects(findUnblockSlots({}, [], 30, 'UTC'), /invalid|expected/i);
+    }
+});
+
+test('calendar operations clean up every owned server on registration, connection and run failures', async () => {
+    for (const phase of ['registration', 'connection', 'run', 'output']) {
+        const failure = new Error(`Failed ${phase}`);
+        const closed = [];
+        const { findUnblockSlots } = loadCalendar({
+            register: async agent => {
+                agent.mcpServers = [0, 1].map(id => ({
+                    connect: async () => { if (phase === 'connection') throw failure; },
+                    close: async () => { closed.push(id); },
+                }));
+                if (phase === 'registration') throw failure;
+            },
+            run: async () => {
+                if (phase === 'run') throw failure;
+                assert.equal(phase, 'output', 'Connection failure must prevent model execution');
+                return { finalOutput: {} };
+            },
+        });
+        await assert.rejects(findUnblockSlots({}, [], 30, 'UTC'),
+            error => phase === 'output' ? /invalid|expected/i.test(error.message) : error === failure);
+        assert.deepEqual(closed.sort(), [0, 1], phase);
+    }
+});
+
+test('calendar cleanup failures are logged without masking a completed booking or its original error', async t => {
+    const warnings = [];
+    t.mock.method(console, 'warn', (...args) => { warnings.push(args.join(' ')); });
+    const failure = new Error('Booking failed');
+    let closed = 0;
+    for (const fails of [false, true]) {
+        const { createUnblockMeeting } = loadCalendar({
+            register: async agent => {
+                agent.mcpServers = [0, 1].map(id => ({
+                    connect: async () => {},
+                    close: async () => { closed++; if (id === 0) throw new Error('Cleanup failed'); },
+                }));
+            },
+            run: async () => {
+                if (fails) throw failure;
+                return { finalOutput: { id: 'event', webLink: 'https://outlook.invalid/event' } };
+            },
+        });
+        const result = createUnblockMeeting({}, { subject: 'Test', body: 'Test', startIso: '', endIso: '', attendees: [], timezone: 'UTC' });
+        if (fails) await assert.rejects(result, error => error === failure);
+        else assert.equal((await result).id, 'event');
+    }
+    assert.equal(closed, 4);
+    assert.equal(warnings.filter(message => message.includes('Cleanup failed')).length, 2);
+});
+
+test('real A365 registration and Agents transports delete distinct propose and book MCP sessions', async () => {
+    const http = require('node:http');
+    const { McpToolRegistrationService } = require('@microsoft/agents-a365-tooling-extensions-openai');
+    const active = new Set(), deleted = [], wrappers = [];
+    let created = 0;
+    const server = http.createServer(async (req, res) => {
+        if (req.method === 'GET') { res.writeHead(405).end(); return; }
+        if (req.method === 'DELETE') {
+            const id = req.headers['mcp-session-id'];
+            deleted.push(id);
+            active.delete(id);
+            res.writeHead(200).end();
+            return;
+        }
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const message = JSON.parse(body);
+        if (!Object.hasOwn(message, 'id')) { res.writeHead(202).end(); return; }
+        let result;
+        if (message.method === 'initialize') {
+            const id = `offline-${++created}`;
+            active.add(id);
+            res.setHeader('mcp-session-id', id);
+            result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'offline', version: '1' } };
+        } else {
+            assert.equal(message.method, 'tools/list');
+            assert.ok(active.has(req.headers['mcp-session-id']));
+            result = { tools: [] };
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+        const registration = new McpToolRegistrationService();
+        registration.configService.listToolServers = async () => [{
+            url: `http://127.0.0.1:${server.address().port}/mcp`, mcpServerName: 'mcp_CalendarTools',
+        }];
+        const payload = Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url');
+        const calendar = loadCalendar({ register: async (agent, ...args) => {
+            await registration.addToolServersToAgent(agent, ...args.slice(0, 3), `offline.${payload}.fixture`);
+            wrappers.push(...agent.mcpServers);
+        } });
+        answer = { slots: [] };
+        assert.deepEqual(await calendar.findUnblockSlots({}, [], 30, 'UTC'), []);
+        assert.equal(active.size, 0, 'Availability must release its session before returning');
+        answer = { id: 'event', webLink: 'https://outlook.invalid/event' };
+        assert.equal((await calendar.createUnblockMeeting({}, {
+            subject: 'Offline', body: 'Test', startIso: '2030-01-01T10:00:00Z',
+            endIso: '2030-01-01T10:30:00Z', attendees: [], timezone: 'UTC',
+        })).id, 'event');
+        assert.notEqual(wrappers[0], wrappers[1]);
+        assert.equal(created, 2);
+        assert.deepEqual(deleted, ['offline-1', 'offline-2']);
+        assert.equal(active.size, 0);
+    } finally {
+        await Promise.all(wrappers.map(wrapper => wrapper.close()));
+        await new Promise(resolve => server.close(resolve));
     }
 });
 

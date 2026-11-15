@@ -665,7 +665,7 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
     }
 
     const schedule = getScheduleConfig();
-    const dateLocal = DateTime.now().setZone(schedule.timezone).toFormat('cccc, d LLLL');
+    const dateLocal = DateTime.fromISO(session.startedUtc).setZone(schedule.timezone).toFormat('cccc, d LLLL');
     const card = buildStandupSummaryCard({
         sprintName: session.sprintName,
         dateLocal,
