@@ -132,9 +132,7 @@ test('standup expands inherited subtasks, coalesces triggers, and finalizes once
     let sends = 0;
     let reconciliations = 0;
     let sprintId = 778899;
-    const dateTime = { setZone() { return this; }, toFormat() { return 'noon'; } };
     await withModule('../src/handlers/standup', {
-        luxon: { DateTime: { now: () => dateTime, fromJSDate: () => dateTime } },
         '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ cutoffHours: 0, timezone: 'UTC' }) },
         '../services/sharepoint': {
             findByTitle: async (_list, title) => records.get(title) ?? null,
