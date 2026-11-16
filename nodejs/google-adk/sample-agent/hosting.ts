@@ -19,10 +19,10 @@ import {
 import {
   BaggageBuilder,
   BaggageBuilderUtils,
-  AgenticTokenCacheInstance,
 } from '@microsoft/opentelemetry';
 
 import type { AgentInterface } from './agentInterface';
+import { toObservabilityContext } from './observability/turn-context';
 
 const logger = {
   info: (...args: unknown[]) => console.log(new Date().toISOString(), 'INFO', 'MyAgent:', ...args),
@@ -57,6 +57,8 @@ export class MyAgent extends AgentApplication<TurnState> {
         authorization: {
           [AUTH_HANDLER_NAME]: {
             type: 'agentic',
+            scopes: (process.env.agentic_scopes || 'https://graph.microsoft.com/.default').split(/[,\s]+/).filter(Boolean),
+            altBlueprintConnectionName: process.env.agentic_altBlueprintConnectionName || 'SERVICE_CONNECTION',
           },
         },
       }),
@@ -66,6 +68,13 @@ export class MyAgent extends AgentApplication<TurnState> {
     this.agent = agent;
 
     if (useAgenticAuth) {
+      this.authorization.onSignInFailure(async (_context, _state, _handlerId, message) => {
+        const code = message?.match(/AADSTS\d+|Authorization_RequestDenied|invalid_scope|invalid_client|consent_required|Connection not found/i)?.[0];
+        logger.error('Agentic workload authorization failed.', {
+          code: code ?? 'TOKEN_ACQUISITION_FAILED',
+          action: 'Verify the blueprint connection, agentic user identity, and workload permission grants.',
+        });
+      });
       logger.info(`Auth handler: ${AUTH_HANDLER_NAME} (agentic authorization enabled)`);
     } else {
       logger.info('No auth handler configured — anonymous mode (Playground/local dev)');
@@ -73,32 +82,6 @@ export class MyAgent extends AgentApplication<TurnState> {
 
     this.setupHandlers(useAgenticAuth);
     logger.info('Handlers registered successfully');
-  }
-
-  // -- observability -------------------------------------------------------
-
-  /**
-   * Preloads or refreshes the Observability token used by the Agent 365
-   * Observability exporter. Uses AgenticTokenCacheInstance.refreshObservabilityToken()
-   * which handles OBO token acquisition automatically.
-   */
-  private async preloadObservabilityToken(turnContext: TurnContext): Promise<void> {
-    const agentId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-    const tenantId = (turnContext?.activity?.recipient as any)?.tenantId ?? '';
-
-    logger.info(`Observability token refresh — agentId: '${agentId}', tenantId: '${tenantId}'`);
-
-    try {
-      await AgenticTokenCacheInstance.refreshObservabilityToken(
-        agentId,
-        tenantId,
-        turnContext as any,
-        this.authorization as any
-      );
-      logger.info('Observability token refreshed successfully');
-    } catch (err) {
-      logger.warn('Failed to refresh observability token:', err);
-    }
   }
 
   // -- handler registration ------------------------------------------------
@@ -159,11 +142,11 @@ export class MyAgent extends AgentApplication<TurnState> {
         // Build baggage from TurnContext — auto-populates tenant, agent, channel, conversation
         const baggageScope = BaggageBuilderUtils.fromTurnContext(
           new BaggageBuilder(),
-          context as any
+          toObservabilityContext(context)
         ).build();
 
-        // Preload/refresh exporter token
-        await this.preloadObservabilityToken(context);
+        // A365 Observability — best-effort instrumentation (verify against official sample)
+        // Agentic-user workload auth is separate from app-only S2S telemetry.
 
         startTypingLoop();
 
@@ -179,8 +162,7 @@ export class MyAgent extends AgentApplication<TurnState> {
               await context.sendActivity(response);
             } catch (error) {
               logger.error('LLM query error:', error);
-              const err = error as any;
-              await context.sendActivity(`Error: ${err.message || err}`);
+              await context.sendActivity('Sorry, I encountered an error while processing your request. Please try again.');
             }
           });
         } finally {
@@ -194,13 +176,11 @@ export class MyAgent extends AgentApplication<TurnState> {
     this.onAgentNotification(
       'agents:*',
       async (context: TurnContext, _state: TurnState, agentNotificationActivity: AgentNotificationActivity) => {
-        // Build baggage + refresh observability token
+        // Build baggage for the notification's runtime identity.
         const baggageScope = BaggageBuilderUtils.fromTurnContext(
           new BaggageBuilder(),
-          context as any
+          toObservabilityContext(context)
         ).build();
-
-        await this.preloadObservabilityToken(context);
 
         try {
           await baggageScope.run(async () => {

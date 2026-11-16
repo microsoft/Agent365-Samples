@@ -5,7 +5,9 @@
  * Entry point — OpenTelemetry instrumentation MUST be imported first so it can
  * patch libraries (HTTP, Express, etc.) before they are loaded.
  */
-import './instrumentation';
+import { configureObservabilityHosting } from './instrumentation';
+// A365 Observability — best-effort instrumentation (verify against official sample)
+import { shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
 
 import express, { Request, Response } from 'express';
 
@@ -96,13 +98,31 @@ function startServer(agentApp: MyAgent): void {
   console.log(`Env:      ${isProduction ? 'production' : 'development'}`);
   console.log();
 
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     logger.info(`Listening on ${host}:${port}/api/messages`);
   });
+
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    server.close(async (error) => {
+      try {
+        if (error) throw error;
+        await shutdownMicrosoftOpenTelemetry();
+      } catch (error) {
+        logger.error('Shutdown failed:', error);
+        process.exitCode = 1;
+      }
+    });
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
 function main(): void {
   const agentApplication = new MyAgent(new GoogleADKAgent());
+  configureObservabilityHosting(agentApplication.cloudAdapter);
   startServer(agentApplication);
 }
 

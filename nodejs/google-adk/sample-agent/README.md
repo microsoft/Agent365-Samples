@@ -1,5 +1,7 @@
 # Google ADK Sample Agent - Node.js
 
+## Demonstrates
+
 This sample demonstrates how to build an agent using Google ADK (Agent Development Kit) in Node.js with the Microsoft Agent 365 SDK. It covers:
 
 - **Observability**: End-to-end tracing, caching, and monitoring via Microsoft OpenTelemetry Distro
@@ -15,7 +17,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 To run the template in your local dev machine, you will need:
 
-- [Node.js](https://nodejs.org/), supported versions: 18.x or higher
+- [Node.js](https://nodejs.org/), supported versions: 22.12 or higher (with npm)
 - [Microsoft 365 Agents Toolkit Visual Studio Code Extension](https://aka.ms/teams-toolkit) latest version
 - A Google Cloud project with Vertex AI enabled, or a Google API key
 - Azure CLI signed in with `az login`
@@ -27,7 +29,7 @@ To run the template in your local dev machine, you will need:
 ## Running the Agent in Microsoft 365 Agents Playground
 
 1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
-2. In file `env/.env.playground`, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and fill in `GOOGLE_API_KEY=<your-key>` if using the public Gemini API.
+2. In file `env/.env.playground`, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and fill in `GOOGLE_GENAI_API_KEY=<your-key>` if using the public Gemini API.
 3. Or for Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=TRUE` and fill in `GOOGLE_CLOUD_PROJECT=<your-project>` and `GOOGLE_CLOUD_LOCATION=<your-region>`.
 4. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
 5. You can send any message to get a response from the agent.
@@ -94,6 +96,53 @@ const stopTypingLoop = () => { clearInterval(typingInterval); };
 To set up and test this agent, refer to the [Configure Agent Testing](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/testing?tabs=nodejs) guide for complete instructions. For a detailed explanation of the agent code and implementation, see the [Agent Code Walkthrough](Agent-Code-Walkthrough.md).
 
 For local Teams testing through a dev tunnel, keep the service connection values in `.env` populated. Bot Framework sends signed JWTs to `/api/messages` even in local development, so the server loads auth configuration from environment variables before accepting message activities.
+
+### Configuration and observability
+
+Copy [.env.example](.env.example) to `.env`, populate the Google model settings and existing Agent 365 service connection, then run:
+
+```shell
+npm install
+npm run build
+npm start
+```
+
+For Teams workload authorization, set `AUTH_HANDLER_NAME=AGENTIC`. Leave it empty for bare local/Playground testing without MCP tools.
+
+```dotenv
+ENABLE_OBSERVABILITY=true
+ENABLE_A365_OBSERVABILITY_EXPORTER=true
+OTEL_LOG_LEVEL=INFO
+A365_OBSERVABILITY_LOG_LEVEL=info|warn|error
+```
+
+Telemetry uses an **app-only token and S2S transport**, independently of the delegated agentic-user tokens used for MCP/Graph. The resolver reuses the adapter's default blueprint connection, obtains an FMI assertion for the runtime agent identity, validates the resulting token claims, and caches tokens per agent/tenant. No separate telemetry credentials are needed.
+
+Google ADK calls are manually traced with `invoke_agent`, `chat`, `execute_tool`, and `output_messages` scopes. Baggage carries the conversation, channel, session, runtime agent, agent-user object ID (`recipient.aadObjectId`, not its UPN), and human-caller identities. Tool scopes wrap actual tool execution, including failures. Tool argument/result payloads are omitted in production and Azure App Service; local development traces can contain business content. Existing prompt/completion tracing also captures message content, so apply your data-handling policy before enabling export. Personalized instructions retain the configured base instructions and security rules.
+
+The OpenTelemetry API override keeps Google ADK and the Microsoft distro on one compatible API version. Mixed API minor versions can produce no-op spans even when initialization reports success. Axios is declared because the tooling SDK loads it internally, although this sample's gateway calls use built-in `fetch`.
+
+The runtime agent ID comes from the incoming activity, **never the blueprint ID or display name**. Local turns without a real runtime agent/tenant identity still return LLM responses but skip semantic telemetry with a warning. A missing runtime agent-user ID or human caller object ID cannot be invented from the blueprint config; test attribution with a real agentic turn.
+
+Set `ENABLE_A365_OBSERVABILITY_EXPORTER=false` for local console-only tracing, or `ENABLE_OBSERVABILITY=false` to disable tracing entirely. Exporter logging uses the SDK's supported diagnostics; the sample does not patch global `fetch` or log upstream response bodies. Durable replay is disabled during the migration away from delegated telemetry.
+
+### Regression tests
+
+```shell
+npm test
+```
+
+The tests use mocked model/tool/token calls and an in-memory span processor; they need no cloud credentials and do not prove live export.
+
+## Troubleshooting
+
+- **No A365 export:** Confirm both observability flags above are true in the running process, not just the template. Check SDK logs for export success or rejected spans.
+- **Local turns skip telemetry:** Playground messages may lack runtime agent identity. Use an approved AI Teammate instance and a real agentic activity; do not fill the gap with a blueprint ID.
+- **Token acquisition or claim-validation warning:** Verify the default service connection, tenant, and runtime agent identity. A delegated token is not accepted for telemetry. Do not copy the encrypted secret from the generated config directly into `.env`.
+- **Gemini returns 403 / API disabled:** Enable the [Gemini API](https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com) in the Google Cloud project owning the key, or use a key from an enabled project. `GOOGLE_GENAI_API_KEY` (or `GEMINI_API_KEY`) is required for public Gemini; `GOOGLE_API_KEY` is not read by this ADK adapter. Model error events are logged with a sanitized reason and fail the turn instead of being reported as a successful fallback.
+- **MCP token is empty / connection not found:** Set `agentic_altBlueprintConnectionName=SERVICE_CONNECTION`. Connection lookup is case-sensitive and must match the configured connection name, not a scope URL. The authorization failure callback logs a safe error category.
+- **MCP discovery fails:** Check the reported HTTP status and workload permissions. Both gateway array response shapes are supported; malformed payloads are rejected rather than silently treated as an empty catalog. V2 tool servers receive a separate workload token for their advertised audience/scope using the SDK resolver; the discovery token is not reused for a different resource. Configured tool/auth initialization failures fail the turn; bare local LLM mode remains available when no token or auth handler is configured.
+- **Export succeeds but Activity is empty:** Export acceptance alone does not establish reporting eligibility. Verify agent-instance approval, caller attribution, and indexing in the target tenant. Filter Activity using the runtime agent ID, not the blueprint ID.
 
 ## Support
 
