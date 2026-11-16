@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Permission Set granting access to the External Credential principal so the running
+  user (REST endpoint + Queueable) can resolve {!$Credential...} for the callouts, plus
+  Apex class access for the externally-invokable entry points (the A365ToolRest REST tool
+  surface, plus the A365Callout and A365AgentforceTool invocable actions). After deploy,
+  assign this to the integration user and the Agentforce agent running user.
+-->
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>A365 Observability</label>
+    <hasActivationRequired>false</hasActivationRequired>
+    <description>External Credential principal access + Apex class access for the invokable entry points (A365ToolRest, A365Callout, A365AgentforceTool) for A365 observability. Assign to the REST integration user and the Agentforce agent running user.</description>
+    <classAccesses>
+        <apexClass>A365AgentforceTool</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365ToolRest</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365Callout</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365Telemetry</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365TelemetryQueueable</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365Trace</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365ObsConfig</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365ObsSpan</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>A365ObsToken</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <externalCredentialPrincipalAccesses>
+        <enabled>true</enabled>
+        <externalCredentialPrincipal>A365_Obs_Entra-BlueprintPrincipal</externalCredentialPrincipal>
+    </externalCredentialPrincipalAccesses>
+    <objectPermissions>
+        <object>UserExternalCredential</object>
+        <allowCreate>false</allowCreate>
+        <allowDelete>false</allowDelete>
+        <allowEdit>false</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>false</modifyAllRecords>
+        <viewAllRecords>false</viewAllRecords>
+    </objectPermissions>
+</PermissionSet>

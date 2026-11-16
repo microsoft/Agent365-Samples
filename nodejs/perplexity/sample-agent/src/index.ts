@@ -1,10 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// It is important to load environment variables before importing other modules
-import { configDotenv } from "dotenv";
-
-configDotenv();
+import "./otel";
 
 import {
   AuthConfiguration,

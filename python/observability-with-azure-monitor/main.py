@@ -16,6 +16,7 @@ Run with: ``python main.py``
 
 import json
 import os
+from contextlib import nullcontext
 
 from dotenv import load_dotenv
 
@@ -42,18 +43,21 @@ configure_azure_monitor(connection_string=_app_insights_conn)
 # Both Azure Monitor and the Agent 365 exporter now receive spans.
 # ---------------------------------------------------------------------------
 from microsoft_agents_a365.observability.core import configure
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
+from observability_token_service import create_observability_token_resolver
 
 
-def _stub_token_resolver(agent_id: str, tenant_id: str) -> str | None:
-    # In a real app, return a bearer token for the Agent 365 backend.
-    # See the observability-core docs for the production pattern.
-    return "stub-token"
+token_resolver = create_observability_token_resolver()
 
 
 _configure_ok = configure(
     service_name=os.environ.get("AGENT_SERVICE_NAME", "sample-agent-azure-monitor"),
     service_namespace="agent365-samples",
-    token_resolver=_stub_token_resolver,
+    exporter_options=Agent365ExporterOptions(
+        use_s2s_endpoint=True,
+        token_resolver=token_resolver,
+    ),
 )
 if not _configure_ok:
     raise SystemExit(
@@ -98,7 +102,13 @@ from opentelemetry import trace
 
 
 def main() -> None:
-    result = Runner.run_sync(agent, "What's the weather in Seattle?")
+    # This standalone demo has no incoming turn carrying an agent/tenant identity.
+    context = (
+        BaggageBuilder().tenant_id(token_resolver.tenant_id).agent_id(token_resolver.agent_id).build()
+        if token_resolver else nullcontext()
+    )
+    with context:
+        result = Runner.run_sync(agent, "What's the weather in Seattle?")
     print(result.final_output)
     # Force span flush so both Azure Monitor and Agent 365 exporters drain
     # before the process exits.

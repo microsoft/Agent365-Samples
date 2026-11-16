@@ -358,7 +358,7 @@ async def handle_agent_notification_activity(
             email = notification_activity.email
             email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
             
-            message = f"You have received the following email. Please follow any instructions in it.\n\n{email_body}"
+            message = _build_email_reply_prompt(email_body)
             logger.info(f"📧 Processing email notification")
             
             response = await self.process_user_message(message, auth, context, auth_handler_name)
@@ -410,7 +410,7 @@ async def handle_agent_notification_activity(
 1. **Checks Availability**: Verifies notification packages are installed
 2. **Identifies Type**: Determines what kind of notification it is
 3. **Extracts Context**: Gets relevant information (email body, comment text, etc.)
-4. **Formats Message**: Creates a clear prompt for Claude
+4. **Formats Message**: Creates a clear prompt for Claude. Email bodies are wrapped as untrusted data by `_build_email_reply_prompt`, so instructions inside an email are never followed (prompt-injection protection)
 5. **Processes with AI**: Uses Claude to generate intelligent response
 6. **Returns Result**: Sends response back to user
 

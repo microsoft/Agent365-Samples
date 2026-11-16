@@ -1,3 +1,15 @@
+<!--
+---
+name: "Autonomous Agent — Python Sample"
+page_type: sample
+languages:
+- python
+products:
+- agent-365
+description: "Run an autonomous Python agent that summarizes trending GitHub repositories with Azure OpenAI and Agent 365 tracing."
+---
+-->
+
 # Autonomous Agent — Python Sample
 
 This sample demonstrates a **purely autonomous agent** built with the Microsoft Agent 365 SDK for Python. It has **no chat functionality** — it runs entirely as a background service.
@@ -11,7 +23,7 @@ Every 60 seconds, the agent:
 
 All operations are **manually instrumented** with Agent 365 observability using the A365 Observability SDK tracing scopes (`InvokeAgentScope`, `InferenceScope`, `ExecuteToolScope`). This makes it a useful reference for instrumenting any non-interactive or custom agent loop.
 
-For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/).
+For comprehensive documentation, visit the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/).
 
 ## What This Sample Demonstrates
 
@@ -28,7 +40,7 @@ For comprehensive documentation, visit the [Microsoft Agent 365 Developer Docume
 
 - Python 3.11 or higher
 - [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-- [Agent 365 CLI](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
+- [Agent 365 CLI](https://learn.microsoft.com/microsoft-agent-365/developer/agent-365-cli) (install: `dotnet tool install --global Microsoft.Agents.A365.DevTools.Cli --prerelease`)
 - An Azure OpenAI resource with a deployed model (e.g., `gpt-4o`)
 - An Entra tenant with at minimum the **Agent ID Developer** role
 
@@ -44,13 +56,15 @@ cd python/autonomous/github-trending
 a365 setup all --agent-name <your-agent-name>
 ```
 
-This creates the blueprint, agent identity, configures observability permissions, and writes provisioned values. Copy the output values into your `.env` file (see below).
+Copy the provisioned blueprint and actual agent instance values from the setup output
+into your `.env` file (see below).
 
-3. If required, have a Global Admin grant admin consent:
-
-```bash
-a365 setup permissions custom --agent-name <your-agent-name> --resource-app-id 9b975845-388f-4429-889e-eab1ef63949c --scopes Agent365.Observability.OtelWrite
-```
+3. Verify **eligible agent instance registration** and authorization for
+   permissionless S2S export. Creating an Entra identity or selecting the S2S endpoint
+   alone is insufficient; `Agent365.Observability.OtelWrite` is not a universal
+   prerequisite. Workload permissions remain independent. On 401/403, check IDs,
+   blueprint credentials, instance registration and authorization rather
+   than blindly adding OBS grants.
 
 ### Configuration
 
@@ -176,14 +190,14 @@ Production (MSI):
 
 The token is refreshed every 50 minutes and cached in `token_cache.py`.
 
-For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability).
+For more details, see [Agent observability — Microsoft Learn](https://learn.microsoft.com/microsoft-agent-365/developer/observability).
 
 ## Support
 
 For issues, questions, or feedback:
 
 - **Issues**: Please file issues in the [GitHub Issues](https://github.com/microsoft/Agent365-Samples/issues) section
-- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- **Documentation**: See the [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - **Security**: For security issues, please see [SECURITY.md](../../../../SECURITY.md)
 
 ## Contributing
@@ -197,12 +211,12 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 ## Additional Resources
 
 - [Microsoft Agent 365 SDK - Python repository](https://github.com/microsoft/Agent365-python)
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
-- [Agent observability guide](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/observability)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
+- [Agent observability guide](https://learn.microsoft.com/microsoft-agent-365/developer/observability)
 
 ## Trademarks
 
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
+Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at [Microsoft Trademark and Brand Guidelines](http://go.microsoft.com/fwlink/?LinkID=254653).
 
 ## License
 

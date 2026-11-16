@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Enabled__c</fullName>
+    <defaultValue>true</defaultValue>
+    <description>Master kill-switch. When false the emitter is a no-op (never enqueues, never calls out).</description>
+    <label>Enabled</label>
+    <type>Checkbox</type>
+</CustomField>

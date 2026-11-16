@@ -1,1 +1,4 @@
 * @microsoft/agent365-approvers
+
+# W365 Computer Use sample approvers
+/dotnet/w365-computer-use/ @microsoft/w365-cua-approvers
