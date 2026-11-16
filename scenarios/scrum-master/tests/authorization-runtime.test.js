@@ -32,6 +32,117 @@ async function drain() {
     for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
 }
 
+test('approval lookup and delivery failures preserve applied Jira transitions in the rendered standup summary', async () => {
+    for (const phase of ['roster', 'delivery']) {
+        const cards = [], writes = [];
+        const issues = [
+            { key: 'TEAM-1', summary: 'Review work', status: 'In Progress', url: '' },
+            { key: 'TEAM-2', summary: 'Finish work', status: 'To Do', url: '' },
+        ];
+        const session = {
+            standupId: `approval-failure-${phase}`, sprintName: 'Sprint',
+            startedUtc: '2026-11-16T09:00:00Z', state: 'open',
+            itemsByAssignee: new Map([['dev', issues]]),
+            responses: new Map([['dev', { userAadId: 'dev', items: issues.map((issue, i) => ({
+                issueKey: issue.key, update: i === 0 ? 'PR up' : 'Done', hasBlocker: false,
+            })) }]]),
+            expectedResponders: new Set(['dev']), sentTo: new Set(['dev']), unreachable: new Set(),
+        };
+        await withModule('../src/handlers/reconcile.ts', {
+            '../services/jira': { getJiraClient: () => ({
+                getIssue: async key => ({ status: key === 'TEAM-1' ? 'In Progress' : 'To Do' }),
+                getTransitions: async () => [{ id: 'review', toStatus: 'In Review' }, { id: 'done', toStatus: 'Done' }],
+                transitionIssue: async key => { writes.push(key); },
+            }) },
+            '../services/team-roster': { listTeamMembers: async () => {
+                if (phase === 'roster') throw new Error('Roster 503');
+                return [{ Role: 'SM', AadObjectId: 'sm', conversationReference: {} }];
+            } },
+            '../services/proactive': { sendProactive: async () => { throw new Error('Connector 503'); } },
+        }, async reconcile => {
+            await withModule('../src/handlers/standup.ts', {
+                './reconcile': reconcile,
+                './chase': { chaseAfterStandup: async () => {} },
+                '../config': { getScheduleConfig: () => ({ timezone: 'UTC' }), getJiraMode: () => 'live' },
+                '../services/team-roster': { listTeamMembers: async () => [{ AadObjectId: 'dev', Title: 'Developer' }] },
+                '../services/sharepoint': {
+                    findByField: async () => [{ fields: { ConversationRef: '{}' } }],
+                    findByTitle: async () => ({ id: 'session' }), updateItem: async () => {},
+                },
+                '../services/proactive': { sendProactive: async (_reference, logic) => {
+                    await logic({ sendActivity: async message => {
+                        if (message.attachments) cards.push(message.attachments[0].content);
+                    } });
+                    return { ok: true };
+                } },
+            }, async standup => {
+                await standup.summarizeStandup(session);
+                assert.deepEqual(writes, ['TEAM-1'], phase);
+                assert.equal(session.state, 'summarized');
+                const row = cards[0].body.find(part => part.type === 'Table').rows[1];
+                assert.equal(row.cells[3].items[0].text, 'In Review', phase);
+            });
+        });
+    }
+});
+
+test('failed approval acknowledgements restore valid proposals without allowing concurrent duplicate applies', async t => {
+    const writes = [];
+    let rejectAck;
+    await withModule('../src/handlers/reconcile.ts', {
+        '../services/jira': { getJiraClient: () => ({
+            getIssue: async () => ({ status: 'To Do' }),
+            getTransitions: async () => [{ id: 'done', toStatus: 'Done' }],
+            transitionIssue: async key => { writes.push(key); },
+        }) },
+        '../services/team-roster': { listTeamMembers: async () => [
+            { Role: 'SM', AadObjectId: 'sm', conversationReference: {} },
+        ] },
+        '../services/proactive': { sendProactive: async () => ({ ok: true }) },
+    }, async reconcile => {
+        const session = {
+            standupId: 'ack-retry', sprintName: 'Sprint',
+            itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'To Do' }]]]),
+            responses: new Map([['dev', { userAadId: 'dev', items: [
+                { issueKey: 'TEAM-1', update: 'Done', hasBlocker: false },
+            ] }]]),
+        };
+        const value = { action: 'reconcile.apply', standupId: session.standupId, 'approve_TEAM-1': 'true' };
+        await reconcile.reconcileAfterStandup(session);
+        const first = context('sm', value);
+        first.sendActivity = () => new Promise((_resolve, reject) => { rejectAck = reject; });
+        const pending = reconcile.handleReconcileSubmit(first);
+        const rejection = assert.rejects(pending, /Ack failed/);
+        await drain();
+        const concurrent = context('sm', value);
+        await reconcile.handleReconcileSubmit(concurrent);
+        assert.match(concurrent.messages[0], /unavailable/);
+        rejectAck(new Error('Ack failed'));
+        await rejection;
+        await drain();
+        assert.deepEqual(writes, []);
+        await reconcile.handleReconcileSubmit(context('sm', value));
+        await drain();
+        assert.deepEqual(writes, ['TEAM-1']);
+        await reconcile.handleReconcileSubmit(context('sm', value));
+        await drain();
+        assert.deepEqual(writes, ['TEAM-1']);
+
+        await reconcile.reconcileAfterStandup(session);
+        const expired = context('sm', value);
+        expired.sendActivity = async () => {
+            t.mock.method(Date, 'now', () => Date.parse('2099-01-01T00:00:00Z'));
+            throw new Error('Ack failed after expiry');
+        };
+        await assert.rejects(reconcile.handleReconcileSubmit(expired), /after expiry/);
+        t.mock.restoreAll();
+        const retryExpired = context('sm', value);
+        await reconcile.handleReconcileSubmit(retryExpired);
+        assert.match(retryExpired.messages[0], /unavailable/);
+        assert.deepEqual(writes, ['TEAM-1']);
+    });
+});
+
 test('blocker cards include the bound issue and row identifiers for both authorized actions', () => {
     const { buildBlockerEscalationCard } = require('../src/cards/blocker-escalation.card.ts');
     const card = buildBlockerEscalationCard({

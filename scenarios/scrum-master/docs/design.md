@@ -274,6 +274,8 @@ cached when the standup started; a changed board cannot silently turn a
 previously safe step into a skip.
 Every successful current-status read refreshes the summary snapshot, including
 the no-op case where Jira already has the inferred target.
+Approval roster lookup or card delivery failures are logged separately and do
+not discard completed board changes; the summary still reflects applied transitions.
 Unrecognized/ambiguous text remains unchanged; no transition is guessed. The
 LLM is *not* involved in reconcile — a demo run has 100 % deterministic
 behaviour on this path.
@@ -281,8 +283,11 @@ behaviour on this path.
 The card carries only `standupId` and approval toggles. The server requires
 the SM's AAD object id and looks up its pending proposal (24-hour TTL);
 issue keys and transitions are not trusted from the submission. Apply/skip
-consumes that proposal. Replayed, expired or post-restart submissions fail
-closed and require a new proposal.
+consumes that proposal. Apply reserves it before acknowledgement to prevent
+concurrent duplicate writes. If acknowledgement fails before Jira work is
+queued, the still-valid proposal is restored (without replacing a newer
+proposal), so the SM can retry the same card. Expired proposals are not restored.
+Replayed, expired or post-restart submissions fail closed and require a new proposal.
 
 ### 5.3 Chase (MVP 3)
 

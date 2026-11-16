@@ -194,34 +194,39 @@ export async function reconcileAfterStandup(session: StandupSession): Promise<Re
 
     if (outcome.needsConfirm.length === 0) return outcome;
 
-    const members = await listTeamMembers();
-    const sm = members.find(m => m.Role === 'SM');
-    if (!sm?.conversationReference) {
-        console.warn('[reconcile] No Scrum Master conversation ref — skipping confirm card.');
-        return outcome;
-    }
+    try {
+        const members = await listTeamMembers();
+        const sm = members.find(m => m.Role === 'SM');
+        if (!sm?.conversationReference) {
+            console.warn('[reconcile] No Scrum Master conversation ref — skipping confirm card.');
+            return outcome;
+        }
 
-    const card = buildTransitionConfirmCard({
-        standupId: session.standupId,
-        sprintName: session.sprintName,
-        autoAppliedCount: outcome.autoApplied.length,
-        transitions: outcome.needsConfirm,
-    });
+        const card = buildTransitionConfirmCard({
+            standupId: session.standupId,
+            sprintName: session.sprintName,
+            autoAppliedCount: outcome.autoApplied.length,
+            transitions: outcome.needsConfirm,
+        });
 
-    for (const [id, proposal] of pendingProposals) {
-        if (proposal.expiresAt <= Date.now()) pendingProposals.delete(id);
-    }
-    pendingProposals.set(session.standupId, {
-        approverAadId: sm.AadObjectId,
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-        transitions: outcome.needsConfirm.map(t => ({ ...t })),
-    });
-    const sent = await sendProactive(sm.conversationReference, async ctx => {
-        await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
-    });
-    if (!sent.ok) {
+        for (const [id, proposal] of pendingProposals) {
+            if (proposal.expiresAt <= Date.now()) pendingProposals.delete(id);
+        }
+        pendingProposals.set(session.standupId, {
+            approverAadId: sm.AadObjectId,
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+            transitions: outcome.needsConfirm.map(t => ({ ...t })),
+        });
+        const sent = await sendProactive(sm.conversationReference, async ctx => {
+            await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+        });
+        if (!sent.ok) {
+            pendingProposals.delete(session.standupId);
+            console.warn(`[reconcile] Approval card delivery failed for ${session.standupId}.`);
+        }
+    } catch (error) {
         pendingProposals.delete(session.standupId);
-        console.warn(`[reconcile] Approval card delivery failed for ${session.standupId}.`);
+        console.warn(`[reconcile] Approval lookup/delivery failed for ${session.standupId}; preserving reconciliation outcome:`, error);
     }
 
     return outcome;
@@ -270,14 +275,22 @@ export async function handleReconcileSubmit(context: TurnContext): Promise<void>
         await context.sendActivity('No transitions were approved — nothing to apply.');
         return;
     }
+    const ref = context.activity.getConversationReference();
     pendingProposals.delete(standupId);
 
     // Ack immediately so the Teams card invoke completes inside its ~15s window.
     // Then do the actual Jira writes in the background and post the outcome via a
     // proactive follow-up message.
-    await context.sendActivity(`Applying ${approvedKeys.size} approved change${approvedKeys.size === 1 ? '' : 's'}…`);
+    try {
+        await context.sendActivity(`Applying ${approvedKeys.size} approved change${approvedKeys.size === 1 ? '' : 's'}…`);
+    } catch (error) {
+        if (proposal.expiresAt > Date.now() && !pendingProposals.has(standupId)) {
+            pendingProposals.set(standupId, proposal);
+        }
+        console.warn(`[reconcile] Approval acknowledgement failed for ${standupId}; no Jira work was queued:`, error);
+        throw error;
+    }
 
-    const ref = context.activity.getConversationReference();
     setImmediate(() => {
         applyApprovedTransitionsAsync(ref, transitions, approvedKeys, standupId).catch(err =>
             console.error('[reconcile] background apply failed:', (err as Error).message),
