@@ -436,10 +436,21 @@ public class ComputerUseOrchestrator
 
             Set sessionProperties to an object containing ONLY session settings explicitly
             requested in the latest userMessage: displayWidth and displayHeight as positive
-            integers, and browserMode as "chromium" or "legacy". Omit unspecified properties;
+            integers, browserMode as "chromium" or "legacy", and poolId as an assigned pool ID
+            string containing a non-whitespace character and at most 256 characters.
+            Omit unspecified properties;
             use null when none are requested. For example, "Start a human W365 session at
             1600 by 900 using chromium browser mode" means sessionKind "human" and
             sessionProperties {"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}.
+            For example, "Start a local W365 session using pool ID assigned-pool" means
+            sessionKind "local" and sessionProperties {"poolId":"assigned-pool"}.
+            Preserve an explicitly supplied pool ID exactly; do not trim or substitute it.
+            A pool ID is not an allocated sessionId. Do not treat selecting or inspecting an
+            existing session as pool targeting. Never infer a pool from a task or pendingTask.
+            A poolId requires an explicitly requested local, human, or agentic sessionKind.
+            If the user requests pool targeting without an explicit kind, leave sessionKind
+            null and include the requested poolId so the host rejects it; never infer a kind.
+            Never omit a requested pool or select a different pool to bypass an error.
             Do not infer settings from pendingTask, incidental numbers, quoted examples,
             comparison questions, resizing an application window, or simply opening a browser.
             Never turn "open Chrome" into a session browserMode request. Do not invent defaults,
@@ -494,7 +505,7 @@ public class ComputerUseOrchestrator
         {
             _logger.LogWarning(ex, "Chat intent classification failed; no W365 session will be started for this turn.");
             throw new InvalidOperationException(
-                "I couldn't determine the desktop request and session options reliably. Please retry with explicit options: local, human, or agentic session kind; positive-integer displayWidth/displayHeight; and chromium or legacy browserMode. No W365 session was started for this turn.", ex);
+                "I couldn't determine the desktop request and session options reliably. Please retry with explicit options: local, human, or agentic session kind; positive-integer displayWidth/displayHeight; chromium or legacy browserMode; and, optionally, a nonblank poolId of at most 256 characters with an explicit session kind. No W365 session was started for this turn.", ex);
         }
     }
 
@@ -595,7 +606,7 @@ public class ComputerUseOrchestrator
                         || !string.IsNullOrWhiteSpace(prestartedW365SessionId)
                         || TryExtractSessionId(userMessage, out _)))
                 {
-                    return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, or browser mode.";
+                    return "A W365 session is already active or selected. Its session options cannot be changed. End that session first, then request a new session with the desired kind, display dimensions, browser mode, or pool ID.";
                 }
                 if (session.HumanOwner != null)
                 {
