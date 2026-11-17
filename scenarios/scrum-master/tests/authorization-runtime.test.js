@@ -32,9 +32,9 @@ async function drain() {
     for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
 }
 
-test('approval lookup and delivery failures preserve applied Jira transitions in the rendered standup summary', async () => {
-    for (const phase of ['roster', 'delivery']) {
-        const cards = [], writes = [];
+test('standup preserves applied transitions and reports approval delivery accurately', async () => {
+    for (const phase of ['roster', 'missing-reference', 'delivery', 'rejected', 'success', 'approval-only']) {
+        const cards = [], writes = [], messages = [];
         const issues = [
             { key: 'TEAM-1', summary: 'Review work', status: 'In Progress', url: '' },
             { key: 'TEAM-2', summary: 'Finish work', status: 'To Do', url: '' },
@@ -44,7 +44,7 @@ test('approval lookup and delivery failures preserve applied Jira transitions in
             startedUtc: '2026-11-16T09:00:00Z', state: 'open',
             itemsByAssignee: new Map([['dev', issues]]),
             responses: new Map([['dev', { userAadId: 'dev', items: issues.map((issue, i) => ({
-                issueKey: issue.key, update: i === 0 ? 'PR up' : 'Done', hasBlocker: false,
+                issueKey: issue.key, update: i === 0 ? (phase === 'approval-only' ? 'No update' : 'PR up') : 'Done', hasBlocker: false,
             })) }]]),
             expectedResponders: new Set(['dev']), sentTo: new Set(['dev']), unreachable: new Set(),
         };
@@ -56,9 +56,13 @@ test('approval lookup and delivery failures preserve applied Jira transitions in
             }) },
             '../services/team-roster': { listTeamMembers: async () => {
                 if (phase === 'roster') throw new Error('Roster 503');
+                if (phase === 'missing-reference') return [];
                 return [{ Role: 'SM', AadObjectId: 'sm', conversationReference: {} }];
             } },
-            '../services/proactive': { sendProactive: async () => { throw new Error('Connector 503'); } },
+            '../services/proactive': { sendProactive: async () => {
+                if (phase === 'delivery') throw new Error('Connector 503');
+                return { ok: phase === 'success' };
+            } },
         }, async reconcile => {
             await withModule('../src/handlers/standup.ts', {
                 './reconcile': reconcile,
@@ -72,15 +76,22 @@ test('approval lookup and delivery failures preserve applied Jira transitions in
                 '../services/proactive': { sendProactive: async (_reference, logic) => {
                     await logic({ sendActivity: async message => {
                         if (message.attachments) cards.push(message.attachments[0].content);
+                        else messages.push(message);
                     } });
                     return { ok: true };
                 } },
             }, async standup => {
                 await standup.summarizeStandup(session);
-                assert.deepEqual(writes, ['TEAM-1'], phase);
+                assert.deepEqual(writes, phase === 'approval-only' ? [] : ['TEAM-1'], phase);
                 assert.equal(session.state, 'summarized');
                 const row = cards[0].body.find(part => part.type === 'Table').rows[1];
-                assert.equal(row.cells[3].items[0].text, 'In Review', phase);
+                assert.equal(row.cells[3].items[0].text, phase === 'approval-only' ? 'In Progress' : 'In Review', phase);
+                const followup = messages.find(message => /Board updated|Pending approval/.test(message));
+                if (phase === 'success') assert.match(followup, /I DM'd you separately/);
+                else {
+                    assert.doesNotMatch(followup, /I DM'd you separately/, phase);
+                    assert.match(followup, /pending approval.*could not be delivered/i, phase);
+                }
             });
         });
     }

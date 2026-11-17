@@ -124,6 +124,9 @@ authorization object, handler name, turn context and optional `BEARER_TOKEN`.
 It does not read `MCP_AUTH_TOKEN` or `AGENTIC_USER_ID`. If registration fails,
 the warning is logged and the agent can continue without those tools; that is
 not proof that an external operation succeeded.
+Each fallback turn creates a fresh client. Its invocation closes every owned
+MCP server in `finally`, including partially connected server sets; cleanup
+failures are logged without replacing the response or original invocation error.
 
 The notification route retrieves only the notified message through Graph with
 the agentic auth handler's `Mail.Read` token (this delegated scope must be granted
@@ -155,8 +158,8 @@ event creation through the configured Calendar server.
   receives fresh MCP wrappers and closes them in `finally`, including on
   registration or connection failure. Cleanup failures are logged without
   masking the operation's outcome.
-- Calendar cleanup does not change `OpenAIClient.invokeAgent()` or close its
-  servers; ownership is limited to the calendar operation's own wrappers.
+- Calendar cleanup owns only its operation's wrappers. The generic fallback
+  client's invocation separately closes its own per-turn MCP servers.
 
 ## 7. Observability and logging
 

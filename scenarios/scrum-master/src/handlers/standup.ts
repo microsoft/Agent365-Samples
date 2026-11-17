@@ -605,7 +605,7 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
     // Fix 1: run Reconcile BEFORE building the summary card so `statusFrom → statusTo`
     // in the card reflects what Jira actually looks like right now. We also patch
     // session.itemsByAssignee in place so any downstream reader sees the fresh state.
-    let reconcileOutcome: { autoApplied: Array<{ issueKey: string; from: string; to: string }>; needsConfirm: Array<{ issueKey: string; statusFrom: string; statusTo: string }>; errors: Array<{ issueKey: string; message: string }> } = { autoApplied: [], needsConfirm: [], errors: [] };
+    let reconcileOutcome: { autoApplied: Array<{ issueKey: string; from: string; to: string }>; needsConfirm: Array<{ issueKey: string; statusFrom: string; statusTo: string }>; errors: Array<{ issueKey: string; message: string }>; approvalDelivered: boolean } = { autoApplied: [], needsConfirm: [], errors: [], approvalDelivered: false };
     try {
         const { reconcileAfterStandup } = await import('./reconcile');
         reconcileOutcome = await reconcileAfterStandup(session);
@@ -678,12 +678,16 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
     });
 
     // Fix 2: a small text follow-up so the auto-reconcile is visible to demo viewers.
-    const boardMsg = reconcileOutcome.autoApplied.length > 0
-        ? `🧾 **Board updated** — ${reconcileOutcome.autoApplied.map(a => `**${a.issueKey}** ${a.from} → ${a.to}`).join(', ')}.` +
-        (reconcileOutcome.needsConfirm.length > 0
-            ? ` I DM'd you separately for ${reconcileOutcome.needsConfirm.length} change(s) that need your call.`
-            : '')
-        : null;
+    const boardMsg = [
+        reconcileOutcome.autoApplied.length > 0
+            ? `🧾 **Board updated** — ${reconcileOutcome.autoApplied.map(a => `**${a.issueKey}** ${a.from} → ${a.to}`).join(', ')}.`
+            : null,
+        reconcileOutcome.needsConfirm.length > 0
+            ? reconcileOutcome.approvalDelivered
+                ? `I DM'd you separately for ${reconcileOutcome.needsConfirm.length} change(s) that need your call.`
+                : `Pending approval: ${reconcileOutcome.needsConfirm.length} change(s) need review, but the approval card could not be delivered. Review these changes manually in Jira.`
+            : null,
+    ].filter(Boolean).join(' ') || null;
 
     // Post to the configured channel (via TeamsConfig).
     const configRows = await findByField<TeamsConfigFields>('teamsConfig', 'Title', 'primary').catch(error => {

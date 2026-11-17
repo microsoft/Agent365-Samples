@@ -187,8 +187,8 @@ function pickReason(from: string, to: string): string {
  * approval, DMs the Scrum Master the transition-confirm card.
  * Best-effort — reconciliation is non-fatal to the standup summary flow.
  */
-export async function reconcileAfterStandup(session: StandupSession): Promise<ReconcileOutcome> {
-    const outcome = await runReconciliation(session);
+export async function reconcileAfterStandup(session: StandupSession): Promise<ReconcileOutcome & { approvalDelivered: boolean }> {
+    const outcome = { ...await runReconciliation(session), approvalDelivered: false };
 
     console.log(`[reconcile] ${session.standupId}: auto-applied=${outcome.autoApplied.length}, needs-confirm=${outcome.needsConfirm.length}, errors=${outcome.errors.length}`);
 
@@ -223,6 +223,8 @@ export async function reconcileAfterStandup(session: StandupSession): Promise<Re
         if (!sent.ok) {
             pendingProposals.delete(session.standupId);
             console.warn(`[reconcile] Approval card delivery failed for ${session.standupId}.`);
+        } else {
+            outcome.approvalDelivered = true;
         }
     } catch (error) {
         pendingProposals.delete(session.standupId);

@@ -53,6 +53,84 @@ function loadCalendar(overrides = {}) {
     finally { Module._load = original; }
 }
 
+function loadGenericClient(overrides = {}) {
+    const filename = path.resolve(__dirname, '../src/client.ts');
+    const original = Module._load;
+    const builder = {
+        withService() { return this; },
+        withExporterOptions() { return this; },
+        withTokenResolver() { return this; },
+    };
+    const stubs = {
+        dotenv: { configDotenv() {} },
+        '@openai/agents': { ...sdk, run: overrides.run ?? sdk.run },
+        '@microsoft/agents-a365-tooling-extensions-openai': {
+            McpToolRegistrationService: class {
+                async addToolServersToAgent(...args) { await overrides.register(...args); }
+            },
+        },
+        '@microsoft/agents-a365-observability-hosting': { AgenticTokenCacheInstance: {} },
+        '@microsoft/agents-a365-observability': {
+            ObservabilityManager: { configure: callback => { callback(builder); return { start() {} }; } },
+            Agent365ExporterOptions: class {},
+            InferenceOperationType: { CHAT: 'chat' },
+        },
+        '@microsoft/agents-a365-observability-extensions-openai': {
+            OpenAIAgentsTraceInstrumentor: class { enable() {} },
+        },
+        './openai-config': { configureOpenAIClient() {}, getModelName: () => 'gpt-4o', isAzureOpenAI: () => false },
+        './token-cache': {},
+        './observability': {
+            buildAgentDetails: () => undefined,
+            withInvokeAgentScope: async (_context, _prompt, work) => work(),
+        },
+    };
+    delete require.cache[filename];
+    Module._load = function (request, parent, ...args) {
+        if (parent?.filename === filename && Object.hasOwn(stubs, request)) return stubs[request];
+        return original.call(this, request, parent, ...args);
+    };
+    try { return require(filename); }
+    finally { Module._load = original; delete require.cache[filename]; }
+}
+
+test('generic fallback closes all turn-owned servers on success and failures without masking results', async t => {
+    const warnings = [];
+    t.mock.method(console, 'warn', (...args) => { warnings.push(args.join(' ')); });
+    for (const phase of ['success', 'registration', 'connection', 'run']) {
+        const closed = [], connected = [];
+        let runs = 0;
+        const { getClient } = loadGenericClient({
+            register: async agent => {
+                agent.mcpServers = [0, 1, 2].map(id => ({
+                    connect: async () => {
+                        connected.push(id);
+                        if (phase === 'connection' && id === 1) throw new Error('Connection failed');
+                    },
+                    close: async () => {
+                        closed.push(id);
+                        if (id === 0) throw new Error('Cleanup failed');
+                    },
+                }));
+                if (phase === 'registration') throw new Error('Registration failed');
+            },
+            run: async () => {
+                runs++;
+                if (phase === 'run') throw new Error('Run failed');
+                return { finalOutput: 'Original response' };
+            },
+        });
+        const client = await getClient({}, 'test', {});
+        const response = await client.invokeAgentWithScope('Offline turn');
+        assert.equal(response, phase === 'connection' ? 'Error: Connection failed'
+            : phase === 'run' ? 'Error: Run failed' : 'Original response', phase);
+        assert.deepEqual(closed.sort(), [0, 1, 2], phase);
+        assert.deepEqual(connected, phase === 'connection' ? [0, 1] : [0, 1, 2]);
+        assert.equal(runs, phase === 'connection' ? 0 : 1);
+    }
+    assert.equal(warnings.filter(message => message.includes('Cleanup failed')).length, 4);
+});
+
 test('direct Zod resolves to a patched release', () => {
     const [major, minor, patch] = require('zod/package.json').version.split('.').map(Number);
     assert.ok(major > 4 || (major === 4 && (minor > 6 || (minor === 6 && patch >= 6))));
@@ -129,7 +207,7 @@ test('calendar cleanup failures are logged without masking a completed booking o
     assert.equal(warnings.filter(message => message.includes('Cleanup failed')).length, 2);
 });
 
-test('real A365 registration and Agents transports delete distinct propose and book MCP sessions', async () => {
+test('real A365 registration and Agents transports delete distinct calendar and fallback-turn MCP sessions', async () => {
     const http = require('node:http');
     const { McpToolRegistrationService } = require('@microsoft/agents-a365-tooling-extensions-openai');
     const active = new Set(), deleted = [], wrappers = [];
@@ -184,6 +262,20 @@ test('real A365 registration and Agents transports delete distinct propose and b
         assert.equal(created, 2);
         assert.deepEqual(deleted, ['offline-1', 'offline-2']);
         assert.equal(active.size, 0);
+
+        const { getClient } = loadGenericClient({ register: async (agent, ...args) => {
+            await registration.addToolServersToAgent(agent, ...args.slice(0, 3), `offline.${payload}.fixture`);
+            wrappers.push(...agent.mcpServers);
+        } });
+        answer = 'Fallback response';
+        for (let turn = 0; turn < 2; turn++) {
+            const client = await getClient({}, 'offline', {});
+            assert.equal(await client.invokeAgentWithScope('Offline fallback'), JSON.stringify(answer));
+            assert.equal(active.size, 0, 'Fallback turn must release its session before returning');
+        }
+        assert.notEqual(wrappers[2], wrappers[3]);
+        assert.equal(created, 4);
+        assert.deepEqual(deleted, ['offline-1', 'offline-2', 'offline-3', 'offline-4']);
     } finally {
         await Promise.all(wrappers.map(wrapper => wrapper.close()));
         await new Promise(resolve => server.close(resolve));

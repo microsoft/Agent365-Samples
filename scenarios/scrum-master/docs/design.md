@@ -276,6 +276,10 @@ Every successful current-status read refreshes the summary snapshot, including
 the no-op case where Jira already has the inferred target.
 Approval roster lookup or card delivery failures are logged separately and do
 not discard completed board changes; the summary still reflects applied transitions.
+Proposed changes and approval delivery are tracked separately. The follow-up
+announces an approval DM only after successful delivery; otherwise it explicitly
+warns of pending approvals that must be reviewed manually in Jira, including
+when no automatic transitions were applied.
 Unrecognized/ambiguous text remains unchanged; no transition is guessed. The
 LLM is *not* involved in reconcile — a demo run has 100 % deterministic
 behaviour on this path.
