@@ -47,6 +47,15 @@ For comprehensive documentation and guidance on building agents with the Microso
 
 ## Configuration
 
+### Azure AI Foundry endpoints
+
+For OpenAI-compatible endpoints whose URL path contains a complete `/v1`
+segment, set `AZURE_OPENAI_ENDPOINT` to that URL and configure
+`AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_DEPLOYMENT`. The sample preserves the
+origin and path through `/v1`, uses `ChatOpenAI` with its standard bearer-key
+authentication, and does not append `api-version`. Standard Azure endpoints
+(including hostnames starting with `v1-`) continue to use `AzureChatOpenAI`.
+
 ### Observability export
 
 `src/index.ts` imports the observability bootstrap first. With
@@ -67,6 +76,19 @@ Sovereign clouds are not supported by this sample provider because the authority
 hard-coded to `login.microsoftonline.com`. For AI Teammates, complete the
 `Agent365.Observability.OtelWrite` application-role step printed by
 `a365 setup all --aiteammate`; AI Teammate S2S without it has not been validated.
+
+The message and email handlers open one explicit `invoke_agent` scope per turn.
+LangChain auto-instrumentation is disabled to avoid a second LangGraph agent
+span. Explicit inference scopes and tool-call middleware create child `chat`
+and `execute_tool` spans. Tool failures are detected from structured error
+status and logged without response bodies; successful mailbox contents are
+never inspected for error-like text or written to application logs.
+
+The Mail MCP manifest retains the existing shared audience and
+`McpServers.Mail.All` permission, so existing Blueprint grants are unchanged.
+
+Run the offline endpoint, logging, identity, and exported-span regression tests
+with `npm test` after installing dependencies.
 
 
 ## Running the Agent in Microsoft 365 Agents Playground

@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "type": "commonjs",
   "scripts": {
+    "test": "node --experimental-global-webcrypto --test tests/*.test.cjs",
     "start": "node dist/index.js",
     "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
@@ -46,8 +47,9 @@
     "@microsoft/m365agentsplayground": "^0.2.18",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
+    "env-cmd": "^11.0.0",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
-    "env-cmd": "^11.0.0"
+    "typescript": "~5.9.3"
   }
 }
