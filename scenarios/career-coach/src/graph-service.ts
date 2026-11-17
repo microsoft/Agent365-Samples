@@ -412,10 +412,7 @@ export async function sendMail({ to, cc, subject, htmlBody, fromUserId, graph }:
 export async function getListIdByName(siteId: string, listDisplayName: string, graphClient?: MsGraphClient): Promise<string | null> {
     const graph = graphClient ?? getBackgroundGraphClient();
     const escaped = listDisplayName.replace(/'/g, "''");
-    const res = await graph
-        .api(`/sites/${siteId}/lists?$filter=displayName eq '${escaped}'`)
-        .get()
-        .catch(() => ({ value: [] as any[] }));
+    const res = await graph.api(`/sites/${siteId}/lists?$filter=displayName eq '${escaped}'`).get();
     return (res?.value?.[0]?.id as string) ?? null;
 }
 

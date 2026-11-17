@@ -491,10 +491,13 @@ function mergeServerOwnedProgress(next: Record<string, unknown>, stored: Record<
 
     const learning = touchesLearning ? [...parseJsonArray(next.LearningProgress)] : parseJsonArray(stored.LearningProgress);
     if (touchesLearning) {
+        const learningPairKey = (record: any): string =>
+            `${String(record?.courseId ?? '').trim().toLowerCase()}\u0000${String(record?.skillId ?? '').trim().toLowerCase()}`;
         for (const earned of parseJsonArray(stored.LearningProgress)) {
             const passed = String(earned?.status ?? '').toLowerCase() === 'complete' && earned?.quizResult?.passed === true;
             if (!passed) continue;
-            const i = learning.findIndex((l) => l?.courseId === earned.courseId);
+            const earnedKey = learningPairKey(earned);
+            const i = learning.findIndex((l) => learningPairKey(l) === earnedKey);
             if (i >= 0) learning[i] = earned; else learning.push(earned);
         }
         out.LearningProgress = learning;
