@@ -10,8 +10,8 @@
     "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register index.ts",
     "start:otel": "node --import @microsoft/opentelemetry/loader dist/index.js",
     "test-tool": "agentsplayground",
-    "dev:teamsfx:playground": "env-cmd --silent -f .localConfigs.playground npm run dev",
-    "dev:teamsfx:launch-playground": "env-cmd --silent -f env/.env.playground agentsplayground start"
+    "dev:teamsfx:playground": "env-cmd -f env/.env.playground.user npm run dev",
+    "dev:teamsfx:launch-playground": "env-cmd -f env/.env.playground.user agentsplayground start"
   },
   "author": "Microsoft",
   "license": "MIT",

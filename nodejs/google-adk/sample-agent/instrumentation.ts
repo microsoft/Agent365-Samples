@@ -12,7 +12,10 @@
  */
 
 import { configDotenv } from 'dotenv';
-configDotenv();
+const envFile = process.env.AGENT_ENV_FILE;
+const envResult = configDotenv({ path: envFile || '.env' });
+if (envFile && envResult.error) throw envResult.error;
+if (envFile) configDotenv({ path: 'env/.env.playground' });
 
 // A365 Observability — best-effort instrumentation (verify against official sample)
 import { useMicrosoftOpenTelemetry, configureA365Hosting } from '@microsoft/opentelemetry';

@@ -13,6 +13,7 @@ import type { Authorization, TurnContext } from '@microsoft/agents-hosting';
 // A365 Observability — best-effort instrumentation (verify against official sample)
 import { ExecuteToolScope } from '@microsoft/opentelemetry';
 import { getTurnTelemetry, type TurnTelemetry } from './observability/turn-context';
+import { validateDevelopmentToken, withCancellation } from './mcpInitialization';
 
 const logger = {
   info: (...args: unknown[]) =>
@@ -30,6 +31,7 @@ export interface AddToolServersOptions {
   authHandlerName: string | null;
   context: TurnContext;
   authToken?: string;
+  signal?: AbortSignal;
 }
 
 interface McpServerConfig {
@@ -78,6 +80,9 @@ class ObservableMCPToolset extends MCPToolset {
         try {
           return await scope.withActiveSpanAsync(async () => {
             const result = await run(request);
+            if (isRecord(result) && result.isError === true) {
+              scope.recordError(new Error('MCP tool returned an application error (isError=true).'));
+            }
             if (captureContent) scope.recordResponse(JSON.stringify(result) ?? '');
             return result;
           });
@@ -100,13 +105,23 @@ export class McpToolRegistrationService {
   async addToolServersToAgent(options: AddToolServersOptions): Promise<Agent> {
     const { agent, agenticAppId, auth, authHandlerName, context, authToken: providedToken } = options;
 
-    let authToken = providedToken;
+    let authToken = validateDevelopmentToken(providedToken);
+    const signal = options.signal ?? AbortSignal.timeout(60_000);
+    signal.throwIfAborted();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agenticAppId)) {
+      logger.error('MCP discovery requires a valid runtime agent instance ID.');
+      throw new Error('Configure AGENTIC_APP_ID for local bearer-token tooling or supply an agentic activity.');
+    }
     const sharedScope = new ToolingConfiguration().mcpPlatformAuthenticationScope;
     const exchange = async (scope: string): Promise<string> => {
       if (!hasTokenExchange(auth) || !authHandlerName) {
-        throw new Error('MCP token exchange requires a configured agentic authorization handler.');
+        logger.error('V2 MCP servers require resource-specific tokens; a discovery bearer token is insufficient.');
+        throw new Error('Configure AUTH_HANDLER_NAME=AGENTIC and its service connection for V2 MCP servers.');
       }
-      const result = await auth.exchangeToken(context, authHandlerName, { scopes: [scope] });
+      signal.throwIfAborted();
+      const result = await withCancellation(
+        auth.exchangeToken(context, authHandlerName, { scopes: [scope] }), signal
+      );
       if (!result?.token) {
         logger.error('MCP workload token exchange returned no token; inspect agentic authorization diagnostics.');
         throw new Error('MCP authorization failed. Verify the blueprint connection name and workload permissions.');
@@ -136,16 +151,17 @@ export class McpToolRegistrationService {
       // gateway may return { mcpServers: [...] } (object with array property).
       const toolingConfig = new ToolingConfiguration();
       const endpoint = `${toolingConfig.mcpPlatformEndpoint}/agents/v2/${encodeURIComponent(agenticAppId)}/mcpServers`;
-      const response = await fetch(endpoint, {
+      const response = await withCancellation(fetch(endpoint, {
         headers: { Authorization: `Bearer ${authToken}` },
-        signal: AbortSignal.timeout(10_000),
-      });
+        signal,
+      }), signal);
       logger.info(`Gateway response status: ${response.status}`);
       if (!response.ok) throw new Error(`MCP discovery failed (HTTP ${response.status}).`);
       let data: unknown;
       try {
-        data = await response.json();
+        data = await withCancellation(response.json(), signal);
       } catch {
+        signal.throwIfAborted();
         throw new Error('Invalid JSON in MCP discovery response.');
       }
 
@@ -178,49 +194,52 @@ export class McpToolRegistrationService {
     const telemetry = getTurnTelemetry(context, agent.name);
     const tokensByScope = new Map<string, string>([[sharedScope, authToken]]);
 
-    for (const serverConfig of mcpServerConfigs) {
-      if (!serverConfig.url) {
-        logger.warn(
-          `Skipping MCP server '${serverConfig.mcpServerUniqueName}' — no URL configured.`
-        );
-        continue;
+    try {
+      for (const serverConfig of mcpServerConfigs) {
+        signal.throwIfAborted();
+        if (!serverConfig.url) {
+          logger.warn(
+            `Skipping MCP server '${serverConfig.mcpServerUniqueName}' — no URL configured.`
+          );
+          continue;
+        }
+
+        const serverScope = resolveTokenScopeForServer({
+          mcpServerName: serverConfig.mcpServerName ?? serverConfig.mcpServerUniqueName ?? '',
+          url: serverConfig.url,
+          audience: serverConfig.audience,
+          scope: serverConfig.scope,
+        }, sharedScope);
+        let serverToken = tokensByScope.get(serverScope);
+        if (!serverToken) {
+          serverToken = await exchange(serverScope);
+          tokensByScope.set(serverScope, serverToken);
+        }
+
+        const serverInfo = new ObservableMCPToolset({
+          type: 'StreamableHTTPConnectionParams',
+          url: serverConfig.url,
+          header: { Authorization: `Bearer ${serverToken}` },
+        }, telemetry);
+
+        logger.info('Created MCP toolset');
+        mcpServersInfo.push(serverInfo);
       }
+      signal.throwIfAborted();
 
-      const serverScope = resolveTokenScopeForServer({
-        mcpServerName: serverConfig.mcpServerName ?? serverConfig.mcpServerUniqueName ?? '',
-        url: serverConfig.url,
-        audience: serverConfig.audience,
-        scope: serverConfig.scope,
-      }, sharedScope);
-      let serverToken = tokensByScope.get(serverScope);
-      if (!serverToken) {
-        serverToken = await exchange(serverScope);
-        tokensByScope.set(serverScope, serverToken);
+      return new Agent({
+        name: agent.name,
+        model: agent.model,
+        description: agent.description,
+        instruction: agent.instruction,
+        tools: [...(agent.tools ?? []), ...mcpServersInfo],
+      });
+    } catch (error) {
+      const cleanup = await Promise.allSettled(mcpServersInfo.map(toolset => toolset.close()));
+      if (cleanup.some(result => result.status === 'rejected')) {
+        logger.error('Failed to close one or more partially initialized MCP toolsets.');
       }
-
-      // MCPToolset requires connectionParams with:
-      //   type: "StreamableHTTPConnectionParams" (discriminant for the switch)
-      //   url: the server endpoint
-      //   header: auth headers (note: singular "header", not "headers")
-      const serverInfo = new ObservableMCPToolset({
-        type: 'StreamableHTTPConnectionParams',
-        url: serverConfig.url,
-        header: { Authorization: `Bearer ${serverToken}` },
-      }, telemetry);
-
-      logger.info('Created MCP toolset');
-      mcpServersInfo.push(serverInfo);
+      throw error;
     }
-
-    const existingTools = agent.tools ?? [];
-    const allTools = [...existingTools, ...mcpServersInfo];
-
-    return new Agent({
-      name: agent.name,
-      model: agent.model as string,
-      description: agent.description,
-      instruction: agent.instruction as string,
-      tools: allTools,
-    });
   }
 }

@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import { Agent, Runner, InMemorySessionService } from '@google/adk';
+import { Agent, Runner, InMemorySessionService, isFinalResponse } from '@google/adk';
+import { validateDevelopmentToken } from './mcpInitialization';
 
 import { McpToolRegistrationService } from './mcpToolRegistrationService';
 import {
@@ -105,7 +106,7 @@ export class GoogleADKAgent implements AgentInterface {
       sessionService: new InMemorySessionService(),
     });
 
-    const responses: string[] = [];
+    let response = '';
 
     try {
       // runEphemeral returns an AsyncGenerator — use for-await
@@ -125,11 +126,11 @@ export class GoogleADKAgent implements AgentInterface {
           });
           throw error;
         }
-        if (!event?.content?.parts) continue;
-        for (const part of event.content.parts) {
-          if (part.text) {
-            responses.push(part.text);
-          }
+        if (isFinalResponse(event) && event.content?.parts) {
+          response = event.content.parts
+            .filter(part => !part.thought && typeof part.text === 'string')
+            .map(part => part.text)
+            .join('');
         }
       }
     } catch (e) {
@@ -139,11 +140,11 @@ export class GoogleADKAgent implements AgentInterface {
       await this.cleanupAgent(agent);
     }
 
-    if (responses.length === 0) {
+    if (!response.trim()) {
       logger.error('Google ADK completed without a text response.');
       throw new Error('Google ADK completed without a text response.');
     }
-    return responses[responses.length - 1];
+    return response;
   }
 
   /**
@@ -241,7 +242,7 @@ export class GoogleADKAgent implements AgentInterface {
   ): Promise<Agent> {
     // Validate BEARER_TOKEN — pass empty string if expired so the SDK uses
     // the proper auth handler instead of a stale token that triggers an OBO hang.
-    let bearerToken = process.env.BEARER_TOKEN ?? '';
+    let bearerToken = validateDevelopmentToken(process.env.BEARER_TOKEN);
     if (bearerToken) {
       try {
         const payloadB64 = bearerToken.split('.')[1];
@@ -263,29 +264,26 @@ export class GoogleADKAgent implements AgentInterface {
       return agent;
     }
 
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort(new Error('MCP tool initialization timed out after 60 seconds.'));
+    }, 60_000);
     try {
       const toolService = new McpToolRegistrationService();
 
-      const agenticAppId = turnContext?.activity?.recipient?.agenticAppId ?? '';
-
-      // Bound configured tool initialization; do not silently discard tools on failure.
-      const timeoutPromise = new Promise<Agent>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('MCP tool initialization timed out')), 10_000);
-      });
-
-      const initPromise = toolService.addToolServersToAgent({
+      const agenticAppId = turnContext.activity.recipient?.agenticAppId ||
+        (bearerToken ? process.env.AGENTIC_APP_ID || process.env.A365_AGENT_APP_INSTANCE_ID : '') || '';
+      return await toolService.addToolServersToAgent({
         agent,
         agenticAppId,
         auth,
         authHandlerName,
         context: turnContext,
         authToken: bearerToken || undefined,
+        signal: controller.signal,
       });
-
-      return await Promise.race([initPromise, timeoutPromise]);
     } catch (e) {
-      if ((e as Error).message === 'MCP tool initialization timed out') {
+      if (controller.signal.aborted) {
         logger.error('MCP tool initialization timed out.');
       } else {
         logger.error('Error during agent initialization:', e);

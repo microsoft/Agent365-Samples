@@ -7,8 +7,6 @@
       "request": "launch",
       "runtimeArgs": [
         "--inspect=9239",
-        "--signal",
-        "SIGINT",
         "-r",
         "ts-node/register"
       ],
@@ -26,16 +24,15 @@
       "request": "launch",
       "runtimeArgs": [
         "--inspect=9239",
-        "--signal",
-        "SIGINT",
         "-r",
         "ts-node/register"
       ],
       "args": ["index.ts"],
       "env": {
-        "NODE_ENV": "development"
+        "NODE_ENV": "development",
+        "AGENT_ENV_FILE": "env/.env.playground.user"
       },
-      "envFile": "${workspaceFolder}/env/.env.playground",
+      "envFile": "${workspaceFolder}/env/.env.playground.user",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "preLaunchTask": "Start Agents Playground"

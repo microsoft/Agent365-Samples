@@ -29,8 +29,8 @@ To run the template in your local dev machine, you will need:
 ## Running the Agent in Microsoft 365 Agents Playground
 
 1. First, select the Microsoft 365 Agents Toolkit icon on the left in the VS Code toolbar.
-2. In file `env/.env.playground`, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and fill in `GOOGLE_GENAI_API_KEY=<your-key>` if using the public Gemini API.
-3. Or for Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=TRUE` and fill in `GOOGLE_CLOUD_PROJECT=<your-project>` and `GOOGLE_CLOUD_LOCATION=<your-region>`.
+2. Copy `env/.env.playground` to the **gitignored** `env/.env.playground.user`. In the user copy only, set `GOOGLE_GENAI_USE_VERTEXAI=FALSE` and `GOOGLE_GENAI_API_KEY=<your-key>` for the public Gemini API. Never put credentials in the tracked template.
+3. Or for Vertex AI, set `GOOGLE_GENAI_USE_VERTEXAI=TRUE`, `GOOGLE_CLOUD_PROJECT=<your-project>`, and `GOOGLE_CLOUD_LOCATION=<your-region>` in the user copy. Keep `AGENT_ENV_FILE=env/.env.playground.user` so startup loads this file rather than the root `.env`. F5 and both Playground scripts use the ignored user file.
 4. Press F5 to start debugging which launches your agent in Microsoft 365 Agents Playground using a web browser. Select `Debug in Microsoft 365 Agents Playground`.
 5. You can send any message to get a response from the agent.
 
@@ -118,6 +118,20 @@ A365_OBSERVABILITY_LOG_LEVEL=info|warn|error
 
 Telemetry uses an **app-only token and S2S transport**, independently of the delegated agentic-user tokens used for MCP/Graph. The resolver reuses the adapter's default blueprint connection, obtains an FMI assertion for the runtime agent identity, validates the resulting token claims, and caches tokens per agent/tenant. No separate telemetry credentials are needed.
 
+The resolver currently targets the commercial-cloud authority `login.microsoftonline.com`; sovereign clouds require provider changes and are not supported by this sample. AI Teammate S2S export without the `Agent365.Observability.OtelWrite` application-role assignment has not been validated in this sample. Follow the application-role step printed by your CLI for this validation path; do not assume a delegated grant authorizes S2S export. Registered-instance authorization is service-policy dependent; see [S2S operator guidance](../../../docs/observability-s2s.md).
+
+Checked-in local and Playground templates keep export disabled. Enable `ENABLE_A365_OBSERVABILITY_EXPORTER=true` explicitly only after validating identity and authorization; the block above is the opt-in configuration, not the template default.
+
+### Local MCP versus agentic authorization
+
+`BEARER_TOKEN` is a development-only **discovery/shared-audience** credential. When a local activity lacks an agent ID, set `AGENTIC_APP_ID` or `A365_AGENT_APP_INSTANCE_ID` to the real runtime application instance ID, not a blueprint or agent-user ID. This fallback applies only to local bearer-token tooling and does not change the runtime-only telemetry guards.
+
+The shipped V2 mail server and other audience-specific V2 servers **require `AUTH_HANDLER_NAME=AGENTIC`**, the configured blueprint connection, and a real agentic activity so the handler can acquire separate resource tokens. Bearer-only mode does not support those servers; it fails explicitly rather than reusing the discovery token for a different audience. Use Teams for this agentic workflow. Without an auth handler or bearer token, Playground runs in bare LLM mode.
+
+Nonempty development bearer tokens are rejected when `NODE_ENV=production` or `WEBSITE_SITE_NAME` is set. Remove them and use agentic authorization in deployed environments.
+
+MCP initialization has a single **60-second total deadline** across discovery, response parsing, and per-resource token exchanges. Cancellation aborts discovery and stops initialization at asynchronous boundaries; partially created toolsets are closed on failure. The hosting token API does not accept an abort signal: an already-started exchange may finish internally, but its result is observed and cannot resume canceled initialization.
+
 Google ADK calls are manually traced with `invoke_agent`, `chat`, `execute_tool`, and `output_messages` scopes. Baggage carries the conversation, channel, session, runtime agent, agent-user object ID (`recipient.aadObjectId`, not its UPN), and human-caller identities. Tool scopes wrap actual tool execution, including failures. Tool argument/result payloads are omitted in production and Azure App Service; local development traces can contain business content. Existing prompt/completion tracing also captures message content, so apply your data-handling policy before enabling export. Personalized instructions retain the configured base instructions and security rules.
 
 The OpenTelemetry API override keeps Google ADK and the Microsoft distro on one compatible API version. Mixed API minor versions can produce no-op spans even when initialization reports success. Axios is declared because the tooling SDK loads it internally, although this sample's gateway calls use built-in `fetch`.
@@ -132,7 +146,7 @@ Set `ENABLE_A365_OBSERVABILITY_EXPORTER=false` for local console-only tracing, o
 npm test
 ```
 
-The tests use mocked model/tool/token calls and an in-memory span processor; they need no cloud credentials and do not prove live export.
+The tests use mocked model/tool/token calls and an in-memory span processor; they need no cloud credentials and do not prove live export. The CI Orchestrator runs this suite on Node.js 22.12 and includes its result in the required aggregate CI Status.
 
 ## Troubleshooting
 

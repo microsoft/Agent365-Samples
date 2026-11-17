@@ -58,7 +58,7 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 
 **Must be imported before all other modules** so the SDK can patch libraries (HTTP, Express).
 
-- Loads `.env` via `configDotenv()` before `@microsoft/opentelemetry` reads `A365_OBSERVABILITY_LOG_LEVEL`
+- Loads `.env` or the explicit ignored Playground user file before `@microsoft/opentelemetry` reads `A365_OBSERVABILITY_LOG_LEVEL`
 - Configures `useMicrosoftOpenTelemetry()` with explicit exporter activation, S2S transport, and an app-only token resolver
 - Enables console exporters in dev mode for local debugging
 - Reuses the adapter's default hosting connection lazily; tokens are acquired on export, not per turn
@@ -88,7 +88,8 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 **GoogleADKAgent** implements the agent interface:
 
 - **Personalized instructions**: Appends a quoted display name to the configured base instruction, preserving its policies
-- **MCP tool initialization**: Delegates to `McpToolRegistrationService` with a 10s timeout that is always cleared; configured auth/tool failures are not silently downgraded to bare LLM mode
+- **MCP tool initialization**: Uses one 60-second cancellation deadline for discovery and per-resource token exchanges, closes partial toolsets on failure, and observes late results from the non-cancelable hosting token API
+- **Final response**: Selects the final ADK response and joins all non-thought text parts instead of truncating multipart output
 - **Google ADK Runner**: `runner.runEphemeral()` with `InMemorySessionService`
 - **InferenceScope**: Wraps invocations with `recordInputMessages`, `recordOutputMessages`, `recordFinishReasons`
 - **Baggage**: `BaggageBuilderUtils.fromTurnContext()` outside all scopes; disposed in `finally`, including failures
@@ -104,6 +105,7 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 - Uses Node's built-in `fetch` with a timeout; checks HTTP status and validates response shape without logging response bodies
 - Resolves each V2 server's audience/scope using `resolveTokenScopeForServer` and acquires/caches workload tokens per scope for the turn
 - Wraps each discovered tool's `runAsync` on its per-turn toolset instance in `ExecuteToolScope`, recording results/errors and disposing the scope
+- Marks MCP `isError: true` results as failed tool spans while preserving the original result for the model
 
 ### 6. agentInterface.ts — Interface Contract
 
@@ -132,12 +134,12 @@ The sample uses the **Microsoft OpenTelemetry Distro** (`@microsoft/opentelemetr
 | Mode | Config | Description |
 |------|--------|-------------|
 | **Teams/dev tunnel** | `AUTH_HANDLER_NAME=AGENTIC` + service connection env vars | JWT validation + OBO token exchange |
-| **Playground** | Via Agents Toolkit extension | Uses `env/.env.playground` values |
+| **Playground** | Via Agents Toolkit extension | Loads credentials from gitignored `env/.env.playground.user`; tracked file provides non-secret defaults |
 | **Bare local LLM** | No MCP token / no agentic handler | Runs without MCP tools |
 
 ## 📦 MCP Tools
 
-The `ToolingManifest.json` defines available MCP servers. At runtime:
+The `ToolingManifest.json` declares the MCP server registration intent. This sample does not load it as a local runtime catalog; runtime discovery always queries the gateway:
 
 1. Agent discovers servers from the A365 gateway (`/agents/v2/{agenticAppId}/mcpServers`)
 2. Creates `MCPToolset` instances with `StreamableHTTPConnectionParams` transport
