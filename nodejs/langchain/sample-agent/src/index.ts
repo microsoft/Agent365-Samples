@@ -26,7 +26,8 @@ useMicrosoftOpenTelemetry({
     tokenResolver: createObservabilityTokenResolver(),
   },
   instrumentationOptions: {
-    langchain: {},
+    // Explicit invoke/chat/tool scopes avoid duplicate LangGraph invoke_agent spans.
+    langchain: { enabled: false },
   },
 });
 

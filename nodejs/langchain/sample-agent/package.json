@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "type": "commonjs",
   "scripts": {
+    "test": "node --test tests/*.test.cjs",
     "start": "node dist/index.js",
     "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
@@ -32,7 +33,6 @@
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
     "@microsoft/opentelemetry": "^1.4.0",
-    "axios": "^1.19.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "langchain": "^1.0.1",
