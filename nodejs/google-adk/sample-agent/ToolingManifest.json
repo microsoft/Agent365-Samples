@@ -1,0 +1,12 @@
+{
+  "mcpServers": [
+    {
+      "mcpServerName": "mcp_MailTools",
+      "mcpServerUniqueName": "mcp_MailTools",
+      "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
+      "scope": "Tools.ListInvoke.All",
+      "audience": "16b1878d-62c7-4009-aa25-68989d63bbad",
+      "publisher": "Microsoft"
+    }
+  ]
+}

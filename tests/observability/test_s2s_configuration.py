@@ -33,6 +33,7 @@ PYTHON_CONFIGS = {
 }
 NODE_CONFIGS = {
     "nodejs/claude/sample-agent/src/otel.ts": "distro",
+    "nodejs/google-adk/sample-agent/instrumentation.ts": "distro",
     "nodejs/langchain/sample-agent/src/index.ts": "distro",
     "nodejs/autonomous/github-trending/src/index.ts": "exporter",
     "nodejs/openai/sample-agent/src/otel.ts": "manager",
@@ -127,7 +128,11 @@ def test_node_s2s_is_explicit_in_exporter_configuration(path, kind):
         assert ".withTokenResolver(createObservabilityTokenResolver())" in code
         assert "ENABLE_A365_OBSERVABILITY_PER_REQUEST_EXPORT" in code
     elif kind == "distro":
-        assert re.search(r"a365:\s*\{[^}]*useS2SEndpoint:\s*true\b", code)
+        # Match the closing indentation so nested delivery options do not hide the resolver.
+        config = re.search(r"(?ms)^([ \t]*)a365:\s*\{(.*?)^\1\}", code)
+        assert config
+        assert re.search(r"\buseS2SEndpoint:\s*true\b", config.group(2))
+        assert re.search(r"\btokenResolver\s*[:,]", config.group(2))
     else:
         assert re.search(r"new Agent365Exporter\(\{[^}]*useS2SEndpoint:\s*true\b", code)
     assert not re.search(r"useS2SEndpoint\s*[:=]\s*false\b", text)
