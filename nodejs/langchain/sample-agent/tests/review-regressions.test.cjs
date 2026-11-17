@@ -173,6 +173,14 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
   const { AIMessage } = require('@langchain/core/messages');
   const { createAgent, tool } = require('langchain');
   const { z } = require('zod');
+  // Exercise real SDK scopes without loading the unrelated Azure networking distro.
+  const sdkRoot = path.dirname(require.resolve('@microsoft/opentelemetry'));
+  const telemetry = Object.assign({},
+    ...['InvokeAgentScope', 'InferenceScope', 'ExecuteToolScope'].map(name =>
+      require(path.join(sdkRoot, 'a365', 'scopes', `${name}.js`))),
+    require(path.join(sdkRoot, 'a365', 'middleware', 'BaggageBuilder.js')),
+    require(path.join(sdkRoot, 'a365', 'hosting', 'baggageBuilderUtils.js')),
+    require(path.join(sdkRoot, 'a365', 'contracts.js')));
   const exporter = new InMemorySpanExporter();
   const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
   trace.setGlobalTracerProvider(provider);
@@ -210,6 +218,8 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
     }
     const helpers = loadModule('observability.ts');
     const client = loadModule('client.ts', {
+      '@microsoft/opentelemetry': telemetry,
+      '@microsoft/agents-a365-tooling': { McpToolServerConfigurationService: class {} },
       '@langchain/openai': { ChatOpenAI: OfflineModel, AzureChatOpenAI: OfflineModel },
       '@microsoft/agents-a365-tooling-extensions-langchain': {
         McpToolRegistrationService: class {
@@ -226,8 +236,13 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
     const { A365Agent } = loadModule('agent.ts', {
       './client': client,
       './observability': helpers,
+      '@microsoft/opentelemetry': telemetry,
+      '@microsoft/agents-a365-notifications': {
+        NotificationType: { EmailNotification: 'email' },
+        createEmailResponseActivity: text => ({ text }),
+      },
       '@microsoft/agents-hosting': {
-        ...require('@microsoft/agents-hosting'),
+        MemoryStorage: class {},
         AgentApplication: class {
           authorization = {};
           onActivity() {}

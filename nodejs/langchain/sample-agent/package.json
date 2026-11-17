@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/*.test.cjs",
+    "test": "node --experimental-global-webcrypto --test tests/*.test.cjs",
     "start": "node dist/index.js",
     "dev": "nodemon --exec node --inspect=9239 --signal SIGINT -r ts-node/register src/index.ts",
     "test-tool": "agentsplayground",
