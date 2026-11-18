@@ -18,6 +18,45 @@ function load(file, mocks) {
     finally { Module._load = original; }
 }
 
+test('Graph refuses ambiguous cached accounts even after successful setup sign-in', async () => {
+    for (const count of [0, 1, 2]) {
+        const accounts = Array.from({ length: count }, (_value, id) => ({ homeAccountId: `account-${id}` }));
+        const silentRequests = [];
+        let authProvider;
+        const graph = load('src\\services\\graph.ts', {
+            'isomorphic-fetch': {},
+            '../config': { getGraphAuthConfig: () => ({ clientId: 'offline', tenantId: 'offline' }) },
+            '@azure/msal-node': { PublicClientApplication: class {
+                async acquireTokenByDeviceCode() {
+                    return { accessToken: 'setup-token', account: accounts[count - 1] };
+                }
+                getTokenCache() { return { getAllAccounts: async () => accounts }; }
+                async acquireTokenSilent(request) {
+                    silentRequests.push(request);
+                    return { accessToken: 'selected-token' };
+                }
+            } },
+            '@microsoft/microsoft-graph-client': { Client: { init: options => {
+                authProvider = options.authProvider;
+                return {};
+            } } },
+        });
+        assert.equal(await graph.acquireTokenViaDeviceCode(), 'setup-token');
+        graph.getGraphClient();
+        const token = new Promise((resolve, reject) => {
+            authProvider((error, result) => error ? reject(error) : resolve(result));
+        });
+        if (count === 1) {
+            assert.equal(await token, 'selected-token');
+            assert.equal(silentRequests[0].account, accounts[0]);
+        } else {
+            await assert.rejects(token, count === 0 ? /No cached.*setup:sharepoint/
+                : /Multiple cached.*mstoken-cache\.json.*setup:sharepoint/);
+            assert.equal(silentRequests.length, 0, 'No account may be chosen implicitly');
+        }
+    }
+});
+
 function pagedSharePoint(emptyMiddlePage = false) {
     const requests = [];
     const graph = {

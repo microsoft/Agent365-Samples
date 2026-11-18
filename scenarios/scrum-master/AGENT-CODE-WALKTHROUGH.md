@@ -200,5 +200,8 @@ Live standup startup checks existing SharePoint session records, then inserts
 an indexed unique `RunKey` before fan-out; only the creation-claim winner sends
 cards. Existing sites must pause workers and migrate/backfill RunKey through
 `npm run setup:sharepoint` before upgrading. The claim does not distribute
-response fan-in or resume a crashed session. Ambiguous failed
-finalization remains `summarizing` for operator review, not automatic retry.
+response fan-in or resume a crashed session. Failed finalization releases the
+live session from `summarizing` back to `open`. Inspect channel/DM delivery and
+persisted responses before `/standup retry <standupId>` in the same process;
+the cutoff path can also retry. A process crash drops the session map rather
+than preserving a `summarizing` claim.

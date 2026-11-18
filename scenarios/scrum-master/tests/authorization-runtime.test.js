@@ -97,6 +97,50 @@ test('standup preserves applied transitions and reports approval delivery accura
     }
 });
 
+test('saved approvals require the displayed source status and skip already-achieved targets', async () => {
+    for (const status of ['To Do', 'Done', 'In Review']) {
+        let currentStatus = 'To Do', writes = 0, transitionLookups = 0;
+        const messages = [];
+        await withModule('../src/handlers/reconcile.ts', {
+            '../services/jira': { getJiraClient: () => ({
+                getIssue: async () => ({ status: currentStatus }),
+                getTransitions: async () => {
+                    transitionLookups++;
+                    return [{ id: 'review', toStatus: 'In Review' }];
+                },
+                transitionIssue: async () => { writes++; },
+            }) },
+            '../services/team-roster': { listTeamMembers: async () => [
+                { Role: 'SM', AadObjectId: 'sm', conversationReference: {} },
+            ] },
+            '../services/proactive': { sendProactive: async (_reference, logic) => {
+                await logic({ sendActivity: async message => { messages.push(message); } });
+                return { ok: true };
+            } },
+        }, async reconcile => {
+            const standupId = `source-status-${status}`;
+            await reconcile.reconcileAfterStandup({
+                standupId, sprintName: 'Sprint',
+                itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'To Do' }]]]),
+                responses: new Map([['dev', { userAadId: 'dev', items: [
+                    { issueKey: 'TEAM-1', update: 'PR up', hasBlocker: false },
+                ] }]]),
+            });
+            currentStatus = status;
+            transitionLookups = 0;
+            await reconcile.handleReconcileSubmit(context('sm', {
+                action: 'reconcile.apply', standupId, 'approve_TEAM-1': 'true',
+            }));
+            await drain();
+            assert.equal(writes, status === 'To Do' ? 1 : 0, status);
+            assert.equal(transitionLookups, status === 'To Do' ? 1 : 0, status);
+            const summary = messages.find(message => typeof message === 'string' && message.includes('Board updates'));
+            if (status === 'Done') assert.match(summary, /status.*changed.*fresh approval/i);
+            if (status === 'In Review') assert.match(summary, /already.*In Review.*no change/i);
+        });
+    }
+});
+
 test('failed approval acknowledgements restore valid proposals without allowing concurrent duplicate applies', async t => {
     const writes = [];
     let rejectAck;

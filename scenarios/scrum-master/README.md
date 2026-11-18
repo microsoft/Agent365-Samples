@@ -346,6 +346,7 @@ To reset Jira sprint issues, use the Atlassian UI or `POST /rest/agile/1.0/sprin
 | Agent says `Couldn't fetch information on Task-N` and the same `Task-N` clearly exists in Jira. | `issue-labels.ts` fallback project key doesn't match `JIRA_PROJECT_KEY`, or nodemon is running stale code. | Confirm `JIRA_PROJECT_KEY` in `.env` matches your project. Restart `npm run dev`. |
 | `/standup` responds `sentTo: 0`. | No roster member has an active conversation reference yet — nobody has DM'd the agent since the last SharePoint provisioning. | Ask each squad member to DM the agent `hi` once. `SMA_TeamMembers.ConversationRef` populates on their first turn. |
 | `MSAL: no cached account` on any seed script. | Delegated token cache missing / expired. | Run `npm run setup:sharepoint` again to trigger a fresh device-code sign-in. |
+| `Multiple cached Microsoft accounts found` during setup or runtime. | More than one account is in the delegated MSAL cache; Graph refuses to choose one implicitly, even after a successful device-code sign-in. | Stop the agent, remove `.mstoken-cache.json` from the sample directory, then run `npm run setup:sharepoint` with the intended Microsoft account and restart. |
 | Jira REST calls 401 during standup summarisation. | `JIRA_API_TOKEN` was revoked or `JIRA_EMAIL` is wrong. | Recreate the token in Atlassian Account → Security → API tokens; make sure `JIRA_EMAIL` matches the account the token belongs to. |
 | Adaptive Card submit hangs, then Teams says *"Something went wrong"*. | Handler exceeded the ~15 s Invoke SLA. | Standup submits send a recording acknowledgement before deferring Graph work; a submitted card follows only after recording succeeds. Other handlers may still perform inline authorization/lookups. There is no fixed acknowledgement latency guarantee. See [`docs/design.md#9-concurrency-idempotency-and-dedup`](docs/design.md#9-concurrency-idempotency-and-dedup). |
 | MCP calendar tool call returns `-32001 Session not found`. | The operation's MCP session was lost. | Calendar operations register fresh MCP wrappers and retry session loss once, then close their own servers on success or failure. Availability and booking do not share transports. Persistent failures propagate; verify the calendar outcome before retrying an uncertain booking. |
@@ -403,12 +404,15 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   proposal only after verifying that no event/invitations were created.
   Repeating a booked card returns an Outlook link built from the stored event ID,
   without creating another event; when no ID was recorded, inspect Outlook.
-- **Standup finalization:** an ambiguous failure can leave `summarizing`.
+- **Standup finalization:** a failed finalization releases the in-memory session
+  from `summarizing` back to `open`; it does not remain claimed.
   Preliminary roster lookup failures leave the session open and retryable.
   Finalization waits for already accepted response writes before snapshotting,
   and rejects new submissions once claimed.
-  Inspect channel/DM delivery and persisted responses before recovery;
-  restarting does not rebuild response fan-in or cutoff timers.
+  Inspect channel/DM delivery and persisted responses before using
+  `/standup retry <standupId>` in the same process; the cutoff path can also retry.
+  A process crash drops the session map, and restarting does not rebuild
+  response fan-in or cutoff timers.
 
 ## Deploy to Azure
 

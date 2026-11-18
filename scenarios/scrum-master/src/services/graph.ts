@@ -116,6 +116,12 @@ export async function acquireTokenSilentForGraph(): Promise<string> {
             'No cached Microsoft account found. Run `npm run setup:sharepoint` once to sign in.',
         );
     }
+    if (accounts.length > 1) {
+        throw new Error(
+            'Multiple cached Microsoft accounts found. Stop the agent, remove .mstoken-cache.json from the sample directory, ' +
+            'and run `npm run setup:sharepoint` with the intended Microsoft account before restarting. No account was selected.',
+        );
+    }
     const request: SilentFlowRequest = { account: accounts[0], scopes: GRAPH_SCOPES };
     const result = await app.acquireTokenSilent(request);
     if (!result?.accessToken) {

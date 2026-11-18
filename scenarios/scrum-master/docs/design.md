@@ -292,6 +292,9 @@ concurrent duplicate writes. If acknowledgement fails before Jira work is
 queued, the still-valid proposal is restored (without replacing a newer
 proposal), so the SM can retry the same card. Expired proposals are not restored.
 Replayed, expired or post-restart submissions fail closed and require a new proposal.
+Before applying a saved approval, the handler rereads the issue. An already-achieved
+target is reported as unchanged; a status different from the card's source status
+requires a fresh approval even if Jira still offers the saved global transition.
 
 ### 5.3 Chase (MVP 3)
 

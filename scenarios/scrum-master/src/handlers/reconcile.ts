@@ -308,10 +308,19 @@ async function applyApprovedTransitionsAsync(
 ): Promise<void> {
     const jira = getJiraClient();
     const applied: string[] = [];
+    const unchanged: string[] = [];
     const failed: string[] = [];
     for (const t of transitions) {
         if (!approvedKeys.has(t.issueKey)) continue;
         try {
+            const current = await jira.getIssue(t.issueKey);
+            if (current.status.toLowerCase() === t.statusTo.toLowerCase()) {
+                unchanged.push(`${t.issueKey} already ${current.status}; no change applied`);
+                continue;
+            }
+            if (current.status.toLowerCase() !== t.statusFrom.toLowerCase()) {
+                throw new Error('The issue status has changed since this proposal; request a fresh approval.');
+            }
             const available = await jira.getTransitions(t.issueKey);
             if (!available.some(candidate => candidate.id === t.transitionId &&
                 candidate.toStatus.toLowerCase() === t.statusTo.toLowerCase())) {
@@ -330,6 +339,7 @@ async function applyApprovedTransitionsAsync(
 
     const parts: string[] = [];
     if (applied.length) parts.push(`✅ Applied: ${applied.join(', ')}`);
+    if (unchanged.length) parts.push(`Unchanged: ${unchanged.join('; ')}`);
     if (failed.length) parts.push(`⚠️ Failed: ${failed.join('; ')}`);
     const stamp = DateTime.now().toFormat('h:mm a');
     const summary = `Board updates at ${stamp} — ${parts.join(' · ')}`;
