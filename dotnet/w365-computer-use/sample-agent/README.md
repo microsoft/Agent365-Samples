@@ -166,9 +166,9 @@ $token = Get-MsalToken `
 $env:GRAPH_TOKEN = $token.AccessToken
 ```
 
-### 5. Start the MCP Platform server
+### 5. Confirm MCP service access
 
-Ensure the MCP Platform is running locally on port 52857, or update the `McpServer:Url` in your config.
+The configuration above connects the agent to your local W365 Computer Use MCP endpoint. Ensure that endpoint is running and accessible.
 
 ### 6. Run the agent
 
@@ -265,7 +265,7 @@ The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Strea
 | Environment | URL |
 |-------------|-----|
 | Production (gateway) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
-| Local development | Your local MCP Platform URL (`McpServer:Url`) |
+| Local development | `http://localhost:52857/mcp/environments/Default-{your-tenant-id}/servers/mcp_W365ComputerUse` (`McpServer:Url`) |
 
 ### Token
 
@@ -335,7 +335,7 @@ To use the V3 human-session options, send the following **instead of** the defau
 
 To target an assigned pool, send `"arguments": {"sessionKind": "local", "sessionProperties": {"poolId": "assigned-pool-id"}}`, replacing the example ID with the actual assigned pool ID and choosing a compatible explicit kind. `poolId` must be a nonblank string of at most 256 characters and requires an explicit `local`, `human`, or `agentic` kind. The ID is forwarded unchanged; it is not an allocated `sessionId`.
 
-The MCP server must enable `EnableW365ExplicitSessionKind` (default off) and `EnableW365PoolTargeting` (default on). For a local MCP Platform instance, configure these under `AgentToolsLocalECSConfig`, not in this sample's settings. A disabled gate rejects the request. The server queries only the specified assigned pool, without enumerating pools or failing over. An unassigned or ineligible pool returns `No Pools have been assigned to this user with the given constraints`; ATG remains authoritative for capacity, so an eligible pool with no free session retains the existing capacity error. The sample surfaces these errors without removing or substituting the pool.
+The server queries only the specified assigned pool, without enumerating pools or failing over. An unassigned or ineligible pool returns `No Pools have been assigned to this user with the given constraints`; an eligible pool with no free session returns a capacity error. The sample surfaces these errors without removing or substituting the pool.
 
 The response retains its existing fields, includes a `sessionId`, and may include `screenShareUrl`, `connectivityUrl` and `awaitingHumanLogin`. A successful human-session start is **not** necessarily ready for remote tools. If `awaitingHumanLogin` is true, present `connectivityUrl` to the human and ask them to open it and sign in promptly; it is not `screenShareUrl`. Retain the same `sessionId` and use bounded progress checks rather than creating another session. Pass that ID when inspecting progress:
 
@@ -739,9 +739,9 @@ This is a verification recipe, not authorization to change infrastructure, conse
 | Resume says session options cannot be changed | Use the separate **Continue after sign-in** action, or say "continue my pending request" without repeating `human`, dimensions, or browser options. Explicit options are blocked while a session/request is pinned, even when the repeated values are unchanged. To change options, end the existing session first |
 | Invalid display/browser option | Use positive integer dimensions and `chromium` or `legacy` |
 | Invalid pool ID / missing kind | Supply a nonblank assigned `poolId` of at most 256 characters and explicitly request `local`, `human`, or `agentic`. A pool ID is not a session ID |
-| Pool targeting disabled / selected pool unavailable | Check the MCP server's `EnableW365ExplicitSessionKind` and `EnableW365PoolTargeting` gates and the caller's assignment/eligibility for that exact pool. Assignment errors differ from ATG capacity errors; the sample does not retry another pool |
+| Selected pool unavailable | Check the caller's assignment/eligibility for that exact pool. Assignment errors differ from capacity errors; the sample does not retry another pool |
 | Unavailable kind / incompatible caller | Check service availability and token identity; an agentic token cannot request `human`, and app-only callers cannot select explicit kinds |
-| W365 gateway HTTP 403 | Check the selected gateway environment against the access token's intended resource and delegated scope. A production-resource token against a test gateway was an observed configuration mismatch; a 403 alone does not establish missing consent or its exact cause. Do not copy test overrides into production or broaden token validation |
+| W365 gateway HTTP 403 | Check the configured service endpoint against the access token's intended resource and delegated scope. A 403 alone does not establish missing consent or its exact cause; do not broaden token validation |
 | No free W365 sessions / no pools found | Ask the administrator to check pool discovery and eligibility for the actual caller as well as free checkout capacity. An observed human call returned an empty `/me/cloudPcPools` collection before any pool checkout; the capacity message did not mean all existing pools were full. Agent-pool provisioning/assignment alone does not establish human eligibility |
 | Windows App stays on its loading screen | Open the exact current `connectivityUrl` in a full, updated browser with the original human account/tenant. Check browser errors and resource/feed discovery separately from EasyAuth. Successful HTTP asset requests or a telemetry SDK error alone do not prove the cause of the spinner. Retain the same session while checking readiness unless the service explicitly reports it ended |
 | `BitBlt failed` / display DC unavailable | This is a remote Windows desktop-capture failure, not by itself a W365 OAuth rejection or invalid display setting. Correlate lifecycle responses and the failed tool's correlation ID/timestamp with the W365 backend to check readiness, lock/disconnect state, and capture-worker session attachment. A previously ready session does not guarantee its desktop remains capturable; do not change app permissions based on this error alone |
