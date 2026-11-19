@@ -9,6 +9,11 @@ This script starts the M365 Agents SDK hosting server with SemanticKernelAgent.
 
 import sys
 
+# Windows pipes can default to CP1252, which cannot encode the startup/log messages.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
 try:
     from agent import SemanticKernelAgent
     from host_agent_server import create_and_run_host

@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Sample Semantic Kernel Agent using Microsoft Agent 365 SDK"
 dependencies = [
     # Semantic Kernel SDK
-    "semantic-kernel>=1.15.0",
+    "semantic-kernel>=1.47.0",
+    "PyMeta3>=0.5.1",
 
     # Microsoft Agents SDK - Official packages for hosting and integration
     "microsoft-agents-hosting-aiohttp>=0.7.0",
@@ -13,8 +14,7 @@ dependencies = [
     "microsoft-agents-activity>=0.7.0",
 
     # Agent 365 packages (using stable versions from PyPI)
-    "microsoft-agents-a365-observability-core>=0.1.0",
-    "microsoft-agents-a365-observability-hosting>=0.1.0",
+    "microsoft-opentelemetry>=1.6.0",
     "microsoft-agents-a365-notifications>=0.1.0",
     "microsoft-agents-a365-tooling>=0.1.0",
     "microsoft-agents-a365-runtime>=0.1.0",

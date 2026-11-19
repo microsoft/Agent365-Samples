@@ -11,8 +11,8 @@ For comprehensive documentation and guidance on building agents with the Microso
 - **Semantic Kernel ChatCompletionAgent** with automatic function calling
 - **Dual LLM support**: Azure OpenAI _or_ OpenAI via API key — configurable via environment variable
 - **MCP (Model Context Protocol)** tool integration — auto-discovered Mail/Calendar tools
-- **Agent 365 Observability** — InvokeAgentScope, InferenceScope, ExecuteToolScope with token tracking
-- **Agentic Authentication** — token exchange for Graph API, MCP, and observability
+- **Agent 365 Observability** — invoke, inference, tool, and output spans with token tracking
+- **Agentic Authentication** — delegated token exchange for Graph/MCP; app-only tokens for telemetry
 - **Notification handling** — email and Word comment notifications
 - **User identity** — personalized responses using `activity.from_property`
 - **Conversation continuity** — per-conversation ChatHistory across turns
@@ -95,6 +95,7 @@ Then configure `.env` for Playground mode:
 AUTH_HANDLER_NAME=
 USE_AGENTIC_AUTH=false
 BEARER_TOKEN=<paste token from above>
+ENABLE_A365_OBSERVABILITY_EXPORTER=false
 ```
 
 Restart the agent and connect the Agents Playground to `http://localhost:3978/api/messages`.
@@ -112,7 +113,8 @@ sample-agent/
 ├── mcp_tool_registration_service.py # MCP server discovery and SK plugin registration
 ├── observability_config.py          # Agent 365 observability initialization
 ├── turn_context_utils.py            # TurnContext utilities for observability
-├── token_cache.py                   # In-memory token caching
+├── observability/app_token_resolver.py # App-only telemetry token acquisition/cache
+├── tests/test_regressions.py         # Isolated regression checks
 ├── local_authentication_options.py  # Environment-based auth configuration
 ├── ToolingManifest.json             # MCP server manifest (fallback)
 ├── .env.template                    # Environment variable reference
@@ -144,7 +146,7 @@ User Message
 │  │ └────────────┘ │  │
 │  └────────────────┘  │
 │  ┌────────────────┐  │
-│  │ Observability  │  │  ← InvokeAgentScope → InferenceScope → ExecuteToolScope
+│  │ Observability  │  │  ← InvokeAgentScope → InferenceScope → execute_tool
 │  └────────────────┘  │
 └──────────────────────┘
 ```
@@ -160,8 +162,9 @@ information — always available with no API calls or token acquisition:
 | `activity.from_property.name`          | Display name as known to the channel                       |
 | `activity.from_property.aad_object_id` | Azure AD Object ID — use this to call Microsoft Graph     |
 
-The sample logs these fields at the start of every message turn and injects the display name
-into the LLM system instructions for personalized responses.
+At the start of each message turn, the sample logs only whether the caller object ID is
+available, without printing these identity values. It injects the display name into the
+LLM system instructions for personalized responses.
 
 ## Handling Agent Install and Uninstall
 
@@ -245,8 +248,9 @@ MCP servers are configured in `ToolingManifest.json`:
       "mcpServerName": "mcp_MailTools",
       "mcpServerUniqueName": "mcp_MailTools",
       "url": "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools",
-      "scope": "McpServers.Mail.All",
-      "audience": ""
+      "scope": "Tools.ListInvoke.All",
+      "audience": "16b1878d-62c7-4009-aa25-68989d63bbad",
+      "publisher": "Microsoft"
     }
   ]
 }
@@ -286,14 +290,78 @@ The agent uses the Agent 365 Observability SDK for production monitoring:
 
 - **InvokeAgentScope**: Wraps the full user message processing
 - **InferenceScope**: Tracks LLM calls (model, tokens, finish reasons)
-- **ExecuteToolScope**: Tracks MCP tool invocations
+- **execute_tool spans**: Semantic Kernel wraps actual MCP tool execution; a per-turn filter records arguments/results without creating duplicate spans
 - **BaggageBuilder**: Propagates tenant/agent context through all spans
+- **OutputScope**: Records the final response
+
+Manual inference scopes are used for this sample. Overlapping OpenAI/framework
+auto-instrumentation is disabled through the distro's supported instrumentation
+options so one completion isn't counted twice. Native Semantic Kernel tool spans
+remain enabled and receive blueprint, agent-user object ID, caller, and run metadata
+through baggage. The agent-user object ID comes from `recipient.aad_object_id`;
+`recipient.agentic_user_id` is recorded separately as the agent user's address.
+When the channel doesn't supply a human IP, `client.address` uses `0.0.0.0`
+(unknown), not the proxy address. Endpoint attributes identify the model service
+and local invocation/tool-execution host.
+
+The unified `microsoft-opentelemetry` distribution is initialized before LLM imports.
+Telemetry uses the S2S transport with an **app-only token for the runtime agent identity**,
+not the delegated token used for Graph or MCP. Each message/notification turn prefetches
+the token using the existing hosting blueprint connection; the exporter reads the cache
+synchronously. Tokens are checked for matching agent, tenant, audience, and expiry.
+Offline replay is disabled during the migration from delegated telemetry.
+The agent builds baggage around its scopes directly. The distro's baggage middleware
+is not registered: in `microsoft-opentelemetry` 1.6.0 it calls the next handler without
+the context argument required by the hosting SDK 1.9.0.
+
+Configure `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID`, `CLIENTSECRET`,
+and `TENANTID` using the blueprint credentials. An encrypted secret in
+`a365.generated.config.json` is not a plaintext client secret.
+The blueprint metadata defaults to the hosting connection's client ID; an optional
+`AGENT_BLUEPRINT_ID` overrides it. Never set `AGENT_ID` to the blueprint ID.
+AI Teammates resolve their agent identity from the incoming activity. Playground turns
+without a valid agent/tenant identity skip A365 scopes rather than inventing identities.
 
 Enable the A365 exporter for production:
 
 ```env
 ENABLE_A365_OBSERVABILITY_EXPORTER=true
 ```
+
+Set `AGENT_NAME=Semantic-Kernel` and `OBSERVABILITY_SERVICE_NAME=Semantic-Kernel`
+in `.env` for consistent agent/model/tool span names and the telemetry service name.
+The configured agent name overrides the incoming activity's display name.
+Restart the agent after changing these values. These settings affect new telemetry,
+not historical records or the Entra/Teams registered display names. Surfaces that
+resolve names from the directory require a separate administrator-managed rename
+of the existing blueprint, agent instance, and agent user; do not change their IDs.
+
+Console logging is explicitly installed alongside the distro's handler. A later
+`logging.basicConfig()` alone cannot configure output after the distro initializes.
+Application INFO messages, tool completion, and app-only token acquisition are
+visible without dumping prompt/response text to the application console.
+
+For diagnostics, set `OTEL_LOG_LEVEL=INFO` and
+`A365_OBSERVABILITY_LOG_LEVEL=debug|info|warn|error` in `.env`, then restart.
+The installed Python exporter logs HTTP success and its response at DEBUG.
+Return the exporter level to `info|warn|error` when finished; diagnostic logs may
+contain endpoint and identity metadata. Never share unredacted logs publicly.
+Verify response destination statuses (`sent`, rather than `rejected`/`not_routed`)
+as well as `partialSuccess`; HTTP 200 alone isn't proof of downstream delivery.
+Verify exporter success before checking MAC;
+successful export does not by itself prove Activity attribution. Use the runtime agent
+identity, not the blueprint ID, when filtering activity reports.
+
+### Regression checks
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+These checks use mocked authentication and HTTP responses; they do not call the LLM,
+change tenant permissions, or prove live telemetry delivery.
+They exercise the real Semantic Kernel/OpenAI integration, exporter HTTP serialization,
+console diagnostics, conversation history, and per-operation identity attributes.
 
 ## Troubleshooting
 
@@ -304,6 +372,20 @@ ENABLE_A365_OBSERVABILITY_EXPORTER=true
 | Slow first response                | MCP servers connect on first message. Subsequent messages reuse the connection                 |
 | `Import could not be resolved`   | Run `uv sync` or `pip install -e .` to install all dependencies                            |
 | Token exchange failures            | Verify `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` credentials are correct                |
+| Agentic MCP without an auth handler | Set `AUTH_HANDLER_NAME=AGENTIC`, or use Playground settings with a non-empty bearer token |
+| MCP HTTP or JSON-RPC errors | Check the reported status/error and credentials; failed manual registrations are not counted as loaded |
+| No MAC Activity | Check the exporter flag, runtime identity, app-only token acquisition, and exporter logs before investigating indexing |
+
+The entry point configures Python stdout/stderr as UTF-8 before imports, avoiding
+`UnicodeEncodeError` when Windows redirects emoji output through a CP1252 pipe.
+For PowerShell to decode that output correctly when logging (including emoji):
+
+```powershell
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [Console]::OutputEncoding
+$env:PYTHONIOENCODING = "utf-8"
+& ".\.venv\Scripts\python.exe" -u .\start_with_generic_host.py 2>&1 | Tee-Object -FilePath ".\log.txt"
+```
 
 ## Documentation
 

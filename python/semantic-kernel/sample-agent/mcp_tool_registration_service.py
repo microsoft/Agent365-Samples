@@ -11,6 +11,7 @@ them as Semantic Kernel plugins via the MCP connector.
 
 import json
 import logging
+import uuid
 from typing import Dict, List, Optional
 
 from microsoft_agents.hosting.core import Authorization, TurnContext
@@ -52,7 +53,7 @@ class McpToolRegistrationService:
     async def discover_servers(
         self,
         auth: Authorization,
-        auth_handler_name: str,
+        auth_handler_name: str | None,
         context: TurnContext,
         auth_token: Optional[str] = None,
     ) -> None:
@@ -67,6 +68,11 @@ class McpToolRegistrationService:
         """
         # --- Authenticate ------------------------------------------------
         if auth_token is None or auth_token.strip() == "":
+            if not auth_handler_name:
+                raise ValueError(
+                    "MCP token exchange requires an auth handler. For Playground, "
+                    "set USE_AGENTIC_AUTH=false and provide BEARER_TOKEN."
+                )
             scopes = get_mcp_platform_authentication_scope()
             self._logger.info("Exchanging token with scopes: %s", scopes)
             auth_result = await auth.exchange_token(context, scopes, auth_handler_name)
@@ -164,8 +170,8 @@ class McpToolRegistrationService:
                     server_name,
                 )
                 # Fallback: register tools manually via httpx MCP calls
-                await self._register_mcp_tools_manually(kernel, server_name, server_url)
-                registered += 1
+                if await self._register_mcp_tools_manually(kernel, server_name, server_url):
+                    registered += 1
             except Exception as e:
                 self._logger.error(
                     "Failed to register MCP server '%s': %s", server_name, e
@@ -175,7 +181,7 @@ class McpToolRegistrationService:
 
     async def _register_mcp_tools_manually(
         self, kernel, server_name: str, server_url: str
-    ) -> None:
+    ) -> bool:
         """
         Fallback: manually discover and register MCP tools as kernel functions.
 
@@ -194,24 +200,20 @@ class McpToolRegistrationService:
             # Initialize MCP session
             async with httpx.AsyncClient(timeout=30.0) as client:
                 # Send initialize request
-                init_response = await client.post(
+                init_response = await self._send_mcp_request(
+                    client,
                     server_url,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
+                    "initialize",
+                    {
                             "protocolVersion": "2025-03-26",
                             "capabilities": {},
                             "clientInfo": {
                                 "name": "semantic-kernel-agent",
                                 "version": "1.0.0",
                             },
-                        },
                     },
-                    headers=self._headers,
+                    self._headers,
                 )
-                init_data = init_response.json()
                 session_id = init_response.headers.get("mcp-session-id")
 
                 headers_with_session = dict(self._headers)
@@ -219,7 +221,7 @@ class McpToolRegistrationService:
                     headers_with_session["mcp-session-id"] = session_id
 
                 # Send initialized notification
-                await client.post(
+                notification_response = await client.post(
                     server_url,
                     json={
                         "jsonrpc": "2.0",
@@ -227,17 +229,15 @@ class McpToolRegistrationService:
                     },
                     headers=headers_with_session,
                 )
+                notification_response.raise_for_status()
 
                 # List tools
-                tools_response = await client.post(
+                tools_response = await self._send_mcp_request(
+                    client,
                     server_url,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "method": "tools/list",
-                        "params": {},
-                    },
-                    headers=headers_with_session,
+                    "tools/list",
+                    {},
+                    headers_with_session,
                 )
                 tools_data = tools_response.json()
                 tools = tools_data.get("result", {}).get("tools", [])
@@ -272,11 +272,40 @@ class McpToolRegistrationService:
                         len(functions),
                         server_name,
                     )
+                    return True
+
+                self._logger.warning("MCP server '%s' returned no tools", server_name)
+                return False
 
         except Exception as e:
             self._logger.error(
                 "Failed to discover tools from MCP server '%s': %s", server_name, e
             )
+            return False
+
+    @staticmethod
+    async def _send_mcp_request(client, server_url, method, params, headers):
+        request_id = str(uuid.uuid4())
+        response = await client.post(
+            server_url,
+            json={
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            },
+            headers=headers,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("id") != request_id:
+            raise RuntimeError(f"MCP {method} returned an invalid response ID")
+        if "error" in payload:
+            error = payload["error"]
+            raise RuntimeError(f"MCP {method} failed: {error}")
+        if not isinstance(payload.get("result"), dict):
+            raise RuntimeError(f"MCP {method} returned no result object")
+        return response
 
     def _create_mcp_tool_function(
         self,
@@ -320,21 +349,20 @@ class McpToolRegistrationService:
 
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(
+                    response = await self._send_mcp_request(
+                        client,
                         server_url,
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": 3,
-                            "method": "tools/call",
-                            "params": {
+                        "tools/call",
+                        {
                                 "name": tool_name,
                                 "arguments": arguments,
-                            },
                         },
-                        headers=headers,
+                        headers,
                     )
                     result = response.json()
                     tool_result = result.get("result", {})
+                    if tool_result.get("isError"):
+                        raise RuntimeError(f"MCP tool '{tool_name}' reported failure")
 
                     # Extract content from MCP response
                     content_list = tool_result.get("content", [])
@@ -346,7 +374,8 @@ class McpToolRegistrationService:
                     return "\n".join(text_parts) if text_parts else json.dumps(tool_result)
 
             except Exception as e:
-                return f"Error calling MCP tool '{tool_name}': {e}"
+                self._logger.error("Error calling MCP tool '%s': %s", tool_name, e)
+                raise
 
         return mcp_tool_call
 

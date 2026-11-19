@@ -12,6 +12,9 @@ import os
 import socket
 from os import environ
 
+# A365 Observability — best-effort instrumentation (verify against official sample)
+from observability_config import EXPORT_ENABLED, OBS_TOKENS, shutdown_observability
+
 from aiohttp.web import Application, Request, Response, json_response, run_app
 from aiohttp.web_middlewares import middleware as web_middleware
 from dotenv import load_dotenv
@@ -38,10 +41,10 @@ from microsoft_agents.activity import load_configuration_from_env, Activity
 
 # Import our agent base class
 from agent_interface import AgentInterface, check_agent_inheritance
+from turn_context_utils import extract_turn_context_details
 
 # Configure logging
 ms_agents_logger = logging.getLogger("microsoft_agents")
-ms_agents_logger.addHandler(logging.StreamHandler())
 ms_agents_logger.setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
@@ -53,14 +56,6 @@ from microsoft_agents_a365.notifications.agent_notification import (
     ChannelId,
 )
 from microsoft_agents_a365.notifications import EmailResponse, NotificationTypes
-
-# Observability imports (optional)
-try:
-    from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-    from token_cache import get_cached_agentic_token, cache_agentic_token
-    OBSERVABILITY_AVAILABLE = True
-except ImportError:
-    OBSERVABILITY_AVAILABLE = False
 
 # Load configuration
 load_dotenv()
@@ -101,6 +96,7 @@ class GenericAgentHost:
         self.storage = MemoryStorage()
         self.connection_manager = MsalConnectionManager(**agents_sdk_config)
         self.adapter = CloudAdapter(connection_manager=self.connection_manager)
+        # Baggage is scoped in agent.py; distro middleware uses an incompatible callback.
         self.authorization = Authorization(
             self.storage, self.connection_manager, **agents_sdk_config
         )
@@ -173,7 +169,7 @@ class GenericAgentHost:
                     return
 
                 user_message = context.activity.text or ""
-                logger.info(f"📨 Processing message: '{user_message}'")
+                logger.info("Processing inbound message (%d characters)", len(user_message))
 
                 # Skip empty messages
                 if not user_message.strip():
@@ -209,9 +205,7 @@ class GenericAgentHost:
                     )
 
                     # Send response back
-                    logger.info(
-                        f"📤 Sending response: '{response[:100] if len(response) > 100 else response}'"
-                    )
+                    logger.info("Sending response (%d characters)", len(response))
                     await context.send_activity(response)
 
                     logger.info("✅ Response sent successfully to client")
@@ -243,15 +237,7 @@ class GenericAgentHost:
                     return
                 tenant_id, agent_id = result
 
-                if OBSERVABILITY_AVAILABLE:
-                    with BaggageBuilder().tenant_id(tenant_id).agent_id(agent_id).build():
-                        await self._handle_notification_with_agent(
-                            context, notification_activity
-                        )
-                else:
-                    await self._handle_notification_with_agent(
-                        context, notification_activity
-                    )
+                await self._handle_notification_with_agent(context, notification_activity)
 
             except Exception as e:
                 logger.error(f"❌ Notification error: {e}")
@@ -332,8 +318,8 @@ class GenericAgentHost:
             Tuple of (tenant_id, agent_id) if successful, None if validation fails
         """
         # Extract tenant and agent IDs
-        tenant_id = context.activity.recipient.tenant_id if context.activity.recipient else None
-        agent_id = context.activity.get_agentic_instance_id()
+        details = extract_turn_context_details(context)
+        tenant_id, agent_id = details.tenant_id, details.agent_id
 
         # Ensure agent is available
         if not self.agent_instance:
@@ -342,7 +328,7 @@ class GenericAgentHost:
             return None
 
         # Setup observability token if available
-        if tenant_id and agent_id:
+        if EXPORT_ENABLED and tenant_id and agent_id:
             await self._setup_observability_token(context, tenant_id, agent_id)
 
         return tenant_id, agent_id
@@ -351,34 +337,18 @@ class GenericAgentHost:
         self, context: TurnContext, tenant_id: str, agent_id: str
     ):
         """
-        Cache observability token for Agent365 exporter.
+        Prefetch an app-only observability token using the hosting connection.
         
         Args:
             context: Turn context
             tenant_id: Tenant identifier
             agent_id: Agent identifier
         """
-        if not OBSERVABILITY_AVAILABLE:
-            return
-
+        # A365 auth mode: agentic-user — telemetry uses an app-only token on the S2S route.
         try:
-            from microsoft_agents_a365.runtime.environment_utils import (
-                get_observability_authentication_scope,
-            )
-
-            exchange_kwargs = {}
-            if self.auth_handler_name:
-                exchange_kwargs["auth_handler_id"] = self.auth_handler_name
-
-            exaau_token = await self.agent_app.auth.exchange_token(
-                context,
-                scopes=get_observability_authentication_scope(),
-                **exchange_kwargs,
-            )
-            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-            logger.debug(f"✅ Cached observability token for {tenant_id}:{agent_id}")
+            await OBS_TOKENS.prefetch(self.connection_manager, tenant_id, agent_id)
         except Exception as e:
-            logger.warning(f"⚠️ Failed to cache observability token: {e}")
+            logger.warning("Failed to acquire app-only observability token: %s", e)
 
     async def initialize_agent(self):
         """Initialize the hosted agent instance"""
@@ -565,13 +535,7 @@ class GenericAgentHost:
             except Exception as e:
                 logger.error(f"Error during agent cleanup: {e}")
 
-        # Clear cached auth tokens
-        try:
-            from token_cache import clear_token_cache
-            clear_token_cache()
-            logger.info("Token cache cleared")
-        except Exception:
-            pass  # Best-effort
+        await asyncio.to_thread(shutdown_observability)
 
 
 def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_kwargs):

@@ -1,74 +1,80 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-"""
-Observability Configuration Module
+# A365 Observability — best-effort instrumentation (verify against official sample)
+"""Initialize observability before importing Semantic Kernel or the LLM clients."""
 
-Handles one-time initialization of Agent 365 Observability SDK.
-This module should be imported early in the application lifecycle to ensure
-observability is configured before any agents are instantiated.
-"""
-
-import logging
 import os
+import logging
 
-from microsoft_agents_a365.observability.core.config import configure
-from token_cache import get_cached_agentic_token
+from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-# Flag to track if observability has been configured
-_observability_configured = False
+from microsoft.opentelemetry import use_microsoft_opentelemetry
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+
+from observability.app_token_resolver import AppTokenResolver
+
+def configure_console_logging() -> None:
+    """Keep the distro handler and add one console sink for application diagnostics."""
+    root = logging.getLogger()
+    root.setLevel(os.getenv("OTEL_LOG_LEVEL", "INFO").upper())
+    if not any(handler.name == "semantic-kernel-console" for handler in root.handlers):
+        handler = logging.StreamHandler()
+        handler.set_name("semantic-kernel-console")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s [Semantic-Kernel] %(name)s: %(message)s"
+        ))
+        root.addHandler(handler)
+    exporter_level = os.getenv("A365_OBSERVABILITY_LOG_LEVEL", "info|warn|error").lower()
+    logging.getLogger("microsoft.opentelemetry.a365").setLevel(
+        logging.DEBUG if "debug" in exporter_level.split("|") else logging.INFO
+    )
+    for name in ("httpx", "httpcore", "openai", "msal"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def _initialize_observability_once() -> bool:
-    """Initialize observability SDK once at module level before any agent instances are created"""
-    global _observability_configured
+configure_console_logging()
 
-    if _observability_configured:
-        logger.debug("Observability already configured, skipping")
-        return True
+OBS_TOKENS = AppTokenResolver()
+EXPORT_ENABLED = os.getenv("ENABLE_A365_OBSERVABILITY_EXPORTER", "false").lower() == "true"
 
-    def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-        """Token resolver for Agent 365 Observability exporter"""
-        try:
-            logger.info(f"Token resolver called for agent_id: {agent_id}, tenant_id: {tenant_id}")
-            cached_token = get_cached_agentic_token(tenant_id, agent_id)
-            if cached_token:
-                logger.info("Using cached agentic token from agent authentication")
-                return cached_token
-            logger.warning(
-                f"No cached agentic token found for agent_id: {agent_id}, tenant_id: {tenant_id}"
-            )
-            return None
-        except Exception as e:
-            logger.error(f"Error resolving token for agent {agent_id}, tenant {tenant_id}: {e}")
-            return None
-
-    try:
-        status = configure(
-            service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "semantic-kernel-sample-agent"),
-            service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
-            token_resolver=token_resolver,
-        )
-
-        if not status:
-            logger.warning("⚠️ Agent 365 Observability configuration failed")
-            return False
-
-        _observability_configured = True
-        logger.info("✅ Agent 365 Observability configured successfully")
-        return True
-
-    except Exception as e:
-        logger.error(f"❌ Error setting up observability: {e}")
-        return False
+use_microsoft_opentelemetry(
+    enable_a365=True,
+    a365_enable_observability_exporter=EXPORT_ENABLED,
+    a365_use_s2s_endpoint=True,
+    a365_token_resolver=OBS_TOKENS.resolve,
+    a365_exporter_disable_offline_storage=True,
+    # Manual model spans already capture messages/usage; avoid a second OpenAI span.
+    instrumentation_options={
+        "openai": {"enabled": False},
+        "openai_agents": {"enabled": False},
+        "agent_framework": {"enabled": False},
+        "langchain": {"enabled": False},
+        "semantic_kernel": {"enabled": False},
+    },
+    resource=Resource.create({
+        "service.name": os.getenv("OBSERVABILITY_SERVICE_NAME") or os.getenv("AGENT_NAME") or "Semantic-Kernel",
+        "service.namespace": os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "agent365-samples"),
+    }),
+)
+configure_console_logging()
+logging.getLogger(__name__).info(
+    "Observability initialized: export=%s, transport=S2S, token=app-only",
+    EXPORT_ENABLED,
+)
 
 
 def is_observability_configured() -> bool:
-    """Check if observability has been configured"""
-    return _observability_configured
+    return True
 
 
-# Initialize observability immediately at module load time
-_initialize_observability_once()
+def shutdown_observability() -> None:
+    provider = trace.get_tracer_provider()
+    if hasattr(provider, "force_flush"):
+        provider.force_flush()
+    if hasattr(provider, "shutdown"):
+        provider.shutdown()
+    OBS_TOKENS.clear()

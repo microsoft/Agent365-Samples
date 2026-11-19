@@ -21,14 +21,19 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# A365 Observability — best-effort instrumentation (verify against official sample)
+from observability_config import is_observability_configured
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -49,6 +54,7 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.open_ai_pro
 )
 from semantic_kernel.contents.chat_history import ChatHistory
 from semantic_kernel.functions.kernel_arguments import KernelArguments
+from semantic_kernel.filters import FilterTypes, FunctionInvocationContext
 
 # Agent Interface
 from agent_interface import AgentInterface
@@ -58,18 +64,14 @@ from local_authentication_options import LocalAuthenticationOptions
 from microsoft_agents.hosting.core import Authorization, TurnContext
 
 # Observability Components
-from microsoft_agents_a365.observability.core import (
+from microsoft.opentelemetry.a365.core import (
     InvokeAgentScope,
     InferenceScope,
     InferenceCallDetails,
     InferenceOperationType,
-    ExecuteToolScope,
-    ToolCallDetails,
+    OutputScope,
+    Response,
 )
-from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
-
-# Observability configuration (must be imported early)
-from observability_config import is_observability_configured
 
 # Shared turn context utilities
 from turn_context_utils import (
@@ -79,6 +81,7 @@ from turn_context_utils import (
     create_caller_details,
     create_request,
     build_baggage_builder,
+    create_model_endpoint,
 )
 
 # MCP Tooling Services
@@ -225,7 +228,7 @@ Guidelines:
         logger.info("MCP tool registration service initialized")
 
     async def setup_mcp_tools(
-        self, auth: Authorization, auth_handler_name: str, context: TurnContext
+        self, auth: Authorization, auth_handler_name: str | None, context: TurnContext
     ):
         """
         Discover MCP servers via the SDK and register them as Semantic Kernel plugins.
@@ -247,7 +250,14 @@ Guidelines:
 
             if not use_agentic_auth:
                 auth_token = self.auth_options.bearer_token
+                if not auth_token or not auth_token.strip():
+                    raise ValueError("USE_AGENTIC_AUTH=false requires BEARER_TOKEN for MCP")
                 logger.info("Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
+            elif not auth_handler_name:
+                raise ValueError(
+                    "USE_AGENTIC_AUTH=true requires AUTH_HANDLER_NAME. For Playground, "
+                    "set USE_AGENTIC_AUTH=false and provide BEARER_TOKEN."
+                )
 
             # Discover MCP servers
             await self.mcp_service.discover_servers(
@@ -312,17 +322,12 @@ Guidelines:
         ctx_details = extract_turn_context_details(context)
 
         # Log the user identity from activity.from_property — set by the A365 platform on every message.
-        logger.info(
-            "Turn received from user — DisplayName: '%s', UserId: '%s', AadObjectId: '%s'",
-            ctx_details.caller_name or "(unknown)",
-            ctx_details.caller_id or "(unknown)",
-            ctx_details.caller_aad_object_id or "(none)",
-        )
+        logger.info("Turn received: caller object ID available=%s", bool(ctx_details.caller_aad_object_id))
         display_name = ctx_details.caller_name or "unknown"
         personalized_prompt = self.SYSTEM_PROMPT.replace("{user_name}", display_name)
 
         try:
-            logger.info(f"📨 Processing message: {message[:100]}...")
+            logger.info("Processing message (%d characters)", len(message))
 
             # Setup MCP tools for this request
             await self.setup_mcp_tools(auth, auth_handler_name, context)
@@ -332,7 +337,10 @@ Guidelines:
                 logger.warning("⚠️ Observability not configured, spans may not be exported")
 
             # Use BaggageBuilder to set contextual information that flows through all spans
-            with build_baggage_builder(context).build():
+            has_identity = bool(ctx_details.agent_id and ctx_details.tenant_id)
+            if not has_identity:
+                logger.info("No valid agent identity for this turn; skipping A365 scopes")
+            with build_baggage_builder(context, ctx_details).build() if has_identity else nullcontext():
                 # Create observability details using shared utilities
                 agent_details = create_agent_details(ctx_details)
                 caller_details = create_caller_details(ctx_details)
@@ -340,12 +348,12 @@ Guidelines:
                 invoke_details = create_invoke_agent_details(ctx_details)
 
                 # Use context manager pattern per documentation
-                with InvokeAgentScope.start(
+                with (InvokeAgentScope.start(
                     request=request,
                     scope_details=invoke_details,
                     agent_details=agent_details,
                     caller_details=caller_details,
-                ) as invoke_scope:
+                ) if has_identity else nullcontext()) as invoke_scope:
                     # Record input message
                     if hasattr(invoke_scope, "record_input_messages"):
                         invoke_scope.record_input_messages([message])
@@ -355,21 +363,51 @@ Guidelines:
                         operationName=InferenceOperationType.CHAT,
                         model=self.model_name,
                         providerName=self.provider_name,
+                        endpoint=create_model_endpoint(),
                     )
 
-                    with InferenceScope.start(
+                    with (InferenceScope.start(
                         request=request,
                         details=inference_details,
                         agent_details=agent_details,
-                    ) as inference_scope:
+                        user_details=caller_details.user_details,
+                    ) if has_identity else nullcontext()) as inference_scope:
+                        if inference_scope:
+                            inference_scope.record_input_messages([message])
+                        # Per-turn filters must not capture another concurrent turn's identity.
+                        kernel = self.kernel.clone()
+
+                        async def trace_tool(
+                            call: FunctionInvocationContext,
+                            next: Callable[[FunctionInvocationContext], Awaitable[None]],
+                        ) -> None:
+                            if not has_identity:
+                                await next(call)
+                                return
+                            # SK already opens execute_tool around this filter.
+                            span = trace.get_current_span()
+                            if isinstance(span, ReadableSpan) and not (span.attributes or {}).get("gen_ai.tool.call.id"):
+                                span.set_attribute("gen_ai.tool.call.id", str(uuid.uuid4()))
+                            span.set_attribute("gen_ai.tool.type", "mcp_extension")
+                            span.set_attribute("server.address", os.getenv("HOST") or "localhost")
+                            span.set_attribute("server.port", int(os.getenv("PORT", "3978")))
+                            span.set_attribute(
+                                "gen_ai.tool.call.arguments",
+                                json.dumps(dict(call.arguments), default=str),
+                            )
+                            await next(call)
+                            span.set_attribute("gen_ai.tool.call.result", str(call.result))
+                            logger.info("Tool completed: %s", call.function.fully_qualified_name)
+
+                        kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, trace_tool)
                         # Create the ChatCompletionAgent with current kernel state
                         execution_settings = OpenAIChatPromptExecutionSettings(
                             function_choice_behavior=FunctionChoiceBehavior.Auto(),
                         )
 
                         agent = ChatCompletionAgent(
-                            kernel=self.kernel,
-                            name="Agent365Agent",
+                            kernel=kernel,
+                            name=ctx_details.agent_name,
                             instructions=personalized_prompt,
                             arguments=KernelArguments(settings=execution_settings),
                         )
@@ -404,55 +442,9 @@ Guidelines:
                                         usage, "completion_tokens", 0
                                     ) or 0
 
-                            # Track tool calls for observability
-                            items = getattr(response.message, "items", [])
-                            for item in items:
-                                item_type = type(item).__name__
-                                if "FunctionCallContent" in item_type:
-                                    tool_name = getattr(item, "function_name", None) or getattr(item, "name", "unknown")
-                                    tool_args = getattr(item, "arguments", None)
-                                    tool_id = getattr(item, "id", str(uuid.uuid4()))
-
-                                    logger.info(f"🔧 Tool call: {tool_name}")
-
-                                    try:
-                                        args_str = (
-                                            json.dumps(tool_args)
-                                            if tool_args
-                                            else ""
-                                        )
-                                    except (TypeError, ValueError):
-                                        args_str = str(tool_args) if tool_args else ""
-
-                                    tool_call_details = ToolCallDetails(
-                                        tool_name=tool_name,
-                                        arguments=args_str,
-                                        tool_call_id=tool_id,
-                                        description=f"Executing {tool_name} tool",
-                                        tool_type="mcp_extension",
-                                    )
-
-                                    with ExecuteToolScope.start(
-                                        request=request,
-                                        details=tool_call_details,
-                                        agent_details=agent_details,
-                                    ) as tool_scope:
-                                        # SK handles tool execution automatically
-                                        # We just record the scope for observability
-                                        if hasattr(tool_scope, "record_response"):
-                                            tool_scope.record_response(
-                                                "Tool executed by Semantic Kernel"
-                                            )
-
                         full_response = "".join(response_parts)
                         if not full_response:
                             full_response = "I couldn't process your request at this time."
-
-                        # Clean up the per-turn thread (ChatHistory is retained for conversation continuity)
-                        try:
-                            await thread.delete()
-                        except Exception:
-                            pass  # Thread delete is best-effort
 
                         # Record token usage
                         if input_tokens and hasattr(inference_scope, "record_input_tokens"):
@@ -469,6 +461,15 @@ Guidelines:
                         # Record output messages on inference scope
                         if hasattr(inference_scope, "record_output_messages"):
                             inference_scope.record_output_messages([full_response])
+
+                    if has_identity:
+                        with OutputScope.start(
+                            request=request,
+                            response=Response(messages=[full_response]),
+                            agent_details=agent_details,
+                            user_details=caller_details.user_details,
+                        ):
+                            pass
 
                     # Record output message on invoke scope (after inference scope closes)
                     if hasattr(invoke_scope, "record_output_messages"):
@@ -607,9 +608,9 @@ Guidelines:
             await self.mcp_service.cleanup()
 
             # Close underlying AI service HTTP clients
-            if self._kernel:
+            if self.kernel:
                 for service_id, service in list(
-                    self._kernel.services.items()
+                    self.kernel.services.items()
                 ):
                     client = getattr(service, "client", None)
                     if client and hasattr(client, "close"):
@@ -618,8 +619,8 @@ Guidelines:
                             logger.info(
                                 f"Closed AI service client: {service_id}"
                             )
-                        except Exception:
-                            pass  # Best-effort close
+                        except Exception as e:
+                            logger.warning("Failed to close AI service client %s: %s", service_id, e)
 
             # Clear per-conversation chat histories
             self._chat_histories.clear()
