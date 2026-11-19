@@ -46,6 +46,15 @@ process.on('uncaughtException', (err) => {
 
 import { AuthConfiguration, authorizeJWT, CloudAdapter, loadAuthConfigFromEnv, Request } from '@microsoft/agents-hosting';
 import express, { Response } from 'express'
+
+// Only explicit local development permits anonymous hosting.
+const isDevelopment = process.env.NODE_ENV === 'development';
+const authConfig: AuthConfiguration = isDevelopment ? {} : loadAuthConfigFromEnv();
+if (!isDevelopment && !authConfig.clientId?.trim()) {
+  console.error('[startup] Hosting clientId is required outside NODE_ENV=development. Configure connections__service_connection__settings__clientId.');
+  process.exit(1);
+}
+
 import { agentApplication } from './agent';
 
 // SMA extensions
@@ -55,11 +64,6 @@ import { runSprintCloseReport } from './handlers/report';
 import { runSprintSummary } from './handlers/sprint-summary';
 import { startLocalScheduler } from './cron/local-scheduler';
 import { getInternalTriggerToken } from './config';
-
-// Only NODE_ENV=development explicitly disables authentication
-// All other cases (production, test, unset, etc.) require authentication
-const isDevelopment = process.env.NODE_ENV === 'development';
-const authConfig: AuthConfiguration = isDevelopment ? {} : loadAuthConfigFromEnv();
 
 console.log(`Environment: NODE_ENV=${process.env.NODE_ENV}, isDevelopment=${isDevelopment}`);
 
@@ -185,7 +189,7 @@ server.use(authorizeJWT(authConfig))
 
 server.post('/api/messages', (req: Request, res: Response) => {
   const adapter = agentApplication.adapter as CloudAdapter;
-  adapter.process(req, res, async (context) => {
+  return adapter.process(req, res, async (context) => {
     await agentApplication.run(context)
   })
 })

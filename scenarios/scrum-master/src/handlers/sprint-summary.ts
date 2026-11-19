@@ -216,12 +216,11 @@ export function buildSprintSummaryMarkdown(opts: {
         lines.push('_No tasks completed yet._');
     } else {
         lines.push('');
-        lines.push('| Task | User Story | Owner | Completed by ETA |');
+        lines.push('| Task | User Story | Owner | Due date |');
         lines.push('|---|---|---|---|');
         for (const t of completed) {
             const usLabel = t.parentKey ? `[${t.parentKey}] ${trim(t.parentSummary, 60)}` : '(no parent)';
-            const onTime = t.dueDate ? '✅' : '—';
-            lines.push(`| [${t.key}](${t.url}) — ${trim(t.summary, 60)} | ${usLabel} | ${t.assignee} | ${onTime} ${etaLabel(t)} |`);
+            lines.push(`| [${t.key}](${t.url}) — ${trim(t.summary, 60)} | ${usLabel} | ${t.assignee} | ${t.dueDate ?? '—'} |`);
         }
     }
     lines.push('');

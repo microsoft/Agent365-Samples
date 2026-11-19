@@ -195,31 +195,53 @@ test('standup expands inherited subtasks, coalesces triggers, and finalizes once
     });
 });
 
-test('mock standup sends directly to the Playground caller without proactive credentials', async () => {
+test('mock standup uses fresh SDK contexts for deferred replies and summaries after the original turn is revoked', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { CloudAdapter, TurnContext } = require('@microsoft/agents-hosting');
+    const { Activity } = require('@microsoft/agents-activity');
     const sessions = require('../src/services/session-store');
     let bound = false;
     const member = {
         AadObjectId: 'playground-user', JiraAccountId: 'acc-alex', Title: 'Alex', Role: 'SM',
-        conversationReference: { conversation: { id: 'playground-dm', conversationType: 'personal' } },
+        conversationReference: {
+            serviceUrl: 'http://localhost:5000', channelId: 'emulator',
+            conversation: { id: 'playground-dm', conversationType: 'personal' },
+            bot: { id: 'bot' }, user: { id: 'playground-user' },
+        },
     };
     const activities = [];
-    const context = {
-        activity: { from: { id: member.AadObjectId }, conversation: { id: 'playground-dm' } },
-        sendActivity: async activity => { activities.push(activity); },
+    const adapter = new CloudAdapter({});
+    adapter.sendActivities = async (_context, messages) => {
+        activities.push(...messages);
+        return messages.map(() => ({ id: 'offline' }));
     };
-    const dateTime = { setZone() { return this; }, toFormat() { return 'noon'; } };
+    const runTurn = async (value, logic) => {
+        const activity = Activity.fromObject({
+            type: 'message', from: { id: member.AadObjectId }, recipient: { id: 'bot' },
+            conversation: member.conversationReference.conversation,
+            serviceUrl: member.conversationReference.serviceUrl, channelId: 'emulator',
+            value,
+        });
+        const context = new TurnContext(adapter, activity, {});
+        let proxy;
+        await adapter.runMiddleware(context, async ctx => { proxy = ctx; await logic(ctx); });
+        assert.throws(() => proxy.activity, /revoked/);
+    };
+    let sprintId = 778901;
     await withModule('../src/handlers/standup', {
-        luxon: { DateTime: { fromJSDate: () => dateTime } },
-        '../config': { getJiraMode: () => 'mock', getScheduleConfig: () => ({ cutoffHours: 0, timezone: 'UTC' }) },
+        '../config': { getJiraMode: () => 'mock', getScheduleConfig: () => ({ cutoffHours: 24, timezone: 'UTC' }) },
         '../services/sharepoint': {
             findByTitle: async () => null,
             createItem: async () => ({}),
             claimStandupSession: async fields => ({ id: fields.Title, fields }),
+            claimStandupResponse: async fields => ({ created: true, item: { id: 'response', fields } }),
+            findByField: async () => [], updateItem: async () => {},
         },
         '../services/jira': { getJiraClient: () => ({
-            getActiveSprint: async () => ({ id: 778901, name: 'Offline sprint' }),
+            getActiveSprint: async () => ({ id: sprintId, name: 'Offline sprint' }),
             searchSprintIssues: async () => [{ key: 'SCRUM-6', assignee: { accountId: 'acc-alex' } }],
             getSprintSubtasks: async () => [],
+            addComment: async () => {},
         }) },
         '../services/team-roster': {
             upsertConversationReference: async () => { bound = true; },
@@ -227,13 +249,43 @@ test('mock standup sends directly to the Playground caller without proactive cre
             isReachable: () => true,
         },
         '../services/proactive': { sendProactive: async () => { throw new Error('No bot credentials in mock quick start'); } },
-        '../cards/standup-request.card': { buildStandupRequestCard: value => value },
-        '../cards/standup-summary.card': {},
+        '../cards/standup-request.card': {
+            buildStandupRequestCard: value => ({ contentType: 'application/vnd.microsoft.card.adaptive', content: { ...value, kind: 'request' } }),
+            buildStandupSubmittedCard: value => ({ contentType: 'application/vnd.microsoft.card.adaptive', content: { ...value, kind: 'submitted' } }),
+        },
+        '../cards/standup-summary.card': {
+            buildStandupSummaryCard: value => ({ contentType: 'application/vnd.microsoft.card.adaptive', content: { ...value, kind: 'summary' } }),
+        },
+        './reconcile': { reconcileAfterStandup: async () => ({ autoApplied: [], needsConfirm: [], errors: [], approvalDelivered: false }) },
+        './chase': { chaseAfterStandup: async () => {} },
     }, async standup => {
-        const result = await standup.triggerStandup({ source: 'command', turnContext: context });
-        assert.equal(result.sentTo, 1);
-        assert.equal(activities[0].attachments[0].assigneeAadId, member.AadObjectId);
-        assert.equal(activities[0].attachments[0].items[0].key, 'SCRUM-6');
-        sessions.removeSession(result.standupId);
+        for (const mode of ['submit', 'cutoff']) {
+            let result;
+            await runTurn(undefined, async context => {
+                result = await standup.triggerStandup({ source: 'command', turnContext: context });
+            });
+            assert.equal(result.sentTo, 1);
+            const session = sessions.getSession(result.standupId);
+            try {
+                if (mode === 'submit') {
+                    await runTurn({
+                        standupId: result.standupId, assigneeAadId: member.AadObjectId,
+                        'update_SCRUM-6': 'Working on the fix',
+                    }, context => standup.handleStandupSubmit(context));
+                    await sessions.waitForSessionSubmissions(session);
+                    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+                    assert.ok(activities.some(activity => activity.attachments?.[0]?.content.kind === 'submitted'));
+                } else {
+                    t.mock.timers.tick(24 * 3600_000);
+                    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+                }
+                assert.equal(session.state, 'summarized', mode);
+                assert.ok(activities.some(activity => activity.attachments?.[0]?.content.kind === 'summary'), mode);
+            } finally {
+                sessions.removeSession(result.standupId);
+                activities.length = 0;
+                sprintId++;
+            }
+        }
     });
 });

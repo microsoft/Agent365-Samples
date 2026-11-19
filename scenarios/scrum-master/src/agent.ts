@@ -62,8 +62,9 @@ export class MyAgent extends AgentApplication<TurnState> {
   async handleAgentMessageActivity(turnContext: TurnContext, state: TurnState): Promise<void> {
     const value = turnContext.activity.value as { action?: string } | undefined;
     if (value?.action?.startsWith('standup.')) {
+      const preparationContext = new TurnContext(turnContext.adapter, turnContext.activity, turnContext.identity);
       setImmediate(() => {
-        this.prepareTurn(turnContext, true).catch(error =>
+        this.prepareTurn(preparationContext, true).catch(error =>
           console.warn('[SMA] Background standup turn preparation failed:', (error as Error).message));
       });
     } else {

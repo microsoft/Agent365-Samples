@@ -39,6 +39,10 @@ const RX_E2E = /\be2e\b|end.?to.?end|integration test|playwright|regression test
 const RX_PROD_DEPLOY = /production|prod deploy|uat|release/i;
 const RX_TAG_PREFIX = /^\s*\[([^\]]+)\]\s*/; // strip leading [BE] / [FE] / [QA] etc.
 
+function isDone(issue: JiraIssue): boolean {
+    return issue.statusCategory != null ? issue.statusCategory === 'done' : issue.status === 'Done';
+}
+
 function cleanSummary(s: string): string {
     return s.replace(RX_TAG_PREFIX, '').trim();
 }
@@ -81,15 +85,15 @@ export function buildSprintReportMarkdown(opts: {
     const end = sprint.endDate ? DateTime.fromISO(sprint.endDate).setZone(tz).toFormat('dd LLL yyyy') : '—';
 
     // Slice work by outcome.
-    const doneStories = stories.filter(i => i.issueType === 'Story' && i.status === 'Done');
-    const missedStories = stories.filter(i => ['Story', 'Task'].includes(i.issueType) && i.status !== 'Done');
-    const doneBugs = stories.filter(i => i.issueType === 'Bug' && i.status === 'Done');
-    const openBugs = stories.filter(i => i.issueType === 'Bug' && i.status !== 'Done');
+    const doneStories = stories.filter(i => i.issueType === 'Story' && isDone(i));
+    const missedStories = stories.filter(i => ['Story', 'Task'].includes(i.issueType) && !isDone(i));
+    const doneBugs = stories.filter(i => i.issueType === 'Bug' && isDone(i));
+    const openBugs = stories.filter(i => i.issueType === 'Bug' && !isDone(i));
 
     const allTasks = Array.from(new Map(
         [...stories.filter(i => i.issueType === 'Task'), ...subtasks].map(i => [i.key, i]),
     ).values());
-    const allTasksDone = allTasks.filter(i => i.status === 'Done');
+    const allTasksDone = allTasks.filter(isDone);
     const allTasksTotal = allTasks.length;
 
     const deploymentTasks = allTasksDone.filter(t => RX_DEPLOYMENT.test(t.summary));
@@ -360,14 +364,14 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
         }
     }
 
-    const doneStories = stories.filter(i => i.issueType === 'Story' && i.status === 'Done').length;
+    const doneStories = stories.filter(i => i.issueType === 'Story' && isDone(i)).length;
     await updateItem<{ State: string; DeliveredUtc?: string }>('sprintReportsDelivery', claimId, delivered
         ? { State: 'sent', DeliveredUtc: new Date().toISOString() }
         : { State: 'failed' });
     const allTasks = Array.from(new Map([...stories.filter(i => i.issueType === 'Task'), ...subtasks].map(i => [i.key, i])).values());
-    const tasksDone = allTasks.filter(i => i.status === 'Done').length;
-    const doneBugs = stories.filter(i => i.issueType === 'Bug' && i.status === 'Done').length;
-    const deployments = allTasks.filter(t => t.status === 'Done' && RX_DEPLOYMENT.test(t.summary)).length;
+    const tasksDone = allTasks.filter(isDone).length;
+    const doneBugs = stories.filter(i => i.issueType === 'Bug' && isDone(i)).length;
+    const deployments = allTasks.filter(t => isDone(t) && RX_DEPLOYMENT.test(t.summary)).length;
 
     const error = delivered ? undefined : deliveryErrors.join('; ') || 'No Teams channel or SM destination is configured.';
     return {

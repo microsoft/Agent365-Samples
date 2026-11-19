@@ -62,6 +62,8 @@ interface MeetingProposal {
     approverAadId: string;
     expiresAt: number;
     slots: Set<string>;
+    attendees: Attendee[];
+    helper: HelperMatch | null;
 }
 
 const meetingProposals = new Map<string, MeetingProposal>();
@@ -292,32 +294,8 @@ async function bookMeetingAsync(
         });
         return;
     }
-    const owner = await getMemberByAadId(b.OwnerAadId);
-    const reporter = await getMemberByAadId(b.ReporterAadId);
-
-    // Attendees: include the SM as an explicit attendee too, since the event is now
-    // organised by the agent itself (mcp_CalendarTools → agent's mailbox). Dedup by
-    // email inside createUnblockMeeting.
-    const attendees: Attendee[] = [];
-    if (owner?.Email) attendees.push({ email: owner.Email, displayName: owner.Title });
-    if (reporter?.Email) attendees.push({ email: reporter.Email, displayName: reporter.Title });
-    if (sm?.Email) attendees.push({ email: sm.Email, displayName: sm.Title });
-
-    // Subject-matter helper — look up someone in the org who can actually help
-    // resolve the blocker (e.g. an IT admin for a "PowerBI service account" ask).
-    // Falls back to `null` when nothing matches, in which case we book the meeting
-    // with just owner + reporter + SM (previous behaviour).
-    const helper = await findHelperForBlocker(b.BlockerText).catch(err => {
-        console.warn('[chase] helper match failed:', (err as Error).message);
-        return null as HelperMatch | null;
-    });
-    if (helper) {
-        attendees.push({ email: helper.email, displayName: helper.displayName });
-        console.log(
-            `[chase] Helper for ${issueKey}: ${helper.displayName} <${helper.email}> — ` +
-            `topic="${helper.topic}" via ${helper.matchedBy} (${helper.reason})`,
-        );
-    }
+    // Book only the recipients whose availability and identities were shown.
+    const { attendees, helper } = proposal;
 
     if (!isFutureSlot(startIso, endIso)) {
         await sendProactive(ref, async ctx => {
@@ -377,18 +355,9 @@ async function bookMeetingAsync(
             if (meetingRecorded) throw e; // A failed confirmation must not undo the booking.
             console.error('[chase] createUnblockMeeting failed:', (e as Error).message);
             const msg = (e as Error).message;
-            if (msg.startsWith('CALENDAR_VERIFY_FAILED')) {
-                await updateBlockerState(row.id, 'booked');
-                await ctx.sendActivity(
-                    `⚠️ Calendar tool returned a garbled response for **${issueKey}**. ` +
-                    `The meeting was most likely created — please check Outlook to confirm. ` +
-                    `Blocker marked as booked so future flows don't re-trigger.`,
-                );
-            } else {
-                await ctx.sendActivity(
-                    `Booking could not be confirmed: ${msg}. Check Outlook before retrying; the booking claim is retained to prevent duplicate invitations.`,
-                );
-            }
+            await ctx.sendActivity(
+                `Booking could not be confirmed: ${msg}. Check Outlook before retrying; the booking claim is retained to prevent duplicate invitations.`,
+            );
         }
     }).finally(async () => {
         if (!calendarAttempted) await claimItemState('blockers', row.id, 'booking', 'open');
@@ -431,15 +400,13 @@ async function proposeSlotsAsync(
     const owner = await getMemberByAadId(b.OwnerAadId);
     const reporter = await getMemberByAadId(b.ReporterAadId);
 
-    // Build attendee list (deduped later inside findUnblockSlots for display too).
+    // Include the SM explicitly because the agent owns the event.
     const attendees: Attendee[] = [];
     if (owner?.Email) attendees.push({ email: owner.Email, displayName: owner.Title });
     if (reporter?.Email) attendees.push({ email: reporter.Email, displayName: reporter.Title });
     if (sm?.Email) attendees.push({ email: sm.Email, displayName: sm.Title });
 
-    // Subject-matter helper — see bookMeetingAsync for the rationale. When a match
-    // exists we surface the helper on the slot-picker card too, so the SM has a
-    // chance to sanity-check who the agent has decided to invite.
+    // Resolve the helper once, so approval cannot silently change recipients.
     const helper = await findHelperForBlocker(b.BlockerText).catch(err => {
         console.warn('[chase] helper match failed:', (err as Error).message);
         return null as HelperMatch | null;
@@ -451,6 +418,10 @@ async function proposeSlotsAsync(
             `topic="${helper.topic}" via ${helper.matchedBy}`,
         );
     }
+    const uniqueAttendees = Array.from(new Map(attendees
+        .filter(attendee => attendee.email.trim())
+        .map(attendee => [attendee.email.trim().toLowerCase(),
+            { ...attendee, email: attendee.email.trim() }] as const)).values());
 
     const durationMinutes = 30;
     // Do the calendar lookup + card send inside one proactive turn for MCP auth.
@@ -462,7 +433,7 @@ async function proposeSlotsAsync(
         };
         let slots;
         try {
-            slots = await findUnblockSlots(cc, attendees, durationMinutes, getScheduleConfig().timezone);
+            slots = await findUnblockSlots(cc, uniqueAttendees, durationMinutes, getScheduleConfig().timezone);
         } catch (error) {
             await ctx.sendActivity('The calendar availability lookup failed. No meeting was booked. Please retry proposing slots.');
             throw error;
@@ -474,12 +445,7 @@ async function proposeSlotsAsync(
             return;
         }
 
-        const attendeeNames = [
-            owner?.Title ?? b.OwnerAadId,
-            reporter?.Title ?? b.ReporterAadId,
-            sm?.Title ?? 'Scrum Master',
-        ];
-        if (helper) attendeeNames.push(helper.displayName);
+        const attendeeNames = uniqueAttendees.map(attendee => attendee.displayName || attendee.email);
 
         const proposalId = randomUUID();
         pruneMeetingProposals();
@@ -487,6 +453,8 @@ async function proposeSlotsAsync(
             blockerId, issueKey, approverAadId: smAadId,
             expiresAt: Date.now() + 30 * 60_000,
             slots: new Set(allowedSlots.map(slot => `${slot.startIso}|${slot.endIso}`)),
+            attendees: uniqueAttendees,
+            helper,
         });
         const card = buildMeetingProposeCard({
             proposalId,

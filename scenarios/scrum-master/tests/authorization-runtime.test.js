@@ -393,23 +393,23 @@ test('empty availability and lookup failures notify the SM without offering book
     });
 });
 
-test('meeting slots must remain future-dated through submission, roster lookup, claim and proactive delivery', async t => {
+test('meeting slots must remain future-dated through submission, blocker lookup, claim and proactive delivery', async t => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T10:00:00Z') });
     await withAuthorization(async (authorization, members) => {
-        for (const elapsedAt of ['submit', 'roster', 'claim', 'delivery', 'never']) {
+        for (const elapsedAt of ['submit', 'blocker', 'claim', 'delivery', 'never']) {
             let state = 'open', armed = false, claims = 0, invitations = 0, slot, proposalId;
             const messages = [];
             await withModule('../src/handlers/chase.ts', {
                 '../services/authorization': authorization,
                 '../services/jira': {},
-                '../services/team-roster': { getMemberByAadId: async () => {
-                    if (armed && elapsedAt === 'roster') t.mock.timers.tick(10 * 60_000);
-                    return members[1];
-                } },
+                '../services/team-roster': { getMemberByAadId: async () => members[1] },
                 '../services/sharepoint': {
-                    findByField: async () => [{ id: 'blocker-1', fields: {
-                        Title: 'TEAM-1', State: state, OwnerAadId: 'dev', ReporterAadId: 'dev',
-                    } }],
+                    findByField: async () => {
+                        if (armed && elapsedAt === 'blocker') t.mock.timers.tick(10 * 60_000);
+                        return [{ id: 'blocker-1', fields: {
+                            Title: 'TEAM-1', State: state, OwnerAadId: 'dev', ReporterAadId: 'dev',
+                        } }];
+                    },
                     claimItemState: async (_key, _id, expected, next) => {
                         assert.equal(state, expected);
                         state = next;

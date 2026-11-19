@@ -26,6 +26,7 @@ function agentStubs(overrides = {}) {
     return {
         dotenv: { configDotenv() {} },
         '@microsoft/agents-hosting': {
+            TurnContext: require('@microsoft/agents-hosting').TurnContext,
             AgentApplication: class {
                 authorization = {};
                 onAgentNotification() {}
@@ -52,6 +53,8 @@ function agentStubs(overrides = {}) {
 }
 
 test('standup entry acknowledges without waiting for token warmup or conversation-reference Graph work', async () => {
+    const { CloudAdapter, TurnContext } = require('@microsoft/agents-hosting');
+    const { Activity } = require('@microsoft/agents-activity');
     const sessions = require('../src/services/session-store');
     const standupFilename = require.resolve('../src/handlers/standup.ts');
     const originalStandup = require.cache[standupFilename];
@@ -87,35 +90,45 @@ test('standup entry acknowledges without waiting for token warmup or conversatio
                 './client': {},
                 './handlers/standup': standup,
                 './observability': {
-                    ensureObservabilityToken: async () => {
+                    ensureObservabilityToken: async context => {
+                        assert.equal(context.activity.from.aadObjectId, 'dev');
                         tokenCalls++;
                         if (blocked === 'tokens') { entered(); await pending; }
                     },
                     runWithTurnBaggage: async (_context, work) => { baggages++; return work(); },
                 },
-                './services/team-roster': { upsertConversationReference: async () => {
+                './services/team-roster': { upsertConversationReference: async context => {
+                    assert.equal(context.activity.from.aadObjectId, 'dev');
                     referenceWrites++;
                     if (blocked === 'reference') { entered(); await pending; }
                 } },
             }), async ({ MyAgent }) => {
                 const agent = new MyAgent();
                 agent.preloadObservabilityToken = async () => {};
-                const context = {
-                    activity: {
+                const adapter = new CloudAdapter({});
+                adapter.sendActivities = async (_context, activities) => {
+                    messages.push(...activities.map(activity => activity.text));
+                    return activities.map(() => ({ id: 'offline' }));
+                };
+                const context = new TurnContext(adapter, Activity.fromObject({
+                        type: 'message', channelId: 'emulator', serviceUrl: 'http://localhost:5000',
+                        conversation: { id: 'dm' }, recipient: { id: 'bot' },
                         from: { aadObjectId: 'dev' },
                         value: { action: 'standup.submit', standupId: session.standupId,
                             assigneeAadId: 'dev', 'update_TEAM-1': 'Working' },
-                        getConversationReference: () => ({ conversation: { id: 'dm' } }),
-                    },
-                    sendActivity: async message => { messages.push(message); },
-                };
-                const invoke = agent.handleAgentMessageActivity(context, {});
+                }), {});
+                let originalContext;
+                const invoke = adapter.runMiddleware(context, ctx => {
+                    originalContext = ctx;
+                    return agent.handleAgentMessageActivity(ctx, {});
+                });
                 const firstTurn = await Promise.race([
                     invoke.then(() => 'returned'),
                     new Promise(resolve => setImmediate(() => resolve('blocked'))),
                 ]);
                 try {
                     assert.equal(firstTurn, 'returned', `invoke waited for ${blocked}`);
+                    assert.throws(() => originalContext.activity, /revoked/);
                     assert.deepEqual(messages, ['Recording your standup response…']);
                     assert.equal(baggages, 1);
                     await started;

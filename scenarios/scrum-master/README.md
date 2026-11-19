@@ -28,7 +28,7 @@ An autonomous **Scrum Master** built on the [Microsoft Agent 365 SDK](https://gi
 Seven capabilities, each a handler under [`src/handlers/`](src/handlers). Live mode uses proactive DMs, SharePoint records, and grounded Jira tools. Standup aggregation and daily deduplication are process-local; they do not survive restart or coordinate replicas.
 
 1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary card posted to the configured channel. See [`handlers/standup.ts`](src/handlers/standup.ts).
-2. **Board reconciliation** — A deterministic phrase classifier reads each update and auto-applies safe forward transitions using current Jira state, or DMs the Scrum Master an approval card for inferred skips/backwards moves. Completion requires an explicit whole-statement assertion; negative, partial, conditional or ambiguous completion prose leaves Jira unchanged. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
+2. **Board reconciliation** — A deterministic phrase classifier reads each update and auto-applies safe forward transitions using current Jira state, or DMs the Scrum Master an approval card for inferred skips/backwards moves. Every automatic target requires an affirmative status assertion; questions, plans, conditional statements and ambiguous prose leave Jira unchanged. Completion additionally uses a finite whole-statement grammar. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
 3. **Blocker chase** — When someone flags a blocker, the agent matches a subject-matter expert from the helper roster, calls the MCP Calendar tool for open slots, and books an unblock meeting on its own mailbox with the SM + owner + reporter as attendees. See [`handlers/chase.ts`](src/handlers/chase.ts).
 4. **Sprint risk warn** — Nightly check: if the sprint is past the halfway mark and too many points are still in "To Do", DMs the SM with a risk assessment. See [`handlers/warn.ts`](src/handlers/warn.ts).
 5. **Grounded Q&A** — Free-text questions ("what's the status of Task-14?", "latest update on Task-6?") go to a scenario-specific OpenAI Agent whose tools read only the configured Jira project. Rolling history is isolated by caller and conversation, so follow-ups stay within the same audience. See [`handlers/answer.ts`](src/handlers/answer.ts).
@@ -88,6 +88,9 @@ npm run test-tool     # opens the Agents Playground
 In a personal Playground conversation, DM the agent `/standup`. The first caller is bound to the mock Alex (Scrum Master) roster entry and receives Alex's tasks. Other mock assignees are unreachable until they interact in their own conversations; this is not a four-member delivery proof. Fill in an update and click **Submit**. The summary waits for expected responses or the cutoff. Then try:
 
 Mock standups require that initiating Playground turn. Cron and HTTP triggers without a turn context explicitly skip before creating a daily session; they never fall through to the live proactive adapter.
+Deferred submitted cards and cutoff summaries capture the anonymous adapter,
+identity and conversation reference, then continue with a fresh SDK turn context.
+They do not retain the completed Playground turn's revoked context.
 
 - `What's the status of Task-1?` — grounded Q&A over the mock board (requires LLM credentials)
 - Submit an update first, then ask for that task's latest comments — the mock starts without standup comments or seeded blockers
@@ -349,7 +352,7 @@ To reset Jira sprint issues, use the Atlassian UI or `POST /rest/agile/1.0/sprin
 | `Multiple cached Microsoft accounts found` during setup or runtime. | More than one account is in the delegated MSAL cache; Graph refuses to choose one implicitly, even after a successful device-code sign-in. | Stop the agent, remove `.mstoken-cache.json` from the sample directory, then run `npm run setup:sharepoint` with the intended Microsoft account and restart. |
 | Jira REST calls 401 during standup summarisation. | `JIRA_API_TOKEN` was revoked or `JIRA_EMAIL` is wrong. | Recreate the token in Atlassian Account → Security → API tokens; make sure `JIRA_EMAIL` matches the account the token belongs to. |
 | Adaptive Card submit hangs, then Teams says *"Something went wrong"*. | Handler exceeded the ~15 s Invoke SLA. | Standup submits send a recording acknowledgement before deferring Graph work; a submitted card follows only after recording succeeds. Other handlers may still perform inline authorization/lookups. There is no fixed acknowledgement latency guarantee. See [`docs/design.md#9-concurrency-idempotency-and-dedup`](docs/design.md#9-concurrency-idempotency-and-dedup). |
-| MCP calendar tool call returns `-32001 Session not found`. | The operation's MCP session was lost. | Calendar operations register fresh MCP wrappers and retry session loss once, then close their own servers on success or failure. Availability and booking do not share transports. Persistent failures propagate; verify the calendar outcome before retrying an uncertain booking. |
+| MCP calendar tool call returns `-32001 Session not found`. | The operation's MCP session was lost. | Read-only availability retries session loss once. Booking never replays creation, because an event may already exist. Both operations close their owned servers. Verify Outlook and invitees before recovering an uncertain booking. |
 | `Cannot find module '../services/xxx'` after `git pull`. | ts-node cached the old module tree. | `Ctrl+C` the dev server and restart. If persistent, `rm -rf dist && npm run build`. |
 | Duplicate standup summary cards. | Both local `node-cron` and the Azure Function timer fired the same day. | Set `LOCAL_CRON=false` once the Function is deployed. |
 | Email notification returns `Unable to process your email`. | The agent's delegated Graph `Mail.Read` scope is missing or the notified message cannot be read. | Grant `Mail.Read` to the blueprint's agentic connection and verify access to the agent mailbox. Email retrieval does not use the SharePoint user's cache. Drafting uses a tool-less agent, not the generic MCP assistant. |
@@ -402,6 +405,9 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   output is malformed). Check Outlook, event details and invitees before
   recovery. Record an existing event as booked; reset to `open` for a new
   proposal only after verifying that no event/invitations were created.
+  Booking uses the participant snapshot whose availability was approved; it
+  does not pick a different helper after confirmation. The returned attendee
+  count must match the deduplicated requested attendees before success is confirmed.
   Repeating a booked card returns an Outlook link built from the stored event ID,
   without creating another event; when no ID was recorded, inspect Outlook.
 - **Standup finalization:** a failed finalization releases the in-memory session
@@ -422,6 +428,9 @@ Minimum runtime configuration:
 
 - Azure App Service (Linux, Node 22 LTS). Set `WEBSITES_PORT=3978`.
 - Configure application settings explicitly; do **not** copy the local `.env` blindly. Required cloud overrides: `NODE_ENV=production`, `HOST=0.0.0.0`, and a nonempty random `INTERNAL_TRIGGER_TOKEN`. Supply live Jira, Graph, LLM and hosting/auth connection settings securely; never commit secrets.
+- Every environment other than explicit `NODE_ENV=development` requires a
+  nonempty hosting `connections__service_connection__settings__clientId` at
+  startup, including staging, test and an unset `NODE_ENV`.
 - Health check path: `/api/health`.
 - Always-On: enabled for the long-lived agent. Use the sibling [`azure-functions/`](azure-functions) package for timer triggers and set `LOCAL_CRON=false` on the agent so only one scheduler is active.
 - `.mstoken-cache.json` — for local dev only. In production, replace `graph.ts`'s file-backed MSAL cache with an Azure Key Vault-backed one (out of scope for this sample).

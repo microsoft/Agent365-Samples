@@ -20,9 +20,12 @@ response. The banner itself remains diagnostic and non-fatal.
   value, including unset or `test`, requires a nonempty token at startup.
 - `POST /api/messages` sits **after** `authorizeJWT(authConfig)`. Only
   `NODE_ENV=development` uses the empty development auth configuration.
-  Other environments load the SDK connection settings.
+  Other environments load the SDK connection settings and fail startup before
+  loading the agent if the hosting client ID is missing or blank, including
+  staging, test and an unset `NODE_ENV`.
 - `CloudAdapter.process` converts the request into a turn and calls
-  `agentApplication.run(context)`. Request JWT validation and the agent's
+  `agentApplication.run(context)`. The route returns the processing promise so
+  Express can complete requests when activity conversion rejects. Request JWT validation and the agent's
   downstream token acquisition are separate stages.
 
 The listener uses `PORT` (default `3978`) and `HOST`. Cloud hosting must set
@@ -69,10 +72,10 @@ toggles. The handler requires the Scrum Master's AAD object id and uses a
 server-side pending proposal with a 24-hour lifetime; caller-supplied issue
 transitions are not authoritative. Apply/skip consumes the proposal.
 Expired, replayed or post-restart submissions fail closed and need a new
-proposal. The deterministic classifier requires a whole-statement completion
-assertion such as `Done` or `I have completed it`; arbitrary prose with `done`
-is not sufficient. Negative, partial, conditional or ambiguous completion text
-remains unchanged. Safe forward steps use the current Jira status, not the
+proposal. Every automatic target requires an affirmative status assertion;
+questions and conditional plans remain unchanged. Completion additionally
+requires a finite whole-statement assertion such as `Done` or `I have completed it`;
+arbitrary prose with `done` is not sufficient. Safe forward steps use the current Jira status, not the
 cached standup snapshot.
 Successfully read statuses also refresh that snapshot when reconciliation is a
 no-op, so the summary can display a change made during the response window.
@@ -86,6 +89,9 @@ personal Playground caller becomes the mock Alex (SM) persona and receives
 Alex's issue card; other mock assignees are separate identities, not silently
 merged into the caller. Live delivery requires real roster mappings and prior
 conversations.
+Deferred mock notifications and cutoff summaries capture the adapter, anonymous
+identity and conversation reference while the turn is valid, then continue the
+conversation with fresh SDK contexts after the originating turn has completed.
 
 `/standup retry <sprintId>#<yyyy-mm-dd>` targets a run retained in the current
 process, even after midnight or the sprint ends. It retries an eligible failed
@@ -153,8 +159,12 @@ event creation through the configured Calendar server.
   before attempting Calendar and records `booked` afterwards. Uncertain
   results retain a duplicate-prevention claim; inspect Outlook before
   manually recovering it, rather than automatically retrying invitations.
-- `withCalendarAgent()` owns registration, connection and execution and retries
-  once on `Session not found` / `-32001`. Each availability or booking call
+- `withCalendarAgent()` owns registration, connection and execution. Only
+  read-only availability retries once on `Session not found` / `-32001`;
+  booking never replays the creation prompt after an uncertain failure.
+  Booking uses the proposal's availability-checked participant snapshot and
+  requires the returned attendee count to match all deduplicated invitees.
+  Each availability or booking call
   receives fresh MCP wrappers and closes them in `finally`, including on
   registration or connection failure. Cleanup failures are logged without
   masking the operation's outcome.

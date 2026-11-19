@@ -80,6 +80,8 @@ const RULES: Array<{ target: Exclude<TargetStatus, 'unchanged'>; patterns: RegEx
 
 const EXPLICIT_COMPLETION = /^(?:(?:i|we)\s+(?:have\s+)?|(?:i\s+am|we\s+are|i['’]m|we['’]re|it['’]s)\s+|(?:it|this|that|the\s+(?:task|issue|work|change|pr))\s+(?:is|was|has\s+been)\s+)?(?:done|completed|finished|merged|shipped|deployed|closed)(?:\s+(?:it|this|that|the\s+(?:task|issue|work|change|pr)))?[.!]?$/i;
 const EXPLICIT_READY_TO_CLOSE = /^(?:(?:it|this|the\s+(?:task|issue|work|change|pr))\s+is\s+)?ready to close[.!]?$/i;
+const EXPLICIT_REVIEW = /^(?:(?:the\s+)?(?:pr|pull request)\s+(?:is\s+)?up|(?:the\s+)?pull request\s+is\s+open|(?:(?:it|this|the\s+(?:task|issue|work|change|pr))\s+is\s+)?in review|(?:(?:i\s+am|we\s+are|i['’]m|we['’]re)\s+)?(?:reviewing|waiting (?:for|on) review)(?:\s+[^?!.]+)?)[.!]?$/i;
+const EXPLICIT_PROGRESS = /^(?:(?:(?:i|we)\s+(?:have\s+)?)?(?:started|began|kicked off|picked up)(?:\s+[^?!.]+)?|(?:(?:i\s+am|we\s+are|i['’]m|we['’]re)\s+)?(?:starting|beginning|working on)(?:\s+[^?!.]+)?|(?:i\s+am|we\s+are|i['’]m|we['’]re|now)\s+(?:implementing|building|coding|writing)(?:\s+[^?!.]+)?|(?:(?:it|this|the\s+(?:task|issue|work|change))\s+is\s+)?in progress)[.!]?$/i;
 
 export function classifyUpdateText(text: string, hasBlocker: boolean): TargetStatus {
     // Blocker flag freezes any inferred movement — status should reflect reality,
@@ -87,6 +89,9 @@ export function classifyUpdateText(text: string, hasBlocker: boolean): TargetSta
     if (hasBlocker) return 'unchanged';
     const t = (text ?? '').trim();
     if (!t) return 'unchanged';
+    if (/\?|\b(if|unless|should|would|could|may|might|maybe|whether|when|once|can|please|intend|want|need)\b/i.test(t)) {
+        return 'unchanged';
+    }
     if (/\b(not|nothing|none|nobody|neither|nor|never|no|cannot|can't|can’t|couldn't|couldn’t|isn't|isn’t|aren't|aren’t|wasn't|wasn’t|weren't|weren’t|haven't|haven’t|hasn't|hasn’t|didn't|didn’t|don't|don’t|doesn't|doesn’t|won't|won’t|will|tomorrow)\b|\b(going to|plan to|planning to|hope to|expect to)\b/i.test(t)) {
         return 'unchanged';
     }
@@ -98,6 +103,8 @@ export function classifyUpdateText(text: string, hasBlocker: boolean): TargetSta
     if (target === 'Done' && !EXPLICIT_COMPLETION.test(t) && !EXPLICIT_READY_TO_CLOSE.test(t)) {
         return 'unchanged';
     }
+    if (target === 'In Review' && !EXPLICIT_REVIEW.test(t)) return 'unchanged';
+    if (target === 'In Progress' && !EXPLICIT_PROGRESS.test(t)) return 'unchanged';
     return target;
 }
 

@@ -104,17 +104,27 @@ interface StandupTriggerResult {
 }
 
 let pendingTrigger: Promise<StandupTriggerResult> | undefined;
-const mockTurnContexts = new Map<string, TurnContext>();
+function captureMockDelivery(context: TurnContext) {
+    const adapter = context.adapter;
+    const identity = context.identity;
+    const reference = context.activity.getConversationReference();
+    return {
+        reference,
+        send: (logic: (ctx: TurnContext) => Promise<void>) =>
+            adapter.continueConversation(identity, reference, logic),
+    };
+}
+const mockDeliveries = new Map<string, ReturnType<typeof captureMockDelivery>>();
 
 async function deliverStandup(
     standupId: string,
     reference: NonNullable<TeamMember['conversationReference']>,
     logic: (context: TurnContext) => Promise<void>,
 ): Promise<{ ok: boolean; error?: string }> {
-    const context = getJiraMode() === 'mock' ? mockTurnContexts.get(standupId) : undefined;
-    if (context && reference.conversation?.id === context.activity.conversation?.id) {
+    const delivery = getJiraMode() === 'mock' ? mockDeliveries.get(standupId) : undefined;
+    if (delivery && reference.conversation?.id === delivery.reference.conversation?.id) {
         try {
-            await logic(context);
+            await delivery.send(logic);
             return { ok: true };
         } catch (error) {
             const message = (error as Error).message;
@@ -281,7 +291,7 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
         responses: new Map(),
     };
     upsertSession(session);
-    if (getJiraMode() === 'mock' && opts.turnContext) mockTurnContexts.set(standupId, opts.turnContext);
+    if (getJiraMode() === 'mock' && opts.turnContext) mockDeliveries.set(standupId, captureMockDelivery(opts.turnContext));
 
     // Keep multi-day cutoffs within Node's supported timer range.
     const msUntilCutoff = cutoffUtc.getTime() - nowUtc.getTime();
@@ -435,9 +445,10 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
         return;
     }
     const reference = context.activity.getConversationReference();
+    const mockDelivery = getJiraMode() === 'mock' ? captureMockDelivery(context) : undefined;
     const reply = async (logic: (ctx: TurnContext) => Promise<void>): Promise<void> => {
-        if (getJiraMode() === 'mock') {
-            await logic(context);
+        if (mockDelivery) {
+            await mockDelivery.send(logic);
             return;
         }
         const result = await deliverStandup(standupId, reference, logic);
@@ -757,7 +768,7 @@ async function finishStandupChase(session: StandupSession): Promise<void> {
     session.chaseState = 'complete';
     // Release heavy response data but retain today's duplicate-fan-out guard.
     completeSession(session);
-    mockTurnContexts.delete(session.standupId);
+    mockDeliveries.delete(session.standupId);
 }
 
 // --- helpers -------------------------------------------------------------

@@ -15,7 +15,7 @@ const compiled = ts.transpileModule(
     { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true } },
 ).outputText;
 
-function boot(overrides = {}, schedulerError) {
+function boot(overrides = {}, schedulerError, hostingAuth = { clientId: 'offline-client' }, agentApplication = {}) {
     const env = {
         NODE_ENV: 'production',
         INTERNAL_TRIGGER_TOKEN: 'test-placeholder',
@@ -37,12 +37,13 @@ function boot(overrides = {}, schedulerError) {
     const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
     const calls = [];
     const errors = [];
+    const routes = new Map();
     let exit;
     const stopped = new Error('test exit');
     const server = {
         use() { return this; },
         get() { return this; },
-        post() { return this; },
+        post(route, handler) { routes.set(route, handler); return this; },
         listen() { calls.push('listen'); return this; },
         on() { return this; },
     };
@@ -52,9 +53,9 @@ function boot(overrides = {}, schedulerError) {
         './util/logger': { installConsoleLogging() {} },
         './util/httpLogger': { installHttpLogging() {} },
         './startup-check': { ...startup, printStartupBanner() {} },
-        '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => ({}), authorizeJWT: () => () => {} },
+        '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => hostingAuth, authorizeJWT: () => () => {} },
         express: Object.assign(() => server, { json: () => () => {} }),
-        './agent': {},
+        './agent': { agentApplication },
         './handlers/standup': {},
         './handlers/warn': {},
         './handlers/report': {},
@@ -94,8 +95,49 @@ function boot(overrides = {}, schedulerError) {
             else process.env[key] = value;
         }
     }
-    return { exit, calls, errors };
+    return { exit, calls, errors, routes };
 }
+
+test('hosting client ID is mandatory in every non-development environment before loading the agent', () => {
+    for (const NODE_ENV of ['production', 'staging', 'test', undefined]) {
+        for (const clientId of [undefined, '', '   ']) {
+            const result = boot({ NODE_ENV }, undefined, { clientId });
+            assert.equal(result.exit, 1);
+            assert.deepEqual(result.calls, []);
+            assert.match(result.errors.join('\n'), /Hosting clientId is required/);
+        }
+    }
+    assert.equal(boot({ NODE_ENV: 'development' }, undefined, {}).exit, undefined);
+});
+
+test('messages route lets Express complete real adapter activity-validation failures', async () => {
+    const express = require('express');
+    const { CloudAdapter } = require('@microsoft/agents-hosting');
+    const adapter = new CloudAdapter({});
+    const result = boot({ NODE_ENV: 'development' }, undefined, {}, {
+        adapter, run: async () => assert.fail('Malformed activities cannot reach the agent'),
+    });
+    const app = express();
+    app.use(express.json());
+    app.post('/api/messages', result.routes.get('/api/messages'));
+    app.use((error, _req, res, _next) => {
+        assert.match(error.message, /text|string/i);
+        res.status(400).json({ error: 'Invalid activity' });
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise(resolve => server.once('listening', resolve));
+    try {
+        const response = await fetch(`http://127.0.0.1:${server.address().port}/api/messages`, {
+            method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ type: 'message', text: 42 }),
+            signal: AbortSignal.timeout(5000),
+        });
+        assert.equal(response.status, 400);
+        assert.deepEqual(await response.json(), { error: 'Invalid activity' });
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+    }
+});
 
 const live = {
     JIRA_MODE: 'live',

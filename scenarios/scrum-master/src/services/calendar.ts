@@ -72,6 +72,7 @@ async function withCalendarAgent<T>(
     instructions: string,
     outputType: z.ZodObject<any>,
     fn: (agent: Agent<any, any>) => Promise<T>,
+    retryReadOnly = false,
 ): Promise<T> {
     const agent = new Agent({
         name: 'Scrum Master — Calendar',
@@ -101,7 +102,7 @@ async function withCalendarAgent<T>(
             return await fn(agent);
         } catch (e) {
             const msg = String((e as Error)?.message ?? e);
-            if (msg.includes('Session not found') || msg.includes('-32001')) {
+            if (retryReadOnly && (msg.includes('Session not found') || msg.includes('-32001'))) {
                 console.warn('[calendar] MCP session lost — reconnecting and retrying once.');
                 await connectAll();
                 return await fn(agent);
@@ -140,7 +141,7 @@ export async function findUnblockSlots(
 ): Promise<MeetingSlot[]> {
     // Dedupe attendees (the same person may appear as owner + reporter + SM in
     // small teams / the POC — presenting the deduped list to the LLM is cleaner).
-    const uniqueEmails = Array.from(new Set(attendees.map(a => a.email.toLowerCase()).filter(Boolean)));
+    const uniqueEmails = dedupeAttendees(attendees).map(attendee => attendee.email.toLowerCase());
     const nowIso = DateTime.now().setZone('UTC').toISO();
     const laterIso = DateTime.now().setZone('UTC').plus({ hours: lookaheadHours }).toISO();
 
@@ -160,7 +161,7 @@ export async function findUnblockSlots(
         `Timezone for display labels: ${timezone}`;
 
     try {
-        const result = await withCalendarAgent(cc, instructions, SlotArraySchema, agent => run(agent, prompt));
+        const result = await withCalendarAgent(cc, instructions, SlotArraySchema, agent => run(agent, prompt), true);
         const out = SlotArraySchema.parse(result.finalOutput);
         return out.slots;
     } catch (err) {
@@ -199,8 +200,8 @@ export async function createUnblockMeeting(cc: CalendarContext, opts: {
         `2. **Turn the event into a Teams online meeting** — the calendar tool exposes flags such as \`isOnlineMeeting\` / \`onlineMeetingProvider\` (=\`teamsForBusiness\`). Set them both. If the tool has a "createOnlineMeeting" or similar sub-option, invoke it. The resulting event MUST have a Teams join link.\n` +
         `3. Use the exact subject, body (HTML allowed), start, end, and timezone from the user message. Do not paraphrase.\n` +
         `4. **The event is organised by YOU (the agent)** — the caller is an attendee, not the organiser.\n` +
-        `5. After creation, verify the event was really saved (call get / read tool if available). Return the id, the webLink, the online-meeting join URL if any, and the attendee count.\n` +
-        `6. If the tool call fails, return \`{ id: "error:<message>", webLink: "" }\`.\n` +
+        `5. After creation, verify the event was really saved (call get / read tool if available). Return the id, the webLink, the online-meeting join URL if any, and the verified attendee count. Never infer the count from the request; omit it if the saved attendees cannot be confirmed.\n` +
+        `6. If the tool call fails or its outcome is uncertain, do not repeat creation. Return \`{ id: "error:<message>", webLink: "" }\`.\n` +
         `\nDo not chit-chat, apologise, or emit commentary. Return only the structured JSON.`;
 
     const attendeeLines = uniqueAttendees.length
@@ -217,18 +218,16 @@ export async function createUnblockMeeting(cc: CalendarContext, opts: {
         `Body (HTML):\n${opts.body}`;
 
     const result = await withCalendarAgent(cc, instructions, CreatedEventSchema, agent => run(agent, prompt));
-    const out = (result as any).finalOutput as z.infer<typeof CreatedEventSchema> | undefined;
-    if (!out || !out.webLink) {
-        throw new Error(`Calendar tool returned no event link. Raw: ${JSON.stringify(out)}`);
-    }
-    // Guard against the LLM emitting rule-#6 error shape or garbage that still
-    // type-checks (e.g. webLink="onlineMeetingUrl") after the tool succeeded.
-    const looksLikeUrl = /^https?:\/\//i.test(out.webLink);
-    const idLooksLikeError = /^error\b/i.test(out.id);
-    if (!looksLikeUrl || idLooksLikeError) {
+    const parsed = CreatedEventSchema.safeParse(result?.finalOutput);
+    const out = parsed.success ? parsed.data : undefined;
+    // A saved event alone is not confirmation that invitations were attached.
+    // Any uncertain result must retain the handler's claim, not invite a replay.
+    if (!out || !out.id.trim() || /^error\b/i.test(out.id.trim()) ||
+        !/^https?:\/\//i.test(out.webLink) || uniqueAttendees.length === 0 ||
+        out.attendeeCount !== uniqueAttendees.length) {
         throw new Error(
             `CALENDAR_VERIFY_FAILED: The event may have been created — the calendar tool ` +
-            `returned an invalid response shape. Please verify in Outlook. Raw: ${JSON.stringify(out)}`,
+            `did not confirm the event and all expected invitations. Please verify in Outlook.`,
         );
     }
     return {
@@ -243,10 +242,10 @@ function dedupeAttendees(attendees: Attendee[]): Attendee[] {
     const seen = new Set<string>();
     const out: Attendee[] = [];
     for (const a of attendees) {
-        const key = (a.email || '').toLowerCase();
+        const key = (a.email || '').trim().toLowerCase();
         if (!key || seen.has(key)) continue;
         seen.add(key);
-        out.push(a);
+        out.push({ ...a, email: a.email.trim() });
     }
     return out;
 }

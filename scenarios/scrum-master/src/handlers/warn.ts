@@ -10,7 +10,7 @@
  * If `progress ≥ WARN_SPRINT_PROGRESS_PCT` AND `toDoRatio ≥ WARN_TODO_PCT`,
  * emit a SprintRisks row and DM the SM a plain-text risk report.
  *
- * Falls back to item count when story points aren't populated on the issues
+ * Falls back to item count when any issue lacks valid story points
  * (common on real boards).
  */
 
@@ -56,12 +56,14 @@ export function assessSprint(sprint: JiraSprint, issues: JiraIssue[], nowUtc = n
         if (end > start) progressPct = Math.max(0, Math.min(1, (now - start) / (end - start)));
     }
 
-    const pointsTotal = issues.reduce((s, i) => s + (i.storyPoints ?? 0), 0);
-    const pointsToDo = issues.filter(i => i.status === 'To Do').reduce((s, i) => s + (i.storyPoints ?? 0), 0);
+    const hasValidEstimate = (issue: JiraIssue): boolean =>
+        typeof issue.storyPoints === 'number' && Number.isFinite(issue.storyPoints) && issue.storyPoints >= 0;
+    const pointsTotal = issues.reduce((s, i) => s + (hasValidEstimate(i) ? i.storyPoints! : 0), 0);
+    const pointsToDo = issues.filter(i => i.status === 'To Do').reduce((s, i) => s + (hasValidEstimate(i) ? i.storyPoints! : 0), 0);
     const itemsTotal = issues.length;
     const itemsToDo = issues.filter(i => i.status === 'To Do').length;
 
-    const usePoints = pointsTotal > 0;
+    const usePoints = issues.every(hasValidEstimate) && Number.isFinite(pointsTotal) && pointsTotal > 0;
     const toDoPct = usePoints
         ? (pointsTotal > 0 ? pointsToDo / pointsTotal : 0)
         : (itemsTotal > 0 ? itemsToDo / itemsTotal : 0);

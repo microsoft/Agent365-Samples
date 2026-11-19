@@ -196,10 +196,11 @@ test('calendar cleanup failures are logged without masking a completed booking o
             },
             run: async () => {
                 if (fails) throw failure;
-                return { finalOutput: { id: 'event', webLink: 'https://outlook.invalid/event' } };
+                return { finalOutput: { id: 'event', webLink: 'https://outlook.invalid/event', attendeeCount: 1 } };
             },
         });
-        const result = createUnblockMeeting({}, { subject: 'Test', body: 'Test', startIso: '', endIso: '', attendees: [], timezone: 'UTC' });
+        const result = createUnblockMeeting({}, { subject: 'Test', body: 'Test', startIso: '', endIso: '',
+            attendees: [{ email: 'owner@example.test' }], timezone: 'UTC' });
         if (fails) await assert.rejects(result, error => error === failure);
         else assert.equal((await result).id, 'event');
     }
@@ -253,10 +254,10 @@ test('real A365 registration and Agents transports delete distinct calendar and 
         answer = { slots: [] };
         assert.deepEqual(await calendar.findUnblockSlots({}, [], 30, 'UTC'), []);
         assert.equal(active.size, 0, 'Availability must release its session before returning');
-        answer = { id: 'event', webLink: 'https://outlook.invalid/event' };
+        answer = { id: 'event', webLink: 'https://outlook.invalid/event', attendeeCount: 1 };
         assert.equal((await calendar.createUnblockMeeting({}, {
             subject: 'Offline', body: 'Test', startIso: '2030-01-01T10:00:00Z',
-            endIso: '2030-01-01T10:30:00Z', attendees: [], timezone: 'UTC',
+            endIso: '2030-01-01T10:30:00Z', attendees: [{ email: 'owner@example.test' }], timezone: 'UTC',
         })).id, 'event');
         assert.notEqual(wrappers[0], wrappers[1]);
         assert.equal(created, 2);

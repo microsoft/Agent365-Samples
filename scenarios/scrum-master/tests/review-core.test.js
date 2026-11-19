@@ -51,6 +51,40 @@ test('reconciliation rejects unsafe inference and preserves clear single-status 
     assert.equal(isSafeForwardTransition('To Do', 'Done'), false);
 });
 
+test('all automatic targets require affirmative assertions, not questions or conditional plans', async () => {
+    let writes = 0, reads = 0;
+    const reconcile = loadWithMocks('../src/handlers/reconcile.ts', {
+        '../services/jira': { getJiraClient: () => ({
+            getIssue: async () => { reads++; return { status: 'In Progress' }; },
+            getTransitions: async () => [{ id: 'review', toStatus: 'In Review' }],
+            transitionIssue: async () => { writes++; },
+        }) },
+        '../services/team-roster': {}, '../services/proactive': {},
+    });
+    for (const text of [
+        'Should I open a pull request?', 'Can I start working on this?', 'Working on this?',
+        'If approved, PR is up', 'I would be working on the fix', 'Maybe in review',
+        'Please mark this in review', 'Consider working on the fix', 'Do we have a pull request',
+        'I wish I had started', 'When should I begin code review?', 'Ready for review?',
+    ]) {
+        assert.equal(reconcile.classifyUpdateText(text, false), 'unchanged', text);
+        const outcome = await reconcile.runReconciliation({
+            standupId: 'assertion-test',
+            itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'In Progress' }]]]),
+            responses: new Map([['dev', { userAadId: 'dev', items: [{ issueKey: 'TEAM-1', update: text, hasBlocker: false }] }]]),
+        });
+        assert.equal(outcome.autoApplied.length, 0, text);
+    }
+    assert.equal(writes, 0);
+    assert.equal(reads, 0);
+    for (const [text, target] of [
+        ['PR is up', 'In Review'], ['The pull request is open', 'In Review'],
+        ['I am waiting for review', 'In Review'], ['In review', 'In Review'],
+        ['I started the fix', 'In Progress'], ['Working on the fix', 'In Progress'],
+        ["I'm coding the change", 'In Progress'], ['In progress', 'In Progress'], ['Done', 'Done'],
+    ]) assert.equal(reconcile.classifyUpdateText(text, false), target, text);
+});
+
 test('approval card carries only the proposal identifier and user choices', () => {
     const { buildTransitionConfirmCard } = require('../src/cards/transition-confirm.card.ts');
     const card = buildTransitionConfirmCard({
@@ -220,7 +254,7 @@ test('internal endpoints fail closed outside explicit development mode', async (
             './util/logger': { installConsoleLogging() {} },
             './util/httpLogger': { installHttpLogging() {} },
             './startup-check': { printStartupBanner() {}, validateStartupConfiguration() {} },
-            '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => ({}), authorizeJWT: () => () => {} },
+            '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => ({ clientId: 'offline-client' }), authorizeJWT: () => () => {} },
             express, './agent': {},
             './handlers/standup': { triggerStandup: async () => ({ sentTo: 1 }) },
             './handlers/warn': { runWarnCheck: async () => {

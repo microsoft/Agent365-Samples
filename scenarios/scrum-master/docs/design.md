@@ -175,8 +175,10 @@ message handlers but not code. They only touch each other through those stores.
 
 1. Teams POSTs an Activity to `/api/messages`.
 2. `authorizeJWT` validates the token except when `NODE_ENV=development`.
-   That development bypass is for local testing, not public hosting.
+   That development bypass is for local testing, not public hosting. Every
+   other environment must supply a nonempty hosting client ID before startup.
 3. `CloudAdapter.process` unpacks the activity, calls `agentApplication.run(context)`.
+   Express receives the processing promise, including activity-validation rejections.
 4. The router in [`agent.ts`](../src/agent.ts):
    - Captures the sender's `ConversationReference` into
      `SMA_TeamMembers.ConversationRef` (idempotent), so future proactive
@@ -237,6 +239,9 @@ an in-memory roster and binds the first personal Playground caller to Alex;
 it needs no SharePoint or LLM credentials for `/standup`.
 Mock triggers without an initiating turn context (cron/HTTP) skip before
 creating the daily session; mock delivery never uses live hosting credentials.
+Deferred mock replies and cutoff summaries use the originating adapter,
+anonymous identity and saved conversation reference to create fresh continuation
+contexts; the original inbound turn's revocable proxy is never retained.
 Jira Story-to-Epic relationships do not count as subtask parents: `parentKey`
 is populated only when Jira's `issuetype.subtask` is true, so inherited
 subtasks of epic-backed Stories remain eligible for standup fan-out.
@@ -252,7 +257,8 @@ cannot accept updates via a client-provided standup ID.
 Free-text updates are classified by a deterministic phrase table in
 [`handlers/reconcile.ts`](../src/handlers/reconcile.ts). Exactly one status
 candidate must match, and a blocker or negation keeps the issue unchanged.
-`Done` additionally requires a whole-statement assertion from a finite grammar,
+Every target requires an affirmative assertion rather than a question, plan or
+conditional statement. `Done` additionally requires a whole-statement assertion from a finite grammar,
 such as `Done`, `I have completed it`, `The issue is closed`, or `Ready to close`.
 Arbitrary prose containing a completion keyword is not proof: questions,
 conditional plans, partial completion and unseen negative phrasings such as
@@ -356,6 +362,13 @@ including partial registration/connection failure; it does not close the Q&A
 client's servers or reuse a previous calendar operation's transport. Cleanup
 failures are logged without masking the original error or a confirmed booking.
 Empty availability remains empty; lookup failures propagate without invented slots.
+Only read-only availability may reconnect and replay on session loss. Booking
+never replays its creation prompt: an event may already have been created before
+a later SDK iteration failed. Its server-side proposal freezes the helper and
+deduplicated participant set checked for availability. Booking reuses that
+snapshot and confirms success only when the returned attendee count matches
+the requested invitees; incomplete or uncertain results require manual Outlook
+verification while retaining the booking claim.
 
 ### 5.4 Warn (MVP 4)
 
@@ -368,7 +381,9 @@ pointsInToDo / total >= WARN_TODO_PCT               (default 0.40)
 ```
 
 If story points are missing on any issue, the check falls back to item
-counts. Every firing writes a row to `SMA_SprintRisks` (idempotency key =
+counts. Points are used only when every included issue has a valid estimate
+and their total is positive; unestimated work is never silently zeroed.
+Every firing writes a row to `SMA_SprintRisks` (idempotency key =
 `<sprintId>#<yyyy-mm-dd>`) so the same sprint can't be re-alerted the same
 day.
 
@@ -417,6 +432,8 @@ channel — no attachments, no SharePoint upload.
 Story metrics count actual Jira Stories. Executable work includes standalone
 Tasks/Bugs and subtasks, deduplicated by issue key; the presence of a subtask
 must not hide an unrelated overdue Task from the RAG table.
+The completed-task table displays due dates only; it does not claim completion
+was on time because Jira completion timestamps are not collected here.
 
 This path has no durable delivery guard. A repeated eligible invocation,
 including a retry of the nightly HTTP call after another check throws, can
@@ -424,6 +441,10 @@ post the T-2 summary again. Successful checks are not rolled back when the
 nightly route returns HTTP 500 with `ok: false`.
 
 ### 5.7 Sprint close (MVP 7)
+
+Completion metrics, returned counts and follow-up actions use Jira's `done`
+status category, so terminal names such as `Closed` are not treated as open.
+Legacy/mock issues without a category retain the exact-`Done` fallback.
 
 `handlers/report.ts` builds a management-ready markdown message
 (completed user stories, deliverables, deployments, demo highlights,

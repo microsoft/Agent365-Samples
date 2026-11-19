@@ -13,7 +13,10 @@ function fixture(handler, issues, subtasks = [], blockers = []) {
     const parentRequests = [];
     const updates = [];
     const mocks = {
-        '../config': { getScheduleConfig: () => ({ timezone: 'UTC' }) },
+        '../config': {
+            getScheduleConfig: () => ({ timezone: 'UTC' }),
+            getWarnConfig: () => ({ sprintProgressPct: 0.7, todoPct: 0.5 }),
+        },
         '../services/jira': { getJiraClient: () => ({
             getActiveSprint: async () => sprint,
             getSprint: async () => sprint,
@@ -44,7 +47,7 @@ function fixture(handler, issues, subtasks = [], blockers = []) {
     try {
         const mod = require(filename);
         return {
-            messages, parentRequests, updates,
+            messages, parentRequests, updates, assessSprint: mod.assessSprint,
             run: () => handler === 'report'
                 ? mod.runSprintCloseReport({ sprintId: 21 })
                 : mod.runSprintSummary({ force: true }),
@@ -119,4 +122,94 @@ test('close report ignores historical blockers but retains current-sprint blocke
     await current.run();
     assert.match(current.messages[0], /\| Blockers Encountered \| \*\*2\*\* \|/);
     assert.match(current.messages[0], /root-cause the top blockers/);
+});
+
+test('warning uses item counts for partially estimated sprint work', () => {
+    const { assessSprint } = fixture('warn', []);
+    const sprint = { id: 21, name: 'Sprint 21', startDate: '2020-01-01', endDate: '2020-01-11' };
+    const done = { ...issue('SMA-1', 'Story', 'Done'), storyPoints: 5 };
+    const todo = Array.from({ length: 9 }, (_, i) => issue(`SMA-${i + 2}`, 'Story', 'To Do'));
+    const result = assessSprint(sprint, [done, ...todo], new Date('2020-01-09'));
+    assert.equal(result.usePoints, false);
+    assert.equal(result.toDoPct, 0.9);
+    assert.equal(result.atRisk, true);
+    assert.match(result.reason, /90% of items still in To Do/);
+});
+
+test('warning requires finite nonnegative estimates for all issues and a positive total', () => {
+    const { assessSprint } = fixture('warn', []);
+    const sprint = { id: 21, name: 'Sprint 21' };
+    const todo = { ...issue('SMA-1', 'Story', 'To Do'), storyPoints: 3 };
+    const done = { ...issue('SMA-2', 'Story', 'Done'), storyPoints: 1 };
+    const estimated = assessSprint(sprint, [todo, done]);
+    assert.equal(estimated.usePoints, true);
+    assert.equal(estimated.toDoPct, 0.75);
+    for (const invalid of [null, undefined, NaN, Infinity, -1, '5']) {
+        const result = assessSprint(sprint, [todo, { ...done, storyPoints: invalid }]);
+        assert.equal(result.usePoints, false, String(invalid));
+        assert.equal(result.toDoPct, 0.5, String(invalid));
+    }
+    assert.equal(assessSprint(sprint, [todo, { ...done, storyPoints: 0 }]).usePoints, true);
+    const zero = assessSprint(sprint, [{ ...todo, storyPoints: 0 }, { ...done, storyPoints: 0 }]);
+    assert.equal(zero.usePoints, false);
+    assert.equal(zero.toDoPct, 0.5);
+    assert.equal(assessSprint(sprint, []).toDoPct, 0);
+});
+
+test('close report uses completion categories throughout metrics, follow-ups and returned counts', async () => {
+    const completed = (key, type, status, summary = key) => ({
+        ...issue(key, type, status), statusCategory: 'done', summary,
+    });
+    const f = fixture('report', [
+        completed('SMA-1', 'Story', 'Released'),
+        completed('SMA-2', 'Bug', 'Resolved'),
+        completed('SMA-3', 'Task', 'Closed', 'Production deployment readiness checklist'),
+        { ...issue('SMA-4', 'Story', 'Done'), statusCategory: 'indeterminate' },
+        { ...issue('SMA-5', 'Bug', 'Done'), statusCategory: 'new' },
+        { ...issue('SMA-6', 'Task', 'Done'), statusCategory: 'indeterminate', summary: 'Unfinished deployment' },
+    ], [
+        completed('SMA-7', 'Sub-task', 'Released', 'E2E regression tests'),
+        completed('SMA-8', 'Sub-task', 'Resolved', 'Accessibility checks'),
+    ]);
+    assert.deepEqual((await f.run()).counts, { stories: 1, tasksDone: 3, deployments: 1, bugs: 1 });
+    const markdown = f.messages[0];
+    assert.match(markdown, /\| User Stories Delivered \| \*\*1\*\* of 2 committed \|/);
+    assert.match(markdown, /\| Tasks Completed \| \*\*3\*\* of 4 \|/);
+    assert.match(markdown, /\| Bugs Resolved \| \*\*1\*\*/);
+    assert.match(markdown, /\| Production \/ UAT-related Tasks Completed \| \*\*1\*\*/);
+    assert.match(markdown, /\| Accessibility-related Tasks Completed \| \*\*1\*\*/);
+    assert.match(markdown, /\| E2E-related Tasks Completed \| \*\*1\*\*/);
+    const followups = markdown.split('### Action Items for Next Sprint')[1].split('### Sprint Metrics')[0];
+    assert.match(followups, /Carry-over: SMA-4/);
+    assert.match(followups, /Carry-over: Unfinished deployment/);
+    assert.match(followups, /Close open bug: SMA-5/);
+    assert.doesNotMatch(followups, /SMA-[12378]|Increase automation|Introduce accessibility|Create deployment readiness/);
+    assert.match(markdown.split('✅ **Key Deliverables**')[0], /SMA-1/);
+    assert.match(markdown.split('**Bug Fixes**')[1].split('### Action Items')[0], /SMA-2/);
+});
+
+test('close report preserves exact Done fallback only when category is absent', async () => {
+    const f = fixture('report', [
+        issue('SMA-1', 'Story', 'Done'),
+        issue('SMA-2', 'Bug', 'Done'),
+        issue('SMA-3', 'Task', 'Done'),
+        issue('SMA-4', 'Story', 'Closed'),
+    ]);
+    assert.deepEqual((await f.run()).counts, { stories: 1, tasksDone: 1, deployments: 0, bugs: 1 });
+    assert.match(f.messages[0], /Carry-over: SMA-4/);
+});
+
+test('completed T-2 tasks show due dates without claiming on-time completion', async () => {
+    const f = fixture('sprint-summary', [
+        issue('SMA-1', 'Task', 'Done', null, '2020-01-01'),
+        issue('SMA-2', 'Task', 'Done', null, '2099-01-01'),
+        issue('SMA-3', 'Task', 'Done'),
+    ]);
+    await f.run();
+    const completed = f.messages[0].split('## ✅ Completed tasks (3)')[1].split('---\n')[0];
+    assert.match(completed, /\| Task \| User Story \| Owner \| Due date \|/);
+    assert.match(completed, /SMA-1.*\| 2020-01-01 \|/);
+    assert.match(completed, /SMA-2.*\| 2099-01-01 \|/);
+    assert.match(completed, /SMA-3.*\| — \|/);
+    assert.doesNotMatch(completed, /Completed by ETA|✅|overdue|\+\d+d/);
 });
