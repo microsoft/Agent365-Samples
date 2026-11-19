@@ -265,7 +265,7 @@ The W365 Computer Use MCP server is a standard **MCP-over-HTTP** endpoint (Strea
 | Environment | URL |
 |-------------|-----|
 | Production (gateway) | `https://agent365.svc.cloud.microsoft/agents/servers/mcp_W365ComputerUse` |
-| Local development | `http://localhost:52857/mcp/environments/Default-{your-tenant-id}/servers/mcp_W365ComputerUse` (`McpServer:Url`) |
+| Local development | Your local MCP Platform URL (`McpServer:Url`) |
 
 ### Token
 
