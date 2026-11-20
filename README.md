@@ -82,6 +82,10 @@ For language-specific documentation and additional resources, explore the follow
 - [Node.js documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 - [Python documentation](https://learn.microsoft.com/python/api/?view=m365-agents-sdk&preserve-view=true)
 
+## Support
+
+For information about how to file issues and get help, see [SUPPORT.md](SUPPORT.md). To report a security vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Trademarks
 
 Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at [Microsoft Trademark and Brand Guidelines](http://go.microsoft.com/fwlink/?LinkID=254653).
