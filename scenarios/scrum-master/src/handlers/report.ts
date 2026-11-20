@@ -17,6 +17,7 @@
 import { DateTime } from 'luxon';
 
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
+import { isIssueDone as isDone } from '../services/issue-status';
 import { getScheduleConfig } from '../config';
 import { listItems, findByField, claimSprintReport, updateItem } from '../services/sharepoint';
 import { listTeamMembers } from '../services/team-roster';
@@ -38,10 +39,6 @@ const RX_ACCESSIBILITY = /accessibility|\ba11y\b|\baxe\b|wcag/i;
 const RX_E2E = /\be2e\b|end.?to.?end|integration test|playwright|regression test/i;
 const RX_PROD_DEPLOY = /production|prod deploy|uat|release/i;
 const RX_TAG_PREFIX = /^\s*\[([^\]]+)\]\s*/; // strip leading [BE] / [FE] / [QA] etc.
-
-function isDone(issue: JiraIssue): boolean {
-    return issue.statusCategory != null ? issue.statusCategory === 'done' : issue.status === 'Done';
-}
 
 function cleanSummary(s: string): string {
     return s.replace(RX_TAG_PREFIX, '').trim();

@@ -387,6 +387,16 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   An operator must inspect Teams and delivery logs first. Confirm a delivered
   report as `sent`; only after establishing that nothing was delivered should
   an authorized operator mark the record `failed` and retry.
+- **Risk warnings:** `SMA_SprintRisks.RiskKey` is indexed and unique
+  (`<sprintId>#<UTC-date>`). Delivery conditionally claims `pending` as `claimed`
+  before sending, then records `delivered`. Pause workers and run
+  `npm run setup:sharepoint` before upgrading an existing list; the migration
+  checks for conflicting keys before backfilling and enforcing uniqueness.
+  Confirmed failures can retry; uncertain sends or a persistence failure after
+  sending remain `claimed`. Inspect Teams and delivery logs before recovery:
+  mark an existing delivery `delivered` with `DeliveredUtc`; reset to `pending`
+  only after confirming nothing was delivered. Forced alerts use separate
+  UUID-suffixed keys and intentionally bypass the ordinary daily guard.
 - **Standup responses:** `SMA_StandupResponses.ResponseKey` is indexed and unique
   (`<StandupId>#<UserAadId>`). The first accepted response wins. Replaying a card
   returns the original acknowledgement without repeating blocker mutations or

@@ -88,14 +88,16 @@ test('all automatic targets require affirmative assertions, not questions or con
 test('approval card carries only the proposal identifier and user choices', () => {
     const { buildTransitionConfirmCard } = require('../src/cards/transition-confirm.card.ts');
     const card = buildTransitionConfirmCard({
-        standupId: 's1', sprintName: 'Sprint 1', autoAppliedCount: 0,
+        standupId: 's1', proposalId: 'p1', sprintName: 'Sprint 1', autoAppliedCount: 0,
         transitions: [{ issueKey: 'SCRUM-1', transitionId: '31', statusTo: 'Done' }],
     });
-    assert.deepEqual(card.content.actions[0].data, { action: 'reconcile.apply', standupId: 's1' });
+    assert.deepEqual(card.content.actions[0].data, { action: 'reconcile.apply', standupId: 's1', proposalId: 'p1' });
+    assert.deepEqual(card.content.actions[1].data, { action: 'reconcile.skipAll', standupId: 's1', proposalId: 'p1' });
 });
 
 test('reconciliation authorizes the SM and consumes a server-side proposal once', async () => {
     const applied = [];
+    let proposalId;
     const members = [{ Role: 'SM', AadObjectId: 'sm-aad', conversationReference: {} }];
     const jira = {
         getIssue: async () => ({ status: 'To Do' }),
@@ -107,7 +109,9 @@ test('reconciliation authorizes the SM and consumes a server-side proposal once'
         '../services/team-roster': { listTeamMembers: async () => members },
         '../services/proactive': {
             sendProactive: async (_ref, callback) => {
-                await callback({ sendActivity: async () => {} });
+                await callback({ sendActivity: async activity => {
+                    if (activity.attachments) proposalId = activity.attachments[0].content.actions[0].data.proposalId;
+                } });
                 return { ok: true };
             },
         },
@@ -128,7 +132,7 @@ test('reconciliation authorizes the SM and consumes a server-side proposal once'
         };
     }
     const payload = {
-        action: 'reconcile.apply', standupId: 'approval-test', 'approve_SCRUM-1': 'true',
+        action: 'reconcile.apply', standupId: 'approval-test', proposalId, 'approve_SCRUM-1': 'true',
         transitions: JSON.stringify([{ issueKey: 'OTHER-9', transitionId: 'malicious' }]),
     };
     const nonSm = context('dev', payload);

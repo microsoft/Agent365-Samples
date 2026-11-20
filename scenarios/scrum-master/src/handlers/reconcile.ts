@@ -18,6 +18,7 @@
  */
 
 import { DateTime } from 'luxon';
+import { randomUUID } from 'node:crypto';
 import { Activity, ConversationReference } from '@microsoft/agents-activity';
 import { TurnContext } from '@microsoft/agents-hosting';
 
@@ -42,6 +43,8 @@ const RANK: Record<Exclude<TargetStatus, 'unchanged'>, number> = {
 };
 
 interface PendingProposal {
+    id: string;
+    state: 'pending' | 'reserved' | 'consumed';
     approverAadId: string;
     expiresAt: number;
     transitions: ProposedTransition[];
@@ -201,6 +204,7 @@ export async function reconcileAfterStandup(session: StandupSession): Promise<Re
 
     if (outcome.needsConfirm.length === 0) return outcome;
 
+    let proposal: PendingProposal | undefined;
     try {
         const members = await listTeamMembers();
         const sm = members.find(m => m.Role === 'SM');
@@ -209,8 +213,16 @@ export async function reconcileAfterStandup(session: StandupSession): Promise<Re
             return outcome;
         }
 
+        proposal = {
+            id: randomUUID(),
+            state: 'pending',
+            approverAadId: sm.AadObjectId,
+            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+            transitions: outcome.needsConfirm.map(t => ({ ...t })),
+        };
         const card = buildTransitionConfirmCard({
             standupId: session.standupId,
+            proposalId: proposal.id,
             sprintName: session.sprintName,
             autoAppliedCount: outcome.autoApplied.length,
             transitions: outcome.needsConfirm,
@@ -219,22 +231,18 @@ export async function reconcileAfterStandup(session: StandupSession): Promise<Re
         for (const [id, proposal] of pendingProposals) {
             if (proposal.expiresAt <= Date.now()) pendingProposals.delete(id);
         }
-        pendingProposals.set(session.standupId, {
-            approverAadId: sm.AadObjectId,
-            expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-            transitions: outcome.needsConfirm.map(t => ({ ...t })),
-        });
+        pendingProposals.set(session.standupId, proposal);
         const sent = await sendProactive(sm.conversationReference, async ctx => {
             await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
         });
         if (!sent.ok) {
-            pendingProposals.delete(session.standupId);
+            if (pendingProposals.get(session.standupId) === proposal) proposal.state = 'consumed';
             console.warn(`[reconcile] Approval card delivery failed for ${session.standupId}.`);
         } else {
             outcome.approvalDelivered = true;
         }
     } catch (error) {
-        pendingProposals.delete(session.standupId);
+        if (proposal && pendingProposals.get(session.standupId) === proposal) proposal.state = 'consumed';
         console.warn(`[reconcile] Approval lookup/delivery failed for ${session.standupId}; preserving reconciliation outcome:`, error);
     }
 
@@ -247,6 +255,7 @@ export async function handleReconcileSubmit(context: TurnContext): Promise<void>
     const value = context.activity.value as Record<string, unknown> | undefined;
     const action = String(value?.action ?? '');
     const standupId = String(value?.standupId ?? '');
+    const proposalId = String(value?.proposalId ?? '');
     if (action !== 'reconcile.apply' && action !== 'reconcile.skipAll') return;
 
     const callerId = context.activity.from?.aadObjectId ||
@@ -256,14 +265,14 @@ export async function handleReconcileSubmit(context: TurnContext): Promise<void>
     const isScrumMaster = !!callerId && members.some(m =>
         m.Role === 'SM' && m.AadObjectId.toLowerCase() === callerId.toLowerCase());
     const proposal = pendingProposals.get(standupId);
-    if (!isScrumMaster || !proposal || proposal.expiresAt <= Date.now() ||
+    if (!isScrumMaster || !proposal || proposal.id !== proposalId || proposal.state !== 'pending' || proposal.expiresAt <= Date.now() ||
         proposal.approverAadId.toLowerCase() !== callerId?.toLowerCase()) {
         console.warn(`[reconcile] Rejected unauthorized, expired, or unknown proposal ${standupId}.`);
         await context.sendActivity('This approval is unavailable or you are not its configured Scrum Master. No changes were applied.');
         return;
     }
     if (action === 'reconcile.skipAll') {
-        pendingProposals.delete(standupId);
+        proposal.state = 'consumed';
         await context.sendActivity('Skipped — no board changes applied.');
         return;
     }
@@ -285,7 +294,7 @@ export async function handleReconcileSubmit(context: TurnContext): Promise<void>
         return;
     }
     const ref = context.activity.getConversationReference();
-    pendingProposals.delete(standupId);
+    proposal.state = 'reserved';
 
     // Ack immediately so the Teams card invoke completes inside its ~15s window.
     // Then do the actual Jira writes in the background and post the outcome via a
@@ -293,13 +302,14 @@ export async function handleReconcileSubmit(context: TurnContext): Promise<void>
     try {
         await context.sendActivity(`Applying ${approvedKeys.size} approved change${approvedKeys.size === 1 ? '' : 's'}…`);
     } catch (error) {
-        if (proposal.expiresAt > Date.now() && !pendingProposals.has(standupId)) {
-            pendingProposals.set(standupId, proposal);
+        if (proposal.expiresAt > Date.now() && pendingProposals.get(standupId) === proposal) {
+            proposal.state = 'pending';
         }
         console.warn(`[reconcile] Approval acknowledgement failed for ${standupId}; no Jira work was queued:`, error);
         throw error;
     }
 
+    proposal.state = 'consumed';
     setImmediate(() => {
         applyApprovedTransitionsAsync(ref, transitions, approvedKeys, standupId).catch(err =>
             console.error('[reconcile] background apply failed:', (err as Error).message),

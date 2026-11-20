@@ -129,14 +129,23 @@ function warnFixture() {
             getScheduleConfig: () => ({ timezone: 'UTC' }),
         },
         '../services/sharepoint': {
-            findByTitle: async (_key, title) => {
+            claimSprintRisk: async fields => {
                 if (lookupError) throw new Error('storage offline');
-                return rows.find(row => row.fields.Title === title) ?? null;
-            },
-            createItem: async (_key, fields) => {
-                const row = { id: String(rows.length + 1), fields: { ...fields } };
+                const existing = rows.find(row => row.fields.Title === fields.Title);
+                if (existing) {
+                    if (existing.fields.State && existing.fields.State !== 'pending') return null;
+                    existing.fields.State = 'claimed';
+                    return existing.id;
+                }
+                const row = { id: String(rows.length + 1), fields: { ...fields, State: 'claimed' } };
                 rows.push(row);
-                return row;
+                return row.id;
+            },
+            claimItemState: async (_key, id, expected, next) => {
+                const row = rows.find(row => row.id === id);
+                if (row.fields.State !== expected) return false;
+                row.fields.State = next;
+                return true;
             },
             updateItem: async (_key, id, fields) => Object.assign(rows.find(row => row.id === id).fields, fields),
         },
@@ -234,7 +243,7 @@ test('configured two-letter helper keywords use case-insensitive whole-word matc
     assert.equal((await matcher.findHelperForBlocker('redesign required'))?.reason, 'Matched keyword "design".');
 });
 
-test('setup adds only missing risk-delivery fields on existing lists, reading all column pages', async () => {
+test('setup migrates risk keys and only missing delivery fields, reading all column pages', async () => {
     const writes = [];
     const graph = {
         api(url) {
@@ -244,10 +253,12 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
                         value: [{ name: 'Payload' }],
                         '@odata.nextLink': 'https://graph.microsoft.com/v1.0/columns?page=2',
                     };
-                    if (url.endsWith('page=2')) return { value: [{ name: 'DeliveredUtc' }] };
+                    if (url.endsWith('page=2')) return { value: [{ id: 'delivered', name: 'DeliveredUtc' }] };
+                    if (url.includes('/items?')) return { value: [] };
                     return { value: [{ id: 'existing-list' }] };
                 },
-                async post(body) { writes.push({ url, body }); },
+                async post(body) { writes.push({ url, body }); return { id: body.name, ...body }; },
+                async update(body) { writes.push({ url, body }); },
             };
         },
     };
@@ -263,6 +274,7 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
             LIST_NAMES: { sprintRisks: 'SprintRisks' },
             LIST_SCHEMAS: {
                 sprintRisks: { columns: [
+                    { name: 'RiskKey', type: 'text', unique: true },
                     { name: 'Payload', type: 'note' },
                     { name: 'State', type: 'text' },
                     { name: 'DeliveredUtc', type: 'dateTime' },
@@ -274,8 +286,9 @@ test('setup adds only missing risk-delivery fields on existing lists, reading al
         '../config': { getSharePointConfig: () => ({ siteUrl: 'https://example.test', listsPrefix: 'SMA_' }) },
     });
     await provisionSharePoint();
-    assert.deepEqual(writes, [{
-        url: '/sites/site/lists/existing-list/columns',
-        body: { name: 'State', text: {} },
-    }]);
+    assert.deepEqual(writes, [
+        { url: '/sites/site/lists/existing-list/columns', body: { name: 'RiskKey', text: {}, indexed: true } },
+        { url: '/sites/site/lists/existing-list/columns', body: { name: 'State', text: {} } },
+        { url: '/sites/site/lists/existing-list/columns/RiskKey', body: { indexed: true, enforceUniqueValues: true } },
+    ]);
 });

@@ -124,19 +124,40 @@ One row per blocker flagged in a standup response. Drives the MVP-3 chase flow.
 
 ### `SMA_SprintRisks`
 
-Row per Warn-check firing (MVP 4). Used to suppress duplicate alerts on the same
-sprint within a short window.
+One daily Warn-check delivery claim per sprint (UTC day). Explicit forced alerts
+use a UUID suffix and deliberately bypass daily suppression.
 
 | Column | Type | Description |
 |---|---|---|
 | `Title` | text | `<sprintId>#<yyyy-mm-dd>` |
+| `RiskKey` | text, indexed, unique | Same value as `Title`; atomic creation claim across workers |
 | `SprintId` | text | Jira sprint id |
 | `DetectedUtc` | dateTime | When the risk was detected |
 | `Reason` | note | Human-readable summary of which thresholds tripped |
-| `PointsToDoPct` | number | Fraction of committed points still in `To Do` |
+| `PointsToDoPct` | number | Percentage (0–100) of points, or items when estimates are incomplete, still in `To Do` |
 | `Payload` | note | JSON snapshot of the sprint state used for the decision |
-| `State` | text | `pending` until the Scrum Master DM succeeds, then `delivered`; legacy rows without a state are retryable |
+| `State` | text | `pending` → `claimed` (conditional delivery claim) → `delivered`; legacy rows without a state can be claimed |
 | `DeliveredUtc` | dateTime | Timestamp of confirmed DM delivery; empty for pending notifications |
+
+**Existing-list migration:** pause every worker and run `npm run setup:sharepoint`
+against the intended live site/prefix before starting upgraded workers. The script
+reads all column/item pages and rejects duplicate/empty/malformed Titles,
+Titles inconsistent with SprintId/DetectedUtc, or existing RiskKeys inconsistent
+with Title **before any mutation**. Reconcile conflicting history manually;
+the script never deletes rows or guesses which duplicate was delivered. It adds
+missing RiskKey/State/DeliveredUtc columns, backfills RiskKey from Title, then
+enables indexed uniqueness. Interrupted migrations can be rerun while workers
+remain paused. Resume only after success; tests/builds do not migrate live sites.
+
+Existing pending/legacy rows require an ETag-conditional state transition before
+sending; concurrent initial detections compete on unique RiskKey. Confirmed
+pre-send failures and explicit connector rejections (HTTP 4xx except timeout)
+release the claim for retry. Transport/timeouts, ambiguous send outcomes, process
+crashes, or failed delivery-state persistence retain `claimed` to avoid duplicate
+DMs. There is no automatic lease expiry/replay. An operator must inspect Teams
+delivery before changing a stranded claim to `delivered` (with DeliveredUtc) or,
+only after confirming no delivery, `pending`. Legacy rows without State remain
+retryable, so inspect their historical delivery before resuming after migration.
 
 ### `SMA_HelperRoster`
 
@@ -172,7 +193,7 @@ npm run setup:sharepoint
 For every list, the script first queries
 `GET /sites/{siteId}/lists?$filter=displayName eq '<name>'`; only missing lists are
 created. Existing standup lists receive the RunKey migration described above;
-existing risk lists receive missing delivery-state columns. Other schema
+existing risk lists receive the RiskKey/delivery-state migration described above. Other schema
 changes require an explicit migration. Do not delete operational lists to
 bypass delivery or creation claims.
 
@@ -193,7 +214,8 @@ A new agent blueprint does not require new SharePoint lists when the tenant,
 `npm run setup:sharepoint` to sign in on a fresh machine and create only missing
 lists. Existing lists and their items are preserved; do not run the seed scripts
 unless you intend to insert or update roster data.
-The setup script skips existing lists; it does not migrate their schemas.
+The setup script preserves existing lists and applies only the supported key and
+delivery-state migrations described above.
 
 Conversation references belong to the agent conversation, not just the user.
 After creating a new blueprint and agent instance, have every participating user

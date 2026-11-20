@@ -15,9 +15,10 @@
  */
 
 import { DateTime } from 'luxon';
+import { randomUUID } from 'node:crypto';
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
 import { getWarnConfig, getScheduleConfig } from '../config';
-import { createItem, findByTitle, updateItem } from '../services/sharepoint';
+import { claimItemState, claimSprintRisk, updateItem } from '../services/sharepoint';
 import { listTeamMembers } from '../services/team-roster';
 import { sendProactive } from '../services/proactive';
 
@@ -28,7 +29,7 @@ interface SprintRiskFields {
     Reason: string;
     PointsToDoPct: number;
     Payload: string;
-    State?: 'pending' | 'delivered';
+    State?: 'pending' | 'claimed' | 'delivered';
     DeliveredUtc?: string;
 }
 
@@ -102,55 +103,68 @@ export async function runWarnCheck(opts?: { forceAlert?: boolean }): Promise<Ris
     }
 
     const nowUtc = new Date().toISOString();
-    const riskId = `${assessment.sprintId}#${nowUtc.slice(0, 10)}${opts?.forceAlert ? `#${Date.now()}` : ''}`;
-
-    // Detection alone is not delivery: pending and legacy rows remain retryable.
-    const existing = opts?.forceAlert ? null : await findByTitle<SprintRiskFields>('sprintRisks', riskId);
-    if (existing?.fields.State === 'delivered') {
-        console.log(`[warn] Risk already delivered today (${riskId}) — skipping notify.`);
-        return assessment;
-    }
-
-    const risk = existing ?? await createItem<SprintRiskFields>('sprintRisks', {
+    const riskId = `${assessment.sprintId}#${nowUtc.slice(0, 10)}${opts?.forceAlert ? `#${randomUUID()}` : ''}`;
+    const claimId = await claimSprintRisk<SprintRiskFields>({
         Title: riskId,
         SprintId: String(assessment.sprintId),
         DetectedUtc: nowUtc,
         Reason: assessment.reason,
         PointsToDoPct: Math.round(assessment.toDoPct * 100),
         Payload: JSON.stringify(assessment),
-        State: 'pending',
     });
-
-    // DM the SM. Keep it plain-text for the POC — an Adaptive Card is trivial
-    // to add later but the SM cares more about the numbers than the chrome.
-    const members = await listTeamMembers();
-    const sm = members.find(m => m.Role === 'SM');
-    if (!sm?.conversationReference) {
-        throw new Error('[warn] No SM conversation reference; risk alert remains pending.');
+    if (!claimId) {
+        console.log(`[warn] Risk already claimed or delivered (${riskId}) — skipping notify.`);
+        return assessment;
     }
 
-    const tz = getScheduleConfig().timezone;
-    const endLocal = sprint.endDate
-        ? DateTime.fromISO(sprint.endDate).setZone(tz).toFormat('ccc d LLL')
-        : 'unknown';
+    let sendStarted = false;
+    let confirmedRejection = false;
+    try {
+        // DM the SM. Keep it plain-text for the POC.
+        const members = await listTeamMembers();
+        const sm = members.find(m => m.Role === 'SM');
+        if (!sm?.conversationReference) {
+            throw new Error('[warn] No SM conversation reference; risk alert remains pending.');
+        }
 
-    const message =
-        `⚠️ **Sprint risk detected — ${assessment.sprintName}**\n\n` +
-        `• Progress: ${(assessment.progressPct * 100).toFixed(0)}% elapsed (ends ${endLocal})\n` +
-        `• In To Do: ${assessment.usePoints ? `${assessment.pointsToDo}/${assessment.pointsTotal} pts` : `${assessment.itemsToDo}/${assessment.itemsTotal} items`} (${(assessment.toDoPct * 100).toFixed(0)}%)\n\n` +
-        `**Reason:** ${assessment.reason}\n\n` +
-        `Consider re-planning, splitting large items, or narrowing the sprint goal.`;
+        const tz = getScheduleConfig().timezone;
+        const endLocal = sprint.endDate
+            ? DateTime.fromISO(sprint.endDate).setZone(tz).toFormat('ccc d LLL')
+            : 'unknown';
 
-    const delivery = await sendProactive(sm.conversationReference, async ctx => {
-        await ctx.sendActivity(message);
-    });
-    if (!delivery.ok) {
-        throw new Error(`[warn] Risk alert delivery failed: ${delivery.error ?? 'unknown send failure'}`);
+        const message =
+            `⚠️ **Sprint risk detected — ${assessment.sprintName}**\n\n` +
+            `• Progress: ${(assessment.progressPct * 100).toFixed(0)}% elapsed (ends ${endLocal})\n` +
+            `• In To Do: ${assessment.usePoints ? `${assessment.pointsToDo}/${assessment.pointsTotal} pts` : `${assessment.itemsToDo}/${assessment.itemsTotal} items`} (${(assessment.toDoPct * 100).toFixed(0)}%)\n\n` +
+            `**Reason:** ${assessment.reason}\n\n` +
+            `Consider re-planning, splitting large items, or narrowing the sprint goal.`;
+
+        const delivery = await sendProactive(sm.conversationReference, async ctx => {
+            sendStarted = true;
+            try {
+                await ctx.sendActivity(message);
+            } catch (error) {
+                const status = (error as any)?.statusCode ?? (error as any)?.status;
+                // Timeouts and transport/server failures may have accepted the DM.
+                confirmedRejection = typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
+                throw error;
+            }
+        });
+        if (!delivery.ok) {
+            throw new Error(`[warn] Risk alert delivery failed: ${delivery.error ?? 'unknown send failure'}`);
+        }
+        sendStarted = true;
+        await updateItem<SprintRiskFields>('sprintRisks', claimId, {
+            State: 'delivered',
+            DeliveredUtc: new Date().toISOString(),
+        });
+    } catch (error) {
+        // Never replay an accepted/uncertain send, including failed persistence.
+        if (!sendStarted || confirmedRejection) {
+            await claimItemState('sprintRisks', claimId, 'claimed', 'pending');
+        }
+        throw error;
     }
-    await updateItem<SprintRiskFields>('sprintRisks', risk.id, {
-        State: 'delivered',
-        DeliveredUtc: new Date().toISOString(),
-    });
 
     return assessment;
 }

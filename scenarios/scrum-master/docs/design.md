@@ -290,14 +290,18 @@ Unrecognized/ambiguous text remains unchanged; no transition is guessed. The
 LLM is *not* involved in reconcile — a demo run has 100 % deterministic
 behaviour on this path.
 
-The card carries only `standupId` and approval toggles. The server requires
+The card carries `standupId`, a unique `proposalId`, and approval toggles. The server requires
 the SM's AAD object id and looks up its pending proposal (24-hour TTL);
 issue keys and transitions are not trusted from the submission. Apply/skip
 consumes that proposal. Apply reserves it before acknowledgement to prevent
 concurrent duplicate writes. If acknowledgement fails before Jira work is
 queued, the still-valid proposal is restored (without replacing a newer
 proposal), so the SM can retry the same card. Expired proposals are not restored.
-Replayed, expired or post-restart submissions fail closed and require a new proposal.
+Every replacement has a new proposal ID bound to its exact transition snapshot.
+Older cards cannot apply or skip a newer proposal, even for the same issue and
+standup. Replayed, expired, missing-ID or post-restart submissions fail closed
+and require a new proposal. Late delivery or acknowledgement failures from an
+older proposal cannot clear or restore a replacement, including a consumed one.
 Before applying a saved approval, the handler rereads the issue. An already-achieved
 target is reported as unchanged; a status different from the card's source status
 requires a fresh approval even if Jira still offers the saved global transition.
@@ -383,9 +387,10 @@ pointsInToDo / total >= WARN_TODO_PCT               (default 0.40)
 If story points are missing on any issue, the check falls back to item
 counts. Points are used only when every included issue has a valid estimate
 and their total is positive; unestimated work is never silently zeroed.
-Every firing writes a row to `SMA_SprintRisks` (idempotency key =
-`<sprintId>#<yyyy-mm-dd>`) so the same sprint can't be re-alerted the same
-day.
+Daily warnings use an indexed unique `SMA_SprintRisks.RiskKey` =
+`<sprintId>#<UTC yyyy-mm-dd>` and conditionally claim delivery before sending.
+Concurrent ordinary requests cannot send the same warning. Forced alerts
+append a UUID and deliberately bypass daily suppression.
 
 ### 5.5 Answer (MVP 5)
 
@@ -423,9 +428,14 @@ comment and collection results to the configured project.
 `sprint-summary?force=true` endpoint or the nightly scheduler's T-2 check. Every task is
 classified:
 
-- **RED** — `dueDate < today` and status not `Done`
-- **AMBER** — `dueDate <= today + AMBER_WINDOW_DAYS` and status not `Done`
+- **RED** — `dueDate < today` and work is not complete
+- **AMBER** — `dueDate <= today + AMBER_WINDOW_DAYS` and work is not complete
 - **GREEN** — otherwise
+
+The T-2 and sprint-close reports share completion detection: category `done`
+means complete regardless of the display name (`Closed`, `Resolved`, etc.).
+Only issues without a status category fall back to the exact `Done` label.
+This rule drives RAG/SLA, completed/pending sections and returned counts.
 
 The output is a prioritised markdown table posted inline to the configured
 channel — no attachments, no SharePoint upload.
@@ -584,8 +594,9 @@ also model-driven and is never used for inbound email.
   restart, inspect the persisted blocker rows and manually recover follow-up;
   neither pending chase nor notification progress is reconstructed.
 - **Deduplication has different scopes.** Standup daily records
-  (`<sprintId>#<UTC-date>`) remain in-memory after completion. Warn/blocker
-  records use their own natural keys; a key alone is not an atomic lock.
+  (`<sprintId>#<UTC-date>`) remain in-memory after completion. Risk warnings
+  combine a unique daily key with a conditional delivery claim; blocker
+  records use their own natural keys and booking claims.
   Sprint-close reports use the durable per-sprint delivery claim described
   in §5.7.
 - **Not all scheduled paths are idempotent.** The mid-sprint summary has no
@@ -619,12 +630,16 @@ also model-driven and is never used for inbound email.
   reconciliation and summary generation while rejecting new submissions.
 
 Warn risk detection and notification delivery are separate: `SMA_SprintRisks`
-rows stay `pending` until the Scrum Master DM succeeds, then become `delivered`
-with `DeliveredUtc`. Failed roster lookups, missing destinations, or connector
-failures propagate to the nightly caller and remain retryable. Run the
-SharePoint setup script to add the new columns to existing lists. There is no
-distributed exactly-once guarantee; a persistence failure after a successful
-DM can cause a duplicate on retry.
+uses unique `RiskKey` creation and conditional ETag state claims
+(`pending` → `claimed` → `delivered` with `DeliveredUtc`). Roster or destination
+failures and confirmed failed delivery release the claim for retry; ambiguous
+sends and persistence failure after successful delivery remain claimed, with
+no automatic expiry. Pause workers and run the SharePoint setup migration
+before upgrading an existing list. Conflicting keys stop migration before
+backfill. Inspect Teams and logs before manual recovery: mark confirmed
+delivery `delivered`; reset to `pending` only when no delivery occurred.
+This avoids automatic duplicate sends but is not a distributed exactly-once
+transaction with Teams.
 
 ## 10. Observability
 

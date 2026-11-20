@@ -129,7 +129,7 @@ test('saved approvals require the displayed source status and skip already-achie
             currentStatus = status;
             transitionLookups = 0;
             await reconcile.handleReconcileSubmit(context('sm', {
-                action: 'reconcile.apply', standupId, 'approve_TEAM-1': 'true',
+                ...messages[0].attachments[0].content.actions[0].data, 'approve_TEAM-1': 'true',
             }));
             await drain();
             assert.equal(writes, status === 'To Do' ? 1 : 0, status);
@@ -141,9 +141,121 @@ test('saved approvals require the displayed source status and skip already-achie
     }
 });
 
+test('replaced approval cards cannot apply or skip a newer snapshot for the same standup', async () => {
+    let status = 'To Do', writes = 0;
+    const cards = [];
+    await withModule('../src/handlers/reconcile.ts', {
+        '../services/jira': { getJiraClient: () => ({
+            getIssue: async () => ({ status }),
+            getTransitions: async () => [{ id: 'review', toStatus: 'In Review' }],
+            transitionIssue: async () => { writes++; },
+        }) },
+        '../services/team-roster': { listTeamMembers: async () => [
+            { Role: 'SM', AadObjectId: 'sm', conversationReference: {} },
+        ] },
+        '../services/proactive': { sendProactive: async (_reference, logic) => {
+            await logic({ sendActivity: async activity => {
+                if (activity.attachments) cards.push(activity.attachments[0].content);
+            } });
+            return { ok: true };
+        } },
+    }, async reconcile => {
+        const session = {
+            standupId: 'replaced-proposal', sprintName: 'Sprint',
+            itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'To Do' }]]]),
+            responses: new Map([['dev', { userAadId: 'dev', items: [
+                { issueKey: 'TEAM-1', update: 'PR up', hasBlocker: false },
+            ] }]]),
+        };
+        await reconcile.reconcileAfterStandup(session);
+        status = 'Done';
+        await reconcile.reconcileAfterStandup(session);
+        assert.notEqual(cards[0].actions[0].data.proposalId, cards[1].actions[0].data.proposalId);
+        for (const data of [
+            cards[0].actions[0].data, cards[0].actions[1].data,
+            { action: 'reconcile.apply', standupId: session.standupId },
+        ]) {
+            const stale = context('sm', { ...data, 'approve_TEAM-1': 'true' });
+            await reconcile.handleReconcileSubmit(stale);
+            assert.match(stale.messages[0], /unavailable/);
+        }
+        await drain();
+        assert.equal(writes, 0);
+        await reconcile.handleReconcileSubmit(context('sm', {
+            ...cards[1].actions[0].data, 'approve_TEAM-1': 'true',
+        }));
+        await drain();
+        assert.equal(writes, 1, 'Only the current card can authorize the new backwards move');
+    });
+});
+
+test('late failures of replaced approval delivery or acknowledgements cannot alter the current proposal', async () => {
+    for (const phase of ['delivery', 'acknowledgement']) {
+        let failOld, announceOld, writes = 0;
+        const pending = new Promise((_resolve, reject) => { failOld = reject; });
+        const started = new Promise(resolve => { announceOld = resolve; });
+        const cards = [];
+        await withModule('../src/handlers/reconcile.ts', {
+            '../services/jira': { getJiraClient: () => ({
+                getIssue: async () => ({ status: 'To Do' }),
+                getTransitions: async () => [{ id: 'done', toStatus: 'Done' }],
+                transitionIssue: async () => { writes++; },
+            }) },
+            '../services/team-roster': { listTeamMembers: async () => [
+                { Role: 'SM', AadObjectId: 'sm', conversationReference: {} },
+            ] },
+            '../services/proactive': { sendProactive: async (_reference, logic) => {
+                await logic({ sendActivity: async activity => {
+                    if (activity.attachments) cards.push(activity.attachments[0].content);
+                } });
+                if (phase === 'delivery' && cards.length === 1) { announceOld(); await pending; }
+                return { ok: true };
+            } },
+        }, async reconcile => {
+            const session = {
+                standupId: `late-failure-${phase}`, sprintName: 'Sprint',
+                itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'To Do' }]]]),
+                responses: new Map([['dev', { userAadId: 'dev', items: [
+                    { issueKey: 'TEAM-1', update: 'Done', hasBlocker: false },
+                ] }]]),
+            };
+            let oldWork;
+            if (phase === 'delivery') oldWork = reconcile.reconcileAfterStandup(session);
+            else {
+                await reconcile.reconcileAfterStandup(session);
+                const old = context('sm', { ...cards[0].actions[0].data, 'approve_TEAM-1': 'true' });
+                old.sendActivity = async () => { announceOld(); await pending; };
+                oldWork = assert.rejects(reconcile.handleReconcileSubmit(old), /Old failure/);
+            }
+            await started;
+            await reconcile.reconcileAfterStandup(session);
+            const current = { ...cards[1].actions[0].data, 'approve_TEAM-1': 'true' };
+            if (phase === 'delivery') {
+                failOld(new Error('Old failure'));
+                await oldWork;
+            }
+            await reconcile.handleReconcileSubmit(context('sm', current));
+            await drain();
+            assert.equal(writes, 1);
+            if (phase === 'acknowledgement') {
+                failOld(new Error('Old failure'));
+                await oldWork;
+            }
+            const replay = context('sm', current);
+            await reconcile.handleReconcileSubmit(replay);
+            assert.match(replay.messages[0], /unavailable/);
+            const oldRetry = context('sm', { ...cards[0].actions[0].data, 'approve_TEAM-1': 'true' });
+            await reconcile.handleReconcileSubmit(oldRetry);
+            assert.match(oldRetry.messages[0], /unavailable/);
+            await drain();
+            assert.equal(writes, 1);
+        });
+    }
+});
+
 test('failed approval acknowledgements restore valid proposals without allowing concurrent duplicate applies', async t => {
     const writes = [];
-    let rejectAck;
+    let rejectAck, proposalId;
     await withModule('../src/handlers/reconcile.ts', {
         '../services/jira': { getJiraClient: () => ({
             getIssue: async () => ({ status: 'To Do' }),
@@ -153,7 +265,12 @@ test('failed approval acknowledgements restore valid proposals without allowing 
         '../services/team-roster': { listTeamMembers: async () => [
             { Role: 'SM', AadObjectId: 'sm', conversationReference: {} },
         ] },
-        '../services/proactive': { sendProactive: async () => ({ ok: true }) },
+        '../services/proactive': { sendProactive: async (_reference, logic) => {
+            await logic({ sendActivity: async activity => {
+                if (activity.attachments) proposalId = activity.attachments[0].content.actions[0].data.proposalId;
+            } });
+            return { ok: true };
+        } },
     }, async reconcile => {
         const session = {
             standupId: 'ack-retry', sprintName: 'Sprint',
@@ -162,8 +279,8 @@ test('failed approval acknowledgements restore valid proposals without allowing 
                 { issueKey: 'TEAM-1', update: 'Done', hasBlocker: false },
             ] }]]),
         };
-        const value = { action: 'reconcile.apply', standupId: session.standupId, 'approve_TEAM-1': 'true' };
         await reconcile.reconcileAfterStandup(session);
+        const value = { action: 'reconcile.apply', standupId: session.standupId, proposalId, 'approve_TEAM-1': 'true' };
         const first = context('sm', value);
         first.sendActivity = () => new Promise((_resolve, reject) => { rejectAck = reject; });
         const pending = reconcile.handleReconcileSubmit(first);
@@ -184,6 +301,7 @@ test('failed approval acknowledgements restore valid proposals without allowing 
         assert.deepEqual(writes, ['TEAM-1']);
 
         await reconcile.reconcileAfterStandup(session);
+        value.proposalId = proposalId;
         const expired = context('sm', value);
         expired.sendActivity = async () => {
             t.mock.method(Date, 'now', () => Date.parse('2099-01-01T00:00:00Z'));

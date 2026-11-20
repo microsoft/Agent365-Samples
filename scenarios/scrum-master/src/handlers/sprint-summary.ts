@@ -20,6 +20,7 @@
 import { DateTime } from 'luxon';
 
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
+import { isIssueDone } from '../services/issue-status';
 import { getScheduleConfig } from '../config';
 import { findByField } from '../services/sharepoint';
 import { listTeamMembers } from '../services/team-roster';
@@ -42,6 +43,7 @@ interface ClassifiedTask {
     assignee: string;
     dueDate: string | null;    // yyyy-mm-dd
     status: string;
+    statusCategory?: string | null;
     daysFromEta: number | null; // negative = overdue, 0 = today, positive = future
     rag: Rag;
     slaBreached: boolean;
@@ -53,7 +55,7 @@ const AMBER_WINDOW_DAYS = 2;
 
 function classify(task: JiraIssue, parentSummary: string, todayIso: string): ClassifiedTask {
     const status = task.status;
-    const isDone = status === 'Done';
+    const isDone = isIssueDone(task);
     let daysFromEta: number | null = null;
     if (task.dueDate) {
         const due = DateTime.fromISO(task.dueDate);
@@ -82,6 +84,7 @@ function classify(task: JiraIssue, parentSummary: string, todayIso: string): Cla
         assignee: task.assignee?.displayName ?? '(unassigned)',
         dueDate: task.dueDate,
         status,
+        statusCategory: task.statusCategory,
         daysFromEta,
         rag,
         slaBreached,
@@ -124,8 +127,8 @@ export function buildSprintSummaryMarkdown(opts: {
     const totalUserStories = Array.from(parentStoriesByKey.values())
         .filter(issue => issue.issueType === 'Story' && !issue.parentKey).length;
     const totalTasks = tasks.length;
-    const completedTasks = tasks.filter(t => t.status === 'Done').length;
-    const pendingTasks = tasks.filter(t => t.status !== 'Done');
+    const completedTasks = tasks.filter(isIssueDone).length;
+    const pendingTasks = tasks.filter(t => !isIssueDone(t));
     const slaBreached = pendingTasks.filter(t => t.slaBreached).length;
     const reds = pendingTasks.filter(t => t.rag === 'Red');
     const ambers = pendingTasks.filter(t => t.rag === 'Amber');
@@ -210,7 +213,7 @@ export function buildSprintSummaryMarkdown(opts: {
     lines.push('');
 
     // ---- Completed (separate section) ----
-    const completed = tasks.filter(t => t.status === 'Done').sort((a, b) => a.key.localeCompare(b.key));
+    const completed = tasks.filter(isIssueDone).sort((a, b) => a.key.localeCompare(b.key));
     lines.push(`## ✅ Completed tasks (${completed.length})`);
     if (completed.length === 0) {
         lines.push('_No tasks completed yet._');
@@ -295,7 +298,7 @@ export async function runSprintSummary(opts?: {
     const configRows = await findByField<TeamsConfigFields>('teamsConfig', 'Title', 'primary');
     const channelRefRaw = configRows[0]?.fields?.ConversationRef;
 
-    const pending = classified.filter(t => t.status !== 'Done');
+    const pending = classified.filter(t => !isIssueDone(t));
     const reds = pending.filter(t => t.rag === 'Red');
     const ambers = pending.filter(t => t.rag === 'Amber');
 

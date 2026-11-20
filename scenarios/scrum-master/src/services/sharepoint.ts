@@ -190,11 +190,11 @@ async function readItemPages<T extends object>(
 
 /** Atomic state transition: a stale reader cannot acquire a second claim. */
 export async function claimItemState(
-    key: ListKey, itemId: string, expected: string, next: string,
+    key: ListKey, itemId: string, expected: string | undefined, next: string,
 ): Promise<boolean> {
     if (getJiraMode() === 'mock') {
         const row = mockList(key).get(itemId);
-        if (!row || row.fields.State !== expected) return false;
+        if (!row || (row.fields.State || undefined) !== expected) return false;
         row.fields.State = next;
         return true;
     }
@@ -202,7 +202,7 @@ export async function claimItemState(
     const siteId = await getSiteId();
     const path = `/sites/${siteId}/lists/${listName(key)}/items/${itemId}`;
     const current = await graph.api(`${path}?$expand=fields`).get();
-    if (current.fields?.State !== expected) return false;
+    if ((current.fields?.State || undefined) !== expected) return false;
     const etag = current.eTag ?? current['@odata.etag'];
     if (!etag) throw new Error('SharePoint did not return an ETag; refusing an unsafe claim.');
     try {
@@ -261,6 +261,28 @@ export async function claimSprintReport(sprintId: number): Promise<string | null
         // storage errors must stop delivery rather than bypass the guard.
         if ((await findByField('sprintReportsDelivery', 'DeliveryKey', deliveryKey)).length) return null;
         throw e;
+    }
+}
+
+export async function claimSprintRisk<T extends object>(
+    fields: T & { Title: string },
+): Promise<string | null> {
+    // Include legacy detections whose RiskKey was added by the setup migration.
+    const existing = await findByTitle<{ State?: string }>('sprintRisks', fields.Title);
+    if (existing) {
+        const state = existing.fields.State || undefined;
+        if (state !== undefined && state !== 'pending') return null;
+        return await claimItemState('sprintRisks', existing.id, state, 'claimed') ? existing.id : null;
+    }
+    try {
+        const created = await createItem('sprintRisks', {
+            ...fields, RiskKey: fields.Title, State: 'claimed',
+        });
+        return created.id;
+    } catch (error) {
+        // A unique-key loser (or an ambiguous successful insert) must not send.
+        if ((await findByField('sprintRisks', 'RiskKey', fields.Title)).length) return null;
+        throw error;
     }
 }
 
@@ -354,6 +376,7 @@ export const LIST_SCHEMAS: Record<ListKey, {
     },
     sprintRisks: {
         columns: [
+            { name: 'RiskKey', type: 'text', unique: true },
             { name: 'SprintId', type: 'text' },
             { name: 'DetectedUtc', type: 'dateTime' },
             { name: 'Reason', type: 'note' },

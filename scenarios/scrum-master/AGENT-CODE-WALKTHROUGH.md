@@ -67,11 +67,13 @@ The routing is important: ordinary sprint questions do **not** go through
 | `handlers/report.ts` | Generate deterministic sprint-close markdown with a per-sprint delivery guard |
 | `handlers/config.ts` | Capture the destination channel conversation reference |
 
-Reconciliation approval cards submit only the standup id and approval
+Reconciliation approval cards submit the standup id, a unique proposal id and approval
 toggles. The handler requires the Scrum Master's AAD object id and uses a
 server-side pending proposal with a 24-hour lifetime; caller-supplied issue
 transitions are not authoritative. Apply/skip consumes the proposal.
-Expired, replayed or post-restart submissions fail closed and need a new
+Replacing a proposal changes its id: an old card cannot authorize or skip the
+replacement's transitions. Late acknowledgement/delivery failures cannot change
+a newer proposal. Expired, replayed, missing-id or post-restart submissions fail closed and need a new
 proposal. Every automatic target requires an affirmative status assertion;
 questions and conditional plans remain unchanged. Completion additionally
 requires a finite whole-statement assertion such as `Done` or `I have completed it`;
@@ -206,6 +208,11 @@ are process-local. SharePoint records do not make those maps a distributed
 lock or reconstruct them after restart. Sprint-close delivery has a separate
 durable per-sprint claim in live mode; `force` bypasses timing, not that guard.
 Mock services and their changes are in-memory and reset with the process.
+Risk warnings use a unique daily `RiskKey` and conditional
+`pending` → `claimed` → `delivered` state changes before/after sending.
+Existing sites require a paused-worker `npm run setup:sharepoint` migration.
+Uncertain sends remain claimed; inspect Teams before marking them delivered or
+returning them to pending. Forced alerts use distinct UUID-suffixed keys.
 Live standup startup checks existing SharePoint session records, then inserts
 an indexed unique `RunKey` before fan-out; only the creation-claim winner sends
 cards. Existing sites must pause workers and migrate/backfill RunKey through

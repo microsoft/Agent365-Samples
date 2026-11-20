@@ -171,7 +171,7 @@ for (const moved of [false, true]) {
         await reconcile.handleReconcileSubmit({
             activity: {
                 from: { aadObjectId: 'sm-aad' },
-                value: { action: 'reconcile.apply', standupId, 'approve_TEAM-123': 'true' },
+                value: { ...messages[0].attachments[0].content.actions[0].data, 'approve_TEAM-123': 'true' },
                 getConversationReference: () => ({}),
             },
             sendActivity: async message => { messages.push(message); },

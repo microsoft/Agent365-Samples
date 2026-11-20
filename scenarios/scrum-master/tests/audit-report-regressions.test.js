@@ -96,6 +96,31 @@ test('T-2 report preserves flat sprint fallback and empty sprint counts', async 
     assert.match(empty.messages[0], /\| Total user stories \| 0 \|/);
 });
 
+test('T-2 completion categories govern RAG, SLA, rendered sections and returned counts', async () => {
+    const f = fixture('sprint-summary', [
+        { ...issue('SMA-1', 'Task', 'Closed', null, '2020-01-01'), statusCategory: 'done' },
+        { ...issue('SMA-2', 'Task', 'Resolved', null, '2020-01-01'), statusCategory: 'done' },
+        issue('SMA-3', 'Task', 'Done', null, '2020-01-01'),
+    ]);
+    assert.deepEqual((await f.run()).counts, { total: 3, pending: 0, red: 0, amber: 0 });
+    const markdown = f.messages[0];
+    assert.match(markdown, /\| Completed tasks \| 3 \|/);
+    assert.match(markdown, /\| Pending tasks \| 0 \|/);
+    assert.match(markdown, /\| SLA breached \| 0 \|/);
+    assert.match(markdown, /On Track/);
+    assert.doesNotMatch(markdown.split('## ✅ Completed tasks')[0], /SMA-[123]|At Risk|Breached/);
+    const completed = markdown.split('## ✅ Completed tasks (3)')[1];
+    for (const key of ['SMA-1', 'SMA-2', 'SMA-3']) assert.ok(completed.includes(key));
+
+    const pending = fixture('sprint-summary', [
+        { ...issue('SMA-4', 'Task', 'Done', null, '2020-01-01'), statusCategory: 'indeterminate' },
+        issue('SMA-5', 'Task', 'Closed', null, '2020-01-01'),
+    ]);
+    assert.deepEqual((await pending.run()).counts, { total: 2, pending: 2, red: 2, amber: 0 });
+    assert.match(pending.messages[0], /Completed tasks \(0\)/);
+    assert.match(pending.messages[0], /At Risk/);
+});
+
 test('close report scopes blocker metrics and retro suggestions to its selected sprint', async () => {
     const f = fixture('report', [], [], [
         { Title: 'SMA-1', StandupId: '21#2020-01-10', State: 'resolved' },

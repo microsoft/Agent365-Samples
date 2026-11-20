@@ -21,6 +21,7 @@ export interface ProposedTransition {
 
 export interface TransitionConfirmCardParams {
     standupId: string;
+    proposalId: string;
     sprintName: string;
     autoAppliedCount: number;
     transitions: ProposedTransition[];
@@ -72,11 +73,12 @@ export function buildTransitionConfirmCard(p: TransitionConfirmCardParams): Atta
                     data: {
                         action: 'reconcile.apply',
                         standupId: p.standupId,
+                        proposalId: p.proposalId,
                     },
                 },
                 {
                     type: 'Action.Submit', title: 'Skip all',
-                    data: { action: 'reconcile.skipAll', standupId: p.standupId },
+                    data: { action: 'reconcile.skipAll', standupId: p.standupId, proposalId: p.proposalId },
                 },
             ],
         },

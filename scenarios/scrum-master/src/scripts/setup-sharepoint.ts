@@ -6,8 +6,8 @@
  *
  * Signs in the developer via device-code, creates all SMA_* lists with the
  * schemas declared in `services/sharepoint.ts`, and creates the SprintReports
- * document library. Also migrates standup run keys and missing risk-delivery
- * columns on existing lists. Pause all agent workers before migration.
+ * document library. Also migrates standup/risk keys and risk-delivery columns
+ * on existing lists. Pause all agent workers before migration.
  *
  * Usage: `npm run setup:sharepoint`
  */
@@ -47,6 +47,54 @@ export async function migrateStandupResponseKeys(
     graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
 ): Promise<void> {
     await migrateStandupKeys(graph, siteId, listId, 'ResponseKey');
+}
+
+export async function migrateSprintRiskKeys(
+    graph: ReturnType<typeof getGraphClient>, siteId: string, listId: string,
+): Promise<void> {
+    const listPath = `/sites/${siteId}/lists/${listId}`;
+    const columns: Array<{ id: string; name: string; indexed?: boolean; enforceUniqueValues?: boolean }> = [];
+    let next: string | undefined = `${listPath}/columns`;
+    while (next) {
+        const page = await graph.api(next).get();
+        columns.push(...(page.value ?? []));
+        next = page['@odata.nextLink'];
+    }
+    const rows: Array<{ id: string; fields: Record<string, string | undefined> }> = [];
+    next = `${listPath}/items?$expand=fields`;
+    while (next) {
+        const page = await graph.api(next).get();
+        rows.push(...(page.value ?? []));
+        next = page['@odata.nextLink'];
+    }
+    const keys = new Set<string>();
+    for (const { fields } of rows) {
+        const title = fields.Title;
+        const dailyKey = `${fields.SprintId}#${fields.DetectedUtc?.slice(0, 10)}`;
+        if (!title || !/^\d+#\d{4}-\d{2}-\d{2}(?:#[\w-]+)?$/.test(title) ||
+            (title !== dailyKey && !title.startsWith(`${dailyKey}#`)) ||
+            keys.has(title) || (fields.RiskKey && fields.RiskKey !== title)) {
+            throw new Error('Sprint RiskKey migration requires distinct canonical Titles matching SprintId/DetectedUtc and existing keys. Reconcile legacy records with all workers paused; no records were changed.');
+        }
+        keys.add(title);
+    }
+    for (const name of ['RiskKey', 'State', 'DeliveredUtc']) {
+        if (columns.some(c => c.name === name)) continue;
+        const column = await graph.api(`${listPath}/columns`).post({
+            name, ...(name === 'DeliveredUtc' ? COLUMN_TYPE_MAP.dateTime : COLUMN_TYPE_MAP.text),
+            ...(name === 'RiskKey' ? { indexed: true } : {}),
+        });
+        columns.push(column);
+    }
+    for (const row of rows.filter(r => r.fields.RiskKey !== r.fields.Title)) {
+        await graph.api(`${listPath}/items/${row.id}/fields`).update({ RiskKey: row.fields.Title });
+    }
+    const keyColumn = columns.find(c => c.name === 'RiskKey');
+    if (!keyColumn?.id) throw new Error('SharePoint did not return the RiskKey column id; migration cannot enforce uniqueness.');
+    if (!keyColumn.indexed || !keyColumn.enforceUniqueValues) {
+        await graph.api(`${listPath}/columns/${keyColumn.id}`).update({ indexed: true, enforceUniqueValues: true });
+    }
+    console.log('[setup] Sprint RiskKeys backfilled and uniqueness enforced.');
 }
 
 async function migrateStandupKeys(
@@ -123,20 +171,7 @@ export async function provisionSharePoint(): Promise<void> {
                 await migrateStandupResponseKeys(graph, siteId, existing.value[0].id);
             }
             if (key === 'sprintRisks') {
-                const listId = existing.value[0].id;
-                const columnsPath = `/sites/${siteId}/lists/${listId}/columns`;
-                const names = new Set<string>();
-                let next: string | undefined = columnsPath;
-                while (next) {
-                    const page = await graph.api(next).get();
-                    for (const column of page.value ?? []) names.add(column.name);
-                    next = page['@odata.nextLink'];
-                }
-                for (const column of schema.columns.filter(col =>
-                    ['State', 'DeliveredUtc'].includes(col.name) && !names.has(col.name))) {
-                    await graph.api(columnsPath).post({ name: column.name, ...COLUMN_TYPE_MAP[column.type] });
-                    console.log(`[setup] Added ${displayName}.${column.name}.`);
-                }
+                await migrateSprintRiskKeys(graph, siteId, existing.value[0].id);
             }
             console.log(`[setup] List ${displayName} already exists — skipping.`);
             continue;
