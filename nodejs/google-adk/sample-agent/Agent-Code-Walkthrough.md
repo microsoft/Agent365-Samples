@@ -106,6 +106,7 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 - Resolves each V2 server's audience/scope using `resolveTokenScopeForServer` and acquires/caches workload tokens per scope for the turn
 - Wraps each discovered tool's `runAsync` on its per-turn toolset instance in `ExecuteToolScope`, recording results/errors and disposing the scope
 - Marks MCP `isError: true` results as failed tool spans while preserving the original result for the model
+- Production/App Service enforces `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false` before agent execution, suppressing native ADK tool arguments/results in addition to the manual tool-span guard
 
 ### 6. agentInterface.ts — Interface Contract
 

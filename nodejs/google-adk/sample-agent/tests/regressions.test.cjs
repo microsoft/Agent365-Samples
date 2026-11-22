@@ -3,10 +3,7 @@
 
 const assert = require('node:assert/strict');
 const { test, after, afterEach } = require('node:test');
-const { Agent, Runner, MCPToolset } = require('@google/adk');
 const otel = require('@microsoft/opentelemetry');
-const { GoogleADKAgent } = require('../dist/agent');
-const { McpToolRegistrationService } = require('../dist/mcpToolRegistrationService');
 const { createAppTokenResolver } = require('../dist/observability/app-token-resolver');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -47,10 +44,16 @@ otel.useMicrosoftOpenTelemetry({
   },
 });
 
+// Native ADK tracers must load after the provider, matching application startup.
+const { Agent, Runner, MCPToolset, BaseLlm, FunctionTool } = require('@google/adk');
+const { GoogleADKAgent } = require('../dist/agent');
+const { McpToolRegistrationService } = require('../dist/mcpToolRegistrationService');
+
 afterEach(() => {
   delete process.env.BEARER_TOKEN;
   delete process.env.WEBSITE_SITE_NAME;
   process.env.NODE_ENV = 'development';
+  delete process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS;
   spans.length = 0;
 });
 after(async () => {
@@ -412,6 +415,74 @@ test('production tool spans retain metadata without business payloads', async t 
   const attributes = JSON.stringify(spans.map(span => span.attributes));
   assert.ok(!attributes.includes('private-tool-argument'));
   assert.ok(!attributes.includes('private-tool-result'));
+});
+
+test('real ADK tool tracing omits native payloads in production and App Service', async t => {
+  class ToolCallingModel extends BaseLlm {
+    constructor() {
+      super({ model: 'offline-tool-model' });
+      this.calls = 0;
+    }
+
+    async *generateContentAsync() {
+      if (this.calls++ === 0) {
+        yield { content: { role: 'model', parts: [{
+          functionCall: { id: 'native-call', name: 'lookup', args: { query: 'private-native-argument' } },
+        }] } };
+      } else {
+        yield { content: { role: 'model', parts: [{ text: 'Completed.' }] } };
+      }
+    }
+  }
+
+  for (const hosted of [false, true]) {
+    spans.length = 0;
+    process.env.NODE_ENV = hosted ? 'development' : 'production';
+    if (hosted) process.env.WEBSITE_SITE_NAME = 'test-site';
+    else delete process.env.WEBSITE_SITE_NAME;
+    // Production must override even an explicitly enabled capture setting.
+    process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS = 'true';
+    let executions = 0;
+    const tool = new FunctionTool({
+      name: 'lookup',
+      description: 'Offline tool',
+      parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      execute: async () => {
+        executions++;
+        return { value: 'private-native-result' };
+      },
+    });
+    t.mock.method(McpToolRegistrationService.prototype, 'addToolServersToAgent', async () =>
+      new Agent({ name: 'native_trace_test', model: new ToolCallingModel(), tools: [tool] }));
+
+    const agent = new GoogleADKAgent();
+    assert.equal(process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS, 'false');
+    process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS = 'true';
+    const response = await agent.invokeAgentWithScope('Perform the lookup.', {}, 'agentic', context());
+    assert.equal(process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS, 'false');
+    assert.equal(response, 'Completed.');
+    assert.equal(executions, 1);
+    const nativeTools = spans.filter(span =>
+      Object.hasOwn(span.attributes, 'gcp.vertex.agent.tool_call_args'));
+    assert.ok(nativeTools.length > 0, 'ADK native tool tracing must actually execute');
+    for (const span of nativeTools) {
+      assert.equal(span.attributes['gen_ai.tool.name'], 'lookup');
+      assert.equal(span.attributes['gcp.vertex.agent.tool_call_args'], '{}');
+      assert.equal(span.attributes['gcp.vertex.agent.tool_response'], '{}');
+    }
+    const attributes = JSON.stringify(spans.map(span => span.attributes));
+    assert.ok(!attributes.includes('private-native-argument'));
+    assert.ok(!attributes.includes('private-native-result'));
+    t.mock.restoreAll();
+  }
+});
+
+test('local development preserves the configured native ADK content capture setting', () => {
+  for (const value of ['true', 'false']) {
+    process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS = value;
+    new GoogleADKAgent();
+    assert.equal(process.env.ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS, value);
+  }
 });
 
 test('missing or blueprint identity preserves local responses without semantic spans', async t => {
