@@ -10,7 +10,7 @@ dependencies = [
     "langchain-core>=0.3.0",
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
-    "microsoft-agents-a365-observability-core",
+    "microsoft-agents-a365-observability-core>=1.0.0",
     "microsoft-agents-a365-observability-extensions-langchain",
     # The langchain extension uses `wrap_function_wrapper(module=..., name=...)`
     # which the wrapt 2.x release removed. Pin until the SDK ships a fix.

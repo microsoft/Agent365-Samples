@@ -41,9 +41,8 @@ from microsoft_agents.hosting.core import (
 from microsoft_agents_a365.observability.core.middleware.baggage_builder import BaggageBuilder
 from microsoft_agents_a365.observability.core import InvokeAgentScope
 from microsoft_agents_a365.observability.core.config import configure as configure_observability
-from microsoft_agents_a365.runtime.environment_utils import (
-    get_observability_authentication_scope,
-)
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+from observability_token_service import create_observability_token_resolver
 
 # Notifications imports
 from microsoft_agents_a365.notifications.agent_notification import (
@@ -60,7 +59,6 @@ from turn_context_utils import (
     create_tenant_details,
     create_request,
 )
-from token_cache import cache_agentic_token, get_cached_agentic_token
 from constants import DEFAULT_SERVICE_NAME, DEFAULT_SERVICE_NAMESPACE
 
 # Configure logging
@@ -212,29 +210,6 @@ class GenericAgentHost:
                         logger.error(error_msg)
                         await context.send_activity(error_msg)
                         return
-
-                    # Only perform token registration when authentication is configured
-                    if self.auth_configured:
-                        # Exchange token and cache for sync token_resolver access
-                        try:
-                            exchange_kwargs = {}
-                            if self.auth_handler_name:
-                                exchange_kwargs["auth_handler_id"] = self.auth_handler_name
-
-                            exaau_token = await self.agent_app.auth.exchange_token(
-                                context,
-                                scopes=get_observability_authentication_scope(),
-                                **exchange_kwargs,
-                            )
-                            cache_agentic_token(
-                                ctx_details.tenant_id,
-                                ctx_details.agent_id,
-                                exaau_token.token,
-                            )
-                        except Exception as e:
-                            logger.debug(f"Token exchange skipped: {e}")
-                    else:
-                        logger.debug("Skipping token registration in anonymous mode")
 
                     user_message = context.activity.text or ""
                     logger.info("Processing message: '%s'", user_message)
@@ -400,41 +375,7 @@ class GenericAgentHost:
             await context.send_activity("❌ Sorry, the agent is not available.")
             return None
 
-        # Setup observability token if available
-        if tenant_id and agent_id:
-            await self._setup_observability_token(context, tenant_id, agent_id)
-
         return tenant_id, agent_id
-
-    async def _setup_observability_token(
-        self, context: TurnContext, tenant_id: str, agent_id: str
-    ):
-        """
-        Cache observability token for Agent365 exporter.
-
-        Args:
-            context: Turn context
-            tenant_id: Tenant identifier
-            agent_id: Agent identifier
-        """
-        if not self.auth_configured:
-            return
-
-        try:
-            # Exchange token and cache for sync token_resolver access
-            exchange_kwargs = {}
-            if self.auth_handler_name:
-                exchange_kwargs["auth_handler_id"] = self.auth_handler_name
-
-            exaau_token = await self.agent_app.auth.exchange_token(
-                context,
-                scopes=get_observability_authentication_scope(),
-                **exchange_kwargs,
-            )
-            cache_agentic_token(tenant_id, agent_id, exaau_token.token)
-            logger.debug(f"✅ Cached observability token for {tenant_id}:{agent_id}")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to cache observability token: {e}")
 
     async def initialize_agent(self):
         """Initialize the hosted agent instance."""
@@ -613,6 +554,7 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
     # CrewAI's TracerProvider being set up before ours
     enable_observability = os.getenv("ENABLE_OBSERVABILITY", "true").lower() in ("true", "1", "yes")
     if enable_observability:
+        token_resolver = create_observability_token_resolver()
         from opentelemetry import trace as otel_trace
         existing_provider = otel_trace.get_tracer_provider()
         provider_type = type(existing_provider).__name__
@@ -631,16 +573,6 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
             service_name = os.getenv("OBSERVABILITY_SERVICE_NAME", DEFAULT_SERVICE_NAME)
             service_namespace = os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", DEFAULT_SERVICE_NAMESPACE)
             
-            # Token resolver for observability exporter (must be sync)
-            def token_resolver(agent_id: str, tenant_id: str) -> str | None:
-                """Resolve authentication token for observability exporter"""
-                token = get_cached_agentic_token(tenant_id, agent_id)
-                if token:
-                    logger.debug(f"Token resolver: found cached token for {agent_id}:{tenant_id}")
-                else:
-                    logger.debug(f"Token resolver: no cached token for {agent_id}:{tenant_id}")
-                return token
-            
             try:
                 logger.info(f"🔍 Existing TracerProvider: {provider_type}")
                 if hasattr(existing_provider, 'resource'):
@@ -649,8 +581,11 @@ def create_and_run_host(agent_class: type[AgentInterface], *agent_args, **agent_
                 configure_observability(
                     service_name=service_name,
                     service_namespace=service_namespace,
-                    token_resolver=token_resolver,
-                    cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
+                    exporter_options=Agent365ExporterOptions(
+                        use_s2s_endpoint=True,
+                        token_resolver=token_resolver,
+                        cluster_category=os.getenv("PYTHON_ENVIRONMENT", "development"),
+                    ),
                 )
                 print("✅ Observability configured")
                 logger.info(f"✅ Observability configured: {service_name} ({service_namespace})")

@@ -1,0 +1,10 @@
+# Custom Metadata RECORDS can fail to deploy via the Metadata API / sf CLI on some orgs
+# (they return an opaque UNKNOWN_EXCEPTION). The A365_Observability_Config.Default record
+# is instead created/updated at runtime via the Apex Metadata API
+# (Metadata.Operations.enqueueDeployment — see scripts/create-obs-config.apex). The template
+# file is kept in git for documentation and repeatability, but excluded from CLI deploys so
+# a full `sf project deploy` of force-app does not fail on it.
+#
+# NOTE: the Custom Metadata TYPE + fields (objects/A365_Observability_Config__mdt) DO deploy
+# normally and are intentionally NOT ignored.
+force-app/main/default/customMetadata/**

@@ -13,7 +13,7 @@ dependencies = [
     "microsoft-agents-activity>=0.7.0",
     
     # Agent 365 packages (using stable versions from PyPI)
-    "microsoft-agents-a365-observability-core>=0.1.0",
+    "microsoft-agents-a365-observability-core>=1.0.0",
     "microsoft-agents-a365-observability-hosting>=0.1.0",
     "microsoft-agents-a365-notifications>=0.1.0",
     "microsoft-agents-a365-tooling>=0.1.0",

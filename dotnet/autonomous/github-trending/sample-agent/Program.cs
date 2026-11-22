@@ -33,9 +33,12 @@ builder.UseMicrosoftOpenTelemetry(o =>
     o.Agent365.Exporter.UseS2SEndpoint = true;
     o.Agent365.Exporter.TokenResolver = async (agentId, tenantId) =>
     {
-        return tokenCache != null
+        var token = tokenCache != null
             ? await tokenCache.GetObservabilityToken(agentId, tenantId)
             : null;
+        return !string.IsNullOrWhiteSpace(token)
+            ? token
+            : throw new InvalidOperationException("OBS application token is unavailable or expired.");
     };
 });
 

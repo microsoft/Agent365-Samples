@@ -116,6 +116,11 @@ a365.generated.config.json
 app.zip
 publish/
 
+# Salesforce / SFDX local artifacts
+**/.sf/
+**/.sfdx/
+**/.localdevserver/
+
 # OS-specific files
 .DS_Store
 Thumbs.db

@@ -29,6 +29,9 @@ Agent365-Samples/
 │   ├── n8n/
 │   ├── perplexity/
 │   └── vercel-sdk/
+├── agent-platforms/           # Agent platform samples (deployed into a SaaS platform)
+│   └── salesforce/            # Salesforce/Apex samples (SFDX projects)
+│       └── apex-observability/ # Native Apex Agent 365 observability + tool boundary
 ├── docs/                      # Repository-wide documentation
 │   └── design.md             # Architectural patterns
 ├── prompts/                   # AI development prompts
@@ -73,6 +76,28 @@ python start_with_generic_host.py
 ```
 
 Python samples use `pyproject.toml` for dependency management. Most samples support `uv` for faster dependency resolution.
+
+### Salesforce / Apex
+
+Salesforce samples are SFDX projects (no hosted process). Use the Salesforce CLI (`sf`).
+
+**Validate (no persist):**
+```bash
+cd agent-platforms/salesforce/<sample-directory>
+sf project deploy start --source-dir force-app/main/default --target-org <alias> --dry-run --test-level RunLocalTests
+```
+
+**Deploy:**
+```bash
+sf project deploy start --source-dir force-app/main/default --target-org <alias> --test-level RunLocalTests
+```
+
+**Test:**
+```bash
+sf apex run test --target-org <alias> --test-level RunLocalTests --wait 10
+```
+
+`RunLocalTests` enforces 75% aggregate org coverage. Full Apex tests require a Dev Hub + scratch org.
 
 ### Node.js / TypeScript
 
@@ -190,6 +215,12 @@ All source files MUST have Microsoft copyright headers:
 // Licensed under the MIT License.
 ```
 
+**Apex (`.cls`):**
+```apex
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+```
+
 **Exclusions**: Auto-generated files, test files, configuration files (`.json`, `.yaml`, `.md`), and third-party code.
 
 ### Legacy Reference Check
@@ -239,5 +270,5 @@ For language-specific design patterns, see:
 
 ## Official Documentation
 
-- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/en-us/microsoft-agent-365/developer/)
+- [Microsoft Agent 365 Developer Documentation](https://learn.microsoft.com/microsoft-agent-365/developer/)
 - [Microsoft 365 Agents SDK Documentation](https://learn.microsoft.com/microsoft-365/agents-sdk/)

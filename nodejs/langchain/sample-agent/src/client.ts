@@ -213,9 +213,12 @@ class LangChainClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: this.turnContext?.activity?.recipient?.agenticAppId || agentName,
+      agentId: this.turnContext?.activity?.recipient?.agenticAppId
+        || process.env.AGENT365_OBS_AGENT_ID || agentName,
       agentName: agentName,
-      tenantId: this.turnContext?.activity?.recipient?.tenantId || 'sample-tenant',
+      tenantId: this.turnContext?.activity?.recipient?.tenantId
+        || this.turnContext?.activity?.conversation?.tenantId
+        || process.env.AGENT365_OBS_TENANT_ID || 'sample-tenant',
     };
 
     let response = '';

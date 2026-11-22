@@ -17,6 +17,8 @@ from microsoft_agents.hosting.aiohttp import start_agent_process, jwt_authorizat
 
 # Microsoft Agent 365 Observability Imports
 from microsoft_agents_a365.observability.core.config import configure
+from microsoft_agents_a365.observability.core.exporters.agent365_exporter_options import Agent365ExporterOptions
+from observability_token_service import create_observability_token_resolver
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -140,9 +142,14 @@ def main():
     # ENABLE_A365_OBSERVABILITY_EXPORTER=true sends traces to the A365 backend;
     # false falls back to the console exporter (expected in local/dev).
     if os.getenv("ENABLE_OBSERVABILITY", "true").lower() == "true":
+        token_resolver = create_observability_token_resolver()
         configure(
             service_name=os.getenv("OBSERVABILITY_SERVICE_NAME", "GoogleADKSampleAgent"),
             service_namespace=os.getenv("OBSERVABILITY_SERVICE_NAMESPACE", "GoogleADKTesting"),
+            exporter_options=Agent365ExporterOptions(
+                use_s2s_endpoint=True,
+                token_resolver=token_resolver,
+            ),
         )
         logger.info(
             "Observability configured (service=%s, a365_exporter=%s)",

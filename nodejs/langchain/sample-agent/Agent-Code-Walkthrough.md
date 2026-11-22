@@ -121,7 +121,7 @@ import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-exten
 
 import {
   InferenceScope,
-} from '@microsoft/agents-a365-observability';
+} from '@microsoft/opentelemetry';
 
 // Observability is initialized by the Microsoft OpenTelemetry distro in index.ts.
 // See: https://github.com/microsoft/opentelemetry-distro-javascript
@@ -243,24 +243,25 @@ class LangChainClient implements Client {
     };
 
     const agentDetails: AgentDetails = {
-      agentId: 'typescript-compliance-agent',
+      agentId: this.turnContext?.activity.recipient?.agenticAppId
+        || process.env.AGENT365_OBS_AGENT_ID!,
       agentName: 'TypeScript Compliance Agent',
-      conversationId: 'conv-12345',
+      tenantId: this.turnContext?.activity.recipient?.tenantId
+        || process.env.AGENT365_OBS_TENANT_ID,
     };
 
-    const tenantDetails: TenantDetails = {
-      tenantId: 'typescript-sample-tenant',
+    const request = {
+      conversationId: this.turnContext?.activity.conversation?.id,
     };
 
     let response = '';
-    const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+    const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
     try {
       await scope.withActiveSpanAsync(async () => {
       response = await this.invokeAgent(prompt);
       // Record the inference response with token usage
       scope.recordOutputMessages([response]);
       scope.recordInputMessages([prompt]);
-      scope.recordResponseId(`resp-${Date.now()}`);
       scope.recordInputTokens(45);
       scope.recordOutputTokens(78);
       scope.recordFinishReasons(['stop']);
@@ -352,7 +353,7 @@ this.onAgentNotification("*", async (context, state, agentNotificationActivity) 
 
 **Scope-Based Tracking**:
 ```typescript
-const scope = InferenceScope.start(inferenceDetails, agentDetails, tenantDetails);
+const scope = InferenceScope.start(request, inferenceDetails, agentDetails);
 // ... perform inference ...
 scope?.recordOutputMessages([response]);
 scope?.recordInputMessages([prompt]);

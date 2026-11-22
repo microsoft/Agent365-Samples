@@ -91,11 +91,18 @@ A365_ENABLED = _has_a365_credentials()
 # Token resolver reads from the in-memory cache populated by the background token service.
 # When A365 credentials are not configured, the A365 exporter is disabled.
 
+def _resolve_observability_token(agent_id: str, tenant_id: str) -> str:
+    token = token_cache.get_cached_token(agent_id, tenant_id)
+    if not token:
+        raise RuntimeError("OBS application token is unavailable or expired.")
+    return token
+
+
 use_microsoft_opentelemetry(
     enable_a365=A365_ENABLED,
     enable_azure_monitor=False,
     a365_use_s2s_endpoint=True,
-    a365_token_resolver=lambda agent_id, tenant_id: token_cache.get_cached_token(agent_id, tenant_id) or "",
+    a365_token_resolver=_resolve_observability_token,
 )
 
 

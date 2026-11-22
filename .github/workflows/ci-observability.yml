@@ -1,0 +1,52 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI - Observability Offline Tests
+permissions:
+  contents: read
+
+on:
+  workflow_call:  # Called by orchestrator
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  python-observability:
+    name: Python observability tests
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Set up Python
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install --pre -e "./python/openai/sample-agent[dev]"
+        pip install requests
+
+    - name: Run observability tests
+      run: python -m pytest tests/observability -q
+
+  dotnet-observability:
+    name: .NET ObservabilityAppTokenTests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore test dependencies
+      run: dotnet restore tests/e2e/Agent365.E2E.Tests.csproj
+
+    - name: Run ObservabilityAppTokenTests
+      run: dotnet test tests/e2e/Agent365.E2E.Tests.csproj --no-restore --filter FullyQualifiedName~ObservabilityAppTokenTests
