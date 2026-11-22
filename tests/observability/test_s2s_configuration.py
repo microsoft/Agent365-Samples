@@ -30,6 +30,7 @@ PYTHON_CONFIGS = {
     "python/observability-with-langgraph/main.py": "legacy",
     "python/observability-with-otlp/main.py": "legacy",
     "python/openai/sample-agent/agent.py": "legacy",
+    "python/semantic-kernel/sample-agent/observability_config.py": "distro",
 }
 NODE_CONFIGS = {
     "nodejs/claude/sample-agent/src/otel.ts": "distro",
