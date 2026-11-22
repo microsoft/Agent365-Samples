@@ -216,6 +216,9 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
         };
       }
     }
+    let failTool = false;
+    let observedToolResult;
+    let middleware;
     const helpers = loadModule('observability.ts');
     const client = loadModule('client.ts', {
       '@microsoft/opentelemetry': telemetry,
@@ -224,9 +227,13 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
       '@microsoft/agents-a365-tooling-extensions-langchain': {
         McpToolRegistrationService: class {
           async addToolServersToAgent(agent) {
+            middleware = agent.options.middleware[0];
             return createAgent({
               ...agent.options,
-              tools: [tool(async () => 'offline result', { name: 'lookup', description: 'Offline lookup', schema: z.object({}) })],
+              tools: [tool(async () => {
+                if (failTool) throw new Error('Offline MCP failure');
+                return 'offline result';
+              }, { name: 'lookup', description: 'Offline lookup', schema: z.object({}) })],
             });
           }
         },
@@ -276,6 +283,65 @@ test('a tool-using turn exports one invoke_agent with chat and tool children', a
     assert.equal(chats[0].parentSpanContext.spanId, agents[0].spanContext().spanId);
     assert.equal(tools[0].parentSpanContext.spanId, chats[0].spanContext().spanId);
     assert.ok(spans.every(span => span.spanContext().traceId === agents[0].spanContext().traceId));
+
+    exporter.reset();
+    failTool = true;
+    const recovered = await client.getClient({}, 'agentic', turn);
+    assert.equal(await recovered.invokeInferenceScope('Try a failing tool'), 'Done');
+    await provider.forceFlush();
+    const failedTools = exporter.getFinishedSpans().filter(span =>
+      span.attributes['gen_ai.operation.name'] === 'execute_tool');
+    assert.equal(failedTools.length, 1);
+    assert.equal(failedTools[0].status.code, 2, 'failed tool span is marked as an error');
+
+    const request = {
+      toolCall: { id: 'failed-call', name: 'lookup', args: {} },
+      runtime: { signal: new AbortController().signal },
+    };
+    const failure = new Error('Recoverable MCP failure');
+    // Verify the same recovery path without telemetry identity.
+    await client.getClient({}, 'agentic', { activity: {} });
+    const savedAgent = process.env.AGENT365_OBS_AGENT_ID;
+    delete process.env.AGENT365_OBS_AGENT_ID;
+    try {
+      observedToolResult = await middleware.wrapToolCall(request, async () => { throw failure; });
+      assert.equal(observedToolResult.status, 'error');
+      assert.equal(observedToolResult.tool_call_id, 'failed-call');
+      assert.ok(observedToolResult.content.includes(failure.message));
+      const { GraphInterrupt } = require('@langchain/langgraph');
+      const interrupt = new GraphInterrupt([]);
+      await assert.rejects(middleware.wrapToolCall(request, async () => { throw interrupt; }),
+        error => error === interrupt);
+      const abort = new Error('Cancelled');
+      abort.name = 'AbortError';
+      await assert.rejects(middleware.wrapToolCall(request, async () => { throw abort; }),
+        error => error === abort);
+      const controller = new AbortController();
+      controller.abort();
+      await assert.rejects(middleware.wrapToolCall({
+        ...request, runtime: { signal: controller.signal },
+      }, async () => { throw failure; }), error => error === failure);
+    } finally {
+      if (savedAgent !== undefined) process.env.AGENT365_OBS_AGENT_ID = savedAgent;
+    }
+
+    exporter.reset();
+    failTool = false;
+    const emailTurn = {
+      ...turn,
+      activity: { ...turn.activity, type: 'event', channelId: 'msteams' },
+      sendActivity: async activity => { sent.push(activity); },
+    };
+    await new A365Agent().handleAgentNotificationActivity(emailTurn, {}, {
+      notificationType: 'email',
+      emailNotification: { id: 'offline-email', conversationId: 'email-conversation' },
+    });
+    await provider.forceFlush();
+    const emailSpans = exporter.getFinishedSpans();
+    assert.equal(emailSpans.filter(span => span.attributes['gen_ai.operation.name'] === 'invoke_agent').length, 1);
+    assert.equal(emailSpans.filter(span => span.attributes['gen_ai.operation.name'] === 'execute_tool').length, 2);
+    assert.ok(emailSpans.every(span => span.attributes['microsoft.channel.name'] === 'outlook'),
+      'invocation, inference and tool spans all use the email override');
   } finally {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;

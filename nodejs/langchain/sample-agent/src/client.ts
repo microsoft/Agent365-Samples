@@ -4,6 +4,9 @@
 import { createAgent, createMiddleware, ReactAgent } from "langchain";
 import { AzureChatOpenAI, ChatOpenAI } from "@langchain/openai";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { ToolMessage } from '@langchain/core/messages';
+import { isGraphBubbleUp } from '@langchain/langgraph';
+import { context, propagation } from '@opentelemetry/api';
 
 // Tooling Imports
 import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-langchain';
@@ -176,27 +179,39 @@ export async function getClient(authorization: Authorization, authHandlerName: s
     name: 'A365ToolTracing',
     wrapToolCall: async (request, handler) => {
       const agentDetails = buildAgentDetails(turnContext);
-      if (!agentDetails) return handler(request);
-      const scope = ExecuteToolScope.start({
+      const channelName = propagation.getBaggage(context.active())
+        ?.getEntry('microsoft.channel.name')?.value;
+      const scope = agentDetails ? ExecuteToolScope.start({
         conversationId: turnContext.activity?.conversation?.id,
-        channel: { name: resolveChannelName(turnContext) },
+        channel: { name: resolveChannelName(turnContext, channelName) },
       }, {
         toolName: request.toolCall.name,
         toolCallId: request.toolCall.id,
         toolType: 'function',
         arguments: request.toolCall.args,
-      }, agentDetails);
-      try {
-        return await scope.withActiveSpanAsync(async () => {
+      }, agentDetails) : undefined;
+      const execute = async () => {
+        try {
           const result = await handler(request);
-          if ('content' in result) scope.recordResponse({ content: result.content });
+          if ('content' in result) scope?.recordResponse({ content: result.content });
           return result;
-        });
-      } catch (error) {
-        scope.recordError(error as Error);
-        throw error;
+        } catch (error) {
+          scope?.recordError(error as Error);
+          if (isGraphBubbleUp(error) || request.runtime.signal?.aborted
+            || (error instanceof Error && error.name === 'AbortError')) throw error;
+          // Preserve ToolNode's normal error-to-message recovery inside middleware.
+          return new ToolMessage({
+            content: `${error}\n Please fix your mistakes.`,
+            tool_call_id: request.toolCall.id ?? '',
+            name: request.toolCall.name,
+            status: 'error',
+          });
+        }
+      };
+      try {
+        return scope ? await scope.withActiveSpanAsync(execute) : await execute();
       } finally {
-        scope.dispose();
+        scope?.dispose();
       }
     },
   });

@@ -83,6 +83,10 @@ span. Explicit inference scopes and tool-call middleware create child `chat`
 and `execute_tool` spans. Tool failures are detected from structured error
 status and logged without response bodies; successful mailbox contents are
 never inspected for error-like text or written to application logs.
+Ordinary tool failures remain error messages the model can recover from, with
+failed tool spans recorded; interrupts and cancellation still propagate.
+Tool spans inherit the effective turn channel, including the Outlook override
+for email notifications.
 
 The Mail MCP manifest retains the existing shared audience and
 `McpServers.Mail.All` permission, so existing Blueprint grants are unchanged.
