@@ -154,7 +154,9 @@ npm run setup:sharepoint
 # your squad, or accept the four Alice/Bob/Charlie/Dana placeholders.
 npm run seed
 
-# Seed SMA_HelperRoster (subject-matter experts for the blocker chase flow).
+# Seed SMA_HelperRoster. First replace ivy@contoso.com, sam@contoso.com, and
+# dana@contoso.com in src/scripts/seed-helper-roster.ts with real tenant users.
+# Chase invites HelperEmail and copies blocker text into the meeting body.
 npm run seed:helpers
 
 # Optional: create 2 stories + 5 sub-tasks + 1 future sprint on your Jira
