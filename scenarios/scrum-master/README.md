@@ -25,7 +25,7 @@ An autonomous **Scrum Master** built on the [Microsoft Agent 365 SDK](https://gi
 
 ## What it does
 
-Seven capabilities, each a handler under [`src/handlers/`](src/handlers). Live mode uses proactive DMs, SharePoint records, and grounded Jira tools. Standup aggregation and daily deduplication are process-local; they do not survive restart or coordinate replicas.
+Seven capabilities, each a handler under [`src/handlers/`](src/handlers). Live mode uses proactive DMs, SharePoint records, and grounded Jira tools. Daily creation and per-member request delivery use durable claims; open assignment snapshots can restore runs after restart. Active aggregation and finalization are still process-local, not coordinated across replicas.
 
 1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary posted to the configured channel. Large summaries split into numbered cards within a 90,000-byte serialized UTF-8 activity budget, including the conversation envelope; oversized cells continue without dropping response text. See [`handlers/standup.ts`](src/handlers/standup.ts).
 2. **Board reconciliation** — A deterministic phrase classifier reads each update and auto-applies safe forward transitions using current Jira state, or DMs the Scrum Master an approval card for inferred skips/backwards moves. Every automatic target requires an affirmative status assertion; questions, plans, conditional statements and ambiguous prose leave Jira unchanged. Completion additionally uses a finite whole-statement grammar. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
@@ -288,7 +288,14 @@ All three accept the `x-internal-token` header (must match a configured `INTERNA
 
 ### `POST /api/internal/standup-trigger`
 
-Fires today's standup. Live mode inserts a unique SharePoint `RunKey` (`<sprintId>#<UTC-date>`) before fan-out; only the insert winner sends cards. That claim survives restart and coordinates workers, but it does not reconstruct an interrupted in-memory session or its cutoff timer.
+Fires today's standup. Live mode inserts a unique SharePoint `RunKey`
+(`<sprintId>#<UTC-date>`) with a frozen assignment snapshot before fan-out.
+Each reachable member has a unique `SMA_StandupDeliveries.DeliveryKey`.
+Request failures return HTTP 500 until all reachable members have confirmed
+delivery. Daily retries and `/standup retry <standupId>` resume only pending
+members, including after restart; already-sent cards are not repeated.
+Open runs with a snapshot restore assignments, accepted responses and the cutoff
+timer. Legacy runs without a snapshot still require manual inspection.
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -300,7 +307,8 @@ Invoke-RestMethod -Method Post `
 Fresh-roster example (four assignees with work, none with a stored personal reference): `{ "standupId": "1#2026-07-12", "sentTo": 0, "skipped": 4 }`.
 `skipped` counts unreachable assignees with work, not the entire roster.
 `sentTo` can rise on subsequent runs only after each assignee DMs the agent once.
-The daily guard above still applies; retriggering an existing run does not repeat fan-out.
+The daily guard above still applies; retriggering an existing run does not repeat
+successful deliveries, but resumes confirmed failed request sends.
 
 ### `POST /api/internal/nightly-check`
 
@@ -379,15 +387,22 @@ Live operations claim SharePoint records before sending external side effects.
 Do not delete or reset a claim merely because a timer/card action was retried.
 
 - **Standup creation:** `SMA_StandupSessions.RunKey` is indexed and unique
-  (`<sprintId>#<UTC yyyy-mm-dd>`). Only the worker that inserts it starts fan-out.
-  Existing runs, including completed runs, block new daily fan-out. A crash after
-  insertion can leave a partially delivered run: inspect records/delivery logs
-  rather than deleting the claim or assuming another worker resumes it.
+  (`<sprintId>#<UTC yyyy-mm-dd>`). The frozen `FanoutSnapshot` preserves assignments
+  for an open run. `SMA_StandupDeliveries` tracks each reachable member with a unique
+  `<standupId>#<UserAadId>` key: `pending` is retryable, `claimed` prevents competing
+  sends, and `sent` blocks repeat delivery. Failures before sending or confirmed
+  non-408 4xx rejections return to `pending`; an ambiguous send becomes `uncertain`.
+  A crash or post-send persistence failure can leave `claimed`.
+  Inspect Teams and logs before recovering `claimed`/`uncertain`: mark a confirmed
+  delivery `sent`; reset to `pending` only after confirming no card was delivered.
+  Do not delete the run or delivery claim. Legacy rows without a snapshot are not
+  automatically resumed.
   Before upgrading an existing deployment, pause **all** agent workers and run
   `npm run setup:sharepoint` with the live site's configuration. The script
   validates distinct nonempty legacy Titles, backfills `RunKey` from `Title`,
   then enforces indexed uniqueness. Duplicate/mismatched legacy keys fail
   migration without modifying records; review and reconcile them manually.
+  Setup also adds `FanoutSnapshot` and provisions the new delivery list.
   Resume workers only after successful migration. No live setup is implied by
   building or testing this sample.
 - **Sprint close:** `SMA_SprintReportsDelivery.DeliveryKey` is unique and indexed
@@ -438,8 +453,9 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   and rejects new submissions once claimed.
   Inspect channel/DM delivery and persisted responses before using
   `/standup retry <standupId>` in the same process; the cutoff path can also retry.
-  A process crash drops the session map, and restarting does not rebuild
-  response fan-in or cutoff timers.
+  A process crash drops the session map. Triggering an open live run with a
+  snapshot restores accepted responses and its cutoff timer; legacy runs and
+  partially delivered summaries still require inspection before recovery.
   For multipart summaries, acknowledged parts and the destination are retained
   in process. Retries resume at the next part and do not switch destinations
   after partial delivery; inspect delivery before restarting. Lost connector
@@ -484,7 +500,7 @@ Set `AGENT_CALLBACK_URL=https://<your-agent-host>` (base URL, without `/api/mess
 - **`GRAPH_CLIENT_ID` defaults to the well-known "Microsoft Graph Command Line Tools" public client** when blank/unset. This avoids creating an app for local sign-in, not tenant policy or admin consent. Register your own public client for a real deployment.
 - **Single-team by design.** The sample assumes one scrum team per process (single project key, single board, single channel). Multi-team support (per-team config, isolated Jira credentials, sharded timers) is called out as future work in [`docs/design.md#12-known-limitations--hardening-roadmap`](docs/design.md#12-known-limitations--hardening-roadmap).
 - **Proactive DMs require prior interaction.** Every squad member must have said "hi" to the agent at least once so their conversation reference is captured in `SMA_TeamMembers`.
-- **Use one scheduler and one agent process for standups.** Live daily creation uses the unique SharePoint `RunKey` after schema migration; mock guards remain process-local. Active response fan-in and cutoff timers are still in-memory, are not rebuilt after a restart, and are not shared by replicas. The creation claim prevents duplicate fan-out, not distributed standup processing. Set `LOCAL_CRON=false` once the Function is deployed.
+- **Use one scheduler and one agent process for standups.** Live daily creation and per-member request delivery use unique durable claims after schema migration; mock guards remain process-local. Open live snapshots can restore accepted responses and cutoff timers on retry, but active aggregation/finalization are not coordinated across replicas. Set `LOCAL_CRON=false` once the Function is deployed.
 - **Sprint-close delivery claims are separate from standup state.** Live mode uses `SMA_SprintReportsDelivery` with a unique per-sprint key. A crash or uncertain send leaves a `claimed` record requiring operator verification; it is not automatically retried. A confirmed delivery failure can be retried. `force=report` does not bypass this guard.
 
 ## Support

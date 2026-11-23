@@ -347,7 +347,7 @@ test('chase propagates lookup failures and retries failed sends without repeatin
             escalations++;
             return { ok: !sendFails, error: 'Connector unavailable' };
         } },
-        '../config': {}, '../agent': {},
+        '../config': { getJiraMode: () => 'live' }, '../agent': {},
     });
     const session = { standupId: 'retry-chase', sprintName: 'Sprint' };
     await assert.rejects(chase.chaseAfterStandup(session), /SharePoint 503/);

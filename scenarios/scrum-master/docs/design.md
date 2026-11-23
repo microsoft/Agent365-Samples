@@ -55,8 +55,9 @@ Every design decision below reflects one or more of these six principles:
 5. **SharePoint records with explicit process-local limits.** Live roster,
    response, blocker and report-delivery records live in `SMA_*` lists.
    Standup fan-in, cutoff timers, completed daily session records and Q&A
-   history are in-memory. A restart does not reconstruct an in-flight
-   standup, and multiple agent processes do not share its guard. Mock mode
+   history are in-memory. An open live run can restore assignments, accepted
+   responses and its cutoff from the durable snapshot on retry, but active
+   aggregation/finalization are not coordinated across processes. Mock mode
    uses in-memory services rather than durable SharePoint.
 6. **Jira is the source of truth for issue state.** The agent writes back
    via comments and transitions but never invents data. Every LLM reply is
@@ -233,8 +234,10 @@ sequenceDiagram
 Standup id = `<sprintId>#<UTC yyyy-mm-dd>`. Completed daily records remain
 in-memory in the agent process, preventing a later trigger there from
 re-sending the day's cards. Live startup also atomically claims the unique
-SharePoint `RunKey` before fan-out, after existing-list migration. This does
-not let a restarted process resume its fan-in/cutoff state. Mock mode uses
+SharePoint `RunKey` and assignment snapshot before fan-out, after existing-list
+migration. Per-member delivery claims resume confirmed failures without replaying
+sent cards. Open live snapshots restore accepted responses and cutoff timers
+on retry. Mock mode uses
 an in-memory roster and binds the first personal Playground caller to Alex;
 it needs no SharePoint or LLM credentials for `/standup`.
 Mock triggers without an initiating turn context (cron/HTTP) skip before
@@ -580,6 +583,18 @@ also model-driven and is never used for inbound email.
 
 ## 9. Concurrency, idempotency, and dedup
 
+- **Request fan-out is resumable.** A frozen assignment snapshot is persisted
+  with the unique daily run before sending. Each reachable member has a unique
+  delivery row conditionally claimed before sending. Confirmed failures remain
+  pending and return HTTP 500; retries resume only those members, also after restart.
+  Sent rows are not replayed. Claimed/uncertain sends require operator verification,
+  not an automatic replay. Finalization waits for successful request fan-out.
+  Open snapshots restore accepted responses and rearm the cutoff; legacy runs
+  without a snapshot require manual inspection.
+- **Mock blocker follow-up stays local.** The captured anonymous Playground
+  adapter callback used for request/summary delivery also sends owner and SM
+  blocker notifications on fresh SDK contexts. Live mode retains authenticated
+  proactive routing and ignores the local callback.
 - **Trigger coalescing is operation-scoped.** Concurrent daily starts share
   initialization; explicit recovery requests share work only for the same retained
   standup ID. A pending daily start cannot consume a prior-run recovery request,
@@ -636,12 +651,12 @@ also model-driven and is never used for inbound email.
   safe for response aggregation by the creation guard: active fan-in remains
   process-local even though live creation is atomically claimed in SharePoint.
 - **Session state** in `session-store.ts` is in-memory. A restart drops
-  pending fan-in and cutoff timers; a persisted SharePoint row does not
-  rebuild them. Live triggers check existing SharePoint records before new
+  active maps and timers; open live snapshots restore assignments, accepted
+  responses and cutoff timers when triggered. Live triggers check existing SharePoint records before new
   fanout, then atomically insert an indexed unique `RunKey`; a competing worker
   cannot create the same daily run. Existing deployments must pause workers and
   migrate/backfill this key with the setup script before upgrading (see
-  `sharepoint-schema.md`). A creation claim does not resume a crashed run.
+  `sharepoint-schema.md`). Legacy runs without a snapshot still require inspection.
   Mock mode enforces the same key within its in-memory store only. Failed
   finalization releases the in-memory `summarizing` claim; SharePoint stores
   `open` or `summarized`, not `summarizing`. Explicitly failed summary
@@ -652,7 +667,7 @@ also model-driven and is never used for inbound email.
   creating a new daily run; unknown IDs never fall back to creation. Summaries
   display the retained run's start date in the configured timezone, not the
   finalization date, even with multi-day cutoffs. After a restart,
-  inspect existing records before manually recovering a run.
+  inspect uncertain deliveries and partially posted summaries before recovery.
   Roster lookup occurs before the finalization claim, so a failed lookup
   leaves the session retryable. Accepted response writes reserve the session
   before their first persistence await; finalization drains them before
@@ -761,10 +776,10 @@ and [Microsoft 365 connector setup](https://learn.microsoft.com/en-us/defender-c
   Multi-team support requires a `SMA_Teams` list, a `TeamId` column on
   every existing list, and per-team Jira credentials in Key Vault. Sketch
   is in the README under "Known limitations".
-- **In-memory standup aggregation/daily guard.** A restart loses session
-  state and cutoff timers. Safe scale-out/recovery needs shared atomic
-  claims plus durable fan-in and timer reconstruction, not just a stored
-  standup id. Review persisted records before recovering manually.
+- **Process-local standup aggregation/finalization.** Daily creation and request
+  delivery are durably claimed, and open live snapshots support restart recovery.
+  Active aggregation/finalization still require one process; scale-out needs
+  distributed coordination. Partially posted summaries require operator inspection.
 - **`.mstoken-cache.json` is unencrypted.** Fine for local dev; swap for
   Key Vault or a DPAPI-backed extension in production.
 - **`GRAPH_CLIENT_ID` uses the shared "Microsoft Graph Command Line Tools"

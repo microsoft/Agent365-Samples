@@ -59,6 +59,7 @@ import {
 } from '../services/session-store';
 import { getJiraMode, getScheduleConfig } from '../config';
 import { sendProactive } from '../services/proactive';
+import { deliverStandupRequest, standupSnapshotSchema, standupResponsesSchema } from '../services/standup-delivery';
 import {
     buildStandupRequestCard,
     buildStandupSubmittedCard,
@@ -79,6 +80,7 @@ interface StandupSessionFields {
     Title: string; SprintId: string; StartedUtc: string; CutoffUtc: string;
     State: 'open' | 'summarized' | 'archived'; ExpectedResponders: string;
     InitiatedByAadId: string;
+    FanoutSnapshot?: string;
 }
 interface StandupResponseFields {
     Title: string; StandupId: string; UserAadId: string;
@@ -106,6 +108,7 @@ interface StandupTriggerResult {
 }
 
 const pendingTriggers = new Map<string, Promise<StandupTriggerResult>>();
+const pendingFanouts = new WeakMap<StandupSession, Promise<void>>();
 function captureMockDelivery(context: TurnContext) {
     const adapter = context.adapter;
     const identity = context.identity;
@@ -165,7 +168,9 @@ export function triggerStandup(opts: StandupTriggerOptions): Promise<StandupTrig
 
 async function startStandup(opts: StandupTriggerOptions): Promise<StandupTriggerResult> {
     if (opts.retryStandupId) {
-        const session = getSession(opts.retryStandupId);
+        const session = getSession(opts.retryStandupId) ?? await restoreStandup(opts.retryStandupId);
+        const resumedFanout = session?.state === 'open' && !!session.fanoutPending;
+        if (session && resumedFanout) await resumeStandupFanout(session);
         let note: string;
         if (!session) {
             note = `Standup ${opts.retryStandupId} is not retained in this process. No new run was started; inspect persisted records before manual recovery.`;
@@ -179,7 +184,9 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
             await summarizeStandup(session);
             note = `Retried retained standup ${session.standupId} without starting a new daily run.`;
         } else {
-            note = `Standup ${session.standupId} is still collecting responses or being summarized; no additional work was started.`;
+            note = resumedFanout
+                ? `Resumed undelivered request cards for standup ${session.standupId}; now collecting responses.`
+                : `Standup ${session.standupId} is still collecting responses or being summarized; no additional work was started.`;
         }
         console.log(`[standup] ${note}`);
         if (opts.turnContext) await opts.turnContext.sendActivity(note);
@@ -203,7 +210,8 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
 
     // Idempotency: if a session already exists today (from cron OR the /standup command),
     // don't re-fan-out. Callers get a friendly note.
-    const existingMem = getSession(standupId);
+    const existingMem = getSession(standupId) ?? await restoreStandup(standupId);
+    if (existingMem?.state === 'open' && existingMem.fanoutPending) await resumeStandupFanout(existingMem);
     const completed = getCompletedSession(standupId);
     if (existingMem?.state === 'summarized') {
         await finishStandupChase(existingMem);
@@ -261,12 +269,10 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     }
 
     const expectedResponders = new Set(itemsByAssignee.keys());
-    const reachable: TeamMember[] = [];
     const unreachable = new Set<string>();
     for (const aadId of expectedResponders) {
         const m = members.find(x => x.AadObjectId === aadId)!;
-        if (isReachable(m)) reachable.push(m);
-        else unreachable.add(aadId);
+        if (!isReachable(m)) unreachable.add(aadId);
     }
 
     const nowUtc = new Date();
@@ -281,6 +287,9 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
         State: 'open',
         ExpectedResponders: JSON.stringify(Array.from(expectedResponders)),
         InitiatedByAadId: opts.initiatedByAadId ?? '',
+        FanoutSnapshot: JSON.stringify({
+            sprintName: sprint.name, itemsByAssignee: Array.from(itemsByAssignee), unreachable: Array.from(unreachable),
+        }),
     });
     if (!claimed) {
         const note = `Standup ${standupId} has already been started or completed today.`;
@@ -302,6 +311,7 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
         sentTo: new Set(),
         unreachable,
         responses: new Map(),
+        fanoutPending: true,
     };
     upsertSession(session);
     if (getJiraMode() === 'mock' && opts.turnContext) mockDeliveries.set(standupId, captureMockDelivery(opts.turnContext));
@@ -312,27 +322,9 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
         scheduleStandupCutoff(session, msUntilCutoff);
     }
 
-    // Fan out request cards.
     const cutoffLocal = formatLocal(cutoffUtc, schedule.timezone);
-    let sent = 0;
-    for (const member of reachable) {
-        const items = itemsByAssignee.get(member.AadObjectId) ?? [];
-        const card = buildStandupRequestCard({
-            standupId,
-            sprintName: sprint.name,
-            cutoffLocal,
-            assigneeAadId: member.AadObjectId,
-            items,
-        });
-        const deliver = async (ctx: TurnContext) => {
-            await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
-        };
-        const result = await deliverStandup(standupId, member.conversationReference!, deliver);
-        if (result.ok) {
-            session.sentTo.add(member.AadObjectId);
-            sent++;
-        }
-    }
+    await resumeStandupFanout(session, members);
+    const sent = session.sentTo.size;
 
     if (opts.turnContext) {
         await opts.turnContext.sendActivity(
@@ -343,6 +335,90 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     }
 
     return { standupId, sentTo: sent, skipped: unreachable.size };
+}
+
+async function restoreStandup(standupId: string): Promise<StandupSession | undefined> {
+    if (getJiraMode() === 'mock' || getCompletedSession(standupId)) return;
+    const row = await findByTitle<StandupSessionFields>('standupSessions', standupId);
+    if (!row || row.fields.State !== 'open' || !row.fields.FanoutSnapshot) return;
+    const snapshot = standupSnapshotSchema.parse(JSON.parse(row.fields.FanoutSnapshot));
+    const expected = Array.from(new Map(snapshot.itemsByAssignee).keys());
+    if (row.fields.Title !== standupId || String(Number(row.fields.SprintId)) !== standupId.split('#')[0] ||
+        !Number.isFinite(Date.parse(row.fields.CutoffUtc)) ||
+        JSON.stringify(expected) !== JSON.stringify(JSON.parse(row.fields.ExpectedResponders))) {
+        throw new Error(`Invalid persisted standup snapshot for ${standupId}; inspect SharePoint before recovery.`);
+    }
+    const responses = await findByField<StandupResponseFields>('standupResponses', 'StandupId', standupId);
+    const session: StandupSession = {
+        standupId, sprintId: Number(row.fields.SprintId), sprintName: snapshot.sprintName,
+        startedUtc: row.fields.StartedUtc, cutoffUtc: row.fields.CutoffUtc, state: 'open',
+        initiatedByAadId: row.fields.InitiatedByAadId || null,
+        itemsByAssignee: new Map(snapshot.itemsByAssignee), expectedResponders: new Set(expected),
+        sentTo: new Set(), unreachable: new Set(snapshot.unreachable), responses: new Map(),
+        fanoutPending: true,
+    };
+    for (const response of responses) {
+        const fields = response.fields;
+        const items = standupResponsesSchema.parse(JSON.parse(fields.Items));
+        if (!session.expectedResponders.has(fields.UserAadId) ||
+            items.some(item => !session.itemsByAssignee.get(fields.UserAadId)?.some(issue => issue.key === item.issueKey))) {
+            throw new Error(`Invalid persisted responder for ${standupId}; inspect SharePoint before recovery.`);
+        }
+        session.responses.set(fields.UserAadId, { userAadId: fields.UserAadId, submittedUtc: fields.SubmittedUtc, items });
+    }
+    upsertSession(session);
+    scheduleStandupCutoff(session, Math.max(1, Date.parse(session.cutoffUtc) - Date.now()));
+    return session;
+}
+
+function resumeStandupFanout(session: StandupSession, members?: TeamMember[]): Promise<void> {
+    const pending = pendingFanouts.get(session);
+    if (pending) return pending;
+    const work = sendPendingStandupRequests(session, members).finally(() => { pendingFanouts.delete(session); });
+    pendingFanouts.set(session, work);
+    return work;
+}
+
+async function sendPendingStandupRequests(session: StandupSession, initialMembers?: TeamMember[]): Promise<void> {
+    const members = initialMembers ?? await listTeamMembers();
+    const failures: string[] = [];
+    for (const aadId of session.expectedResponders) {
+        if (session.unreachable.has(aadId) || session.sentTo.has(aadId)) continue;
+        try {
+            await deliverStandupRequest(session.standupId, aadId, async (started, rejected) => {
+                const member = members.find(m => m.AadObjectId === aadId);
+                if (!member?.conversationReference || !isReachable(member)) {
+                    return { ok: false, error: 'Previously reachable member has no personal conversation reference.' };
+                }
+                const card = buildStandupRequestCard({
+                    standupId: session.standupId, sprintName: session.sprintName,
+                    cutoffLocal: formatLocal(new Date(session.cutoffUtc), getScheduleConfig().timezone),
+                    assigneeAadId: aadId, items: session.itemsByAssignee.get(aadId) ?? [],
+                });
+                return deliverStandup(session.standupId, member.conversationReference, async ctx => {
+                    started();
+                    try {
+                        await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+                    } catch (error) {
+                        const status = typeof error === 'object' && error !== null
+                            ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+                            : undefined;
+                        if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408) rejected();
+                        throw error;
+                    }
+                });
+            });
+            session.sentTo.add(aadId);
+        } catch (error) {
+            failures.push(error instanceof Error ? error.message : String(error));
+        }
+    }
+    if (failures.length) {
+        const message = `Standup ${session.standupId} fan-out incomplete (${session.sentTo.size} delivered): ${failures.join('; ')}`;
+        console.error(`[standup] ${message}`);
+        throw new Error(message);
+    }
+    session.fanoutPending = false;
 }
 
 // --- handleStandupSubmit -------------------------------------------------
@@ -608,6 +684,7 @@ async function recordStandupSubmission(
 
 export async function summarizeStandup(session: StandupSession): Promise<void> {
     if (session.state !== 'open') return;
+    if (session.fanoutPending) await resumeStandupFanout(session);
 
     // Resolve prerequisites before claiming; a transient roster failure remains retryable.
     const members = await listTeamMembers();
@@ -818,7 +895,9 @@ async function finishStandupChase(session: StandupSession): Promise<void> {
     session.chaseState = 'running';
     try {
         const { chaseAfterStandup } = await import('./chase');
-        await chaseAfterStandup(session);
+        await chaseAfterStandup(session, getJiraMode() === 'mock'
+            ? (reference, logic) => deliverStandup(session.standupId, reference, logic)
+            : undefined);
     } catch (e) {
         session.chaseState = 'failed';
         console.error(`[standup] Summary delivered, but blocker follow-up failed. Session retained; retry /standup retry ${session.standupId} to retry only blocker follow-up:`, (e as Error).message);

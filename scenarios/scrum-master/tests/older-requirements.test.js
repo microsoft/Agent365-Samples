@@ -204,9 +204,10 @@ test('standup migration backfills every page before enforcing uniqueness and can
     ]);
     await fixture.migrate();
     assert.deepEqual(fixture.rows.map(r => r.fields.RunKey), ['one', 'two']);
-    assert.deepEqual(fixture.writes.at(-1), [
+    assert.deepEqual(fixture.writes.find(w => w[1].endsWith('/columns/run-key')), [
         'update', '/sites/site/lists/list/columns/run-key', { indexed: true, enforceUniqueValues: true },
     ]);
+    assert.equal(fixture.writes.filter(w => w[0] === 'post' && w[2].name === 'FanoutSnapshot').length, 1);
     const count = fixture.writes.length;
     await fixture.migrate();
     assert.equal(fixture.writes.length, count);
@@ -230,8 +231,9 @@ test('interrupted RunKey migration can resume without losing backfilled history'
     assert.equal(fixture.rows[0].fields.RunKey, 'one');
     await fixture.migrate();
     assert.equal(fixture.rows[0].fields.State, 'summarized');
-    assert.deepEqual(fixture.writes.at(-1)[2], { indexed: true, enforceUniqueValues: true });
-    assert.equal(fixture.writes.filter(w => w[0] === 'post').length, 1);
+    assert.deepEqual(fixture.writes.filter(w => w[1].endsWith('/columns/run-key')).at(-1)[2], { indexed: true, enforceUniqueValues: true });
+    assert.equal(fixture.writes.filter(w => w[0] === 'post' && w[2].name === 'RunKey').length, 1);
+    assert.equal(fixture.writes.filter(w => w[0] === 'post' && w[2].name === 'FanoutSnapshot').length, 1);
 });
 
 function reportFixture(kind, states = new Map(), failure = true) {

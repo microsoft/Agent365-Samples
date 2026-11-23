@@ -20,6 +20,7 @@ export const LIST_NAMES = {
     teamMembers: 'TeamMembers',
     teamsConfig: 'TeamsConfig',
     standupSessions: 'StandupSessions',
+    standupDeliveries: 'StandupDeliveries',
     standupResponses: 'StandupResponses',
     blockers: 'Blockers',
     sprintRisks: 'SprintRisks',
@@ -353,6 +354,16 @@ export const LIST_SCHEMAS: Record<ListKey, {
             { name: 'State', type: 'text' },
             { name: 'ExpectedResponders', type: 'note' },
             { name: 'InitiatedByAadId', type: 'text' },
+            { name: 'FanoutSnapshot', type: 'note' },
+        ],
+    },
+    standupDeliveries: {
+        columns: [
+            { name: 'DeliveryKey', type: 'text', unique: true },
+            { name: 'StandupId', type: 'text' },
+            { name: 'UserAadId', type: 'text' },
+            { name: 'State', type: 'text' },
+            { name: 'DeliveredUtc', type: 'dateTime' },
         ],
     },
     standupResponses: {

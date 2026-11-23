@@ -244,7 +244,7 @@ test('internal endpoints fail closed outside explicit development mode', async (
     const compiled = ts.transpileModule(source, {
         compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true },
     }).outputText;
-    function boot(nodeEnv, token, failWarn = false) {
+    function boot(nodeEnv, token, failWarn = false, failStandup = false) {
         const routes = new Map();
         const calls = [];
         const server = {
@@ -260,7 +260,10 @@ test('internal endpoints fail closed outside explicit development mode', async (
             './startup-check': { printStartupBanner() {}, validateStartupConfiguration() {} },
             '@microsoft/agents-hosting': { loadAuthConfigFromEnv: () => ({ clientId: 'offline-client' }), authorizeJWT: () => () => {} },
             express, './agent': {},
-            './handlers/standup': { triggerStandup: async () => ({ sentTo: 1 }) },
+            './handlers/standup': { triggerStandup: async () => {
+                if (failStandup) throw new Error('Standup fan-out incomplete');
+                return { sentTo: 1 };
+            } },
             './handlers/warn': { runWarnCheck: async () => {
                 calls.push('warn');
                 if (failWarn) throw new Error('test warn failure');
@@ -301,6 +304,8 @@ test('internal endpoints fail closed outside explicit development mode', async (
     assert.equal(await status(staging, undefined), 401);
     assert.equal(await status(staging, 'wrong'), 401);
     assert.equal(await status(staging, 'configured-secret'), 200);
+    const failedStandup = boot('staging', 'configured-secret', false, true);
+    assert.equal(await status(failedStandup, 'configured-secret'), 500);
     for (const failWarn of [false, true]) {
         const nightly = boot('staging', 'configured-secret', failWarn);
         let responseCode, body;

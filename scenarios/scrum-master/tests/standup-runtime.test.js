@@ -6,6 +6,12 @@ const test = require('node:test');
 const Module = require('node:module');
 
 async function withModule(file, stubs, run) {
+    if (file.endsWith('/handlers/standup') && !stubs['../services/standup-delivery']) {
+        stubs['../services/standup-delivery'] = { deliverStandupRequest: async (_id, _user, send) => {
+            const result = await send(() => {}, () => {});
+            if (!result.ok) throw new Error(result.error ?? 'Request delivery failed');
+        } };
+    }
     if (stubs['../cards/standup-summary.card']) {
         stubs['../cards/standup-summary.card'] = {
             ...require('../src/cards/standup-summary.card'),

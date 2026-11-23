@@ -137,6 +137,9 @@ async function migrateStandupKeys(
     if (!column.indexed || !column.enforceUniqueValues) {
         await graph.api(`${listPath}/columns/${column.id}`).update({ indexed: true, enforceUniqueValues: true });
     }
+    if (keyName === 'RunKey' && !columns.some(c => c.name === 'FanoutSnapshot')) {
+        await graph.api(`${listPath}/columns`).post({ name: 'FanoutSnapshot', ...COLUMN_TYPE_MAP.note });
+    }
     console.log(`[setup] Standup ${keyName}s backfilled and uniqueness enforced.`);
 }
 

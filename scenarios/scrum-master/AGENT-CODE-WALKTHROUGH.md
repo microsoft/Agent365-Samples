@@ -102,10 +102,11 @@ and destination; after partial delivery they never fall back to another
 destination or accept later submissions. Restart recovery and uncertain
 connector acknowledgements require inspection rather than an exactly-once claim.
 
-`/standup retry <sprintId>#<yyyy-mm-dd>` targets a run retained in the current
-process, even after midnight or the sprint ends. It retries an eligible failed
-summary or pending blocker follow-up without creating a new daily run. It cannot
-reconstruct a session after restart. Summary cards preserve an empty optional
+`/standup retry <sprintId>#<yyyy-mm-dd>` targets a retained run, even after midnight
+or the sprint ends, or restores an open live run from its assignment snapshot.
+It resumes pending request delivery, an eligible failed summary or pending blocker
+follow-up without creating a new daily run. Legacy rows and uncertain/partial
+summary deliveries require inspection. Summary cards preserve an empty optional
 blocker description as `Blocked (no details provided)` and still mention the SM.
 
 ## 4. Grounded Jira Q&A
@@ -211,8 +212,8 @@ separate from inbound request authentication and MCP authorization. The
 file-backed MSAL cache is unencrypted and intended for local development.
 
 Standup response fan-in, cutoff timers, completed daily guard and Q&A history
-are process-local. SharePoint records do not make those maps a distributed
-lock or reconstruct them after restart. Sprint-close delivery has a separate
+are process-local. Open live snapshots restore accepted responses and cutoff
+timers on retry, but these maps are not a distributed lock. Sprint-close delivery has a separate
 durable per-sprint claim in live mode; `force` bypasses timing, not that guard.
 Mock services and their changes are in-memory and reset with the process.
 Risk warnings use a unique daily `RiskKey` and conditional
@@ -221,10 +222,14 @@ Existing sites require a paused-worker `npm run setup:sharepoint` migration.
 Uncertain sends remain claimed; inspect Teams before marking them delivered or
 returning them to pending. Forced alerts use distinct UUID-suffixed keys.
 Live standup startup checks existing SharePoint session records, then inserts
-an indexed unique `RunKey` before fan-out; only the creation-claim winner sends
-cards. Existing sites must pause workers and migrate/backfill RunKey through
-`npm run setup:sharepoint` before upgrading. The claim does not distribute
-response fan-in or resume a crashed session. Failed finalization releases the
+an indexed unique `RunKey` with a frozen assignment snapshot before fan-out.
+`SMA_StandupDeliveries` conditionally claims each recipient before sending;
+confirmed failures return HTTP 500 and remain pending for retries, while
+sent/claimed/uncertain rows are not replayed. Mock blocker notifications use the
+captured local adapter callback; live notifications retain authenticated routing.
+Existing sites must pause workers and run `npm run setup:sharepoint` to migrate
+RunKey, add `FanoutSnapshot` and provision the delivery list before upgrading.
+The claims do not distribute response fan-in/finalization. Failed finalization releases the
 live session from `summarizing` back to `open`. Inspect channel/DM delivery and
 persisted responses before `/standup retry <standupId>` in the same process;
 the cutoff path can also retry. A process crash drops the session map rather

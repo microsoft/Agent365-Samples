@@ -74,6 +74,7 @@ summarise" state machine.
 | `State` | text | `open` \| `summarized` \| `archived` |
 | `ExpectedResponders` | note | JSON array of AAD ids the DMs were sent to |
 | `InitiatedByAadId` | text | Who triggered the standup (SM or timer identity) |
+| `FanoutSnapshot` | note | Frozen sprint name, per-assignee Jira items and initially unreachable ids; restores open runs after restart |
 
 **Existing-list migration:** pause all agent workers, then run
 `npm run setup:sharepoint` against the intended live site. Before changing
@@ -83,7 +84,28 @@ history. It adds RunKey when absent, backfills all pages of legacy rows, then
 enables indexed uniqueness. Rerunning after a partial migration is safe with
 workers still paused. Resume only after success; a build/test does not migrate
 the live schema. Creation failures (including an unmigrated schema) stop fan-out.
-The claim is not a distributed response store or a mechanism to resume crashed runs.
+Setup also adds `FanoutSnapshot` and provisions `SMA_StandupDeliveries`.
+Open runs with a snapshot can resume pending request delivery and restore accepted
+responses and cutoff timers; legacy runs without one still require inspection.
+
+### `SMA_StandupDeliveries`
+
+One durable delivery claim per reachable member per standup.
+
+| Column | Type | Description |
+|---|---|---|
+| `Title` | text | `<StandupId>#<UserAadId>` |
+| `DeliveryKey` | text, indexed, unique | Same canonical key; prevents duplicate per-member delivery rows |
+| `StandupId` | text | Parent run identifier |
+| `UserAadId` | text | Expected recipient identity |
+| `State` | text | `pending` \| `claimed` \| `sent` \| `uncertain` |
+| `DeliveredUtc` | dateTime | Time delivery was confirmed |
+
+Conditional `pending → claimed` protects competing workers. Confirmed pre-send
+failures and non-408 4xx rejections return to `pending`; retries skip `sent` rows.
+Ambiguous sends retain `uncertain`, while crashes or post-send persistence failures
+can retain `claimed`. Inspect Teams before marking such rows `sent` or returning
+them to `pending`; never reset a claim merely because a retry fired.
 
 ### `SMA_StandupResponses`
 

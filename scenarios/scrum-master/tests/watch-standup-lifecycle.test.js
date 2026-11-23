@@ -71,6 +71,10 @@ async function withStandup(overrides, run) {
                 return { ok: true };
             },
         },
+        '../services/standup-delivery': { deliverStandupRequest: async (_id, _user, send) => {
+            const result = await send(() => {}, () => {});
+            if (!result.ok) throw new Error(result.error ?? 'Request delivery failed');
+        } },
         '../cards/standup-request.card': { buildStandupRequestCard: value => value },
         '../cards/standup-summary.card': {
             ...require('../src/cards/standup-summary.card'),

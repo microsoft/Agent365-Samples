@@ -93,13 +93,15 @@ async function findBlocker(blockerId: string, issueKey: string) {
 
 // --- entry point called from summarizeStandup ---------------------------
 
-export async function chaseAfterStandup(session: StandupSession): Promise<void> {
+export async function chaseAfterStandup(session: StandupSession, localDelivery?: typeof sendProactive): Promise<void> {
     const openBlockers = await findByField<BlockerFields>('blockers', 'StandupId', session.standupId);
     const openOnly = openBlockers.filter(b => b.fields.State === 'open');
     if (openOnly.length === 0) {
         console.log(`[chase] ${session.standupId}: no open blockers.`);
         return;
     }
+    const deliver = getJiraMode() === 'mock' ? localDelivery : sendProactive;
+    if (!deliver) throw new Error('Mock blocker follow-up requires the standup local delivery callback.');
 
     const members = await listTeamMembers();
     const memberByAadId = new Map(members.map(m => [m.AadObjectId, m]));
@@ -115,7 +117,7 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
 
         // Ping the owner (unless it's the same person who reported — no self-ping).
         if (owner?.conversationReference && b.OwnerAadId !== b.ReporterAadId && !delivered.has(`owner:${row.id}`)) {
-            const result = await sendProactive(owner.conversationReference, async ctx => {
+            const result = await deliver(owner.conversationReference, async ctx => {
                 await ctx.sendActivity(
                     `👋 Heads up — **${issueKey}** was flagged as blocked in today's standup:\n\n` +
                     `> ${b.BlockerText || '_(no detail provided)_'}\n\n` +
@@ -155,7 +157,7 @@ export async function chaseAfterStandup(session: StandupSession): Promise<void> 
             blockerText: b.BlockerText,
         });
 
-        const result = await sendProactive(sm.conversationReference, async ctx => {
+        const result = await deliver(sm.conversationReference, async ctx => {
             await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
         });
         if (!result.ok) throw new Error(`Blocker escalation delivery failed: ${result.error ?? row.id}`);

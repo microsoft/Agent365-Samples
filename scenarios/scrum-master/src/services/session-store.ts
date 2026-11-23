@@ -47,6 +47,8 @@ export interface StandupSession {
     unreachable: Set<string>;
     /** Submitted responses, keyed by AAD id. */
     responses: Map<string, StandupResponse>;
+    /** Request delivery must finish before finalization can claim the session. */
+    fanoutPending?: boolean;
     /** Cutoff timer handle (only set when running under local cron). */
     cutoffTimer?: NodeJS.Timeout;
     chaseState?: 'running' | 'failed' | 'complete';
