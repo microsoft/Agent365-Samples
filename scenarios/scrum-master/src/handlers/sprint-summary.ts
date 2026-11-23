@@ -18,6 +18,7 @@
  */
 
 import { DateTime } from 'luxon';
+import { ConversationReference } from '@microsoft/agents-activity';
 
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
 import { isIssueDone } from '../services/issue-status';
@@ -303,35 +304,54 @@ export async function runSprintSummary(opts?: {
     const ambers = pending.filter(t => t.rag === 'Amber');
 
     let delivered = false;
+    let uncertainDelivery = false;
     const deliveryErrors: string[] = [];
+    const deliver = async (ref: Partial<ConversationReference>, label: string) => {
+        let sendStarted = false;
+        let confirmedRejection = false;
+        try {
+            const result = await sendProactive(ref, async ctx => {
+                sendStarted = true;
+                try {
+                    await ctx.sendActivity(markdown);
+                } catch (error) {
+                    const status = typeof error === 'object' && error !== null
+                        ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+                        : undefined;
+                    confirmedRejection = typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
+                    throw error;
+                }
+            });
+            if (result.ok) {
+                delivered = true;
+                return;
+            }
+            deliveryErrors.push(`${label}: ${result.error ?? 'send failed'}`);
+        } catch (error) {
+            deliveryErrors.push(`${label}: ${(error as Error).message}`);
+        }
+        uncertainDelivery = sendStarted && !confirmedRejection;
+        console.warn(`[sprint-summary] ${label} delivery ${uncertainDelivery ? 'uncertain; no fallback attempted' : 'failed before acceptance'}:`, deliveryErrors[deliveryErrors.length - 1]);
+    };
     if (channelRefRaw) {
         try {
             const ref = JSON.parse(channelRefRaw);
-            const result = await sendProactive(ref, async ctx => { await ctx.sendActivity(markdown); });
-            delivered = result.ok;
+            await deliver(ref, 'Channel');
             if (delivered) {
                 console.log(`[sprint-summary] Posted to configured channel (${classified.length} tasks, ${reds.length} red / ${ambers.length} amber)`);
-            } else {
-                deliveryErrors.push(`Channel: ${result.error ?? 'send failed'}`);
-                console.warn('[sprint-summary] Channel delivery failed; trying SM DM:', result.error);
             }
         } catch (e) {
             deliveryErrors.push(`Channel: ${(e as Error).message}`);
             console.warn('[sprint-summary] Bad TeamsConfig ref — falling back to SM DM:', (e as Error).message);
         }
     }
-    if (!delivered) {
+    if (!delivered && !uncertainDelivery) {
         try {
             const members = await listTeamMembers();
             const sm = members.find(m => m.Role === 'SM');
             if (sm?.conversationReference) {
-                const result = await sendProactive(sm.conversationReference, async ctx => { await ctx.sendActivity(markdown); });
-                delivered = result.ok;
+                await deliver(sm.conversationReference, 'SM DM');
                 if (delivered) console.log('[sprint-summary] Posted to SM DM (channel unavailable)');
-                else {
-                    deliveryErrors.push(`SM DM: ${result.error ?? 'send failed'}`);
-                    console.warn('[sprint-summary] SM DM delivery failed:', result.error ?? 'send failed');
-                }
             }
         } catch (e) {
             deliveryErrors.push(`SM DM: ${(e as Error).message}`);
@@ -344,6 +364,8 @@ export async function runSprintSummary(opts?: {
         uploaded: delivered,
         error,
         counts: { total: classified.length, pending: pending.length, red: reds.length, amber: ambers.length },
-        note: delivered ? undefined : `Report was not delivered: ${error}`,
+        note: delivered ? undefined : uncertainDelivery
+            ? `Report delivery is uncertain: ${error} Inspect Teams and delivery logs before manually retrying.`
+            : `Report was not delivered: ${error}`,
     };
 }

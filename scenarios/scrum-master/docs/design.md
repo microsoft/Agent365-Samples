@@ -339,8 +339,8 @@ unused `booking` claim is conditionally released back to `open`.
 Booking uses a conditional SharePoint state claim, `open → booking → booked`,
 so repeated submissions cannot independently create the same meeting.
 Uncertain calendar failures retain the claim rather than inviting twice.
-A malformed verification response may mark the blocker booked even when
-event details could not be recorded. An operator must verify Outlook/event
+A malformed verification response leaves the blocker in `booking`, not `booked`.
+An operator must inspect that retained booking claim and verify Outlook/event
 delivery before reopening a blocker or retrying; see
 [`Claim recovery`](../README.md#claim-recovery).
 

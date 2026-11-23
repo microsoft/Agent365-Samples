@@ -197,13 +197,13 @@ Sanity check that the runtime is wired correctly, in three minutes:
    ```
    Expected: `{ status = 'healthy'; timestamp = '...' }`
 
-2. **Standup fire.** Trigger the flow via the internal endpoint (equivalent to a Scrum Master DM'ing `/standup`):
+2. **Standup fire.** Trigger the flow via the internal endpoint (unlike a DM, this cannot capture a personal conversation reference):
    ```powershell
    Invoke-RestMethod -Method Post `
      -Uri 'http://localhost:3978/api/internal/standup-trigger' `
      -Headers @{ 'x-internal-token' = '<INTERNAL_TRIGGER_TOKEN>' } -Body '{}'
    ```
-   Expected: `{ standupId = '1#2026-07-24'; sentTo = 4; skipped = 0 }`. Every roster member with a cached conversation reference receives a standup card DM.
+   On a freshly seeded live roster, expect `sentTo = 0` and `skipped` equal to the number of assignees with work but no stored personal conversation reference. For four such assignees, an example is `{ standupId = '1#2026-07-24'; sentTo = 0; skipped = 4 }`. Seeding real identities does not create these references. Have each assignee DM the agent `hi` once so their personal reference is stored; only then can `sentTo` rise on a subsequent standup run. The HTTP trigger alone cannot prove full-squad fan-out.
 
 3. **Grounded Q&A.** In the Agents Playground (or Teams DM):
    ```
@@ -211,7 +211,7 @@ Sanity check that the runtime is wired correctly, in three minutes:
    ```
    Expected: a reply that names the assignee, status, story points, and a link to the Jira issue. If the reply says "Task-1", the [`issue-labels.ts`](src/services/issue-labels.ts) mapping is working; if it says the raw project key (e.g. `DEMO-1`), the mapping is not being applied — see [Troubleshooting](#troubleshooting).
 
-If all three succeed the sample is fully wired.
+These checks verify health, standup processing and grounded Q&A. Verify card delivery separately after assignees have DM'd the agent and a subsequent standup run reaches them.
 
 Run the local regression suite after `npm install`:
 
@@ -295,7 +295,10 @@ Invoke-RestMethod -Method Post `
   -Body '{}'
 ```
 
-Response: `{ "standupId": "1#2026-07-12", "sentTo": 4, "skipped": 0 }`
+Fresh-roster example (four assignees with work, none with a stored personal reference): `{ "standupId": "1#2026-07-12", "sentTo": 0, "skipped": 4 }`.
+`skipped` counts unreachable assignees with work, not the entire roster.
+`sentTo` can rise on subsequent runs only after each assignee DMs the agent once.
+The daily guard above still applies; retriggering an existing run does not repeat fan-out.
 
 ### `POST /api/internal/nightly-check`
 
@@ -322,6 +325,10 @@ Fires the mid-sprint RAG report to the configured channel.
 
 Unlike sprint-close reporting, this path has no durable delivery guard;
 repeated eligible calls can post repeated summaries.
+SM DM fallback is allowed only before the channel send starts or after a
+confirmed non-408 4xx rejection. A timeout, 5xx or transport failure after sending
+starts is uncertain: no fallback is attempted. Inspect Teams and delivery logs
+before manually retrying; the returned `error` and `note` preserve the uncertainty.
 
 Query params:
 - `force=true` — bypass the "T-2 days from sprint end" gate
@@ -413,9 +420,9 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   closed sprints, so an already reported newer sprint cannot starve the backlog.
 - **Meeting booking:** `SMA_Blockers.State` is conditionally claimed from `open`
   to `booking`, then set to `booked` after a confirmed booking. An uncertain
-  Calendar result may retain `booking` (or mark `booked` when verification
-  output is malformed). Check Outlook, event details and invitees before
-  recovery. Record an existing event as booked; reset to `open` for a new
+  Calendar result, including malformed verification output, retains `booking`;
+  it does not mark the blocker `booked`. Inspect that retained booking claim,
+  Outlook, event details and invitees before recovery. Record an existing event as booked; reset to `open` for a new
   proposal only after verifying that no event/invitations were created.
   Booking uses the participant snapshot whose availability was approved; it
   does not pick a different helper after confirmation. The returned attendee

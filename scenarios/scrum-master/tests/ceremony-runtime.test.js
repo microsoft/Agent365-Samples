@@ -218,6 +218,91 @@ test('report never invents a Sprint 2 target when the next sprint is unknown', (
     assert.doesNotMatch(markdown, /Sprint 2\s*\|/);
 });
 
+function summaryFixture(send, channelRef = '{"target":"channel"}') {
+    const attempts = [];
+    const summary = load('src\\handlers\\sprint-summary.ts', {
+        '../services/jira': { getJiraClient: () => ({
+            getActiveSprint: async () => sprint,
+            searchSprintIssues: async () => [],
+            getSprintSubtasks: async () => [],
+        }) },
+        '../config': { getScheduleConfig: () => ({ timezone: 'UTC' }) },
+        '../services/sharepoint': { findByField: async () => [{ fields: { ConversationRef: channelRef } }] },
+        '../services/team-roster': { listTeamMembers: async () => [{ Role: 'SM', conversationReference: { target: 'sm' } }] },
+        '../services/proactive': { sendProactive: async (ref, callback) => {
+            attempts.push(ref.target);
+            if (ref.target === 'channel') return send(callback);
+            await callback({ sendActivity: async () => {} });
+            return { ok: true };
+        } },
+    });
+    return { ...summary, attempts };
+}
+
+test('mid-sprint summary never falls back after uncertain channel delivery', async () => {
+    for (const status of [undefined, 408, 500, 503]) {
+        for (const swallowed of [false, true]) {
+            const f = summaryFixture(async callback => {
+                try {
+                    await callback({ sendActivity: async () => {
+                        throw Object.assign(new Error('Acknowledgement lost'), { statusCode: status });
+                    } });
+                } catch (error) {
+                    if (!swallowed) throw error;
+                    return { ok: false, error: error.message };
+                }
+            });
+            const result = await f.runSprintSummary({ force: true });
+            assert.equal(result.uploaded, false);
+            assert.match(result.error, /Channel: Acknowledgement lost/);
+            assert.match(result.note, /delivery is uncertain.*Inspect Teams/i);
+            assert.deepEqual(f.attempts, ['channel']);
+        }
+    }
+    for (const swallowed of [false, true]) {
+        const f = summaryFixture(async callback => {
+            await callback({ sendActivity: async () => {} });
+            if (swallowed) return { ok: false, error: 'Adapter failed after sending' };
+            throw new Error('Adapter failed after sending');
+        });
+        assert.match((await f.runSprintSummary({ force: true })).note, /delivery is uncertain/);
+        assert.deepEqual(f.attempts, ['channel']);
+    }
+});
+
+test('mid-sprint summary falls back only before send or after confirmed rejection', async () => {
+    for (const field of ['statusCode', 'status']) {
+        for (const status of [400, 401, 403, 413, 429]) {
+            const f = summaryFixture(async callback => {
+                try {
+                    await callback({ sendActivity: async () => {
+                        throw Object.assign(new Error('Rejected'), { [field]: status });
+                    } });
+                } catch (error) { return { ok: false, error: error.message }; }
+            });
+            assert.equal((await f.runSprintSummary({ force: true })).uploaded, true);
+            assert.deepEqual(f.attempts, ['channel', 'sm']);
+        }
+    }
+    for (const send of [
+        async () => ({ ok: false, error: 'Could not start proactive turn' }),
+        async () => { throw new Error('Could not start proactive turn'); },
+    ]) {
+        const f = summaryFixture(send);
+        assert.equal((await f.runSprintSummary({ force: true })).uploaded, true);
+        assert.deepEqual(f.attempts, ['channel', 'sm']);
+    }
+    const invalid = summaryFixture(async () => { throw new Error('Must not send'); }, '{invalid');
+    assert.equal((await invalid.runSprintSummary({ force: true })).uploaded, true);
+    assert.deepEqual(invalid.attempts, ['sm']);
+    const success = summaryFixture(async callback => {
+        await callback({ sendActivity: async () => {} });
+        return { ok: true };
+    });
+    assert.equal((await success.runSprintSummary({ force: true })).uploaded, true);
+    assert.deepEqual(success.attempts, ['channel']);
+});
+
 test('report quotes completed work instead of inventing compliance, deployment or production outcomes', () => {
     const { buildSprintReportMarkdown } = reportFixture();
     const markdown = buildSprintReportMarkdown({
