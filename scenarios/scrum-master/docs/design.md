@@ -580,6 +580,11 @@ also model-driven and is never used for inbound email.
 
 ## 9. Concurrency, idempotency, and dedup
 
+- **Trigger coalescing is operation-scoped.** Concurrent daily starts share
+  initialization; explicit recovery requests share work only for the same retained
+  standup ID. A pending daily start cannot consume a prior-run recovery request,
+  and different retained runs can recover independently. In-flight entries are
+  released after success or failure.
 - **Early finalization preserves the cutoff.** The synchronous finalization
   claim prevents concurrent summaries but keeps the future deadline armed.
   Configured cutoff hours must produce a positive supported Node timer delay

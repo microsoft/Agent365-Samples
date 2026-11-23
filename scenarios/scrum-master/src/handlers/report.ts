@@ -60,7 +60,7 @@ function dedupeSimilar(items: string[]): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const raw of items) {
-        const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60);
+        const key = raw.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim().slice(0, 60);
         if (seen.has(key)) continue;
         seen.add(key);
         out.push(raw);

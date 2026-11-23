@@ -105,7 +105,7 @@ interface StandupTriggerResult {
     standupId: string; sentTo: number; skipped: number; note?: string;
 }
 
-let pendingTrigger: Promise<StandupTriggerResult> | undefined;
+const pendingTriggers = new Map<string, Promise<StandupTriggerResult>>();
 function captureMockDelivery(context: TurnContext) {
     const adapter = context.adapter;
     const identity = context.identity;
@@ -154,9 +154,12 @@ export function triggerStandup(opts: StandupTriggerOptions): Promise<StandupTrig
         console.log(`[standup] ${note}`);
         return Promise.resolve({ standupId: '', sentTo: 0, skipped: 0, note });
     }
-    // Reserve the entire async initialization, before roster and persistence awaits.
-    if (pendingTrigger) return pendingTrigger;
-    pendingTrigger = startStandup(opts).finally(() => { pendingTrigger = undefined; });
+    // Daily starts share initialization; recovery requests share only their retained run.
+    const key = opts.retryStandupId ? `retry:${opts.retryStandupId}` : 'daily';
+    const pending = pendingTriggers.get(key);
+    if (pending) return pending;
+    const pendingTrigger = startStandup(opts).finally(() => { pendingTriggers.delete(key); });
+    pendingTriggers.set(key, pendingTrigger);
     return pendingTrigger;
 }
 

@@ -65,6 +65,31 @@ function issue(key, issueType, status, parentKey = null, dueDate = null) {
     };
 }
 
+test('close-report deliverables preserve distinct Unicode summaries and still deduplicate punctuation and case', async () => {
+    const summaries = [
+        '\u5b9e\u73b0\u767b\u5f55\u9875\u9762',
+        '\u6dfb\u52a0\u5458\u5de5\u641c\u7d22',
+        '\u30ed\u30b0\u30a4\u30f3\u753b\u9762',
+        '\u691c\u7d22\u753b\u9762',
+        '\u041f\u043e\u0438\u0441\u043a',
+        '\u0412\u0445\u043e\u0434',
+        '\u0661',
+        '\u0662',
+        'Build search!',
+        'BUILD SEARCH',
+    ];
+    const f = fixture('report', summaries.map((summary, index) => ({
+        ...issue(`SMA-${index + 1}`, 'Task', 'Done'), summary,
+    })));
+    await f.run();
+    const deliverables = f.messages[0].split('**Key Deliverables**')[1]
+        .split('**Completed Deployment-related Tasks**')[0];
+    for (const summary of summaries.slice(0, -1)) {
+        assert.ok(deliverables.includes(`- ${summary}\n`), `Missing deliverable: ${summary}`);
+    }
+    assert.equal(deliverables.split('\n').filter(line => line.startsWith('- ')).length, 9);
+});
+
 test('T-2 report counts real Stories and retains standalone overdue work in a mixed hierarchy', async () => {
     const story = issue('SMA-1', 'Story', 'Done');
     const overdue = issue('SMA-2', 'Task', 'To Do', null, '2020-01-01');

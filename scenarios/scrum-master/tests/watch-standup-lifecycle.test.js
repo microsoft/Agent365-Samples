@@ -144,6 +144,72 @@ test('explicit retained-session retries recover a previous-day run without query
     });
 });
 
+test('daily initialization cannot consume overlapping retained-run retries or their acknowledgements', async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-22T09:00:00Z') });
+    const dailyLookup = deferred();
+    const sessionsToRetry = [makeSession([]), makeSession([])];
+    t.mock.timers.tick(24 * 3600_000);
+    const acknowledgements = [[], []];
+    let activeLookups = 0, summaries = 0;
+    await withStandup({
+        '../services/jira': { getJiraClient: () => ({
+            getActiveSprint: async () => { activeLookups++; return dailyLookup.promise; },
+        }) },
+        '../services/proactive': { sendProactive: async () => {
+            summaries++;
+            return { ok: true };
+        } },
+    }, async standup => {
+        const daily = standup.triggerStandup({ source: 'cron' });
+        const retries = sessionsToRetry.map((session, index) => standup.triggerStandup({
+            source: 'command', retryStandupId: session.standupId,
+            turnContext: { sendActivity: async message => { acknowledgements[index].push(message); } },
+        }));
+        dailyLookup.resolve(null);
+        const [dailyResult, ...results] = await Promise.all([daily, ...retries]);
+        assert.equal(dailyResult.standupId, '');
+        assert.equal(activeLookups, 1);
+        assert.equal(summaries, 2);
+        for (const [index, session] of sessionsToRetry.entries()) {
+            assert.equal(results[index].standupId, session.standupId);
+            assert.match(acknowledgements[index][0], /Retried retained standup/);
+            assert.equal(session.state, 'summarized');
+            assert.equal(session.chaseState, 'complete');
+            assert.equal(sessions.getSession(session.standupId), undefined);
+        }
+    });
+});
+
+test('same-run trigger retries share work and release their in-flight entry after failure and success', async () => {
+    const session = makeSession([]);
+    const firstSend = deferred();
+    let sends = 0;
+    await withStandup({
+        '../services/proactive': { sendProactive: async () => {
+            sends++;
+            return firstSend.promise;
+        } },
+    }, async standup => {
+        const opts = { source: 'command', retryStandupId: session.standupId };
+        const first = standup.triggerStandup(opts);
+        assert.equal(standup.triggerStandup(opts), first);
+        firstSend.resolve({ ok: false, error: 'Temporary delivery failure' });
+        await assert.rejects(first, /not delivered/);
+        assert.equal(session.state, 'open');
+        const retry = standup.triggerStandup(opts);
+        assert.notEqual(retry, first);
+        await assert.rejects(retry, /not delivered/);
+        assert.equal(sends, 2);
+        session.cutoffUtc = new Date(Date.now() + 3600_000).toISOString();
+        session.expectedResponders.add('waiting');
+        const collecting = await standup.triggerStandup(opts);
+        assert.match(collecting.note, /still collecting/);
+        session.state = 'summarized';
+        const completed = await standup.triggerStandup(opts);
+        assert.match(completed.note, /without repeating its summary/);
+    });
+});
+
 test('explicit prior-day retries do not finalize early or repeat an already delivered summary', async t => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-11-10T09:00:00Z') });
     const session = makeSession(['absent']);
