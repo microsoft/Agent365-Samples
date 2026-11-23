@@ -7,9 +7,9 @@
  * When LOCAL_CRON=true (default in dev), spins up two node-cron jobs:
  *   - STANDUP_CRON  → calls the same triggerStandup() the HTTP endpoint uses
  *   - NIGHTLY_CRON  → runs warn + close report + T-2 RAG report checks
- *
- * The Azure Function projects under `azure-functions/` do the same thing when
- * the agent is deployed. Both are safe to fire simultaneously — session IDs
+* The Azure Function projects under `azure-functions/` do the same thing when
+ * the agent is deployed. Do not run both. makeStandupId is only an id string;
+ * set LOCAL_CRON=false once the Function timers are deployed.
  * are idempotent (see session-store.makeStandupId).
  */
 
