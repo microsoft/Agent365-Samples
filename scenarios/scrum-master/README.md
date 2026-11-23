@@ -27,7 +27,7 @@ An autonomous **Scrum Master** built on the [Microsoft Agent 365 SDK](https://gi
 
 Seven capabilities, each a handler under [`src/handlers/`](src/handlers). Live mode uses proactive DMs, SharePoint records, and grounded Jira tools. Standup aggregation and daily deduplication are process-local; they do not survive restart or coordinate replicas.
 
-1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary card posted to the configured channel. See [`handlers/standup.ts`](src/handlers/standup.ts).
+1. **Standup** — Proactively DMs every squad member an Adaptive Card listing their sprint tasks with an update field and blocker toggle. Aggregates responses into a summary posted to the configured channel. Large summaries split into numbered cards within a 90,000-byte serialized UTF-8 activity budget, including the conversation envelope; oversized cells continue without dropping response text. See [`handlers/standup.ts`](src/handlers/standup.ts).
 2. **Board reconciliation** — A deterministic phrase classifier reads each update and auto-applies safe forward transitions using current Jira state, or DMs the Scrum Master an approval card for inferred skips/backwards moves. Every automatic target requires an affirmative status assertion; questions, plans, conditional statements and ambiguous prose leave Jira unchanged. Completion additionally uses a finite whole-statement grammar. See [`handlers/reconcile.ts`](src/handlers/reconcile.ts).
 3. **Blocker chase** — When someone flags a blocker, the agent matches a subject-matter expert from the helper roster, calls the MCP Calendar tool for open slots, and books an unblock meeting on its own mailbox with the SM + owner + reporter as attendees. See [`handlers/chase.ts`](src/handlers/chase.ts).
 4. **Sprint risk warn** — Nightly check: if the sprint is past the halfway mark and too many points are still in "To Do", DMs the SM with a risk assessment. See [`handlers/warn.ts`](src/handlers/warn.ts).
@@ -384,6 +384,8 @@ Do not delete or reset a claim merely because a timer/card action was retried.
 - **Sprint close:** `SMA_SprintReportsDelivery.DeliveryKey` is unique and indexed
   (`sprint-close:<sprintId>`). `sent` blocks another report; `failed` permits a
   later retry. A crash or uncertain send can leave `claimed` indefinitely.
+  An uncertain send also stops channel-to-DM fallback; a timeout or transport
+  failure is not proof Teams rejected the report.
   An operator must inspect Teams and delivery logs first. Confirm a delivered
   report as `sent`; only after establishing that nothing was delivered should
   an authorized operator mark the record `failed` and retry.
@@ -429,6 +431,11 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   `/standup retry <standupId>` in the same process; the cutoff path can also retry.
   A process crash drops the session map, and restarting does not rebuild
   response fan-in or cutoff timers.
+  For multipart summaries, acknowledged parts and the destination are retained
+  in process. Retries resume at the next part and do not switch destinations
+  after partial delivery; inspect delivery before restarting. Lost connector
+  acknowledgements can still leave uncertainty, and splitting very long
+  Markdown across continuations may affect formatting, not the retained text.
 
 ## Deploy to Azure
 

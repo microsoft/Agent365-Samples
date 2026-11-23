@@ -65,6 +65,8 @@ import {
 } from '../cards/standup-request.card';
 import {
     buildStandupSummaryCard,
+    splitStandupSummaryActivity,
+    STANDUP_ACTIVITY_BYTE_BUDGET,
     StandupSummaryBlocker,
     StandupSummaryMissed,
     StandupSummaryPerson,
@@ -115,6 +117,14 @@ function captureMockDelivery(context: TurnContext) {
     };
 }
 const mockDeliveries = new Map<string, ReturnType<typeof captureMockDelivery>>();
+// Freeze rendered content and retain acknowledged-part progress while an open
+// session is retried. Like the session itself, this checkpoint is process-local.
+const summaryDeliveries = new WeakMap<StandupSession, {
+    card: ReturnType<typeof buildStandupSummaryCard>;
+    destinations: Map<string, { activities: Activity[]; next: number }>;
+    pinnedDestination?: string;
+    pinnedReference?: TeamMember['conversationReference'];
+}>();
 
 async function deliverStandup(
     standupId: string,
@@ -388,7 +398,8 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     }
 
     const session = getSession(standupId);
-    if ((session && session.state !== 'open') || getCompletedSession(standupId)) {
+    if ((session && (session.state !== 'open' || summaryDeliveries.get(session)?.pinnedDestination))
+        || getCompletedSession(standupId)) {
         await context.sendActivity(`Standup ${standupId} is already being summarized — no further updates were recorded.`);
         return;
     }
@@ -677,16 +688,23 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
 
     const schedule = getScheduleConfig();
     const dateLocal = DateTime.fromISO(session.startedUtc).setZone(schedule.timezone).toFormat('cccc, d LLLL');
-    const card = buildStandupSummaryCard({
-        sprintName: session.sprintName,
-        dateLocal,
-        respondedCount: session.responses.size,
-        expectedCount: session.expectedResponders.size,
-        updatesByPerson,
-        missed,
-        blockers,
-        scrumMaster: smMember ? { aadId: smMember.AadObjectId, displayName: smMember.Title } : null,
-    });
+    let delivery = summaryDeliveries.get(session);
+    if (!delivery) {
+        delivery = {
+            card: buildStandupSummaryCard({
+                sprintName: session.sprintName,
+                dateLocal,
+                respondedCount: session.responses.size,
+                expectedCount: session.expectedResponders.size,
+                updatesByPerson,
+                missed,
+                blockers,
+                scrumMaster: smMember ? { aadId: smMember.AadObjectId, displayName: smMember.Title } : null,
+            }),
+            destinations: new Map(),
+        };
+        summaryDeliveries.set(session, delivery);
+    }
 
     // Fix 2: a small text follow-up so the auto-reconcile is visible to demo viewers.
     const boardMsg = [
@@ -707,26 +725,63 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
     });
     const targetConvRef = configRows[0]?.fields?.ConversationRef;
     let deliveredReference: TeamMember['conversationReference'] = null;
+    const destinationKey = (ref: any) => JSON.stringify([
+        ref.serviceUrl ?? '', ref.channelId ?? '', ref.conversation?.id ?? '',
+    ]);
     const sendCard = async (ctx: TurnContext) => {
-        await ctx.sendActivity({ type: 'message', attachments: [card] } as Partial<Activity> as Activity);
+        const reference = ctx.activity.getConversationReference();
+        const key = destinationKey(reference);
+        if (delivery!.pinnedDestination && delivery!.pinnedDestination !== key) {
+            throw new Error('A multipart summary is partially delivered to another destination; retry that destination.');
+        }
+        let progress = delivery!.destinations.get(key);
+        if (!progress) {
+            // Mirror TurnContext.sendActivities' envelope before measuring.
+            const envelope = Activity.fromObject({ type: 'message' })
+                .applyConversationReference(reference);
+            const activity = { ...JSON.parse(envelope.toJsonString()), attachments: [delivery!.card] };
+            delete activity.id;
+            progress = { activities: splitStandupSummaryActivity(activity), next: 0 };
+            delivery!.destinations.set(key, progress);
+        }
+        while (progress.next < progress.activities.length) {
+            // The SDK mutates sent activities (e.g. assigning their response ID).
+            const outgoing = JSON.parse(JSON.stringify(progress.activities[progress.next]));
+            const enriched = Activity.fromObject({ type: 'message' }).applyConversationReference(reference);
+            Object.assign(outgoing, JSON.parse(enriched.toJsonString()));
+            delete outgoing.id;
+            if (Buffer.byteLength(JSON.stringify(outgoing), 'utf8') > STANDUP_ACTIVITY_BYTE_BUDGET) {
+                throw new Error('Standup summary activity envelope changed beyond the Teams byte budget.');
+            }
+            await ctx.sendActivity(outgoing);
+            progress.next++;
+            delivery!.pinnedDestination = key;
+            delivery!.pinnedReference = reference;
+        }
     };
-    if (targetConvRef) {
+    if (delivery.pinnedReference) {
+        const result = await deliverStandup(session.standupId, delivery.pinnedReference, sendCard);
+        if (result.ok) deliveredReference = delivery.pinnedReference;
+        else console.warn('[standup] Remaining summary parts could not be delivered:', result.error);
+    } else if (targetConvRef) {
         try {
             const ref = JSON.parse(targetConvRef);
             const result = await deliverStandup(session.standupId, ref, sendCard);
             if (result.ok) deliveredReference = ref;
-            else console.warn('[standup] Channel summary delivery failed; trying SM DM:', result.error);
+            else console.warn('[standup] Channel summary delivery incomplete:', result.error);
         } catch (e) {
             console.warn('[standup] Channel summary unavailable; trying SM DM:', (e as Error).message);
         }
     }
-    if (!deliveredReference && smMember?.conversationReference) {
+    if (!deliveredReference && !delivery.pinnedDestination && smMember?.conversationReference) {
         const result = await deliverStandup(session.standupId, smMember.conversationReference, sendCard);
         if (result.ok) deliveredReference = smMember.conversationReference;
         else console.warn('[standup] SM summary delivery failed:', result.error);
     }
     if (!deliveredReference) {
         session.state = 'open';
+        // No acknowledged part means a later retry can include late responses.
+        if (!delivery.pinnedDestination) summaryDeliveries.delete(session);
         console.error('[standup] Summary was not delivered; retaining the open session for retry.');
         throw new Error('Standup summary was not delivered. Retry /standup after cutoff or once all responses are collected.');
     }
@@ -739,6 +794,7 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
 
     // Mark session summarized.
     session.state = 'summarized';
+    summaryDeliveries.delete(session);
     if (session.cutoffTimer) { clearTimeout(session.cutoffTimer); session.cutoffTimer = undefined; }
 
     // Update StandupSessions row.

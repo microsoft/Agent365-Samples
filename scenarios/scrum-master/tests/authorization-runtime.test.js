@@ -73,8 +73,8 @@ test('standup preserves applied transitions and reports approval delivery accura
                     findByField: async () => [{ fields: { ConversationRef: '{}' } }],
                     findByTitle: async () => ({ id: 'session' }), updateItem: async () => {},
                 },
-                '../services/proactive': { sendProactive: async (_reference, logic) => {
-                    await logic({ sendActivity: async message => {
+                '../services/proactive': { sendProactive: async (reference, logic) => {
+                    await logic({ activity: { getConversationReference: () => reference }, sendActivity: async message => {
                         if (message.attachments) cards.push(message.attachments[0].content);
                         else messages.push(message);
                     } });

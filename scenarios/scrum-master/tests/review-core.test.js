@@ -76,7 +76,7 @@ test('all automatic targets require affirmative assertions, not questions or con
         assert.equal(outcome.autoApplied.length, 0, text);
     }
     assert.equal(writes, 0);
-    assert.equal(reads, 0);
+    assert.equal(reads, 12, 'Non-assertive updates refresh display status without writing');
     for (const [text, target] of [
         ['PR is up', 'In Review'], ['The pull request is open', 'In Review'],
         ['I am waiting for review', 'In Review'], ['In review', 'In Review'],
@@ -171,7 +171,7 @@ test('reconciliation never moves negative prose and uses fresh Jira state instea
         const outcome = await run(text);
         assert.deepEqual(outcome, { autoApplied: [], needsConfirm: [], errors: [] });
     }
-    assert.equal(reads, 0);
+    assert.equal(reads, 4);
     assert.equal(transitions, 0);
     status = 'To Do';
     const skippedStep = await run('Done');

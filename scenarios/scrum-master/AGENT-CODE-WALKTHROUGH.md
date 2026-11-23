@@ -79,8 +79,9 @@ questions and conditional plans remain unchanged. Completion additionally
 requires a finite whole-statement assertion such as `Done` or `I have completed it`;
 arbitrary prose with `done` is not sufficient. Safe forward steps use the current Jira status, not the
 cached standup snapshot.
-Successfully read statuses also refresh that snapshot when reconciliation is a
-no-op, so the summary can display a change made during the response window.
+Statuses are refreshed for all submitted issues, including blocked responses
+and ordinary prose that infer no transition, so the summary can display a change
+made during the response window without authorizing a Jira write.
 Live Jira comments and transitions resolve and revalidate the issue's current
 project before posting, then use its validated canonical key. An assigned issue
 moved out of the configured project is rejected rather than written through an
@@ -94,6 +95,12 @@ conversations.
 Deferred mock notifications and cutoff summaries capture the adapter, anonymous
 identity and conversation reference while the turn is valid, then continue the
 conversation with fresh SDK contexts after the originating turn has completed.
+Summary activities include the SDK conversation envelope in a 90,000-byte
+serialized UTF-8 budget. Large summaries split into numbered cards and long
+cells continue without dropping text. Same-process retries retain the next part
+and destination; after partial delivery they never fall back to another
+destination or accept later submissions. Restart recovery and uncertain
+connector acknowledgements require inspection rather than an exactly-once claim.
 
 `/standup retry <sprintId>#<yyyy-mm-dd>` targets a run retained in the current
 process, even after midnight or the sprint ends. It retries an eligible failed

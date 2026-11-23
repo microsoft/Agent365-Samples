@@ -242,6 +242,16 @@ creating the daily session; mock delivery never uses live hosting credentials.
 Deferred mock replies and cutoff summaries use the originating adapter,
 anonymous identity and saved conversation reference to create fresh continuation
 contexts; the original inbound turn's revocable proxy is never retained.
+Summary activities are measured as serialized UTF-8, including SDK conversation
+envelope fields, and capped at 90,000 bytes. Oversized summaries become numbered
+cards with repeated headers; long cells continue losslessly across cards and
+blocker mentions remain attached. Impossible envelope/mention sizes fail closed.
+Acknowledged-part progress is retained with the destination in process, so a
+retry resumes instead of resending earlier parts. Fallback to the SM is allowed
+only before any part is acknowledged; partial delivery pins the destination and
+rejects later submissions. This progress is not reconstructed after restart,
+and a lost acknowledgement cannot provide exactly-once delivery. Very long
+Markdown may lose formatting across continuations, but response text is retained.
 Jira Story-to-Epic relationships do not count as subtask parents: `parentKey`
 is populated only when Jira's `issuetype.subtask` is true, so inherited
 subtasks of epic-backed Stories remain eligible for standup fan-out.
@@ -278,8 +288,10 @@ become a confirm card DM to the SM, who approves per-row and clicks **Apply appr
 The safe-step decision uses a fresh Jira issue read rather than the status
 cached when the standup started; a changed board cannot silently turn a
 previously safe step into a skip.
-Every successful current-status read refreshes the summary snapshot, including
-the no-op case where Jira already has the inferred target.
+Every submitted issue is read for summary status independently of inference,
+including blocked responses and ambiguous prose that authorize no transition.
+Successful reads refresh the snapshot; failed reads are recorded as per-issue
+reconciliation errors without authorizing writes.
 Approval roster lookup or card delivery failures are logged separately and do
 not discard completed board changes; the summary still reflects applied transitions.
 Proposed changes and approval delivery are tracked separately. The follow-up
@@ -479,6 +491,12 @@ skipping existing `sent`/`claimed` records before choosing an unreported or
 explicitly failed candidate. The selected candidate must still acquire the
 durable delivery claim before sending. Both report handlers return failed send
 details in `error`/`note`, log them and retain `uploaded: false` if fallback fails.
+For sprint close, fallback and automatic retry are allowed only before sending
+starts or after a confirmed rejection (HTTP 4xx other than 408). A transport
+failure, timeout or server error after sending starts is uncertain: no second
+destination is attempted and the claim remains `claimed`. A successful send
+followed by persistence failure also retains its claim. Inspect Teams and
+delivery logs before manual recovery, rather than automatically replaying it.
 
 ## 6. Data model
 

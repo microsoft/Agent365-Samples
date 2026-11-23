@@ -72,7 +72,10 @@ async function withStandup(overrides, run) {
             },
         },
         '../cards/standup-request.card': { buildStandupRequestCard: value => value },
-        '../cards/standup-summary.card': { buildStandupSummaryCard: value => value },
+        '../cards/standup-summary.card': {
+            ...require('../src/cards/standup-summary.card'),
+            buildStandupSummaryCard: value => value,
+        },
         './reconcile': { reconcileAfterStandup: async () => ({ autoApplied: [], needsConfirm: [], errors: [] }) },
         './chase': { chaseAfterStandup: async () => {} },
     };
@@ -80,6 +83,9 @@ async function withStandup(overrides, run) {
     for (const [request, values] of Object.entries(overrides)) {
         stubs[request] = { ...stubs[request], ...values };
     }
+    const sendProactive = stubs['../services/proactive'].sendProactive;
+    stubs['../services/proactive'].sendProactive = (reference, logic) => sendProactive(reference, context =>
+        logic({ ...context, activity: context.activity ?? { getConversationReference: () => reference } }));
     if (!overrides['../services/sharepoint']?.claimStandupResponse) {
         stubs['../services/sharepoint'].claimStandupResponse = async fields => ({
             created: true,

@@ -6,6 +6,12 @@ const test = require('node:test');
 const Module = require('node:module');
 
 async function withModule(file, stubs, run) {
+    if (stubs['../cards/standup-summary.card']) {
+        stubs['../cards/standup-summary.card'] = {
+            ...require('../src/cards/standup-summary.card'),
+            ...stubs['../cards/standup-summary.card'],
+        };
+    }
     const filename = require.resolve(file);
     delete require.cache[filename];
     const original = Module._load;

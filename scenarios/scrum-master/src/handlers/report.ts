@@ -15,6 +15,7 @@
  */
 
 import { DateTime } from 'luxon';
+import { ConversationReference } from '@microsoft/agents-activity';
 
 import { getJiraClient, JiraIssue, JiraSprint } from '../services/jira';
 import { isIssueDone as isDone } from '../services/issue-status';
@@ -327,33 +328,51 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
     if (!claimId) return { uploaded: false, note: `Sprint ${sprint.name} report already delivered or claimed; no duplicate sent.` };
 
     let delivered = false;
+    let uncertainDelivery = false;
     const deliveryErrors: string[] = [];
+    const deliver = async (ref: Partial<ConversationReference>, label: string) => {
+        let sendStarted = false;
+        let confirmedRejection = false;
+        try {
+            const result = await sendProactive(ref, async ctx => {
+                sendStarted = true;
+                try {
+                    await ctx.sendActivity(markdown);
+                } catch (error) {
+                    const status = typeof error === 'object' && error !== null
+                        ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+                        : undefined;
+                    confirmedRejection = typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
+                    throw error;
+                }
+            });
+            if (result.ok) {
+                delivered = true;
+                return;
+            }
+            deliveryErrors.push(`${label}: ${result.error ?? 'send failed'}`);
+        } catch (error) {
+            deliveryErrors.push(`${label}: ${(error as Error).message}`);
+        }
+        uncertainDelivery = sendStarted && !confirmedRejection;
+        console.warn(`[report] ${label} delivery ${uncertainDelivery ? 'uncertain; retaining claim without fallback' : 'failed before acceptance'}:`, deliveryErrors[deliveryErrors.length - 1]);
+    };
     if (channelRefRaw) {
         try {
             const ref = JSON.parse(channelRefRaw);
-            const result = await sendProactive(ref, async ctx => { await ctx.sendActivity(markdown); });
-            delivered = result.ok;
+            await deliver(ref, 'Channel');
             if (delivered) console.log(`[report] Posted Sprint Close Report inline for ${sprint.name}`);
-            else {
-                deliveryErrors.push(`Channel: ${result.error ?? 'send failed'}`);
-                console.warn('[report] Channel delivery failed; trying SM DM:', result.error ?? 'send failed');
-            }
         } catch (e) {
             deliveryErrors.push(`Channel: ${(e as Error).message}`);
             console.warn('[report] Bad TeamsConfig ref — falling back to SM DM:', (e as Error).message);
         }
     }
-    if (!delivered) {
+    if (!delivered && !uncertainDelivery) {
         try {
             const sm = (await listTeamMembers()).find(m => m.Role === 'SM');
             if (sm?.conversationReference) {
-                const result = await sendProactive(sm.conversationReference, async ctx => { await ctx.sendActivity(markdown); });
-                delivered = result.ok;
+                await deliver(sm.conversationReference, 'SM DM');
                 if (delivered) console.log('[report] Posted Sprint Close Report to SM DM (channel unavailable)');
-                else {
-                    deliveryErrors.push(`SM DM: ${result.error ?? 'send failed'}`);
-                    console.warn('[report] SM delivery failed:', result.error ?? 'send failed');
-                }
             }
         } catch (e) {
             deliveryErrors.push(`SM DM: ${(e as Error).message}`);
@@ -362,9 +381,11 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
     }
 
     const doneStories = stories.filter(i => i.issueType === 'Story' && isDone(i)).length;
-    await updateItem<{ State: string; DeliveredUtc?: string }>('sprintReportsDelivery', claimId, delivered
-        ? { State: 'sent', DeliveredUtc: new Date().toISOString() }
-        : { State: 'failed' });
+    if (!uncertainDelivery) {
+        await updateItem<{ State: string; DeliveredUtc?: string }>('sprintReportsDelivery', claimId, delivered
+            ? { State: 'sent', DeliveredUtc: new Date().toISOString() }
+            : { State: 'failed' });
+    }
     const allTasks = Array.from(new Map([...stories.filter(i => i.issueType === 'Task'), ...subtasks].map(i => [i.key, i])).values());
     const tasksDone = allTasks.filter(isDone).length;
     const doneBugs = stories.filter(i => i.issueType === 'Bug' && isDone(i)).length;
@@ -375,6 +396,8 @@ export async function runSprintCloseReport(opts?: { force?: boolean; sprintId?: 
         uploaded: delivered,
         error,
         counts: { stories: doneStories, tasksDone, deployments, bugs: doneBugs },
-        note: delivered ? undefined : `Report was not delivered: ${error} The sprint claim is retryable.`,
+        note: delivered ? undefined : uncertainDelivery
+            ? `Report delivery is uncertain: ${error} The sprint claim remains claimed. Inspect Teams and delivery logs before manual recovery.`
+            : `Report was not delivered: ${error} The sprint claim is retryable.`,
     };
 }

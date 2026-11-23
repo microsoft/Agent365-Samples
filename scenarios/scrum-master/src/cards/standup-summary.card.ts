@@ -14,9 +14,104 @@
  *   - "Task-N" is the friendly display form of the Jira key (`EDP-14` -> `Task-14`).
  *   - Blocker text (if any) appears inline in the last column, so the card is a
  *     single self-contained artefact — no separate "Blockers" section.
+ *   - Delivery splits oversized summaries into numbered cards at a measured
+ *     90,000-byte activity budget; exceptionally large cells continue in rows.
  */
 
 import { Attachment } from './standup-request.card';
+
+// Leave headroom below Teams' 100 KB limit for connector-added metadata.
+export const STANDUP_ACTIVITY_BYTE_BUDGET = 90_000;
+
+/** Split the rendered card, measuring the complete outgoing UTF-8 activity.
+ * Ordinary summaries are unchanged. Oversized individual cells continue in
+ * subsequent rows (without repeating other cells), preserving every code point.
+ */
+export function splitStandupSummaryActivity(activity: any): any[] {
+    const bytes = (value: any) => Buffer.byteLength(
+        typeof value.toJsonString === 'function' ? value.toJsonString() : JSON.stringify(value), 'utf8');
+    if (bytes(activity) <= STANDUP_ACTIVITY_BYTE_BUDGET) return [activity];
+
+    const attachment = activity.attachments[0];
+    const card = attachment.content;
+    const units = card.body.flatMap((element: any) => element.type === 'Table'
+        ? element.rows.slice(1).map((row: any) => ({ ...element, rows: [element.rows[0], row] }))
+        : [element]);
+    const marker = {
+        type: 'TextBlock', wrap: true, isSubtle: true,
+        text: 'Standup summary — part 9999999999999999 of 9999999999999999',
+    };
+    const wrap = (elements: any[]) => {
+        const body: any[] = [{ ...marker }];
+        for (const element of elements) {
+            const previous = body[body.length - 1];
+            if (element.type === 'Table' && previous.type === 'Table') {
+                previous.rows.push(...element.rows.slice(1));
+            } else {
+                body.push(element.type === 'Table' ? { ...element, rows: [...element.rows] } : element);
+            }
+        }
+        const entities = card.msteams?.entities?.filter((entity: any) =>
+            body.some(element => typeof element.text === 'string' && element.text.includes(entity.text)));
+        const msteams = { ...card.msteams };
+        if (entities?.length) msteams.entities = entities;
+        else delete msteams.entities;
+        return {
+            ...activity,
+            attachments: [{ ...attachment, content: { ...card, body, msteams } }],
+        };
+    };
+    const splitUnit = (unit: any): any[] => {
+        if (typeof unit.text === 'string'
+            && card.msteams?.entities?.some((entity: any) => unit.text.includes(entity.text))) {
+            throw new Error('Standup summary mention exceeds the Teams byte budget.');
+        }
+        const first = JSON.parse(JSON.stringify(unit));
+        const second = JSON.parse(JSON.stringify(unit));
+        const texts = (value: any): any[] => value.type === 'Table'
+            ? value.rows[1].cells.flatMap((c: any) => c.items.filter((i: any) => typeof i.text === 'string'))
+            : typeof value.text === 'string' ? [value] : [];
+        const left = texts(first);
+        const right = texts(second);
+        let longest = -1;
+        for (let i = 0; i < left.length; i++) {
+            if (longest < 0 || left[i].text.length > left[longest].text.length) longest = i;
+        }
+        if (longest < 0) throw new Error('Standup summary activity envelope exceeds the Teams byte budget.');
+        const points = Array.from(left[longest].text as string);
+        if (points.length < 2) throw new Error('Standup summary activity envelope exceeds the Teams byte budget.');
+        const mid = Math.floor(points.length / 2);
+        left[longest].text = points.slice(0, mid).join('');
+        right.forEach((value, i) => { value.text = i === longest ? points.slice(mid).join('') : ''; });
+        return [first, second];
+    };
+    const parts: any[] = [];
+    let current: any[] = [];
+    const pending = [...units];
+    while (pending.length) {
+        const unit = pending.shift()!;
+        if (bytes(wrap([...current, unit])) <= STANDUP_ACTIVITY_BYTE_BUDGET) {
+            current.push(unit);
+        } else if (current.length) {
+            parts.push(wrap(current));
+            current = [];
+            pending.unshift(unit);
+        } else {
+            // An envelope that cannot carry even an empty card cannot be fixed
+            // by splitting response text; fail before sending any part.
+            if (bytes(wrap([])) > STANDUP_ACTIVITY_BYTE_BUDGET) {
+                throw new Error('Standup summary activity envelope exceeds the Teams byte budget.');
+            }
+            pending.unshift(...splitUnit(unit));
+        }
+    }
+    if (current.length) parts.push(wrap(current));
+    parts.forEach((part, i) => {
+        part.attachments[0].content.body[0].text = `Standup summary — part ${i + 1} of ${parts.length}`;
+        if (bytes(part) > STANDUP_ACTIVITY_BYTE_BUDGET) throw new Error('Standup summary exceeds the Teams byte budget.');
+    });
+    return parts;
+}
 
 export interface StandupSummaryUpdateItem {
     issueKey: string;

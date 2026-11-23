@@ -38,18 +38,24 @@ function reportFixture(overrides = {}) {
         '../services/sharepoint': {
             listItems: async () => [],
             findByField: async key => key === 'teamsConfig'
-                ? [{ fields: { ConversationRef: '{"target":"channel"}' } }] : [],
+                ? (overrides.smOnly ? [] : [{ fields: { ConversationRef: '{"target":"channel"}' } }]) : [],
             claimSprintReport: async () => {
                 if (claimed) return null;
                 claimed = true;
                 return 'claim-1';
             },
-            updateItem: async (...args) => { updates.push(args); if (args[2].State === 'failed') claimed = false; },
+            updateItem: async (...args) => {
+                updates.push(args);
+                if (overrides.persistenceError) throw new Error('Persistence failed');
+                if (args[2].State === 'failed') claimed = false;
+            },
         },
         '../services/team-roster': { listTeamMembers: async () => [{ Role: 'SM', conversationReference: { target: 'sm' } }] },
         '../services/proactive': {
             sendProactive: async (ref, callback) => {
                 sent.push(ref.target);
+                if (overrides.proactive) return overrides.proactive(ref, callback);
+                if (overrides.send) return overrides.send(ref, callback, sent);
                 if (overrides.failAll || ref.target === 'channel') return { ok: false };
                 await callback({ sendActivity: async text => { sent.push(text); } });
                 return { ok: true };
@@ -89,6 +95,113 @@ test('concurrent report workers acquire one per-sprint delivery claim', async ()
     const results = await Promise.all([fixture.runSprintCloseReport(), fixture.runSprintCloseReport()]);
     assert.equal(results.filter(r => r.uploaded).length, 1);
     assert.equal(fixture.sent.filter(s => s === 'sm').length, 1);
+});
+
+test('uncertain close-report sends retain claims and never fall back or replay', async () => {
+    for (const smOnly of [false, true]) {
+        for (const status of [undefined, 408, 500]) {
+            const f = reportFixture({
+                smOnly,
+                send: async (_ref, callback, sent) => {
+                    try {
+                        await callback({ sendActivity: async text => {
+                            sent.push(text); // Teams accepted it before the acknowledgement was lost.
+                            throw Object.assign(new Error('Acknowledgement lost'), { statusCode: status });
+                        } });
+                    } catch (error) {
+                        return { ok: false, error: error.message };
+                    }
+                },
+            });
+            const result = await f.runSprintCloseReport();
+            assert.equal(result.uploaded, false);
+            assert.match(result.note, /delivery is uncertain.*remains claimed/i);
+            assert.equal(f.updates.length, 0);
+            assert.equal(f.sent.filter(item => item === 'channel' || item === 'sm').length, 1);
+            assert.equal((await f.runSprintCloseReport({ force: true })).uploaded, false);
+            assert.equal(f.sent.length, 2, 'The claimed report must not send again');
+        }
+    }
+});
+
+test('confirmed close-report rejection permits fallback and retry', async () => {
+    for (const status of [400, 401, 403, 413, 429]) {
+        const f = reportFixture({
+            send: async (ref, callback, sent) => {
+                if (ref.target === 'sm') {
+                    await callback({ sendActivity: async text => { sent.push(text); } });
+                    return { ok: true };
+                }
+                try {
+                    await callback({ sendActivity: async () => {
+                        throw Object.assign(new Error('Rejected'), { statusCode: status });
+                    } });
+                } catch (error) {
+                    return { ok: false, error: error.message };
+                }
+            },
+        });
+        assert.equal((await f.runSprintCloseReport()).uploaded, true);
+        assert.deepEqual(f.sent.slice(0, 2), ['channel', 'sm']);
+        assert.equal(f.updates[0][2].State, 'sent');
+    }
+    const f = reportFixture({ smOnly: true, send: async (_ref, callback) => {
+        try {
+            await callback({ sendActivity: async () => {
+                throw Object.assign(new Error('Rejected'), { status: 403 });
+            } });
+        } catch (error) { return { ok: false, error: error.message }; }
+    } });
+    for (let retry = 0; retry < 2; retry++) {
+        assert.equal((await f.runSprintCloseReport()).uploaded, false);
+        assert.equal(f.updates[retry][2].State, 'failed');
+    }
+});
+
+test('a report accepted before helper or persistence failure keeps its claim', async () => {
+    const f = reportFixture({ send: async (_ref, callback, sent) => {
+        await callback({ sendActivity: async text => { sent.push(text); } });
+        throw new Error('Failure after sending');
+    } });
+    assert.match((await f.runSprintCloseReport()).note, /uncertain/);
+    assert.equal(f.updates.length, 0);
+    assert.equal(f.sent.length, 2);
+    assert.equal((await f.runSprintCloseReport()).uploaded, false);
+    const stored = reportFixture({ persistenceError: true });
+    await assert.rejects(stored.runSprintCloseReport(), /Persistence failed/);
+    assert.equal(stored.updates[0][2].State, 'sent');
+    assert.equal((await stored.runSprintCloseReport()).uploaded, false);
+    assert.equal(stored.sent.length, 3);
+});
+
+test('real proactive helper transport failures leave close-report delivery uncertain', async () => {
+    const previous = process.env.connections__service_connection__settings__clientId;
+    process.env.connections__service_connection__settings__clientId = 'offline-client';
+    let accepted = 0;
+    try {
+        const { sendProactive } = load('src\\services\\proactive.ts', {
+            '../agent': { agentApplication: {
+                authorization: {},
+                adapter: { continueConversation: async (_id, _reference, logic) => {
+                    await logic({ sendActivity: async () => {
+                        accepted++;
+                        throw new Error('Connection reset after Teams accepted report');
+                    } });
+                } },
+            } },
+            '../observability': { runWithObservabilityContext: async (_context, _authorization, logic) => logic() },
+        });
+        const f = reportFixture({ smOnly: true, proactive: sendProactive });
+        const result = await f.runSprintCloseReport();
+        assert.match(result.note, /delivery is uncertain.*remains claimed/i);
+        assert.equal(accepted, 1);
+        assert.equal(f.updates.length, 0);
+        await f.runSprintCloseReport();
+        assert.equal(accepted, 1);
+    } finally {
+        if (previous === undefined) delete process.env.connections__service_connection__settings__clientId;
+        else process.env.connections__service_connection__settings__clientId = previous;
+    }
 });
 
 test('report never invents a Sprint 2 target when the next sprint is unknown', () => {

@@ -88,4 +88,53 @@ test('standup retry command passes the exact retained session ID and rejects mal
         assert.equal(calls.length, 2);
         assert.equal(calls[1].retryStandupId, undefined);
     });
+
+});
+
+test('ordinary prose and blocked responses refresh the rendered current status without inferring writes', async () => {
+    for (const [update, hasBlocker] of [
+        ['Finished the implementation and merged the PR.', false],
+        ['Waiting for an external dependency', true],
+        ['Done', true],
+    ]) {
+        await withModule('../src/handlers/reconcile', {
+            '../services/jira': { getJiraClient: () => ({
+                getIssue: async () => ({ status: 'Done' }),
+                getTransitions: async () => { assert.fail('Unchanged inference must not inspect transitions'); },
+                transitionIssue: async () => { assert.fail('Unchanged inference must not write'); },
+            }) },
+            '../services/team-roster': {}, '../services/proactive': {},
+        }, async ({ runReconciliation }) => {
+            const issue = { key: 'TEAM-1', status: 'In Review', summary: 'Work', url: '' };
+            const outcome = await runReconciliation({
+                responses: new Map([['dev', { userAadId: 'dev', items: [{ issueKey: 'TEAM-1', update, hasBlocker }] }]]),
+                itemsByAssignee: new Map([['dev', [issue]]]),
+            });
+
+            assert.deepEqual(outcome, { autoApplied: [], needsConfirm: [], errors: [] });
+            const { buildStandupSummaryCard } = require('../src/cards/standup-summary.card');
+            const card = buildStandupSummaryCard(summaryParams([{ ...summaryItem(), statusFrom: issue.status }])).content;
+            assert.equal(card.body.find(part => part.type === 'Table').rows[1].cells[3].items[0].text, 'Done');
+        });
+    }
+});
+
+test('a summary status-refresh failure is reported without permitting writes', async () => {
+    await withModule('../src/handlers/reconcile', {
+        '../services/jira': { getJiraClient: () => ({
+            getIssue: async () => { throw new Error('Jira unavailable'); },
+            getTransitions: async () => { assert.fail('A failed refresh cannot inspect transitions'); },
+            transitionIssue: async () => { assert.fail('A failed refresh cannot write'); },
+        }) },
+        '../services/team-roster': {}, '../services/proactive': {},
+    }, async ({ runReconciliation }) => {
+        const outcome = await runReconciliation({
+            responses: new Map([['dev', { userAadId: 'dev', items: [{ issueKey: 'TEAM-1', update: 'Needs discussion', hasBlocker: true }] }]]),
+            itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1', status: 'In Review' }]]]),
+        });
+        assert.deepEqual(outcome, {
+            autoApplied: [], needsConfirm: [],
+            errors: [{ issueKey: 'TEAM-1', message: 'Jira unavailable' }],
+        });
+    });
 });
