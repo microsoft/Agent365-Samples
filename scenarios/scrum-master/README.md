@@ -286,7 +286,7 @@ All three accept the `x-internal-token` header (must match a configured `INTERNA
 
 ### `POST /api/internal/standup-trigger`
 
-Fires today's standup. The `<sprintId>#<UTC-date>` guard retains completed records for the lifetime of this process. Live mode also checks persisted SharePoint session records before new fanout after restart, but this is not an atomic cross-process claim and does not reconstruct an interrupted session.
+Fires today's standup. Live mode inserts a unique SharePoint `RunKey` (`<sprintId>#<UTC-date>`) before fan-out; only the insert winner sends cards. That claim survives restart and coordinates workers, but it does not reconstruct an interrupted in-memory session or its cutoff timer.
 
 ```powershell
 Invoke-RestMethod -Method Post `
