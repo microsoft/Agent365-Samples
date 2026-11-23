@@ -104,8 +104,40 @@ test('jira_list_sprint_issues never exposes foreign board content or launders it
         '../observability': { withExecuteToolScope: async (_name, _input, callback) => callback() },
     });
     const result = await tools.listSprintIssuesTool.execute();
-    assert.deepEqual(result.issues.map(i => i.key), ['Task-1', 'Task-2']);
+    assert.deepEqual(result.issues.map(i => i.key), ['Task-1', 'Task-2', 'Task-3', 'Task-4']);
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE|PROGRAM|Task-123|Task-456|Task-8/);
+});
+
+test('sprint Q&A includes inherited assignees and deduplicates issues returned by both Jira endpoints', async () => {
+    const parents = [
+        { key: 'TEAM-1', summary: 'Story', parentKey: null, status: 'In Progress', assignee: { displayName: 'Owner' } },
+        { key: 'TEAM-2', summary: 'Task', parentKey: null, status: 'To Do', assignee: null },
+        { key: 'TEAM-3', summary: 'Child', parentKey: 'TEAM-1', status: 'To Do', assignee: { displayName: 'Developer' } },
+    ];
+    let fails = false, requested;
+    const tools = load('src\\services\\jira-tool.ts', {
+        '@openai/agents': { tool: definition => definition },
+        './jira': { getJiraClient: () => ({
+            getActiveSprint: async () => ({ id: 42, name: 'Sprint' }),
+            searchSprintIssues: async () => parents,
+            getSprintSubtasks: async (id, keys) => {
+                requested = { id, keys };
+                if (fails) throw new Error('Subtask lookup failed');
+                return [parents[2], parents[2], {
+                    key: 'TEAM-4', summary: 'Inherited work', parentKey: 'TEAM-1',
+                    status: 'In Review', assignee: { displayName: 'Helper' },
+                }];
+            },
+        }) },
+        '../observability': { withExecuteToolScope: async (_name, _input, callback) => callback() },
+    });
+    const result = await tools.listSprintIssuesTool.execute();
+    assert.deepEqual(requested, { id: 42, keys: ['TEAM-1', 'TEAM-2'] });
+    assert.deepEqual(result.issues.map(issue => [issue.key, issue.assignee]), [
+        ['Task-1', 'Owner'], ['Task-2', null], ['Task-3', 'Developer'], ['Task-4', 'Helper'],
+    ]);
+    fails = true;
+    await assert.rejects(tools.listSprintIssuesTool.execute(), /Subtask lookup failed/);
 });
 
 test('mock collection boundary retains SCRUM seed and denies foreign parent keys despite live project setting', async () => {

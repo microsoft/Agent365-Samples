@@ -316,6 +316,77 @@ test('failed approval acknowledgements restore valid proposals without allowing 
     });
 });
 
+test('a later standup opens a separate actionable blocker episode without altering the booked meeting', async () => {
+    const sessions = require('../src/services/session-store');
+    const old = { id: 'old', fields: {
+        Title: 'TEAM-1', StandupId: 'earlier-run', State: 'booked', MeetingEventId: 'old-meeting',
+    } };
+    const rows = [old];
+    const session = sessions.upsertSession({
+        standupId: 'new-blocker-episode', sprintName: 'Sprint', state: 'open',
+        expectedResponders: new Set(['dev', 'absent']),
+        itemsByAssignee: new Map([['dev', [{ key: 'TEAM-1' }]]]),
+        responses: new Map(), sentTo: new Set(), unreachable: new Set(),
+    });
+    const sharepoint = {
+        findByField: async (_list, field, value) => rows.filter(row => row.fields[field] === value),
+        claimStandupResponse: async fields => ({ created: true, item: { id: 'response', fields } }),
+        createItem: async (_list, fields) => {
+            const row = { id: `row-${rows.length}`, fields: { ...fields } };
+            rows.push(row);
+            return row;
+        },
+        updateItem: async (_list, id, fields) => Object.assign(rows.find(row => row.id === id).fields, fields),
+        claimItemState: async (_list, id, expected, next) => {
+            const row = rows.find(row => row.id === id);
+            if (row.fields.State !== expected) return false;
+            row.fields.State = next;
+            return true;
+        },
+    };
+    try {
+        await withModule('../src/handlers/standup.ts', {
+            '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+            '../services/sharepoint': sharepoint,
+            '../services/jira': { getJiraClient: () => ({ addComment: async () => {} }) },
+            '../services/team-roster': {},
+            '../services/proactive': { sendProactive: async (_reference, logic) => {
+                await logic({ sendActivity: async () => {} });
+                return { ok: true };
+            } },
+            '../cards/standup-request.card': { buildStandupSubmittedCard: value => value },
+        }, async standup => {
+            await standup.handleStandupSubmit(context('dev', {
+                standupId: session.standupId, assigneeAadId: 'dev',
+                'update_TEAM-1': 'Blocked again', 'blocker_TEAM-1': 'true', 'blockerText_TEAM-1': 'New dependency',
+            }));
+            await drain();
+            assert.equal(rows.length, 2);
+            assert.deepEqual(old.fields, {
+                Title: 'TEAM-1', StandupId: 'earlier-run', State: 'booked', MeetingEventId: 'old-meeting',
+            });
+            assert.equal(rows[1].fields.State, 'open');
+            assert.equal(rows[1].fields.MeetingEventId, undefined);
+            assert.equal(rows[1].fields.StandupId, session.standupId);
+        });
+        await withModule('../src/handlers/chase.ts', {
+            '../services/sharepoint': sharepoint,
+            '../services/authorization': { requireScrumMaster: async () => ({ AadObjectId: 'sm' }) },
+            '../services/proactive': {},
+            '../services/calendar': {},
+            '../services/team-roster': {},
+            '../services/helperMatcher': {},
+            '../agent': {},
+        }, async chase => {
+            const dismiss = context('sm', { action: 'blocker.dismiss', issueKey: 'TEAM-1', blockerId: rows[1].id });
+            await chase.handleBlockerSubmit(dismiss);
+            assert.equal(rows[1].fields.State, 'resolved');
+            assert.match(dismiss.messages[0], /Dismissed/);
+            assert.equal(old.fields.MeetingEventId, 'old-meeting');
+        });
+    } finally { sessions.removeSession(session.standupId); }
+});
+
 test('blocker cards include the bound issue and row identifiers for both authorized actions', () => {
     const { buildBlockerEscalationCard } = require('../src/cards/blocker-escalation.card.ts');
     const card = buildBlockerEscalationCard({
@@ -355,6 +426,7 @@ test('standup submissions fail closed before writes for unknown sessions, identi
                 },
                 updateItem: async () => { writes++; },
                 findByTitle: async () => null,
+                findByField: async () => [],
             },
             '../services/team-roster': {},
             '../services/proactive': { sendProactive: async (_ref, logic) => {

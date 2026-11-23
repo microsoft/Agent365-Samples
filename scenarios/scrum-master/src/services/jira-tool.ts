@@ -57,7 +57,10 @@ export const listSprintIssuesTool = tool({
         const jira = getJiraClient();
         const sprint = await jira.getActiveSprint();
         if (!sprint) return { error: 'No active sprint found.' };
-        const issues = await jira.searchSprintIssues(sprint.id);
+        const sprintIssues = await jira.searchSprintIssues(sprint.id);
+        const parentKeys = sprintIssues.filter(issue => !issue.parentKey).map(issue => issue.key);
+        const subtasks = await jira.getSprintSubtasks(sprint.id, parentKeys);
+        const issues = Array.from(new Map([...sprintIssues, ...subtasks].map(issue => [issue.key, issue])).values());
         return {
             sprint: { id: sprint.id, name: sprint.name, endDate: sprint.endDate },
             issues: issues.map(i => ({

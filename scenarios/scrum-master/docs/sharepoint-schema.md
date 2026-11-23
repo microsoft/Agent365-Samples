@@ -111,6 +111,10 @@ not replaying the card.
 ### `SMA_Blockers`
 
 One row per blocker flagged in a standup response. Drives the MVP-3 chase flow.
+Rows are scoped to the issue key plus `StandupId`: a later standup creates a
+new episode rather than reopening the old row. Prior meeting IDs and booking
+claims remain on their original rows; card actions identify the exact row ID.
+Updating an existing episode preserves its state and meeting metadata.
 
 | Column | Type | Description |
 |---|---|---|

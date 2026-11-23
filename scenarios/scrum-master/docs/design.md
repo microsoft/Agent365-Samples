@@ -322,6 +322,9 @@ requires a fresh approval even if Jira still offers the saved global transition.
 
 Every blocker/meeting action checks the caller's configured `SM` role on the
 server. Slot lookup verifies the blocker ID and issue key together. The picker
+targets a specific standup's blocker episode. Later standups create separate
+rows for the same issue, leaving prior meeting IDs and booking claims intact;
+an earlier booked meeting cannot disable the new episode's actions. The picker
 contains only a random proposal ID and the selected slot; the server retains the
 blocker, authorized approver and offered slots for 30 minutes. Book/cancel consumes
 the proposal once. Forged, expired and post-restart proposals require new slots.
@@ -428,7 +431,10 @@ sequenceDiagram
 ```
 
 Tools available to the agent: `jira_get_issue`, `jira_list_sprint_issues`,
-`jira_get_issue_comments`. Caller-and-conversation-scoped history means follow-ups
+`jira_get_issue_comments`. Sprint-wide data includes inherited subtasks: the list tool expands
+top-level sprint issue keys with `getSprintSubtasks` and deduplicates all
+returned issues by key. Failed expansion propagates rather than reporting
+a partial sprint as complete. Caller-and-conversation-scoped history means follow-ups
 like *"provide more details"* or *"and the assignee?"* resolve against
 the last discussed task in the same conversation. Missing scope identifiers
 disable history retention. The shared Jira read boundary restricts issue,

@@ -541,14 +541,15 @@ async function recordStandupSubmission(
         for (const item of created ? items : []) {
             if (!item.hasBlocker) continue;
             const blockerTitle = item.issueKey;
-            const existing = await findByTitle<BlockerFields>('blockers', blockerTitle);
+            const existing = (await findByField<BlockerFields>('blockers', 'Title', blockerTitle))
+                .find(row => row.fields.StandupId === standupId);
             const fields = {
                 Title: blockerTitle,
                 StandupId: standupId,
                 ReporterAadId: response.userAadId,
                 OwnerAadId: response.userAadId,      // owner = reporter unless we learn otherwise
                 BlockerText: item.blockerText ?? '',
-                State: 'open',
+                State: existing?.fields.State ?? 'open',
             };
             if (existing) await updateItem<BlockerFields>('blockers', existing.id, fields);
             else await createItem<BlockerFields>('blockers', fields);
