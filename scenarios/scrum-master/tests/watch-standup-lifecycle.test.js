@@ -477,11 +477,11 @@ test('successful delayed response insertion crossing cutoff is included once and
             return { autoApplied: [], needsConfirm: [], errors: [] };
         } },
     }, async standup => {
-        session.cutoffUtc = new Date(Date.now() + 100).toISOString();
+session.cutoffUtc = new Date(Date.now() + 60_000).toISOString();
         const submission = standup.handleStandupSubmit(submitContext(session));
         await entered.promise;
         assert.ok(Date.now() < Date.parse(session.cutoffUtc));
-        await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(session.cutoffUtc) - Date.now() + 1)));
+        session.cutoffUtc = new Date(Date.now() - 1).toISOString();
         assert.equal(session.responses.size, 0);
         const finalization = standup.summarizeStandup(session);
         await new Promise(resolve => setImmediate(resolve));
