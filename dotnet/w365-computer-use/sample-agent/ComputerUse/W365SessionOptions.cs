@@ -9,16 +9,18 @@ public sealed record W365SessionOptions(
     string? SessionKind = null,
     int? DisplayWidth = null,
     int? DisplayHeight = null,
-    string? BrowserMode = null)
+    string? BrowserMode = null,
+    string? PoolId = null)
 {
     internal bool HasExplicitOptions =>
-        SessionKind != null || DisplayWidth != null || DisplayHeight != null || BrowserMode != null;
+        SessionKind != null || DisplayWidth != null || DisplayHeight != null || BrowserMode != null || PoolId != null;
 
     internal static W365SessionOptions FromChat(string? sessionKind, JsonElement properties)
     {
         int? displayWidth = null;
         int? displayHeight = null;
         string? browserMode = null;
+        string? poolId = null;
         if (properties.ValueKind != JsonValueKind.Null)
         {
             if (properties.ValueKind != JsonValueKind.Object)
@@ -41,13 +43,16 @@ public sealed record W365SessionOptions(
                     case "browserMode" when property.Value.ValueKind == JsonValueKind.String:
                         browserMode = property.Value.GetString();
                         break;
+                    case "poolId" when property.Value.ValueKind == JsonValueKind.String:
+                        poolId = property.Value.GetString();
+                        break;
                     default:
                         throw new InvalidOperationException($"The chat router returned an unsupported session property or value: {property.Name}.");
                 }
             }
         }
 
-        var options = new W365SessionOptions(sessionKind, displayWidth, displayHeight, browserMode);
+        var options = new W365SessionOptions(sessionKind, displayWidth, displayHeight, browserMode, poolId);
         options.Validate();
         return options;
     }
@@ -67,6 +72,13 @@ public sealed record W365SessionOptions(
             throw new InvalidOperationException("The session display dimensions requested in chat must be positive integers.");
         if (BrowserMode is not (null or "chromium" or "legacy"))
             throw new InvalidOperationException("The session browser mode requested in chat must be chromium or legacy, or omitted.");
+        if (PoolId != null)
+        {
+            if (string.IsNullOrWhiteSpace(PoolId) || PoolId.Length > 256)
+                throw new InvalidOperationException("The session poolId requested in chat must be a non-empty string of at most 256 characters.");
+            if (SessionKind == null)
+                throw new InvalidOperationException("The session poolId requested in chat requires an explicit local, human or agentic session kind.");
+        }
     }
 
     public Dictionary<string, object?> CreateStartArguments()
@@ -78,6 +90,7 @@ public sealed record W365SessionOptions(
         if (DisplayWidth is { } width) properties["displayWidth"] = width;
         if (DisplayHeight is { } height) properties["displayHeight"] = height;
         if (BrowserMode != null) properties["browserMode"] = BrowserMode;
+        if (PoolId != null) properties["poolId"] = PoolId;
         if (properties.Count > 0) arguments["sessionProperties"] = properties;
         return arguments;
     }

@@ -25,7 +25,7 @@ It supports two model types:
 ## Demonstrates
 
 - Session-aware MCP discovery and desktop/browser tool calls.
-- Optional W365 session kind, display dimensions and browser selection, with unchanged defaults.
+- Optional W365 session kind, display dimensions, browser selection and assigned-pool targeting, with unchanged defaults.
 - Human sign-in handoff, bounded readiness checks, same-session task resumption and cleanup.
 
 ## Architecture
@@ -166,9 +166,9 @@ $token = Get-MsalToken `
 $env:GRAPH_TOKEN = $token.AccessToken
 ```
 
-### 5. Start the MCP Platform server
+### 5. Confirm MCP service access
 
-Ensure the MCP Platform is running locally on port 52857, or update the `McpServer:Url` in your config.
+The configuration above connects the agent to your local W365 Computer Use MCP endpoint. Ensure that endpoint is running and accessible.
 
 ### 6. Run the agent
 
@@ -239,7 +239,7 @@ dotnet run
 
 #### V3 session examples
 
-V3 adds optional session kinds, display/browser settings, and human sign-in readiness. Try the following chat prompts **one session at a time**. Say **"end my session"** before trying another startup example; options cannot be changed on an active or pending session. These are explicit chat choices, not appsettings or environment-variable defaults.
+V3 adds optional session kinds, display/browser settings, assigned-pool targeting, and human sign-in readiness. Try the following chat prompts **one session at a time**. Say **"end my session"** before trying another startup example; options cannot be changed on an active or pending session. These are explicit chat choices, not appsettings or environment-variable defaults.
 
 | Scenario | Playground message | Expected `StartSession` arguments |
 |----------|--------------------|-----------------------------------|
@@ -247,6 +247,7 @@ V3 adds optional session kinds, display/browser settings, and human sign-in read
 | Properties only; default agentic kind retained | "Start a W365 session with a display 1280 pixels wide by 720 pixels tall using legacy browser mode and open Notepad" | `{"sessionProperties":{"displayWidth":1280,"displayHeight":720,"browserMode":"legacy"}}` |
 | Explicit agentic session | "Start an agentic W365 session with a display 1920 pixels wide by 1080 pixels tall using chromium browser mode and open Notepad" | `{"sessionKind":"agentic","sessionProperties":{"displayWidth":1920,"displayHeight":1080,"browserMode":"chromium"}}` |
 | Explicit local session | "Start a local W365 session and open Notepad" | `{"sessionKind":"local"}` |
+| Target an assigned pool | "Start a local W365 session using pool ID assigned-pool-id and open Notepad" | `{"sessionKind":"local","sessionProperties":{"poolId":"assigned-pool-id"}}` |
 | Human session with settings | "Start a human W365 session with a display 1600 pixels wide by 900 pixels tall using chromium browser mode and open Notepad" | `{"sessionKind":"human","sessionProperties":{"displayWidth":1600,"displayHeight":900,"browserMode":"chromium"}}` |
 
 Use an agentic `BEARER_TOKEN` for default/agentic tests. For the human example, follow [Development human bearer token](#development-human-bearer-token): use a compatible **human-user** W365 token and restart the local Development process after changing it. `local` supports compatible human or agent callers; app-only callers cannot select explicit kinds. Playground does not turn an agent token into a human token. The hosted EasyAuth flow requires validated channel sender attribution and should be tested separately using the [hosted human live verification](#hosted-human-live-verification-only-after-approval) steps.
@@ -332,6 +333,10 @@ To use the V3 human-session options, send the following **instead of** the defau
 
 `sessionProperties` is nested, dimensions are positive integers, and `browserMode` is `chromium` or `legacy`. Omit unrequested fields. For example, `"arguments": {"sessionProperties": {"browserMode": "legacy"}}` selects only the browser mode and retains the **default agentic** session kind; supplying properties does not select a human session. Human callers can explicitly request `human` or `local`, agent callers `agentic` or `local`; app-only callers cannot select explicit kinds. Do not retry an unavailable/incompatible kind as a different kind without an explicit decision.
 
+To target an assigned pool, send `"arguments": {"sessionKind": "local", "sessionProperties": {"poolId": "assigned-pool-id"}}`, replacing the example ID with the actual assigned pool ID and choosing a compatible explicit kind. `poolId` must be a nonblank string of at most 256 characters and requires an explicit `local`, `human`, or `agentic` kind. The ID is forwarded unchanged; it is not an allocated `sessionId`.
+
+The server queries only the specified assigned pool, without enumerating pools or failing over. An unassigned or ineligible pool returns `No Pools have been assigned to this user with the given constraints`; an eligible pool with no free session returns a capacity error. The sample surfaces these errors without removing or substituting the pool.
+
 The response retains its existing fields, includes a `sessionId`, and may include `screenShareUrl`, `connectivityUrl` and `awaitingHumanLogin`. A successful human-session start is **not** necessarily ready for remote tools. If `awaitingHumanLogin` is true, present `connectivityUrl` to the human and ask them to open it and sign in promptly; it is not `screenShareUrl`. Retain the same `sessionId` and use bounded progress checks rather than creating another session. Pass that ID when inspecting progress:
 
 ```json
@@ -393,7 +398,7 @@ var transport = new SseClientTransportOptions
 
 ### Optional session settings and human sign-in
 
-All W365 session options come **only from explicit chat requests**, for example **"Start a human W365 session at 1600 by 900 using chromium browser mode and open Notepad"**, **"Start a local W365 session"**, or **"Start an agentic W365 session using legacy browser mode"**. Session kind, display dimensions, and browser mode are not read from app settings or environment variables.
+All W365 session options come **only from explicit chat requests**, for example **"Start a human W365 session at 1600 by 900 using chromium browser mode and open Notepad"**, **"Start a local W365 session using pool ID assigned-pool-id"**, or **"Start an agentic W365 session using legacy browser mode"**. Session kind, display dimensions, browser mode, and pool ID are not read from app settings or environment variables.
 
 The chat router extracts options before session startup, without calling remote tools. Incidental words such as "human resources", numbers in a task, resizing an application window, simply opening Chrome, and questions about session settings do not select options. If routing fails or returns invalid, unsupported, or ambiguous options, the turn reports an error instead of starting a potentially unintended default session. Options cannot change or replace an active session: end it first, then explicitly request a new session with the desired options.
 
@@ -403,7 +408,7 @@ For `computer-use-preview`, chat-selected dimensions also override the model's v
 
 Requested options are retained per tracked session ID and restored when switching back to that session, so its preview geometry does not revert to defaults. Selecting an external session with no recorded options uses model defaults; ending/removing a session removes its recorded options.
 
-Omitting a kind in chat retains the default agentic behavior, **even when setting properties**. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds or dropping properties. Chat options are scoped to the conversation's session and retained for in-turn recovery, not applied as defaults to later new sessions.
+Omitting a kind in chat retains the default agentic behavior, **even when setting display/browser properties**. Pool targeting is the exception: a requested `poolId` without an explicit kind is rejected before startup, not converted to a default kind or an untargeted request. Pool IDs must be nonblank strings of at most 256 characters; the router does not infer a pool from a task or an existing session ID. Availability depends on the service: human callers may request `local` or `human`, agent callers `local` or `agentic`, and app-only callers cannot select an explicit kind. The sample surfaces service validation, unavailable-kind and caller-compatibility errors without silently switching kinds or dropping properties. Chat options are scoped to the conversation's session and retained for in-turn recovery, not applied as defaults to later new sessions.
 
 #### Development human bearer token
 
@@ -733,8 +738,10 @@ This is a verification recipe, not authorization to change infrastructure, conse
 | Waiting for human sign-in | Open `connectivityUrl` promptly, sign in, then reply to resume; do not start another session |
 | Resume says session options cannot be changed | Use the separate **Continue after sign-in** action, or say "continue my pending request" without repeating `human`, dimensions, or browser options. Explicit options are blocked while a session/request is pinned, even when the repeated values are unchanged. To change options, end the existing session first |
 | Invalid display/browser option | Use positive integer dimensions and `chromium` or `legacy` |
+| Invalid pool ID / missing kind | Supply a nonblank assigned `poolId` of at most 256 characters and explicitly request `local`, `human`, or `agentic`. A pool ID is not a session ID |
+| Selected pool unavailable | Check the caller's assignment/eligibility for that exact pool. Assignment errors differ from capacity errors; the sample does not retry another pool |
 | Unavailable kind / incompatible caller | Check service availability and token identity; an agentic token cannot request `human`, and app-only callers cannot select explicit kinds |
-| W365 gateway HTTP 403 | Check the selected gateway environment against the access token's intended resource and delegated scope. A production-resource token against a test gateway was an observed configuration mismatch; a 403 alone does not establish missing consent or its exact cause. Do not copy test overrides into production or broaden token validation |
+| W365 gateway HTTP 403 | Check the configured service endpoint against the access token's intended resource and delegated scope. A 403 alone does not establish missing consent or its exact cause; do not broaden token validation |
 | No free W365 sessions / no pools found | Ask the administrator to check pool discovery and eligibility for the actual caller as well as free checkout capacity. An observed human call returned an empty `/me/cloudPcPools` collection before any pool checkout; the capacity message did not mean all existing pools were full. Agent-pool provisioning/assignment alone does not establish human eligibility |
 | Windows App stays on its loading screen | Open the exact current `connectivityUrl` in a full, updated browser with the original human account/tenant. Check browser errors and resource/feed discovery separately from EasyAuth. Successful HTTP asset requests or a telemetry SDK error alone do not prove the cause of the spinner. Retain the same session while checking readiness unless the service explicitly reports it ended |
 | `BitBlt failed` / display DC unavailable | This is a remote Windows desktop-capture failure, not by itself a W365 OAuth rejection or invalid display setting. Correlate lifecycle responses and the failed tool's correlation ID/timestamp with the W365 backend to check readiness, lock/disconnect state, and capture-worker session attachment. A previously ready session does not guarantee its desktop remains capturable; do not change app permissions based on this error alone |
