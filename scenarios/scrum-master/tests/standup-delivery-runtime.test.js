@@ -69,7 +69,7 @@ function fixture(send, sp = storage()) {
     }));
     return {
         sp, attempts, id, members, issues,
-        async run(callback) {
+        async run(callback, overrides = {}) {
             await withModule('../src/services/standup-delivery', { './sharepoint': sp }, async delivery => {
                 await withModule('../src/handlers/standup', {
                     '../services/standup-delivery': delivery,
@@ -86,6 +86,7 @@ function fixture(send, sp = storage()) {
                         return send(ref.conversation.id, logic);
                     } },
                     '../cards/standup-request.card': { buildStandupRequestCard: value => value },
+                    ...overrides,
                 }, callback);
             });
         },
@@ -97,6 +98,123 @@ const accepted = async logic => {
     await logic({ sendActivity: async () => {} });
     return { ok: true };
 };
+
+function deferred() {
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    return { promise, resolve };
+}
+
+test('daily and explicit recovery share one restored session, fan-out and summary', async () => {
+    const readStarted = deferred(), releaseRead = deferred(), summaryStarted = deferred(), releaseSummary = deferred();
+    let recovering = false, summaries = 0, responseReads = 0;
+    const reconciled = [];
+    const f = fixture(async (_user, logic) => {
+        if (!recovering) return accepted(logic);
+        summaries++;
+        summaryStarted.resolve();
+        await releaseSummary.promise;
+        await logic({
+            activity: { getConversationReference: () => f.members[0].conversationReference },
+            sendActivity: async () => {},
+        });
+        return { ok: true };
+    });
+    f.members[0].Role = 'SM';
+    const id = sessions.makeStandupId(f.id);
+    try {
+        await f.run(async standup => { await standup.triggerStandup({ source: 'http' }); });
+        for (const user of ['a', 'b']) {
+            await f.sp.createItem('standupResponses', {
+                Title: `${id}#${user}`, StandupId: id, UserAadId: user, SubmittedUtc: new Date().toISOString(),
+                Items: JSON.stringify([{ issueKey: `WORK-${user}`, update: `Saved update ${user}`, hasBlocker: false }]),
+            });
+        }
+        sessions.removeSession(id);
+        recovering = true;
+        const find = f.sp.findByField;
+        f.sp.findByField = async (...args) => {
+            const rows = await find(...args);
+            if (args[0] === 'standupResponses') {
+                responseReads++;
+                readStarted.resolve();
+                await releaseRead.promise;
+            }
+            return rows;
+        };
+        await f.run(async standup => {
+            const daily = standup.triggerStandup({ source: 'http' });
+            await readStarted.promise;
+            const retry = standup.triggerStandup({ source: 'command', retryStandupId: id });
+            await new Promise(resolve => setImmediate(resolve));
+            releaseRead.resolve();
+            await summaryStarted.promise;
+            const canonical = sessions.getSession(id);
+            assert.equal(canonical.responses.size, 2);
+            releaseSummary.resolve();
+            await Promise.all([daily, retry]);
+            assert.equal(responseReads, 1);
+            assert.equal(summaries, 1);
+            assert.deepEqual(reconciled, [canonical]);
+            assert.equal(sessions.getSession(id), undefined);
+            assert.ok(sessions.getCompletedSession(id));
+        }, {
+            './reconcile': { reconcileAfterStandup: async session => {
+                reconciled.push(session);
+                return { autoApplied: [], needsConfirm: [], errors: [] };
+            } },
+            './chase': { chaseAfterStandup: async () => {} },
+        });
+    } finally { releaseRead.resolve(); releaseSummary.resolve(); f.cleanup(); }
+});
+
+test('a late restore preserves an installed session and never resurrects a completed run', async () => {
+    for (const completed of [false, true]) {
+        const f = fixture((_user, logic) => accepted(logic));
+        const readStarted = deferred(), releaseRead = deferred();
+        const id = sessions.makeStandupId(f.id);
+        try {
+            let original;
+            await f.run(async standup => {
+                await standup.triggerStandup({ source: 'http' });
+                original = sessions.getSession(id);
+            });
+            sessions.removeSession(id);
+            const find = f.sp.findByField;
+            f.sp.findByField = async (...args) => {
+                const rows = await find(...args);
+                if (args[0] === 'standupResponses') {
+                    readStarted.resolve();
+                    await releaseRead.promise;
+                }
+                return rows;
+            };
+            await f.run(async standup => {
+                const restore = standup.triggerStandup({ source: 'http' });
+                await readStarted.promise;
+                if (completed) {
+                    sessions.completeSession(original);
+                } else {
+                    original.responses.set('a', {
+                        userAadId: 'a', submittedUtc: new Date().toISOString(),
+                        items: [{ issueKey: 'WORK-a', update: 'Accepted during restore', hasBlocker: false }],
+                    });
+                    sessions.upsertSession(original);
+                }
+                releaseRead.resolve();
+                await restore;
+                if (completed) {
+                    assert.equal(sessions.getSession(id), undefined);
+                    assert.ok(sessions.getCompletedSession(id));
+                } else {
+                    assert.equal(sessions.getSession(id), original);
+                    assert.equal(original.responses.get('a').items[0].update, 'Accepted during restore');
+                }
+                assert.deepEqual(f.attempts, ['a', 'b']);
+            });
+        } finally { releaseRead.resolve(); f.cleanup(); }
+    }
+});
 
 test('partial fan-out fails and retries only the undelivered member across process restart', async () => {
     let failB = true;
@@ -240,7 +358,7 @@ test('mock chase uses the supplied local callback for owner and SM, while live i
     }
 });
 
-test('a blocked Playground standup completes chase on fresh local SDK contexts without hosting credentials', async () => {
+test('a two-person Playground standup delivers both personal requests and completes local blocker chase', async () => {
     const { CloudAdapter, TurnContext } = require('@microsoft/agents-hosting');
     const { Activity } = require('@microsoft/agents-activity');
     const sp = storage();
@@ -249,23 +367,26 @@ test('a blocked Playground standup completes chase on fresh local SDK contexts w
     const reference = {
         serviceUrl: 'http://localhost:5000', channelId: 'emulator',
         conversation: { id: 'playground', conversationType: 'personal' },
-        bot: { id: 'bot' }, user: { id: 'caller' },
+        agent: { id: 'bot' }, user: { id: 'caller' },
     };
     const member = { AadObjectId: 'caller', JiraAccountId: 'caller', Title: 'Caller', Role: 'SM', conversationReference: reference };
+    const otherReference = { ...reference, conversation: { ...reference.conversation, id: 'other-playground' }, user: { id: 'other' } };
+    const otherMember = { ...member, AadObjectId: 'other', JiraAccountId: 'other', Title: 'Other', Role: 'Dev', conversationReference: otherReference };
     const issue = {
         id: '1', key: 'WORK-1', summary: 'Work', status: 'To Do', statusCategory: 'new',
         assignee: { accountId: 'caller', displayName: 'Caller' }, storyPoints: null,
         url: 'https://example.test/WORK-1', sprintId: id, dueDate: null, parentKey: null, issueType: 'Task',
     };
+    const otherIssue = { ...issue, id: '2', key: 'WORK-2', assignee: { accountId: 'other', displayName: 'Other' } };
     const common = {
         '../config': { getJiraMode: () => 'mock', getScheduleConfig: () => ({ timezone: 'UTC', cutoffHours: 4 }) },
         '../services/sharepoint': sp,
         '../services/jira': { getJiraClient: () => ({
             getActiveSprint: async () => ({ id, name: 'Offline sprint' }),
-            searchSprintIssues: async () => [issue], getSprintSubtasks: async () => [],
+            searchSprintIssues: async () => [issue, otherIssue], getSprintSubtasks: async () => [],
             getIssue: async () => issue, addComment: async () => {},
         }) },
-        '../services/team-roster': { listTeamMembers: async () => [member], upsertConversationReference: async () => {}, isReachable: () => true },
+        '../services/team-roster': { listTeamMembers: async () => [member, otherMember], upsertConversationReference: async () => {}, isReachable: () => true },
         '../services/proactive': { sendProactive: () => { assert.fail('Mock flows must never use live proactive authentication'); } },
         '../agent': {},
     };
@@ -277,7 +398,7 @@ test('a blocked Playground standup completes chase on fresh local SDK contexts w
     };
     const runTurn = async (value, logic) => {
         const activity = Activity.fromObject({
-            type: 'message', from: reference.user, recipient: reference.bot,
+            type: 'message', from: reference.user, recipient: reference.agent,
             conversation: reference.conversation, serviceUrl: reference.serviceUrl, channelId: 'emulator', value,
         });
         let proxy;
@@ -298,9 +419,15 @@ test('a blocked Playground standup completes chase on fresh local SDK contexts w
                 }, async standup => {
                     await runTurn(undefined, context => standup.triggerStandup({ source: 'command', turnContext: context }));
                     const session = sessions.getSession(standupId);
+                    assert.deepEqual([...session.sentTo], ['caller', 'other']);
+                    assert.ok(activities.some(activity => activity.conversation?.id === 'other-playground'));
                     session.responses.set('caller', {
                         userAadId: 'caller', submittedUtc: new Date().toISOString(),
                         items: [{ issueKey: issue.key, update: 'Blocked by dependency', hasBlocker: true, blockerText: 'Dependency' }],
+                    });
+                    session.responses.set('other', {
+                        userAadId: 'other', submittedUtc: new Date().toISOString(),
+                        items: [{ issueKey: otherIssue.key, update: 'Working on it', hasBlocker: false }],
                     });
                     await sp.createItem('blockers', {
                         Title: issue.key, StandupId: standupId, OwnerAadId: 'caller', ReporterAadId: 'caller',

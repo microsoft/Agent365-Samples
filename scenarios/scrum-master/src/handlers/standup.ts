@@ -108,14 +108,13 @@ interface StandupTriggerResult {
 }
 
 const pendingTriggers = new Map<string, Promise<StandupTriggerResult>>();
+const pendingRestores = new Map<string, Promise<StandupSession | undefined>>();
 const pendingFanouts = new WeakMap<StandupSession, Promise<void>>();
 function captureMockDelivery(context: TurnContext) {
     const adapter = context.adapter;
     const identity = context.identity;
-    const reference = context.activity.getConversationReference();
     return {
-        reference,
-        send: (logic: (ctx: TurnContext) => Promise<void>) =>
+        send: (reference: NonNullable<TeamMember['conversationReference']>, logic: (ctx: TurnContext) => Promise<void>) =>
             adapter.continueConversation(identity, reference, logic),
     };
 }
@@ -135,9 +134,9 @@ async function deliverStandup(
     logic: (context: TurnContext) => Promise<void>,
 ): Promise<{ ok: boolean; error?: string }> {
     const delivery = getJiraMode() === 'mock' ? mockDeliveries.get(standupId) : undefined;
-    if (delivery && reference.conversation?.id === delivery.reference.conversation?.id) {
+    if (delivery) {
         try {
-            await delivery.send(logic);
+            await delivery.send(reference, logic);
             return { ok: true };
         } catch (error) {
             const message = (error as Error).message;
@@ -146,7 +145,7 @@ async function deliverStandup(
         }
     }
     if (getJiraMode() === 'mock') {
-        return { ok: false, error: 'Mock standup delivery requires a matching local turn context.' };
+        return { ok: false, error: 'Mock standup delivery requires a captured local adapter.' };
     }
     return sendProactive(reference, logic);
 }
@@ -337,7 +336,17 @@ async function startStandup(opts: StandupTriggerOptions): Promise<StandupTrigger
     return { standupId, sentTo: sent, skipped: unreachable.size };
 }
 
-async function restoreStandup(standupId: string): Promise<StandupSession | undefined> {
+function restoreStandup(standupId: string): Promise<StandupSession | undefined> {
+    const existing = getSession(standupId);
+    if (existing) return Promise.resolve(existing);
+    const pending = pendingRestores.get(standupId);
+    if (pending) return pending;
+    const work = loadStandup(standupId).finally(() => { pendingRestores.delete(standupId); });
+    pendingRestores.set(standupId, work);
+    return work;
+}
+
+async function loadStandup(standupId: string): Promise<StandupSession | undefined> {
     if (getJiraMode() === 'mock' || getCompletedSession(standupId)) return;
     const row = await findByTitle<StandupSessionFields>('standupSessions', standupId);
     if (!row || row.fields.State !== 'open' || !row.fields.FanoutSnapshot) return;
@@ -366,6 +375,9 @@ async function restoreStandup(standupId: string): Promise<StandupSession | undef
         }
         session.responses.set(fields.UserAadId, { userAadId: fields.UserAadId, submittedUtc: fields.SubmittedUtc, items });
     }
+    const existing = getSession(standupId);
+    if (existing) return existing;
+    if (getCompletedSession(standupId)) return;
     upsertSession(session);
     scheduleStandupCutoff(session, Math.max(1, Date.parse(session.cutoffUtc) - Date.now()));
     return session;
@@ -538,7 +550,7 @@ export async function handleStandupSubmit(context: TurnContext): Promise<void> {
     const mockDelivery = getJiraMode() === 'mock' ? captureMockDelivery(context) : undefined;
     const reply = async (logic: (ctx: TurnContext) => Promise<void>): Promise<void> => {
         if (mockDelivery) {
-            await mockDelivery.send(logic);
+            await mockDelivery.send(reference, logic);
             return;
         }
         const result = await deliverStandup(standupId, reference, logic);

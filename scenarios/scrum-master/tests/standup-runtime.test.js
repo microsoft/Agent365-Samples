@@ -218,7 +218,7 @@ test('mock standup uses fresh SDK contexts for deferred replies and summaries af
         conversationReference: {
             serviceUrl: 'http://localhost:5000', channelId: 'emulator',
             conversation: { id: 'playground-dm', conversationType: 'personal' },
-            bot: { id: 'bot' }, user: { id: 'playground-user' },
+            agent: { id: 'bot' }, user: { id: 'playground-user' },
         },
     };
     const activities = [];

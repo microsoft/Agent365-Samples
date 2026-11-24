@@ -600,6 +600,9 @@ also model-driven and is never used for inbound email.
   standup ID. A pending daily start cannot consume a prior-run recovery request,
   and different retained runs can recover independently. In-flight entries are
   released after success or failure.
+  Restoration also shares one in-flight load per standup ID across daily and
+  explicit retries. It preserves any already-installed session and never
+  reinstalls a completed run, so fan-out and finalization use the same object.
 - **Early finalization preserves the cutoff.** The synchronous finalization
   claim prevents concurrent summaries but keeps the future deadline armed.
   Configured cutoff hours must produce a positive supported Node timer delay
