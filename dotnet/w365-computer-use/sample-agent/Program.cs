@@ -3,6 +3,7 @@
 
 using W365ComputerUseSample;
 using W365ComputerUseSample.Agent;
+using W365ComputerUseSample.Authentication;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
@@ -44,6 +45,7 @@ builder.Services.AddCuaModelProvider(builder.Configuration);
 
 // Register the Computer Use orchestrator
 builder.Services.AddSingleton<ComputerUseOrchestrator>();
+builder.Services.AddHostedService<ComputerUseShutdownService>();
 
 // Bind ScreenShare options consumed by the link the agent posts in chat and by the
 // screenshare SPA / token-exchange endpoint.
@@ -54,6 +56,18 @@ builder.Services.Configure<ScreenShareOptions>(
 // for multi-instance hosts swap for a distributed store (Redis, etc.).
 builder.Services.AddSingleton<HandoffStore>();
 
+builder.Services.Configure<HumanW365AuthenticationOptions>(
+    builder.Configuration.GetSection(HumanW365AuthenticationOptions.SectionName));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<HumanW365AuthorizationStore>();
+builder.Services.AddAntiforgery(options =>
+{
+    options.Cookie.Name = "__Host-W365HumanAuth";
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+});
+
 // Add AspNet token validation
 builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 
@@ -62,6 +76,22 @@ builder.Services.AddAgentAspNetAuthentication(builder.Configuration);
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = (context, cancellationToken) =>
+    {
+        if (context.HttpContext.Request.Path == HumanW365AuthenticationEndpoints.CompletionPath)
+            HumanW365AuthenticationEndpoints.SetResponseHeaders(context.HttpContext);
+        return ValueTask.CompletedTask;
+    };
+    options.AddPolicy(HumanW365AuthenticationEndpoints.RateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true,
+            }));
     options.AddPolicy("ScreenShareToken", httpContext =>
     {
         var sid = httpContext.Request.RouteValues["sid"]?.ToString() ?? "unknown";
@@ -157,6 +187,7 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseStaticFiles();
+app.MapHumanW365Authentication();
 
 // Map the /api/messages endpoint to the AgentApplication
 app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, IAgentHttpAdapter adapter, IAgent agent, CancellationToken cancellationToken) =>
@@ -168,6 +199,14 @@ app.MapPost("/api/messages", async (HttpRequest request, HttpResponse response, 
 
     await AgentMetrics.InvokeObservedHttpOperation("agent.process_message", async () =>
     {
+        if (app.Configuration.GetValue<bool>("HumanW365Authentication:Enabled"))
+        {
+            var reason = await HumanW365IncomingIdentity.BindAsync(request.HttpContext).ConfigureAwait(false);
+            if (reason != null)
+                app.Logger.LogWarning("Human W365 incoming JWT proof unavailable. ReasonCode={ReasonCode}", reason);
+            else
+                app.Logger.LogInformation("Human W365 incoming JWT proof bound. ReasonCode={ReasonCode}", "incoming_jwt_identity_bound");
+        }
         await adapter.ProcessAsync(request, response, agent, cancellationToken);
     }).ConfigureAwait(false);
 });
@@ -249,13 +288,6 @@ else
 {
     app.MapControllers();
 }
-
-// End active W365 session on shutdown to release the VM back to the pool
-app.Lifetime.ApplicationStopping.Register(() =>
-{
-    var orchestrator = app.Services.GetRequiredService<ComputerUseOrchestrator>();
-    orchestrator.EndSessionOnShutdownAsync().GetAwaiter().GetResult();
-});
 
 app.Run();
 

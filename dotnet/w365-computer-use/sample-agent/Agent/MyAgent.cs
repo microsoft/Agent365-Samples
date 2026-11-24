@@ -5,6 +5,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
+using W365ComputerUseSample.Authentication;
 using W365ComputerUseSample.ComputerUse;
 using W365ComputerUseSample.ScreenShare;
 using W365ComputerUseSample.Telemetry;
@@ -27,6 +28,9 @@ public class MyAgent : AgentApplication
     private const string AgentWelcomeMessage = "Hello! I can help you perform tasks on a Windows 365 Cloud PC. Tell me what you'd like to do.";
     private const string AgentHireMessage = "Thank you for hiring me! I can control a Windows desktop to accomplish tasks for you.";
     private const string AgentFarewellMessage = "Thank you for your time, I enjoyed working with you.";
+    private const string HumanResourceLimitation = "Human W365 sessions do not yet support this sample's agent-authenticated screen-share links or OneDrive screenshot uploads. The separate W365 sign-in link is still available when required.";
+    private const string HumanIdentityGuidance = "Human W365 sign-in requires a verified chat sender. Enable TokenValidation and use an authenticated channel that supplies GUID Activity.Conversation.TenantId and Activity.From.AadObjectId. A validated Bot Framework channel or allowlisted Agent 365 Teams delivery caller can attest the sender; direct-user JWTs must carry matching tid and oid claims. Ask your administrator to verify the channel's sender attribution; unsupported channel mappings cannot be inferred. No W365 connection was attempted.";
+    private const string TurnIntentCacheKey = "W365ComputerUseSample.TurnIntent";
 
     private readonly Agent365TelemetryOptions _telemetryOptions;
     private readonly ILogger<MyAgent> _logger;
@@ -35,6 +39,8 @@ public class MyAgent : AgentApplication
     private readonly string[] _mcpServerUrls;
     private readonly ScreenShareOptions _screenShareOptions;
     private readonly HandoffStore _handoffStore;
+    private readonly bool _incomingJwtEnabled;
+    private readonly Guid[] _incomingJwtAudiences;
 
     /// <summary>
     /// Subset of <see cref="_mcpServerUrls"/> whose path names the W365 Computer-Use server.
@@ -123,6 +129,11 @@ public class MyAgent : AgentApplication
         _screenShareOptions = screenShareOptions.Value;
         _telemetryOptions = telemetryOptions.Value;
         _handoffStore = handoffStore;
+        var tokenValidation = configuration.GetSection("TokenValidation");
+        _incomingJwtEnabled = tokenValidation.Exists() && tokenValidation.GetValue("Enabled", true);
+        _incomingJwtAudiences = (tokenValidation.GetSection("Audiences").Get<string[]>() ?? [])
+            .Select(value => Guid.TryParse(value, out var id) ? id : Guid.Empty)
+            .Where(id => id != Guid.Empty).ToArray();
 
         // Support multiple MCP server URLs; fall back to single McpServer:Url for backward compat
         _mcpServerUrls = configuration.GetSection("McpServers").Get<string[]>() ?? [];
@@ -167,8 +178,57 @@ public class MyAgent : AgentApplication
         OnActivity(ActivityTypes.InstallationUpdate, OnInstallationUpdateAsync, isAgenticOnly: false);
 
         // Handle messages — MUST BE AFTER any other message handlers
+        // SDK route auto-sign-in runs before the handler. Select hosted human turns first,
+        // without agent resource sign-in; keep the existing automatic auth on all other routes.
+        OnMessage(ShouldDeferAgenticSignInAsync, OnMessageAsync, isAgenticOnly: true);
         OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: true, autoSignInHandlers: agenticHandlers);
         OnActivity(ActivityTypes.Message, OnMessageAsync, isAgenticOnly: false);
+    }
+
+    private async Task<bool> ShouldDeferAgenticSignInAsync(ITurnContext turnContext, CancellationToken cancellationToken)
+    {
+        if (HumanW365ChatActions.TryRead(turnContext.Activity.Value, out _))
+            return true;
+        if (IsDevelopment())
+            return false;
+
+        var localSessionKey = BuildLocalSessionKey(
+            turnContext.Activity.Conversation?.Id ?? string.Empty, turnContext.Activity.From);
+        if (_orchestrator.UsesHumanW365Authentication(localSessionKey))
+            return true;
+
+        try
+        {
+            var intent = await ClassifyTurnOnceAsync(turnContext, localSessionKey,
+                turnContext.Activity.Text?.Trim() ?? string.Empty, cancellationToken);
+            return intent.SessionOptions.SessionKind == "human"
+                || _orchestrator.UsesHumanW365Authentication(localSessionKey);
+        }
+        catch (InvalidOperationException)
+        {
+            // Let OnMessageAsync report the cached routing error without acquiring resources.
+            return true;
+        }
+    }
+
+    private Task<ComputerUseOrchestrator.TurnIntent> ClassifyTurnOnceAsync(
+        ITurnContext turnContext, string localSessionKey, string userText, CancellationToken cancellationToken)
+    {
+        HumanW365Owner? humanOwner = null;
+        if (_orchestrator.UsesHumanW365Authentication(localSessionKey))
+        {
+            var (owner, failureReason) = TryGetHumanW365Owner(turnContext);
+            if (owner == null)
+                throw new InvalidOperationException($"{HumanIdentityGuidance} Diagnostic code: `{failureReason}`.");
+            humanOwner = owner;
+        }
+        var intent = turnContext.Services.Get<Task<ComputerUseOrchestrator.TurnIntent>>(TurnIntentCacheKey);
+        if (intent == null)
+        {
+            intent = _orchestrator.ClassifyTurnAsync(localSessionKey, userText, cancellationToken, humanOwner);
+            turnContext.Services.Set(TurnIntentCacheKey, intent);
+        }
+        return intent;
     }
 
     protected async Task WelcomeMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken cancellationToken)
@@ -247,8 +307,8 @@ public class MyAgent : AgentApplication
             fromAccount?.Id ?? "(unknown)",
             fromAccount?.AadObjectId ?? "(none)");
 
-        // Agentic requests use the agentic handler; non-agentic requests fall back to env
-        // bearer token / no auth (handled inside GetToolsAsync).
+        // Agentic observability uses the agentic handler. Hosted human W365 authentication
+        // is selected after classification, before legacy tool/token acquisition.
         var ObservabilityAuthHandlerName = turnContext.IsAgenticRequest() ? AgenticAuthHandlerName : null;
         var ToolAuthHandlerName = ObservabilityAuthHandlerName;
 
@@ -263,6 +323,7 @@ public class MyAgent : AgentApplication
             _logger,
             async () =>
             {
+                var followUpActivities = new List<IActivity>();
                 // Typing indicator
                 // Single typing indicator. A background refresh loop was removed because it
                 // raced with the main reply path and triggered Kestrel request-body
@@ -275,40 +336,85 @@ public class MyAgent : AgentApplication
                     var userText = turnContext.Activity.Text?.Trim() ?? string.Empty;
                     var conversationId = turnContext.Activity.Conversation?.Id ?? Guid.NewGuid().ToString();
                     var localSessionKey = BuildLocalSessionKey(conversationId, fromAccount);
+                    if (HumanW365ChatActions.TryRead(turnContext.Activity.Value, out var chatAction))
+                    {
+                        var actionResponse = chatAction == null
+                            ? "This request action is invalid. Use the latest card in the original chat, or reply \"continue\" or \"end my session\"."
+                            : await RunHumanW365TurnAsync(turnContext, localSessionKey, conversationId, userText,
+                                new ComputerUseOrchestrator.TurnIntent(true, ComputerUseOrchestrator.PendingTaskAction.Resume, new()),
+                                false, cancellationToken, followUpActivities, chatAction);
+                        turnContext.StreamingResponse.QueueTextChunk(actionResponse);
+                        return actionResponse;
+                    }
+                    var screenShareRequest = IsScreenShareLinkRequest(userText);
+                    var wasHumanRequest = _orchestrator.UsesHumanW365Authentication(localSessionKey);
+                    if (screenShareRequest && wasHumanRequest)
+                    {
+                        turnContext.StreamingResponse.QueueTextChunk(HumanResourceLimitation);
+                        return HumanResourceLimitation;
+                    }
 
-                    // Fast path: the user is asking for a (fresh) screen share link. The link is
-                    // otherwise emitted only once when a session starts, and each handoff is
-                    // single-use and short-lived — so handle re-mint requests here, before the LLM
-                    // classifier (the model has no tool for it and would otherwise refuse).
-                    if (IsScreenShareLinkRequest(userText))
+                    // Step 1: classify intent with a cheap tool-less LLM call. If the message
+                    // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
+                    // W365 tool loading and explicit session startup entirely. Classify even a
+                    // new screenshare request so an explicit human kind cannot reach agent APIs.
+                    ComputerUseOrchestrator.TurnIntent intent;
+                    try
+                    {
+                        intent = await ClassifyTurnOnceAsync(turnContext, localSessionKey, userText, cancellationToken);
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        turnContext.StreamingResponse.QueueTextChunk(ex.Message);
+                        return ex.Message;
+                    }
+
+                    wasHumanRequest = _orchestrator.UsesHumanW365Authentication(localSessionKey);
+                    var hostedHumanRequest = !IsDevelopment()
+                        && (intent.SessionOptions.SessionKind == "human" || wasHumanRequest);
+                    if (screenShareRequest)
                     {
                         string reply;
-                        var (ssFound, ssSessionId, ssUrl) = await _orchestrator
-                            .TryGetActiveScreenShareAsync(localSessionKey, cancellationToken)
-                            .ConfigureAwait(false);
-                        if (ssFound)
+                        if (wasHumanRequest || hostedHumanRequest)
                         {
-                            var freshLink = await BuildScreenSharePageUrlAsync(turnContext, ssSessionId, ssUrl)
-                                .ConfigureAwait(false);
-                            reply = freshLink != null
-                                ? $"🖥️ Watch this session live: [Open screen share]({freshLink})"
-                                : "I couldn't generate a screen share link right now. Please try again in a moment.";
+                            reply = HumanResourceLimitation;
                         }
                         else
                         {
-                            reply = "There's no active Windows 365 session yet. Ask me to do something on the desktop first, then I can share a live link.";
+                            var (ssFound, ssSessionId, ssUrl) = await _orchestrator
+                                .TryGetActiveScreenShareAsync(localSessionKey, cancellationToken)
+                                .ConfigureAwait(false);
+                            if (ssFound)
+                            {
+                                var freshLink = await BuildScreenSharePageUrlAsync(turnContext, ssSessionId, ssUrl)
+                                    .ConfigureAwait(false);
+                                reply = freshLink != null
+                                    ? $"🖥️ Watch this session live: [Open screen share]({freshLink})"
+                                    : "I couldn't generate a screen share link right now. Please try again in a moment.";
+                            }
+                            else
+                            {
+                                reply = "There's no active Windows 365 session yet. Ask me to do something on the desktop first, then I can share a live link.";
+                            }
                         }
                         turnContext.StreamingResponse.QueueTextChunk(reply);
                         return reply;
                     }
 
-                    // Step 1: classify intent with a cheap tool-less LLM call. If the message
-                    // doesn't need desktop control ("hi", "summarize my inbox", etc.) we skip
-                    // W365 tool loading and explicit session startup entirely.
-                    var needsCua = await _orchestrator.ClassifyNeedsCuaAsync(userText, cancellationToken);
-
-                    if (!needsCua)
+                    if (!intent.NeedsCua)
                     {
+                        HumanW365Turn? humanTurn = null;
+                        if (_orchestrator.UsesHumanW365Authentication(localSessionKey))
+                        {
+                            var (owner, failureReason) = TryGetHumanW365Owner(turnContext);
+                            if (owner == null)
+                            {
+                                var guidance = $"{HumanIdentityGuidance} Diagnostic code: `{failureReason}`.";
+                                turnContext.StreamingResponse.QueueTextChunk(guidance);
+                                return guidance;
+                            }
+                            humanTurn = new HumanW365Turn(owner, _w365GatewayUrl, turnContext);
+                        }
                         // Non-CUA fast path: with the current CUA-only ToolingManifest, skip MCP
                         // discovery entirely so chit-chat never touches W365.
                         var (_, nonCuaAdditionalTools, _, _, _) = await GetToolsAsync(turnContext, ToolAuthHandlerName, includeW365: false, localSessionKey, cancellationToken);
@@ -323,8 +429,10 @@ public class MyAgent : AgentApplication
                             onCuaStarting: null,
                             onFolderLinkReady: null,
                             includeCuaTool: false,
+                            humanTurn: humanTurn,
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
+                            classifiedStateVersion: intent.StateVersion,
                             cancellationToken: cancellationToken);
                         turnContext.StreamingResponse.QueueTextChunk(directResponse);
                         return directResponse;
@@ -338,9 +446,18 @@ public class MyAgent : AgentApplication
                     // the streaming activity that starts on the next line.
                     await turnContext.SendActivityAsync(MessageFactory.Text("Got it — working on it…"), cancellationToken).ConfigureAwait(false);
 
+                    if (hostedHumanRequest)
+                    {
+                        var humanResponse = await RunHumanW365TurnAsync(
+                            turnContext, localSessionKey, conversationId, userText, intent,
+                            !wasHumanRequest, cancellationToken, followUpActivities);
+                        turnContext.StreamingResponse.QueueTextChunk(humanResponse);
+                        return humanResponse;
+                    }
+
                     // Announce first W365 connection setup only when we don't already have W365 tools cached.
                     // Explicit session startup is announced separately from the CUA loop.
-                    var willAcquireFreshSession = !_orchestrator.HasCachedW365Tools;
+                    var willAcquireFreshSession = _orchestrator.GetSelectedW365SessionId(localSessionKey) == null;
                     if (willAcquireFreshSession)
                     {
                         await turnContext.StreamingResponse.QueueInformativeUpdateAsync("Connecting to Windows 365 Computer Use tools…");
@@ -379,6 +496,7 @@ public class MyAgent : AgentApplication
                         }
 
                         // Run the CUA loop — session is managed per conversation
+                        string? cloudPcSignInUrl = null;
                         var response = await _orchestrator.RunAsync(
                             localSessionKey,
                             userText,
@@ -411,8 +529,18 @@ public class MyAgent : AgentApplication
                             prestartedScreenShareUrl: prestartedScreenShareUrl,
                             telemetryConversationId: conversationId,
                             telemetryChannelId: turnContext.Activity.ChannelId,
-                            cancellationToken: cancellationToken);
+                            cancellationToken: cancellationToken,
+                            pendingTaskAction: intent.TaskAction,
+                            sessionOptions: intent.SessionOptions,
+                            classifiedStateVersion: intent.StateVersion,
+                            onCloudPcSignInRequired: url => cloudPcSignInUrl = url);
 
+                        if (cloudPcSignInUrl != null)
+                        {
+                            var message = MessageFactory.Text(response);
+                            message.Attachments = [HumanW365ChatActions.CreateSignInCard(cloudPcSignInUrl, cloudPc: true)];
+                            turnContext.StreamingResponse.FinalMessage = message;
+                        }
                         // Send the response
                         turnContext.StreamingResponse.QueueTextChunk(response);
                         return response;
@@ -425,10 +553,131 @@ public class MyAgent : AgentApplication
                 }
                 finally
                 {
-                    try { await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); }
-                    catch (ObjectDisposedException) { /* stream already disposed */ }
+                    await CompleteResponseAsync(turnContext, followUpActivities, cancellationToken).ConfigureAwait(false);
                 }
             });
+    }
+
+    private static async Task CompleteResponseAsync(
+        ITurnContext turnContext, IReadOnlyCollection<IActivity> followUpActivities, CancellationToken cancellationToken)
+    {
+        StreamingResponseResult? result = null;
+        try { result = await turnContext.StreamingResponse.EndStreamAsync(cancellationToken).ConfigureAwait(false); }
+        catch (ObjectDisposedException) { /* stream already disposed */ }
+        if (followUpActivities.Count > 0 && result != StreamingResponseResult.Success)
+            throw new InvalidOperationException($"The sign-in message could not be completed ({result?.ToString() ?? "disposed"}). Request controls were not sent.");
+        // Finalize the sign-in activity before sending independent request controls.
+        foreach (var activity in followUpActivities)
+            await turnContext.SendActivityAsync(activity, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<string> RunHumanW365TurnAsync(
+        ITurnContext turnContext, string localSessionKey, string conversationId, string userText,
+        ComputerUseOrchestrator.TurnIntent intent, bool includeResourceLimitation,
+        CancellationToken cancellationToken, ICollection<IActivity> followUpActivities, HumanW365ChatAction? chatAction = null)
+    {
+        var (owner, failureReason) = TryGetHumanW365Owner(turnContext);
+        if (owner == null)
+            return $"{HumanIdentityGuidance} Diagnostic code: `{failureReason}`.";
+
+        string? actionRequestId = null;
+        string? signInUrl = null;
+        string? cloudPcSignInUrl = null;
+        // No agent resource authentication on this route. State and action binding are
+        // checked under the orchestrator's existing turn lock before transport is used.
+        var response = await _orchestrator.RunAsync(
+            localSessionKey,
+            userText,
+            w365Tools: [],
+            graphAccessToken: null,
+            onStatusUpdate: status => turnContext.StreamingResponse.QueueInformativeUpdateAsync(status),
+            telemetryConversationId: conversationId,
+            telemetryChannelId: turnContext.Activity.ChannelId,
+            cancellationToken: cancellationToken,
+            pendingTaskAction: intent.TaskAction,
+            sessionOptions: intent.SessionOptions,
+            classifiedStateVersion: intent.StateVersion,
+            humanTurn: new HumanW365Turn(owner, _w365GatewayUrl, turnContext, chatAction, (id, link) =>
+            {
+                actionRequestId = id;
+                signInUrl = link;
+            }),
+            onCloudPcSignInRequired: url => cloudPcSignInUrl = url);
+        if (includeResourceLimitation && _orchestrator.UsesHumanW365Authentication(localSessionKey))
+            response += "\n\n" + HumanResourceLimitation;
+        if (actionRequestId != null && signInUrl != null)
+        {
+            var message = MessageFactory.Text(response);
+            message.Attachments = [HumanW365ChatActions.CreateSignInCard(signInUrl)];
+            turnContext.StreamingResponse.FinalMessage = message;
+            var controls = MessageFactory.Text("Continue your saved request after signing in, or cancel it. Cancel request clears the saved request or ends its existing Cloud PC session.");
+            controls.Attachments = [HumanW365ChatActions.CreateControlsCard(actionRequestId)];
+            followUpActivities.Add(controls);
+        }
+        else if (cloudPcSignInUrl != null)
+        {
+            var message = MessageFactory.Text(response);
+            message.Attachments = [HumanW365ChatActions.CreateSignInCard(cloudPcSignInUrl, cloudPc: true)];
+            turnContext.StreamingResponse.FinalMessage = message;
+        }
+        return response;
+    }
+
+    private (HumanW365Owner? Owner, string? FailureReason) TryGetHumanW365Owner(ITurnContext turnContext)
+    {
+        (HumanW365Owner?, string?) Reject(string reason)
+        {
+            _logger.LogWarning("Human W365 sender verification rejected. ReasonCode={ReasonCode}", reason);
+            return (null, reason);
+        }
+
+        if (!_incomingJwtEnabled)
+            return Reject("incoming_jwt_validation_disabled");
+        if (!Guid.TryParse(turnContext.Activity.Conversation?.TenantId, out var tenantId) || tenantId == Guid.Empty)
+            return Reject("activity_tenant_id_missing_or_invalid");
+        if (!Guid.TryParse(turnContext.Activity.From?.AadObjectId, out var objectId) || objectId == Guid.Empty)
+            return Reject("activity_sender_object_id_missing_or_invalid");
+
+        if (turnContext.Identity is not HumanW365IncomingIdentity { IsAuthenticated: true } identity)
+            return Reject("incoming_jwt_identity_unavailable");
+
+        var issuers = identity.ValidatedClaims.Where(c => c.Type == "iss")
+            .Select(c => c.Value).Distinct(StringComparer.Ordinal).ToArray();
+        if (issuers.Length != 1 || string.IsNullOrWhiteSpace(issuers[0]))
+            return Reject("jwt_issuer_missing_or_ambiguous");
+        if (issuers[0] == "https://api.botframework.com"
+            && HumanW365IncomingIdentity.IsTeamsChannel(turnContext.Activity.ChannelId))
+            return (new HumanW365Owner(tenantId, objectId), null);
+
+        // JwtBearer can map the Entra claims to their schema names. Require one unambiguous
+        // GUID value across both spellings; never infer identity from display name or email.
+        bool MatchesClaim(Guid expected, string name, string mappedName)
+        {
+            var claims = identity.ValidatedClaims.Where(c => c.Type == name || c.Type == mappedName).ToArray();
+            if (claims.Length > 0 && claims.All(c => Guid.TryParse(c.Value, out var id) && id == expected))
+                return true;
+
+            var status = claims.Length == 0 ? "missing"
+                : claims.Any(c => !Guid.TryParse(c.Value, out _)) ? "malformed"
+                : claims.Select(c => Guid.Parse(c.Value)).Distinct().Skip(1).Any() ? "conflicting"
+                : "mismatch";
+            _logger.LogWarning(
+                "Human W365 validated sender claim check failed. ClaimKind={ClaimKind}; ClaimStatus={ClaimStatus}",
+                name, status);
+            return false;
+        }
+        if (!MatchesClaim(tenantId, "tid", "http://schemas.microsoft.com/identity/claims/tenantid"))
+            return Reject("jwt_tenant_does_not_match_activity");
+        // Agent365 authenticates the delivery caller, not the human in Activity.From.
+        // EasyAuth still independently verifies that human before binding W365 credentials.
+        if (identity.AttestsTeamsSender(issuers[0], tenantId, turnContext.Activity.ChannelId))
+            return (new HumanW365Owner(tenantId, objectId), null);
+        if (!MatchesClaim(objectId, "oid", "http://schemas.microsoft.com/identity/claims/objectidentifier"))
+        {
+            identity.LogSubjectDiagnostics(_logger, _incomingJwtAudiences);
+            return Reject("jwt_sender_does_not_match_activity");
+        }
+        return (new HumanW365Owner(tenantId, objectId), null);
     }
 
     /// <summary>
@@ -452,13 +701,13 @@ public class MyAgent : AgentApplication
         if (!string.IsNullOrEmpty(authHandlerName))
         {
             accessToken = await UserAuthorization.GetTurnTokenAsync(context, authHandlerName);
-            agentId = Utility.ResolveAgentIdentity(context, accessToken);
+            agentId = !includeW365 || context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken) : null;
         }
         else if (TryGetBearerTokenForDevelopment(out var bearerToken))
         {
             _logger.LogInformation("Using bearer token from environment.");
             accessToken = bearerToken;
-            agentId = Utility.ResolveAgentIdentity(context, accessToken!);
+            agentId = !includeW365 || context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken!) : null;
         }
 
         if (includeW365 && !IsDevelopment())
@@ -467,13 +716,13 @@ public class MyAgent : AgentApplication
             if (!string.IsNullOrEmpty(w365AuthHandlerName))
             {
                 accessToken = await UserAuthorization.GetTurnTokenAsync(context, w365AuthHandlerName);
-                agentId = Utility.ResolveAgentIdentity(context, accessToken);
+                agentId = context.IsAgenticRequest() ? Utility.ResolveAgentIdentity(context, accessToken) : null;
             }
         }
 
-        if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(agentId))
+        if (string.IsNullOrEmpty(accessToken) || (!includeW365 && string.IsNullOrEmpty(agentId)))
         {
-            _logger.LogWarning("No auth token or agent identity available. Cannot connect to MCP.");
+            _logger.LogWarning("No compatible auth token or required identity available. Cannot connect to MCP.");
             return (null, null, null, null, null);
         }
 
@@ -481,6 +730,23 @@ public class MyAgent : AgentApplication
         {
             IList<AITool>? allTools;
             IMcpClient? mcpClient = null;
+
+            if (includeW365)
+            {
+                var development = IsDevelopment() && TryGetBearerTokenForDevelopment(out _);
+                var endpoint = development
+                    ? _w365McpServerUrls.FirstOrDefault()
+                        ?? throw new InvalidOperationException("Configure a W365 MCP endpoint in McpServers or McpServer:Url for Development mode.")
+                    : _w365GatewayUrl;
+                var result = await _orchestrator.ConnectDirectW365Async(
+                    endpoint, accessToken!, agentId, context,
+                    localSessionKey ?? throw new InvalidOperationException("A conversation key is required for W365."),
+                    cancellationToken);
+                var otherTools = development
+                    ? await _orchestrator.GetOrCreateNonW365McpConnectionAsync(_otherMcpServerUrls, accessToken!)
+                    : Array.Empty<AITool>();
+                return (result.Tools, otherTools, result.Client, null, null);
+            }
 
             // Development with bearer token: use orchestrator's cached MCP connection
             if (TryGetBearerTokenForDevelopment(out _) && IsDevelopment())
@@ -502,20 +768,6 @@ public class MyAgent : AgentApplication
             }
             else
             {
-                if (includeW365)
-                {
-                    var existingSessionId = _orchestrator.GetSelectedW365SessionId(localSessionKey);
-                    var w365Result = await _orchestrator.StartDirectW365SessionAndListToolsAsync(
-                        _w365GatewayUrl,
-                        accessToken!,
-                        agentId,
-                        context,
-                        existingSessionId,
-                        cancellationToken);
-                    var additionalToolsForCua = Array.Empty<AITool>();
-                    return (w365Result.Tools, additionalToolsForCua, w365Result.Client, w365Result.SessionId, w365Result.ScreenShareUrl);
-                }
-
                 _logger.LogInformation("Skipping production MCP tool discovery for non-CUA turn while ToolingManifest is restricted to W365 CUA.");
                 return (null, Array.Empty<AITool>(), null, null, null);
             }
