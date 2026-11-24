@@ -99,24 +99,28 @@ Configuration for bearer token and auth handler settings.
    │
 5. OpenAIAgentWithMCP.process_user_message()
    │
-   ├── 6. setup_mcp_servers()
+   ├── 6. setup_mcp_servers(tool_service, agent, ...)  # per-turn copy, this caller's tokens
    │       ├── Bearer token path (development)
    │       ├── Auth handler path (production)
    │       └── No auth fallback (bare LLM)
    │
-   └── 7. Runner.run(agent, input=message)
-           └── Return final_output
+   ├── 7. Runner.run(turn_agent, input=message)
+   │       └── Return final_output
+   │
+   └── 8. tool_service.cleanup_all_servers()  # close this turn's MCP connections
 ```
 
 ## Tool Integration
 
 ### MCP Server Setup
 ```python
-async def setup_mcp_servers(self, auth, auth_handler_name, context):
+async def setup_mcp_servers(self, tool_service, agent, auth, auth_handler_name, context):
+    # MCP servers carry the caller's token: return a per-turn copy of the agent and use it
+    # only for this turn. Never store it on self; one agent instance serves every user.
     # Priority 1: Bearer token (development)
     if self.auth_options.bearer_token:
-        self.agent = await self.tool_service.add_tool_servers_to_agent(
-            agent=self.agent,
+        return await tool_service.add_tool_servers_to_agent(
+            agent=agent,
             auth=auth,
             auth_handler_name=auth_handler_name,
             context=context,
@@ -124,8 +128,8 @@ async def setup_mcp_servers(self, auth, auth_handler_name, context):
         )
     # Priority 2: Auth handler (production)
     elif auth_handler_name:
-        self.agent = await self.tool_service.add_tool_servers_to_agent(
-            agent=self.agent,
+        return await tool_service.add_tool_servers_to_agent(
+            agent=agent,
             auth=auth,
             auth_handler_name=auth_handler_name,
             context=context,
@@ -133,6 +137,7 @@ async def setup_mcp_servers(self, auth, auth_handler_name, context):
     # Priority 3: No auth - bare LLM
     else:
         logger.warning("No auth - running without MCP tools")
+        return agent
 ```
 
 ## Configuration

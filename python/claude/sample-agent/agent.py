@@ -121,9 +121,6 @@ class ClaudeAgent(AgentInterface):
         # Create Claude client
         self._create_client()
         
-        # Initialize MCP services
-        self._initialize_mcp_services()
-        
         logger.info("Claude Agent uses built-in tools: WebSearch, Read, Write, WebFetch")
         logger.info("MCP Tooling integration enabled for extended capabilities")
 
@@ -185,21 +182,23 @@ Guidelines:
     # =========================================================================
     # <McpTooling>
 
-    def _initialize_mcp_services(self):
-        """Initialize MCP services for tool discovery."""
-        self.mcp_service = McpToolRegistrationService(logger=self.logger)
-        logger.info("MCP tool registration service initialized")
-
     async def setup_mcp_servers(
         self, auth: Authorization, auth_handler_name: str, context: TurnContext
-    ):
+    ) -> tuple[dict, list[str]]:
         """
-        Discover MCP servers via the SDK and register them for Claude.
+        Discover MCP servers via the SDK for the current turn.
+
+        The returned server configurations carry the token of the user who sent this message,
+        so use them only for this turn and never store them on the agent.
 
         Args:
             auth: Authorization for token exchange
             auth_handler_name: Name of the auth handler
             context: Turn context from M365 SDK
+
+        Returns:
+            MCP servers in Claude SDK's McpHttpServerConfig format, and the MCP tool names
+            in Claude's mcp__<server>__<tool> format. Both are empty if discovery fails.
         """
         try:
             # Get auth token for local dev, or let the SDK exchange one
@@ -210,7 +209,8 @@ Guidelines:
                 auth_token = self.auth_options.bearer_token
                 logger.info("Using static bearer token for MCP (USE_AGENTIC_AUTH=false)")
 
-            await self.mcp_service.discover_and_connect_servers(
+            mcp_service = McpToolRegistrationService(logger=self.logger)
+            await mcp_service.discover_and_connect_servers(
                 agentic_app_id="",  # resolved by SDK via Utility.resolve_agent_identity
                 auth=auth,
                 auth_handler_name=auth_handler_name,
@@ -218,22 +218,16 @@ Guidelines:
                 auth_token=auth_token,
             )
 
-            servers = self.mcp_service.get_mcp_servers_for_claude()
+            servers = mcp_service.get_mcp_servers_for_claude()
             if servers:
                 logger.info("%d MCP server(s) registered: %s", len(servers), list(servers.keys()))
             else:
                 logger.info("No MCP servers discovered")
+            return servers, mcp_service.get_allowed_tool_names_for_claude()
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
-
-    def get_mcp_servers_for_claude(self) -> dict:
-        """Get MCP servers in Claude SDK's McpHttpServerConfig format."""
-        return self.mcp_service.get_mcp_servers_for_claude()
-
-    def get_allowed_mcp_tool_names(self) -> list[str]:
-        """Get MCP tool names in Claude's mcp__<server>__<tool> format."""
-        return self.mcp_service.get_allowed_tool_names_for_claude()
+            return {}, []
 
     # </McpTooling>
 
@@ -276,7 +270,9 @@ Guidelines:
             logger.info(f"📨 Processing message: {message[:100]}...")
             
             # Setup MCP servers for this request
-            await self.setup_mcp_servers(auth, auth_handler_name, context)
+            mcp_servers, mcp_allowed_tools = await self.setup_mcp_servers(
+                auth, auth_handler_name, context
+            )
             
             # Verify observability is configured before using BaggageBuilder
             if not is_observability_configured():
@@ -313,10 +309,6 @@ Guidelines:
                         details=inference_details,
                         agent_details=agent_details,
                     ) as inference_scope:
-                        # Get MCP servers in Claude SDK format
-                        mcp_servers = self.get_mcp_servers_for_claude()
-                        mcp_allowed_tools = self.get_allowed_mcp_tool_names()
-                        
                         # Debug: Log MCP server configuration being passed to Claude
                         if mcp_servers:
                             for server_name, config in mcp_servers.items():
@@ -615,15 +607,11 @@ Guidelines:
     # <Cleanup>
 
     async def cleanup(self) -> None:
-        """Clean up agent resources including MCP connections"""
+        """Clean up agent resources"""
         try:
             logger.info("Cleaning up agent resources...")
             
-            # Clean up MCP tool registration service
-            if hasattr(self, 'mcp_service'):
-                await self.mcp_service.cleanup()
-                logger.info("MCP tool registration service cleaned up")
-            
+            # MCP servers are set up per turn, so there is nothing to clean up here.
             # Claude SDK client cleanup is handled by context manager
             # No additional cleanup needed
             

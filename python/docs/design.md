@@ -83,16 +83,15 @@ class OpenAIAgentWithMCP(AgentInterface):
         else:
             self.openai_client = AsyncOpenAI(api_key=self.openai_api_key)
 
-        # Create agent with model and instructions
+        # Base agent without MCP servers. Each turn adds MCP servers for its own caller.
         self.agent = Agent(
             name="MCP Agent",
             model=self.model,
             instructions="...",
-            mcp_servers=self.mcp_servers,
         )
 
     async def initialize(self) -> None:
-        """Initialize the agent and MCP server connections"""
+        """Initialize the agent services"""
         self._initialize_services()
 
     async def process_user_message(
@@ -100,9 +99,16 @@ class OpenAIAgentWithMCP(AgentInterface):
         auth_handler_name: str, context: TurnContext
     ) -> str:
         """Process user message using the OpenAI Agents SDK"""
-        await self.setup_mcp_servers(auth, auth_handler_name, context)
-        result = await Runner.run(starting_agent=self.agent, input=message)
-        return str(result.final_output)
+        # MCP servers carry this caller's token, so they are created and closed per turn
+        tool_service = McpToolRegistrationService()
+        try:
+            turn_agent = await self.setup_mcp_servers(
+                tool_service, self.agent, auth, auth_handler_name, context
+            )
+            result = await Runner.run(starting_agent=turn_agent, input=message)
+            return str(result.final_output)
+        finally:
+            await tool_service.cleanup_all_servers()
 
     async def cleanup(self) -> None:
         """Clean up agent resources"""
@@ -208,29 +214,34 @@ validated only when `ENABLE_A365_OBSERVABILITY_EXPORTER` enables A365 HTTP expor
 ### 6. MCP Server Setup
 
 ```python
-async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str,
-                            context: TurnContext):
-    """Set up MCP server connections"""
+async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, agent: Agent,
+                            auth: Authorization, auth_handler_name: str,
+                            context: TurnContext) -> Agent:
+    """Return this turn's agent with MCP servers for the current caller.
+
+    The MCP servers carry the caller's token: use the returned agent only for this turn
+    and never store it on self.
+    """
     # Priority 1: Bearer token from config (development)
     if self.auth_options.bearer_token:
-        self.agent = await self.tool_service.add_tool_servers_to_agent(
-            agent=self.agent,
+        return await tool_service.add_tool_servers_to_agent(
+            agent=agent,
             auth=auth,
             auth_handler_name=auth_handler_name,
             context=context,
             auth_token=self.auth_options.bearer_token,
         )
     # Priority 2: Auth handler (production)
-    elif auth_handler_name:
-        self.agent = await self.tool_service.add_tool_servers_to_agent(
-            agent=self.agent,
+    if auth_handler_name:
+        return await tool_service.add_tool_servers_to_agent(
+            agent=agent,
             auth=auth,
             auth_handler_name=auth_handler_name,
             context=context,
         )
     # Priority 3: No auth - bare LLM mode
-    else:
-        logger.warning("No auth configured - running without MCP tools")
+    logger.warning("No auth configured - running without MCP tools")
+    return agent
 ```
 
 ### 7. Authentication Options

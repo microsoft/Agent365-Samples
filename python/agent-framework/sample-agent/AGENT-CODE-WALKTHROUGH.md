@@ -222,38 +222,25 @@ workload permissions remain independent.
 ## Step 6: MCP Server Setup
 
 ```python
-def _initialize_services(self):
-    """Initialize MCP services and authentication options"""
+async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, auth: Authorization, auth_handler_name: str, context: TurnContext, instructions: Optional[str] = None):
+    """Return an agent with MCP servers authenticated as the current turn's caller."""
+    agent_instructions = instructions or self.AGENT_PROMPT
     try:
-        # Create MCP tool registration service
-        self.tool_service = McpToolRegistrationService()
-        logger.info("✅ AgentFramework MCP tool registration service initialized")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not initialize MCP tool service: {e}")
-        self.tool_service = None
-
-async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
-    """Set up MCP server connections"""
-    try:
-        if not self.tool_service:
-            logger.warning("⚠️ MCP tool service not available - skipping MCP server setup")
-            return
-
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
 
         if use_agentic_auth:
-            self.agent = await self.tool_service.add_tool_servers_to_agent(
+            agent = await tool_service.add_tool_servers_to_agent(
                 chat_client=self.chat_client,
-                agent_instructions="You are a helpful assistant with access to tools.",
+                agent_instructions=agent_instructions,
                 initial_tools=[],
                 auth=auth,
                 auth_handler_name=auth_handler_name,
                 turn_context=context,
             )
         else:
-            self.agent = await self.tool_service.add_tool_servers_to_agent(
+            agent = await tool_service.add_tool_servers_to_agent(
                 chat_client=self.chat_client,
-                agent_instructions="You are a helpful assistant with access to tools.",
+                agent_instructions=agent_instructions,
                 initial_tools=[],
                 auth=auth,
                 auth_handler_name=auth_handler_name,
@@ -261,13 +248,13 @@ async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, c
                 turn_context=context,
             )
 
-        if self.agent:
-            logger.info("✅ Agent MCP setup completed successfully")
-        else:
-            logger.error("❌ Agent is None after MCP setup")
+        logger.info("✅ MCP setup completed")
+        return agent
 
     except Exception as e:
-        logger.error(f"Error setting up MCP servers: {e}")
+        logger.error(f"MCP setup error: {e}")
+        # Continue without MCP tools, never with another turn's agent
+        return ChatAgent(chat_client=self.chat_client, instructions=agent_instructions, tools=[])
 ```
 
 **What it does**: Connects your agent to external tools (like mail, calendar, notifications) that it can use to help users.
@@ -284,10 +271,12 @@ The agent supports multiple authentication modes and extensive configuration opt
 - **Bearer Token Authentication**: Simple token-based security (for development and testing)
 
 **What happens**:
-1. Creates services to find and manage external tools
-2. Sets up security and authentication
-3. Finds available tools and connects them to the agent
-4. Recreates the agent with the new tools attached
+1. Uses the per-turn tool service passed in by the caller
+2. Sets up security and authentication for the user who sent this message
+3. Finds available tools and connects them using that user's token
+4. Returns a new agent with the tools attached, used only for this turn
+
+> **Important:** MCP tools carry the token of the user who sent the message. Set them up for every message and notification, and never store the returned agent on `self` or reuse it for another message: one agent instance serves every user.
 
 ---
 
@@ -298,22 +287,27 @@ async def process_user_message(
     self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Process user message using the AgentFramework SDK"""
+    # MCP servers carry this caller's token, so they are created and closed per turn
+    tool_service = McpToolRegistrationService()
     try:
-        await self.setup_mcp_servers(auth, auth_handler_name, context)
-        result = await self.agent.run(message)
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
+        result = await turn_agent.run(message)
         return self._extract_result(result) or "I couldn't process your request at this time."
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         return f"Sorry, I encountered an error: {str(e)}"
+    finally:
+        await tool_service.cleanup()
 ```
 
 **What it does**: Handles regular chat messages from users.
 
 **What happens**:
-1. **Setup Tools**: Makes sure MCP tools are connected (only runs once on first message)
+1. **Setup Tools**: Connects MCP tools for this message, authenticated as the user who sent it
 2. **Run Agent**: Sends the message to the AI agent for processing
 3. **Extract Response**: Pulls out the text response from the agent's result
 4. **Error Handling**: Catches problems and returns friendly error messages
+5. **Close Tools**: Closes this message's MCP connections
 
 ---
 
@@ -324,11 +318,13 @@ async def handle_agent_notification_activity(
     self, notification_activity, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Handle agent notification activities (email, Word mentions, etc.)"""
+    # MCP servers carry this caller's token, so they are created and closed per notification
+    tool_service = McpToolRegistrationService()
     try:
         notification_type = notification_activity.notification_type
         logger.info(f"📬 Processing notification: {notification_type}")
 
-        await self.setup_mcp_servers(auth, auth_handler_name, context)
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
 
         # Handle Email Notifications
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
@@ -339,7 +335,7 @@ async def handle_agent_notification_activity(
             email_body = getattr(email, "html_body", "") or getattr(email, "body", "")
             message = _build_email_reply_prompt(email_body)
 
-            result = await self.agent.run(message)
+            result = await turn_agent.run(message)
             return self._extract_result(result) or "Email notification processed."
 
         # Handle Word Comment Notifications
@@ -354,30 +350,33 @@ async def handle_agent_notification_activity(
 
             # Get Word document content
             doc_message = f"You have a new comment on the Word document with id '{doc_id}', comment id '{comment_id}', drive id '{drive_id}'. Please retrieve the Word document as well as the comments and return it in text format."
-            doc_result = await self.agent.run(doc_message)
+            doc_result = await turn_agent.run(doc_message)
             word_content = self._extract_result(doc_result)
 
             # Process the comment with document context
             comment_text = notification_activity.text or ""
             response_message = f"You have received the following Word document content and comments. Please refer to these when responding to comment '{comment_text}'. {word_content}"
-            result = await self.agent.run(response_message)
+            result = await turn_agent.run(response_message)
             return self._extract_result(result) or "Word notification processed."
 
         # Generic notification handling
         else:
             notification_message = notification_activity.text or f"Notification received: {notification_type}"
-            result = await self.agent.run(notification_message)
+            result = await turn_agent.run(notification_message)
             return self._extract_result(result) or "Notification processed successfully."
 
     except Exception as e:
         logger.error(f"Error processing notification: {e}")
         return f"Sorry, I encountered an error processing the notification: {str(e)}"
+
+    finally:
+        await tool_service.cleanup()
 ```
 
 **What it does**: Handles notifications from Microsoft 365 apps like Outlook and Word.
 
 **What happens**:
-1. **Setup Tools**: Makes sure MCP tools are connected (notifications might arrive before any regular messages)
+1. **Setup Tools**: Connects MCP tools for this notification, authenticated as its caller
 2. **Identify Type**: Checks what kind of notification it is (email, Word comment, etc.)
 3. **Email Notifications**: Wraps the email body as untrusted data with `_build_email_reply_prompt` and asks the agent to write a reply, so instructions inside an email are never followed (prompt-injection protection)
 4. **Word Comments**: Retrieves document content, then processes the comment with context
@@ -388,7 +387,7 @@ async def handle_agent_notification_activity(
 - `NotificationTypes.WPX_COMMENT`: @mentions in Word/Excel comments
 - Other notification types handled generically
 
-**Why MCP Setup is Needed**: Notifications need access to tools (like Microsoft Graph to read documents) just like regular messages. The `mcp_servers_initialized` flag ensures setup only runs once regardless of whether a message or notification arrives first.
+**Why MCP Setup Runs Every Time**: Notifications need access to tools (like Microsoft Graph to read documents) just like regular messages. MCP tools carry the caller's token, so setup runs for every message and notification; reusing tools from an earlier turn would let one user act with another user's identity.
 
 ---
 
@@ -408,12 +407,14 @@ async def process_user_message(
     self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
 ) -> str:
     """Process user message using the AgentFramework SDK"""
+    # MCP servers carry this caller's token, so they are created and closed per turn
+    tool_service = McpToolRegistrationService()
     try:
-        # Setup MCP servers
-        await self.setup_mcp_servers(auth, auth_handler_name, context)
+        # Setup MCP servers for this turn's caller
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
 
         # Run the agent with the user message
-        result = await self.agent.run(message)
+        result = await turn_agent.run(message)
 
         # Extract the response from the result
         if result:
@@ -431,12 +432,15 @@ async def process_user_message(
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         return f"Sorry, I encountered an error: {str(e)}"
+
+    finally:
+        await tool_service.cleanup()
 ```
 
 **What it does**: This is the main function that handles user conversations - when someone sends a message, this processes it and sends back a response.
 
 **What happens**:
-1. **Connect Tools**: Sets up any external tools the agent might need for this conversation
+1. **Connect Tools**: Connects the external tools for this turn, authenticated as the user who sent the message
 2. **Run AI**: Sends the user's message to the AI model and gets a response
 3. **Extract Answer**: Pulls out the text response from the AI's reply
 4. **Handle Problems**: If something goes wrong, it gives a helpful error message instead of crashing
@@ -449,30 +453,15 @@ async def process_user_message(
 
 ```python
 async def cleanup(self) -> None:
-    """Clean up agent resources and MCP server connections"""
-    try:
-        logger.info("Cleaning up agent resources...")
-
-        # Cleanup MCP tool service if it exists
-        if hasattr(self, "tool_service") and self.tool_service:
-            try:
-                await self.tool_service.cleanup()
-                logger.info("MCP tool service cleanup completed")
-            except Exception as cleanup_ex:
-                logger.warning(f"Error cleaning up MCP tool service: {cleanup_ex}")
-
-        logger.info("Agent cleanup completed")
-
-    except Exception as e:
-        logger.error(f"Error during cleanup: {e}")
+    """Clean up agent resources. MCP connections are closed at the end of each turn."""
+    logger.info("Agent cleanup completed")
 ```
 
-**What it does**: Properly shuts down the agent and cleans up connections when it's done working.
+**What it does**: Properly shuts down the agent when it's done working.
 
 **What happens**:
-- Safely closes connections to MCP tool servers
+- MCP tool connections are already closed at the end of each message (`tool_service.cleanup()` in `finally`)
 - Makes sure no resources are left hanging around
-- Logs any cleanup issues but doesn't crash if something goes wrong
 
 **Why it's important**: Like turning off the lights and locking the door when you leave - keeps everything tidy and prevents problems!
 
@@ -569,9 +558,9 @@ async def custom_capability(self, params: Dict[str, Any]) -> Any:
 ```
 
 ### 2. **Custom MCP Servers**
-Add new MCP servers through the tool registration service:
+Add new MCP servers through the per-turn tool registration service:
 ```python
-await self.tool_service.add_custom_mcp_server(server_config)
+await tool_service.add_custom_mcp_server(server_config)
 ```
 
 ### 3. **Additional Endpoints**

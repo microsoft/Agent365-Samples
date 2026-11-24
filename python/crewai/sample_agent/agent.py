@@ -74,10 +74,6 @@ class CrewAIAgent(AgentInterface):
 
     def __init__(self):
         self.auth_options = LocalAuthenticationOptions.from_environment()
-        self.mcp_service = McpToolRegistrationService(logger=logger)
-        self.mcp_tool_executor = MCPToolExecutor(self.mcp_service)
-        self.mcp_servers_initialized = False
-        self.mcp_tools: list[MCPToolDefinition] = []
 
         logger.info("CrewAIAgent initialized")
 
@@ -87,13 +83,15 @@ class CrewAIAgent(AgentInterface):
 
     async def _setup_mcp_servers(
         self, auth: Authorization, auth_handler_name: str, context: TurnContext
-    ):
+    ) -> tuple[McpToolRegistrationService, list[MCPToolDefinition]]:
         """
-        Discover MCP servers, connect to them, and fetch available tools.
-        """
-        if self.mcp_servers_initialized:
-            return
+        Discover MCP servers, connect to them, and fetch available tools for the current turn.
 
+        The connections carry the token of the user who sent this message, so they are set up
+        for every turn, used only for that turn, and never stored on the agent.
+        """
+        mcp_service = McpToolRegistrationService(logger=logger)
+        mcp_tools: list[MCPToolDefinition] = []
         try:
             # Get agentic_app_id from context or environment
             agentic_app_id = None
@@ -113,7 +111,7 @@ class CrewAIAgent(AgentInterface):
                 logger.info("ℹ️ MCP will use token exchange for authentication")
             
             # Discover and connect to MCP servers
-            self.mcp_tools = await self.mcp_service.discover_and_connect_servers(
+            mcp_tools = await mcp_service.discover_and_connect_servers(
                 agentic_app_id=agentic_app_id,
                 auth=auth,
                 auth_handler_name=auth_handler_name,
@@ -121,24 +119,25 @@ class CrewAIAgent(AgentInterface):
                 auth_token=auth_token,
             )
             
-            if self.mcp_tools:
-                logger.info(f"✅ {len(self.mcp_tools)} MCP tool(s) available:")
-                for tool in self.mcp_tools:
+            if mcp_tools:
+                logger.info(f"✅ {len(mcp_tools)} MCP tool(s) available:")
+                for tool in mcp_tools:
                     logger.info(f"   🔧 {tool.name}: {tool.description[:50]}...")
             else:
                 logger.info("ℹ️ No MCP tools discovered")
             
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
-            self.mcp_tools = []
-        finally:
-            self.mcp_servers_initialized = True
+            mcp_tools = []
+        return mcp_service, mcp_tools
 
-    def _create_observable_tools(self) -> list:
+    def _create_observable_tools(
+        self, mcp_service: McpToolRegistrationService, mcp_tools: list[MCPToolDefinition]
+    ) -> list:
         """Create observable MCP tool wrappers with ExecuteToolScope tracing."""
         return create_observable_mcp_tools(
-            mcp_tools=self.mcp_tools,
-            tool_executor=self.mcp_tool_executor,
+            mcp_tools=mcp_tools,
+            tool_executor=MCPToolExecutor(mcp_service),
             get_agent_details=lambda: _current_agent_details.get(),
             get_tenant_details=lambda: _current_tenant_details.get(),
         )
@@ -188,8 +187,10 @@ class CrewAIAgent(AgentInterface):
                     if hasattr(invoke_scope, 'record_input_messages'):
                         invoke_scope.record_input_messages([message])
 
-                    # Setup MCP servers
-                    await self._setup_mcp_servers(auth, auth_handler_name, context)
+                    # Setup MCP servers for this turn
+                    mcp_service, mcp_tools = await self._setup_mcp_servers(
+                        auth, auth_handler_name, context
+                    )
 
                     # Store context for observable MCP tool wrappers using context variables
                     # This is thread/async-safe for concurrent request handling
@@ -198,7 +199,7 @@ class CrewAIAgent(AgentInterface):
 
                     try:
                         # Create observable MCP tool wrappers
-                        observable_mcp_tools = self._create_observable_tools()
+                        observable_mcp_tools = self._create_observable_tools(mcp_service, mcp_tools)
                         if observable_mcp_tools:
                             logger.info(f"📊 Created {len(observable_mcp_tools)} observable MCP tool wrapper(s)")
                             for tool in observable_mcp_tools:
@@ -215,6 +216,8 @@ class CrewAIAgent(AgentInterface):
                         # Reset context variables to previous values
                         _current_agent_details.reset(agent_details_token)
                         _current_tenant_details.reset(tenant_details_token)
+                        # Release this turn's MCP connections
+                        await mcp_service.cleanup()
 
                 logger.info("✅ Observability scopes closed successfully")
                 return full_response
@@ -296,14 +299,10 @@ class CrewAIAgent(AgentInterface):
     # =========================================================================
 
     async def cleanup(self) -> None:
-        """Clean up agent resources including MCP connections."""
+        """Clean up agent resources."""
         try:
             logger.info("Cleaning up CrewAI agent resources...")
-            
-            if hasattr(self, 'mcp_service'):
-                await self.mcp_service.cleanup()
-                logger.info("MCP tool registration service cleaned up")
-            
+            # MCP connections are set up and released per turn, so there is nothing to close.
             logger.info("CrewAIAgent cleanup completed")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
