@@ -1,0 +1,342 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+/**
+ * Microsoft Graph change-notification subscription manager for the LearningPortalStatus list.
+ *
+ * Flow:
+ *   1. On agent startup, `ensureSubscription()` is called.
+ *      - If a subscription file exists AND the notificationUrl, resource and notification secret
+ *        (PORTAL_EVENT_SECRET, compared by hash) still match AND it can be renewed → PATCH to extend it.
+ *      - Otherwise → DELETE the stale one (if any), then CREATE a fresh one.
+ *   2. A background timer runs every 30 min and calls `renewSubscription()` so the sub
+ *      never expires while the process is running. If Graph reports the subscription gone (or its
+ *      saved expiry has passed, e.g. after a long outage), the timer re-enters `ensureSubscription()`
+ *      to create a fresh one instead of retrying the dead id forever.
+ *   3. On graceful shutdown we DON'T delete the sub (Graph will time it out naturally in
+ *      ~60 min if the agent stays down).
+ *
+ * Requires PORTAL_WEBHOOK_URL to be set in .env — this must be a publicly reachable HTTPS
+ * URL (dev tunnel works). Graph will POST validation + notifications to it.
+ *
+ * Identity: background Graph calls run as the agent user (see graph-service `getPinnedBackgroundGraphClient`).
+ * The agent's ids are learned from the first message, so a startup attempt before that retries with
+ * bounded backoff (30 s doubling to 10 min) and is re-tried immediately when the identity is captured.
+ * Outside production, an attempt made before the ids are known may use the developer cache; such a
+ * subscription is recorded as "developer" and is replaced by an agent-user one as soon as the ids arrive
+ * (a subscription is only visible to the identity that created it, so it is deleted with that identity).
+ * Setup is single-flight: overlapping calls never create two subscriptions.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { createHash } from 'crypto';
+import {
+    createSubscription,
+    deleteSubscription,
+    getBackgroundClientFor,
+    getListIdByName,
+    getPinnedBackgroundGraphClient,
+    getSiteId,
+    renewSubscription,
+    listSubscriptions,
+    canUseAgentIdentityInBackground,
+    type BackgroundIdentity,
+    type GraphSubscription,
+} from './graph-service';
+import { SP_CONFIG } from './career-coach-types';
+import { portalSecretProblem } from './portal-secret';
+
+const STATE_FILE = path.resolve(process.cwd(), '.sp-subscription.json');
+const EXPIRATION_MINUTES = 60;
+const RENEW_INTERVAL_MS = 30 * 60_000;
+const RETRY_INITIAL_MS = 30_000;
+const RETRY_MAX_MS = 10 * 60_000;
+
+interface PersistedSub {
+    subscriptionId: string;
+    resource: string;
+    notificationUrl: string;
+    expirationDateTime: string;
+    /** SHA-256 of the clientState the subscription was created with. Renewal can't change clientState, so a rotated secret needs a new subscription. */
+    clientStateHash?: string;
+    /** Which identity created the subscription; only that identity can renew, list or delete it. */
+    identity?: BackgroundIdentity;
+}
+
+function fingerprint(secret: string): string {
+    return createHash('sha256').update(secret).digest('hex');
+}
+
+function readState(): PersistedSub | null {
+    try {
+        if (!fs.existsSync(STATE_FILE)) return null;
+        return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')) as PersistedSub;
+    } catch (err) {
+        console.warn('[sub-mgr] Failed to read state file:', (err as any)?.message ?? err);
+        return null;
+    }
+}
+
+function writeState(sub: PersistedSub): void {
+    try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify(sub, null, 2), 'utf-8');
+    } catch (err) {
+        console.warn('[sub-mgr] Failed to write state file:', (err as any)?.message ?? err);
+    }
+}
+
+let renewTimer: ReturnType<typeof setInterval> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryDelayMs = RETRY_INITIAL_MS;
+let healthy = false;
+
+interface EnsureResult {
+    sub: GraphSubscription | null;
+    /** True for failures that can clear up on their own (identity not known yet, tunnel down, transient Graph error). */
+    retry: boolean;
+    /** The identity the subscription was created / renewed with. */
+    identity?: BackgroundIdentity;
+}
+
+let inFlight: Promise<GraphSubscription | null> | null = null;
+let rerun = false;
+
+/**
+ * Ensures a Graph subscription exists for LearningPortalStatus targeting our notification URL.
+ * Safe to call more than once (idempotent) and single-flight: a call made while another is running
+ * waits for it and then runs once more, so the agent identity learned mid-attempt is picked up without
+ * two attempts ever overlapping. A retryable failure (the agent identity is not known yet, the tunnel
+ * is down, a transient Graph error) schedules a bounded-backoff retry (30 s doubling to 10 min);
+ * configuration problems are reported once and not retried.
+ */
+export function ensureSubscription(): Promise<GraphSubscription | null> {
+    if (inFlight) {
+        rerun = true;
+        return inFlight;
+    }
+    inFlight = (async () => {
+        try {
+            let sub: GraphSubscription | null;
+            do {
+                rerun = false;
+                sub = await ensureAttempt();
+            } while (rerun);
+            return sub;
+        } finally {
+            inFlight = null;
+        }
+    })();
+    return inFlight;
+}
+
+async function ensureAttempt(): Promise<GraphSubscription | null> {
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    let result: EnsureResult;
+    try {
+        result = await ensureOnce();
+    } catch (err) {
+        console.warn('[sub-mgr] Ensuring the subscription failed:', (err as any)?.message ?? err);
+        result = { sub: null, retry: true };
+    }
+    // A subscription made with the developer fallback is not "healthy": it is replaced when the agent identity arrives.
+    healthy = !!result.sub && result.identity !== 'developer';
+    if (result.sub) {
+        retryDelayMs = RETRY_INITIAL_MS;
+    } else if (result.retry) {
+        const delay = retryDelayMs;
+        retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_MS);
+        console.log(`[sub-mgr] Will retry creating the subscription in ${Math.round(delay / 1000)}s.`);
+        retryTimer = setTimeout(() => { retryTimer = null; void ensureSubscription(); }, delay);
+        retryTimer.unref?.();
+    }
+    return result.sub;
+}
+
+/** Called when the agent identity becomes known: replace a developer-made (or missing) subscription right away. */
+export function retrySubscriptionNow(): void {
+    if (healthy) return;
+    retryDelayMs = RETRY_INITIAL_MS;
+    void ensureSubscription();
+}
+
+async function ensureOnce(): Promise<EnsureResult> {
+    const notificationUrl = (process.env.PORTAL_WEBHOOK_URL || '').trim();
+    const clientState = (process.env.PORTAL_EVENT_SECRET || '').trim();
+    if (!notificationUrl) {
+        console.warn('[sub-mgr] PORTAL_WEBHOOK_URL is empty in .env — skipping subscription. The manual POST path still works for testing.');
+        return { sub: null, retry: false };
+    }
+    const secretProblem = portalSecretProblem(clientState);
+    if (secretProblem) {
+        console.warn(`[sub-mgr] ${secretProblem} — refusing to create a subscription without a strong clientState guard.`);
+        return { sub: null, retry: false };
+    }
+    if (!notificationUrl.startsWith('https://')) {
+        console.warn(`[sub-mgr] PORTAL_WEBHOOK_URL must be https (got: ${notificationUrl}). Graph rejects http.`);
+        return { sub: null, retry: false };
+    }
+
+    // One identity for the whole attempt (throws in production until the agent ids are known → retried).
+    const { client: graph, identity } = getPinnedBackgroundGraphClient();
+
+    // Resolve site + list ids.
+    const siteId = await getSiteId(graph);
+    const listName = SP_CONFIG.lists.learningPortalStatus;
+    const listId = await getListIdByName(siteId, listName, graph);
+    if (!listId) {
+        console.warn(`[sub-mgr] LearningPortalStatus list not found on the site (name="${listName}"). Run "npm run setup:sharepoint" first.`);
+        return { sub: null, retry: false };
+    }
+    const resource = `sites/${siteId}/lists/${listId}`;
+
+    // 1) Try to renew an existing sub that matches this notificationUrl, resource, notification secret AND identity.
+    //    Renewal only extends the expiry — Graph keeps sending the clientState the sub was created with —
+    //    so after PORTAL_EVENT_SECRET is rotated the old sub must be replaced, not renewed. A subscription
+    //    created under another identity can't be renewed with this one, so it is replaced too.
+    const secretHash = fingerprint(clientState);
+    const persisted = readState();
+    const persistedIdentity: BackgroundIdentity = persisted?.identity ?? identity;
+    const reusable = !!persisted
+        && persisted.notificationUrl === notificationUrl
+        && persisted.resource === resource
+        && persisted.clientStateHash === secretHash
+        && persistedIdentity === identity;
+    if (persisted && !reusable) {
+        const why = persisted.clientStateHash === undefined
+            ? 'saved without a notification-secret fingerprint'
+            : persisted.clientStateHash !== secretHash ? 'PORTAL_EVENT_SECRET changed'
+                : persistedIdentity !== identity ? `created by the ${persistedIdentity} identity, now running as the ${identity}`
+                    : 'notification URL or resource changed';
+        console.log(`[sub-mgr] Saved subscription is not reusable (${why}) — replacing it.`);
+        // We created it, so remove it explicitly with the identity that owns it (it would otherwise keep notifying until it expires).
+        await deleteSubscription(persisted.subscriptionId, getBackgroundClientFor(persistedIdentity))
+            .catch((e) => console.warn('  delete failed:', (e as any)?.message ?? e));
+    }
+    if (persisted && reusable) {
+        try {
+            const renewed = await renewSubscription(persisted.subscriptionId, EXPIRATION_MINUTES, graph);
+            writeState({
+                subscriptionId: renewed.id,
+                resource: renewed.resource,
+                notificationUrl: renewed.notificationUrl,
+                expirationDateTime: renewed.expirationDateTime,
+                clientStateHash: secretHash,
+                identity,
+            });
+            console.log(`[sub-mgr] Renewed existing subscription (id=${renewed.id}), expires ${renewed.expirationDateTime}`);
+            startRenewTimer();
+            return { sub: renewed, retry: false, identity };
+        } catch (err: any) {
+            const code = err?.statusCode ?? err?.code ?? '';
+            console.warn(`[sub-mgr] Renew failed (${code}). Will create a fresh subscription. Detail: ${err?.message ?? err}`);
+            // Fall through to create-fresh path.
+        }
+    }
+
+    // 2) Clean up any stale subs pointing at old tunnel URLs for the same resource (avoid orphans).
+    // Scope deletions to subscriptions created by THIS sample via clientState (visible to this identity only).
+    try {
+        const all = await listSubscriptions(graph);
+        for (const s of all) {
+            if (s.resource === resource && s.clientState === clientState) {
+                console.log(`[sub-mgr] Deleting stale subscription id=${s.id} (was pointing at ${s.notificationUrl})`);
+                await deleteSubscription(s.id, graph).catch((e) => console.warn('  delete failed:', (e as any)?.message ?? e));
+            }
+        }
+    } catch (err) {
+        console.warn('[sub-mgr] Failed to enumerate existing subscriptions (continuing):', (err as any)?.message ?? err);
+    }
+
+    // 3) Create fresh. Graph will POST a validation handshake to notificationUrl and expects
+    //    the response body to equal the ?validationToken=… query param, within ~10s.
+    console.log(`[sub-mgr] Creating Graph subscription as the ${identity} identity:`);
+    console.log(`  resource:         ${resource}`);
+    console.log(`  notificationUrl:  ${notificationUrl}`);
+    console.log(`  expirationMin:    ${EXPIRATION_MINUTES}`);
+    try {
+        const fresh = await createSubscription({
+            resource,
+            notificationUrl,
+            clientState,
+            expirationMinutes: EXPIRATION_MINUTES,
+            changeType: 'updated',
+            graph,
+        });
+        writeState({
+            subscriptionId: fresh.id,
+            resource: fresh.resource,
+            notificationUrl: fresh.notificationUrl,
+            expirationDateTime: fresh.expirationDateTime,
+            clientStateHash: secretHash,
+            identity,
+        });
+        console.log(`[sub-mgr] ✓ Subscription created (id=${fresh.id}), expires ${fresh.expirationDateTime}`);
+        startRenewTimer();
+        return { sub: fresh, retry: false, identity };
+    } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        console.error(`[sub-mgr] ✗ Failed to create subscription: ${msg}`);
+        console.error('[sub-mgr]   Hint: make sure PORTAL_WEBHOOK_URL is reachable from the internet and the /api/portal-event route is running (Graph validates it during CREATE).');
+        return { sub: null, retry: true };
+    }
+}
+
+let recreating = false;
+
+/** Graph reports a missing / expired subscription as 404 (ResourceNotFound). */
+function isSubscriptionGone(err: any): boolean {
+    const code = err?.statusCode ?? err?.code ?? '';
+    return code === 404 || code === '404' || /ResourceNotFound|not found/i.test(String(err?.message ?? ''));
+}
+
+function startRenewTimer(): void {
+    if (renewTimer) return;
+    renewTimer = setInterval(async () => {
+        const persisted = readState();
+        if (!persisted) return;
+        const persistedIdentity: BackgroundIdentity = persisted.identity ?? 'agent';
+        // A developer-made subscription is migrated as soon as the agent identity is available.
+        if (persistedIdentity === 'developer' && canUseAgentIdentityInBackground()) {
+            void ensureSubscription();
+            return;
+        }
+        try {
+            const renewed = await renewSubscription(persisted.subscriptionId, EXPIRATION_MINUTES, getBackgroundClientFor(persistedIdentity));
+            writeState({
+                subscriptionId: renewed.id,
+                resource: renewed.resource,
+                notificationUrl: renewed.notificationUrl,
+                expirationDateTime: renewed.expirationDateTime,
+                clientStateHash: persisted.clientStateHash,
+                identity: persistedIdentity,
+            });
+            console.log(`[sub-mgr] Auto-renewed subscription — new expiry ${renewed.expirationDateTime}`);
+        } catch (err) {
+            const expired = Date.parse(persisted.expirationDateTime) <= Date.now();
+            if (!isSubscriptionGone(err) && !expired) {
+                console.warn('[sub-mgr] Auto-renew failed (will retry on next tick):', (err as any)?.message ?? err);
+                return;
+            }
+            // The subscription expired or was deleted (e.g. after an outage longer than its lifetime).
+            // Retrying the same id can never succeed, so go back through the ensure/create path.
+            if (recreating) return;
+            recreating = true;
+            console.warn('[sub-mgr] Subscription is gone or expired — creating a fresh one.');
+            try {
+                await ensureSubscription();
+            } catch (e) {
+                console.warn('[sub-mgr] Re-creating the subscription failed (will retry on next tick):', (e as any)?.message ?? e);
+            } finally {
+                recreating = false;
+            }
+        }
+    }, RENEW_INTERVAL_MS);
+}
+
+export function stopRenewTimer(): void {
+    if (renewTimer) {
+        clearInterval(renewTimer);
+        renewTimer = null;
+    }
+}
