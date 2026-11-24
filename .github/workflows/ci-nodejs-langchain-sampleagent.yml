@@ -8,17 +8,27 @@ on:
   workflow_dispatch:  # Manual trigger
 jobs:
   nodejs-langchain-sampleagent:
-    name: Node.js LangChain Sample Agent
+    # Keeps the original check names for sample-agent ("Node.js LangChain Sample Agent (18)" / "(20)").
+    name: ${{ matrix.display-name }} (${{ matrix.node-version }})
     permissions:
       contents: read
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./nodejs/langchain/sample-agent
+        working-directory: ./nodejs/langchain/${{ matrix.sample }}
 
     strategy:
       matrix:
-        node-version: ['18', '20']
+        include:
+          - sample: sample-agent
+            display-name: Node.js LangChain Sample Agent
+            node-version: '18'
+          - sample: sample-agent
+            display-name: Node.js LangChain Sample Agent
+            node-version: '20'
+          - sample: travel-agent-aws
+            display-name: Node.js LangChain Travel Agent AWS
+            node-version: '24'
 
     steps:
     - name: Checkout repository
@@ -32,5 +42,11 @@ jobs:
     - name: Install dependencies
       run: npm install
 
+    # travel-agent-aws compiles in its postinstall script, so npm install already built it.
     - name: Build
+      if: matrix.sample != 'travel-agent-aws'
       run: npm run build
+
+    - name: Test
+      if: matrix.sample == 'travel-agent-aws'
+      run: npm test

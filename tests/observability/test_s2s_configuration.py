@@ -34,6 +34,7 @@ PYTHON_CONFIGS = {
 NODE_CONFIGS = {
     "nodejs/claude/sample-agent/src/otel.ts": "distro",
     "nodejs/langchain/sample-agent/src/index.ts": "distro",
+    "nodejs/langchain/travel-agent-aws/src/index.ts": "distro",
     "nodejs/autonomous/github-trending/src/index.ts": "exporter",
     "nodejs/openai/sample-agent/src/otel.ts": "manager",
     "nodejs/copilot-studio/sample-agent/src/otel.ts": "manager",
@@ -198,10 +199,11 @@ def test_node_manager_samples_use_sdk_with_otlp_route(name):
         assert "@microsoft/agents-a365-observability-hosting" not in package["dependencies"]
 
 
-def test_published_distro_does_not_replay_legacy_route_choices():
-    package = json.loads(source("nodejs/langchain/sample-agent/package.json"))
+@pytest.mark.parametrize("sample", ["sample-agent", "travel-agent-aws"])
+def test_published_distro_does_not_replay_legacy_route_choices(sample):
+    package = json.loads(source(f"nodejs/langchain/{sample}/package.json"))
     assert package["dependencies"]["@microsoft/opentelemetry"] == "^1.4.0"
-    assert "durableDelivery: { enabled: false }" in source("nodejs/langchain/sample-agent/src/index.ts")
+    assert "durableDelivery: { enabled: false }" in source(f"nodejs/langchain/{sample}/src/index.ts")
 
 
 @pytest.mark.parametrize("sample", [

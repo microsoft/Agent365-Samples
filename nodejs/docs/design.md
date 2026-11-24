@@ -17,6 +17,7 @@ Legacy service-route authorization is distinct from public OTLP authorization.
 | Claude | Anthropic's Claude AI | [claude/sample-agent](../claude/sample-agent/) |
 | Devin | Cognition's Devin AI | [devin/sample-agent](../devin/sample-agent/) |
 | LangChain | LangChain.js framework | [langchain/sample-agent](../langchain/sample-agent/) |
+| LangChain on AWS | Travel teammate with Amazon Bedrock and Lambda Web Functions | [langchain/travel-agent-aws](../langchain/travel-agent-aws/) |
 | N8N | N8N workflow automation | [n8n/sample-agent](../n8n/sample-agent/) |
 | OpenAI | OpenAI Agents SDK | [openai/sample-agent](../openai/sample-agent/) |
 | Perplexity | Perplexity AI | [perplexity/sample-agent](../perplexity/sample-agent/) |
