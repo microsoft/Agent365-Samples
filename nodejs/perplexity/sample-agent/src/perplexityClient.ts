@@ -32,6 +32,9 @@ interface ChatCompletionResponse {
   [key: string]: unknown;
 }
 
+const PERPLEXITY_API_HOST = "api.perplexity.ai";
+const PERPLEXITY_INTEGRATION = "agent365-samples";
+
 /**
  * Client for interacting with the Perplexity AI SDK.
  */
@@ -41,7 +44,14 @@ export class PerplexityClient {
   private systemPrompt: string;
 
   constructor(apiKey: string, model: string, systemPrompt: string) {
-    this.client = new Perplexity({ apiKey });
+    const client = new Perplexity({ apiKey });
+    // Identify this sample to Perplexity only when targeting the public API host.
+    this.client =
+      new URL(client.baseURL).hostname === PERPLEXITY_API_HOST
+        ? client.withOptions({
+            defaultHeaders: { "X-Pplx-Integration": PERPLEXITY_INTEGRATION },
+          })
+        : client;
     this.model = model;
     this.systemPrompt = systemPrompt;
   }
