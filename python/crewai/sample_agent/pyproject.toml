@@ -11,10 +11,10 @@ dependencies = [
     "python-dotenv>=1.0.0",
     
     # Microsoft 365 Agents SDK - hosting and auth
-    "microsoft-agents-hosting-aiohttp>=0.7.0",
-    "microsoft-agents-hosting-core>=0.7.0",
-    "microsoft-agents-authentication-msal>=0.7.0",
-    "microsoft-agents-activity>=0.7.0",
+    "microsoft-agents-hosting-aiohttp>=0.9.0",
+    "microsoft-agents-hosting-core>=0.9.0",
+    "microsoft-agents-authentication-msal>=0.9.0",
+    "microsoft-agents-activity>=0.9.0",
     
     # Core hosting deps
     "aiohttp",
