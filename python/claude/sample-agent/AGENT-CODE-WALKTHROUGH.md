@@ -175,8 +175,9 @@ async def process_user_message(
     
     ctx_details = extract_turn_context_details(context)
 
-    # Setup MCP servers for this request
-    await self.setup_mcp_servers(auth, auth_handler_name, context)
+    # Setup MCP servers for this request. They carry this caller's token,
+    # so they stay local to this turn.
+    mcp_servers, mcp_allowed_tools = await self.setup_mcp_servers(auth, auth_handler_name, context)
 
     # Observability is configured at module load time
     if not is_observability_configured():

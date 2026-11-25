@@ -57,42 +57,44 @@ from crewai import Agent, Crew, Task
 
 class CrewAIAgent(AgentInterface):
     def __init__(self):
-        # Define agents with roles
-        self.researcher = Agent(
-            role="Researcher",
-            goal="Research and gather information",
-            backstory="Expert researcher...",
-            tools=self.mcp_tools,
-        )
-
         self.writer = Agent(
             role="Writer",
             goal="Create clear responses",
             backstory="Expert communicator...",
         )
 
-        # Create crew
-        self.crew = Crew(
-            agents=[self.researcher, self.writer],
-            tasks=[],  # Tasks added per request
-            verbose=True,
-        )
-
     async def process_user_message(self, message, auth, auth_handler_name, context):
-        # Create task for this message
-        research_task = Task(
-            description=f"Research: {message}",
-            agent=self.researcher,
-        )
+        # MCP tools carry this caller's token, so they are discovered for each turn
+        mcp_service, mcp_tools = await self._setup_mcp_servers(auth, auth_handler_name, context)
+        try:
+            # Define agents with roles, using this turn's MCP tools
+            researcher = Agent(
+                role="Researcher",
+                goal="Research and gather information",
+                backstory="Expert researcher...",
+                tools=self._create_observable_tools(mcp_service, mcp_tools),
+            )
 
-        response_task = Task(
-            description="Create response from research",
-            agent=self.writer,
-        )
+            # Create task for this message
+            research_task = Task(
+                description=f"Research: {message}",
+                agent=researcher,
+            )
 
-        self.crew.tasks = [research_task, response_task]
-        result = await self.crew.kickoff_async()
-        return str(result)
+            response_task = Task(
+                description="Create response from research",
+                agent=self.writer,
+            )
+
+            crew = Crew(
+                agents=[researcher, self.writer],
+                tasks=[research_task, response_task],
+                verbose=True,
+            )
+            result = await crew.kickoff_async()
+            return str(result)
+        finally:
+            await mcp_service.cleanup()
 ```
 
 ## Configuration

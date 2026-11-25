@@ -209,34 +209,29 @@ def _setup_observability(self):
 def _initialize_services(self):
         """
         Initialize MCP services and authentication options.
-
-        Returns:
-            Tuple of (tool_service, auth_options)
         """
-        # Create configuration service and tool service with dependency injection
+        # Create configuration service. The MCP tool service is created per turn because the
+        # MCP servers it attaches carry the caller's token (see setup_mcp_servers).
         self.config_service = McpToolServerConfigurationService()
-        self.tool_service = mcp_tool_registration_service.McpToolRegistrationService()
 
         # Create authentication options from environment
         self.auth_options = LocalAuthenticationOptions.from_environment()
 
-        # return tool_service, auth_options
-
-    async def setup_mcp_servers(self, auth: Authorization, auth_handler_name: str, context: TurnContext):
-        """Set up MCP server connections"""
+    async def setup_mcp_servers(self, tool_service, agent: Agent, auth: Authorization, auth_handler_name: str, context: TurnContext) -> Agent:
+        """Return a copy of agent with MCP servers authenticated as the current turn's caller."""
         try:
 
             use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
             if use_agentic_auth:
-                self.agent = await self.tool_service.add_tool_servers_to_agent(
-                    agent=self.agent,
+                return await tool_service.add_tool_servers_to_agent(
+                    agent=agent,
                     auth=auth,
                     auth_handler_name=auth_handler_name,
                     context=context,
                 )
             else:
-                self.agent = await self.tool_service.add_tool_servers_to_agent(
-                    agent=self.agent,
+                return await tool_service.add_tool_servers_to_agent(
+                    agent=agent,
                     auth=auth,
                     auth_handler_name=auth_handler_name,
                     context=context,
@@ -245,6 +240,8 @@ def _initialize_services(self):
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
+            # Continue without MCP tools, never with another turn's MCP servers
+            return agent
 
     async def initialize(self):
         """Initialize the agent and MCP server connections"""
@@ -279,7 +276,9 @@ The agent supports multiple authentication modes and extensive configuration opt
 **What happens**:
 1. Creates services to find and manage external tools
 2. Sets up security and authentication
-3. Finds available tools and connects them to the agent
+3. On every turn, finds available tools and connects them to a copy of the agent using the current caller's token
+
+> **Important:** MCP servers carry the token of the user who sent the message. Create them for every turn and use the returned agent only for that turn. Don't store it on `self` or reuse it for another message: one agent instance serves every user.
 
 ---
 
@@ -290,12 +289,14 @@ async def process_user_message(
         self, message: str, auth: Authorization, auth_handler_name: str, context: TurnContext
     ) -> str:
         """Process user message using the OpenAI Agents SDK"""
+        # MCP servers carry this caller's token, so they are created and closed per turn
+        tool_service = mcp_tool_registration_service.McpToolRegistrationService()
         try:
-            # Setup MCP servers
-            await self.setup_mcp_servers(auth, auth_handler_name, context)
+            # Setup MCP servers for this turn's caller
+            turn_agent = await self.setup_mcp_servers(tool_service, self.agent, auth, auth_handler_name, context)
 
             # Run the agent with the user message
-            result = await self.runner.run(starting_agent=self.agent, input=message)
+            result = await Runner.run(starting_agent=turn_agent, input=message, context=context)
 
             # Extract the response from the result
             if result and hasattr(result, "final_output") and result.final_output:
@@ -306,15 +307,19 @@ async def process_user_message(
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             return f"Sorry, I encountered an error: {str(e)}"
+
+        finally:
+            await tool_service.cleanup_all_servers()
 ```
 
 **What it does**: This is the main function that handles user conversations - when someone sends a message, this processes it and sends back a response.
 
 **What happens**:
-1. **Connect Tools**: Sets up any external tools the agent might need for this conversation
+1. **Connect Tools**: Connects the external tools for this turn, authenticated as the user who sent the message
 2. **Run AI**: Sends the user's message to the AI model and gets a response
 3. **Extract Answer**: Pulls out the text response from the AI's reply
 4. **Handle Problems**: If something goes wrong, it gives a helpful error message instead of crashing
+5. **Close Tools**: Closes this turn's tool connections
 
 **Why it's important**: This is the "brain" of the agent - it's what actually makes conversations happen!
 
