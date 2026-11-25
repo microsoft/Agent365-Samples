@@ -76,30 +76,20 @@ def __init__(self):
     """Initialize the AgentFramework agent."""
     self.logger = logging.getLogger(self.__class__.__name__)
 
-    # Initialize observability
-    self._setup_observability()
-
     # Initialize authentication options
     self.auth_options = LocalAuthenticationOptions.from_environment()
 
     # Create Azure OpenAI chat client
     self._create_chat_client()
-
-    # Create the agent with initial configuration
-    self._create_agent()
-
-    # Initialize MCP services
-    self._initialize_services()
 ```
 
-**What it does**: Creates the main AI agent and sets up its basic behavior.
+**What it does**: Sets up what every turn shares: the logger, authentication settings and the Azure OpenAI client. The agent itself, with its MCP tools, is created for each turn (see Step 4).
 
 **What happens**:
-1. **Sets up Monitoring**: Turns on tracking so we can see what the agent does
-2. **Gets Authentication**: Loads security settings from environment variables
-3. **Creates AI Client**: Makes a connection to Azure OpenAI's servers
-4. **Builds the Agent**: Creates the actual AI assistant with instructions
-5. **Initializes Tools**: Sets up access to external MCP tools
+1. **Gets Authentication**: Loads security settings from environment variables
+2. **Creates AI Client**: Makes a connection to Azure OpenAI's servers
+
+Observability is set up by the host (`host_agent_server.py`), not by the agent.
 
 ---
 
@@ -141,37 +131,26 @@ def _create_chat_client(self):
 
 ---
 
-## Step 4: Agent Creation
+## Step 4: Per-Turn Agent and Instructions
 
 ```python
-def _create_agent(self):
-    """Create the AgentFramework agent with initial configuration"""
-    try:
-        logger.info("Creating AgentFramework agent...")
-
-        self.agent = ChatAgent(
-            chat_client=self.chat_client,
-            instructions="You are a helpful assistant with access to tools.",
-            tools=[]  # Tools will be added dynamically by MCP setup
-        )
-
-        logger.info("✅ AgentFramework agent created successfully")
-
-    except Exception as e:
-        logger.error(f"Failed to create agent: {e}")
-        raise
+@classmethod
+def _get_instructions(cls, context: TurnContext) -> str:
+    """Return the agent prompt with the name of the user who sent this activity."""
+    from_prop = context.activity.from_property
+    user_name = getattr(from_prop, "name", None) or "unknown"
+    return cls.AGENT_PROMPT.replace("{user_name}", user_name)
 ```
 
-**What it does**: Creates the AI agent that will handle conversations.
+**What it does**: Builds the instructions for one turn. There's no shared agent: every message and notification gets a new `ChatAgent` from `setup_mcp_servers` (Step 6), created with these instructions and that turn's MCP tools.
 
 **What happens**:
-1. **Creates Agent**: Builds the chat agent with the AI client
-2. **Sets Instructions**: Gives the agent its base personality and behavior
-3. **Prepares for Tools**: Tools will be added later when MCP servers connect
+1. **Reads the Sender**: Takes the display name of the user who sent the message or notification
+2. **Personalizes the Prompt**: Fills the `{user_name}` placeholder in `AGENT_PROMPT`
 
 **Settings**:
 - Instructions define how the agent behaves
-- Tools array starts empty and gets filled when MCP servers connect
+- Messages and notifications use the same helper, so the prompt never contains a literal `{user_name}`
 
 ---
 
@@ -222,16 +201,15 @@ workload permissions remain independent.
 ## Step 6: MCP Server Setup
 
 ```python
-async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, auth: Authorization, auth_handler_name: str, context: TurnContext, instructions: Optional[str] = None):
+async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, auth: Authorization, auth_handler_name: str, context: TurnContext, instructions: str):
     """Return an agent with MCP servers authenticated as the current turn's caller."""
-    agent_instructions = instructions or self.AGENT_PROMPT
     try:
         use_agentic_auth = os.getenv("USE_AGENTIC_AUTH", "false").lower() == "true"
 
         if use_agentic_auth:
             agent = await tool_service.add_tool_servers_to_agent(
                 chat_client=self.chat_client,
-                agent_instructions=agent_instructions,
+                agent_instructions=instructions,
                 initial_tools=[],
                 auth=auth,
                 auth_handler_name=auth_handler_name,
@@ -240,7 +218,7 @@ async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, auth
         else:
             agent = await tool_service.add_tool_servers_to_agent(
                 chat_client=self.chat_client,
-                agent_instructions=agent_instructions,
+                agent_instructions=instructions,
                 initial_tools=[],
                 auth=auth,
                 auth_handler_name=auth_handler_name,
@@ -252,9 +230,11 @@ async def setup_mcp_servers(self, tool_service: McpToolRegistrationService, auth
         return agent
 
     except Exception as e:
-        logger.error(f"MCP setup error: {e}")
-        # Continue without MCP tools, never with another turn's agent
-        return ChatAgent(chat_client=self.chat_client, instructions=agent_instructions, tools=[])
+        logger.error(f"❌ Error setting up MCP servers: {e}")
+        if self.should_skip_tooling_on_errors():
+            # Continue without MCP tools, never with another turn's agent
+            return ChatAgent(chat_client=self.chat_client, instructions=instructions, tools=[])
+        raise
 ```
 
 **What it does**: Connects your agent to external tools (like mail, calendar, notifications) that it can use to help users.
@@ -276,6 +256,8 @@ The agent supports multiple authentication modes and extensive configuration opt
 3. Finds available tools and connects them using that user's token
 4. Returns a new agent with the tools attached, used only for this turn
 
+**If setup fails**: the error is raised, so the turn fails and the user gets an error message instead of an agent that silently has no tools. To continue without MCP tools while developing locally, set `ENVIRONMENT=Development` and `SKIP_TOOLING_ON_ERRORS=true`. The OpenAI sample behaves the same way.
+
 > **Important:** MCP tools carry the token of the user who sent the message. Set them up for every message and notification, and never store the returned agent on `self` or reuse it for another message: one agent instance serves every user.
 
 ---
@@ -290,7 +272,7 @@ async def process_user_message(
     # MCP servers carry this caller's token, so they are created and closed per turn
     tool_service = McpToolRegistrationService()
     try:
-        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context, self._get_instructions(context))
         result = await turn_agent.run(message)
         return self._extract_result(result) or "I couldn't process your request at this time."
     except Exception as e:
@@ -324,7 +306,7 @@ async def handle_agent_notification_activity(
         notification_type = notification_activity.notification_type
         logger.info(f"📬 Processing notification: {notification_type}")
 
-        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context, self._get_instructions(context))
 
         # Handle Email Notifications
         if notification_type == NotificationTypes.EMAIL_NOTIFICATION:
@@ -387,7 +369,7 @@ async def handle_agent_notification_activity(
 - `NotificationTypes.WPX_COMMENT`: @mentions in Word/Excel comments
 - Other notification types handled generically
 
-**Why MCP Setup Runs Every Time**: Notifications need access to tools (like Microsoft Graph to read documents) just like regular messages. MCP tools carry the caller's token, so setup runs for every message and notification; reusing tools from an earlier turn would let one user act with another user's identity.
+**Why MCP Setup Runs Every Time**: Notifications need access to tools (like Microsoft Graph to read documents) just like regular messages. MCP tools carry the caller's token, so setup runs for every message and notification, and tools set up for an earlier turn are never reused.
 
 ---
 
@@ -411,7 +393,7 @@ async def process_user_message(
     tool_service = McpToolRegistrationService()
     try:
         # Setup MCP servers for this turn's caller
-        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context)
+        turn_agent = await self.setup_mcp_servers(tool_service, auth, auth_handler_name, context, self._get_instructions(context))
 
         # Run the agent with the user message
         result = await turn_agent.run(message)
@@ -558,10 +540,7 @@ async def custom_capability(self, params: Dict[str, Any]) -> Any:
 ```
 
 ### 2. **Custom MCP Servers**
-Add new MCP servers through the per-turn tool registration service:
-```python
-await tool_service.add_custom_mcp_server(server_config)
-```
+MCP servers aren't added in code. `setup_mcp_servers` connects the servers configured for the agent on every turn: in development, the ones listed in `ToolingManifest.json` in this folder (add servers with `a365 develop add-mcp-servers`), and in production, the ones configured for the agent in Agent 365. No code change is needed when you add a server.
 
 ### 3. **Additional Endpoints**
 Add new HTTP endpoints in the server:
