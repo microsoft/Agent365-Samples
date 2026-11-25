@@ -1,0 +1,179 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+/**
+ * In-memory quiz cache. When we render a quiz card, we cache the questions
+ * (including correct answers + short-answer rubrics) server-side keyed by
+ * userAADId + courseId, with an opaque generationId sent back in the card action.
+ * On submit, both the course and generationId must match before grading, so an
+ * older card can never be graded against replacement questions with reused q1-q5 IDs.
+ *
+ * Kept in memory only — lost on server restart. If a user submits a quiz whose
+ * cache entry is gone, we regenerate the questions on the fly (or ask them to
+ * click the "retake" flow). Acceptable for a dev/demo setup.
+ */
+
+import { QuizQuestionWithKey, GradedAnswer } from './career-coach-service';
+import { randomUUID } from 'crypto';
+
+interface QuizCacheEntry {
+    generationId: string;
+    questions: QuizQuestionWithKey[];
+    createdAt: number;
+    attempts: number;
+}
+
+const cache = new Map<string, QuizCacheEntry>();
+
+function keyOf(userAADId: string, courseId: string): string {
+    return `${userAADId.toLowerCase()}::${courseId}`;
+}
+
+export function putQuiz(userAADId: string, courseId: string, questions: QuizQuestionWithKey[]): void {
+    const key = keyOf(userAADId, courseId);
+    const prior = cache.get(key);
+    cache.set(key, {
+        generationId: randomUUID(),
+        questions,
+        createdAt: Date.now(),
+        attempts: (prior?.attempts ?? 0),
+    });
+    // New questions mean any half-finished submission belonged to the old ones.
+    submissions.delete(key);
+}
+
+// ----------------------------------------------------------------------------
+// Submissions — the recorded outcome of one graded submission, kept until it has been fully applied
+// (audit row written AND the plan updated). If the plan update fails after the audit row was written,
+// the restored card is resubmitted with the same answers; that retry reuses this record (same grading,
+// same attempt number, no second audit row) instead of grading and appending again.
+// ----------------------------------------------------------------------------
+
+export interface PendingSubmission {
+    generationId: string;
+    /** Hash of the submitted answers; a retry with different answers is a new submission. */
+    fingerprint: string;
+    graded: GradedAnswer[];
+    attempts: number;
+    attemptDate: string;
+    /** True once the QuizResponses audit row for this submission exists. */
+    auditWritten: boolean;
+}
+
+const submissions = new Map<string, PendingSubmission>();
+
+export function getSubmission(userAADId: string, courseId: string, generationId: string, fingerprint: string): PendingSubmission | null {
+    const found = submissions.get(keyOf(userAADId, courseId));
+    return found && found.generationId === generationId && found.fingerprint === fingerprint ? found : null;
+}
+
+export function saveSubmission(userAADId: string, courseId: string, submission: PendingSubmission): void {
+    submissions.set(keyOf(userAADId, courseId), submission);
+}
+
+export function clearSubmission(userAADId: string, courseId: string): void {
+    submissions.delete(keyOf(userAADId, courseId));
+}
+
+// One generation per user/course at a time: overlapping sync / portal turns that both find the cache
+// empty must share a single set of questions, or the first card sent would be graded against the
+// second card's answer key.
+const generating = new Map<string, Promise<QuizQuestionWithKey[]>>();
+
+export async function getOrCreateQuiz(
+    userAADId: string,
+    courseId: string,
+    generate: () => Promise<QuizQuestionWithKey[]>,
+): Promise<QuizQuestionWithKey[]> {
+    const cached = getQuiz(userAADId, courseId);
+    if (cached && cached.length > 0) return cached;
+    const key = keyOf(userAADId, courseId);
+    let pendingGeneration = generating.get(key);
+    if (!pendingGeneration) {
+        pendingGeneration = generate()
+            .then((questions) => {
+                putQuiz(userAADId, courseId, questions);
+                return questions;
+            })
+            .finally(() => generating.delete(key));
+        generating.set(key, pendingGeneration);
+    }
+    return pendingGeneration;
+}
+
+export function getQuiz(userAADId: string, courseId: string): QuizQuestionWithKey[] | null {
+    const key = keyOf(userAADId, courseId);
+    const entry = cache.get(key);
+    return entry ? entry.questions : null;
+}
+
+/** Immutable identifier for the exact question set rendered to the user. */
+export function getQuizGenerationId(userAADId: string, courseId: string): string | null {
+    return cache.get(keyOf(userAADId, courseId))?.generationId ?? null;
+}
+
+export function bumpAttempts(userAADId: string, courseId: string): number {
+    const key = keyOf(userAADId, courseId);
+    const entry = cache.get(key);
+    if (!entry) return 1;
+    entry.attempts += 1;
+    return entry.attempts;
+}
+
+export function clearQuiz(userAADId: string, courseId: string): void {
+    cache.delete(keyOf(userAADId, courseId));
+    submissions.delete(keyOf(userAADId, courseId));
+}
+
+/**
+ * Drops every cached quiz, graded marker and queued quiz for the user. Called when a goal is saved
+ * or replaced: questions cached for the previous plan must never be graded against the new one.
+ */
+export function clearAllQuizzes(userAADId: string): void {
+    const prefix = `${userAADId.toLowerCase()}::`;
+    for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key);
+    for (const key of [...submissions.keys()]) if (key.startsWith(prefix)) submissions.delete(key);
+    for (const key of [...graded]) if (key.startsWith(prefix)) graded.delete(key);
+    pending.delete(userAADId.toLowerCase());
+}
+
+// ----------------------------------------------------------------------------
+// Graded markers — lets the submit handler recognise a resubmit of an already-graded card.
+// ----------------------------------------------------------------------------
+
+const graded = new Set<string>();
+
+export function markGraded(userAADId: string, courseId: string): void {
+    graded.add(keyOf(userAADId, courseId));
+}
+
+export function unmarkGraded(userAADId: string, courseId: string): void {
+    graded.delete(keyOf(userAADId, courseId));
+}
+
+export function wasGraded(userAADId: string, courseId: string): boolean {
+    return graded.has(keyOf(userAADId, courseId));
+}
+
+// ----------------------------------------------------------------------------
+// Pending-quiz queue — courses the user reported as completed in chat that still need a
+// quiz. Learning-portal completions are tracked in SharePoint; chat reports only live here.
+// ----------------------------------------------------------------------------
+
+const pending = new Map<string, string[]>();
+
+export function queueQuizzes(userAADId: string, courseIds: string[]): void {
+    const key = userAADId.toLowerCase();
+    const list = pending.get(key) ?? [];
+    for (const id of courseIds) if (id && !list.includes(id)) list.push(id);
+    pending.set(key, list);
+}
+
+export function dequeueQuiz(userAADId: string, courseId: string): void {
+    const key = userAADId.toLowerCase();
+    pending.set(key, (pending.get(key) ?? []).filter((id) => id !== courseId));
+}
+
+export function peekQueuedQuizzes(userAADId: string): string[] {
+    return [...(pending.get(userAADId.toLowerCase()) ?? [])];
+}

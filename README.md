@@ -39,7 +39,7 @@ Please help improve the Microsoft Agent 365 SDK and CLI by taking our survey: [A
 ## Current Repository State
 
 This samples repository is currently in active development and contains:
-- **Sample Agents**: Production-ready examples in C#/.NET, Python, Node.js/TypeScript, and Salesforce/Apex demonstrating observability, notifications, tooling, and hosting patterns
+- **Sample Agents**: Complete, end-to-end examples in C#/.NET, Python, Node.js/TypeScript, and Salesforce/Apex demonstrating observability, notifications, tooling, and hosting patterns
 - **Prompts**: Guides for using AI-powered development tools (e.g., Cursor IDE) to accelerate agent development
 
 ## Documentation
@@ -82,9 +82,13 @@ For language-specific documentation and additional resources, explore the follow
 - [Node.js documentation](https://learn.microsoft.com/javascript/api/?view=m365-agents-sdk&preserve-view=true)
 - [Python documentation](https://learn.microsoft.com/python/api/?view=m365-agents-sdk&preserve-view=true)
 
+## Support
+
+For information about how to file issues and get help, see [SUPPORT.md](SUPPORT.md). To report a security vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## Trademarks
 
-*Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at http://go.microsoft.com/fwlink/?LinkID=254653.*
+Microsoft, Windows, Microsoft Azure and/or other Microsoft products and services referenced in the documentation may be either trademarks or registered trademarks of Microsoft in the United States and/or other countries. The licenses for this project do not grant you rights to use any Microsoft names, logos, or trademarks. Microsoft's general trademark guidelines can be found at [Microsoft Trademark and Brand Guidelines](http://go.microsoft.com/fwlink/?LinkID=254653).
 
 ## License
 Copyright (c) Microsoft Corporation. All rights reserved.
