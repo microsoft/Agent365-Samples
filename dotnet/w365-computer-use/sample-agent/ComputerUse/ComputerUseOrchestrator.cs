@@ -126,9 +126,8 @@ public class ComputerUseOrchestrator
 
     /// <summary>
     /// Shared W365 tools and their client are published together after discovery.
-    /// <paramref name="Clients"/> holds every MCP client the discovery connected.
     /// </summary>
-    private sealed record McpConnection(IList<AITool> Tools, IMcpClient? Client, IReadOnlyList<IMcpClient> Clients);
+    private sealed record McpConnection(IList<AITool> Tools, IMcpClient? Client);
     private volatile McpConnection? _cachedW365Connection;
     private readonly SemaphoreSlim _mcpConnectionLock = new(1, 1);
 
@@ -145,12 +144,10 @@ public class ComputerUseOrchestrator
     private volatile IList<AITool>? _cachedNonW365Tools;
 
     /// <summary>
-    /// The server URLs and token <see cref="_cachedNonW365Tools"/> were loaded with, and the MCP clients
-    /// that serve them, so a different token (for example a rotated BEARER_TOKEN) loads them again.
-    /// Guarded by <see cref="_mcpConnectionLock"/>.
+    /// The server URLs and token <see cref="_cachedNonW365Tools"/> were loaded with, so a different
+    /// token (for example a rotated BEARER_TOKEN) loads them again. Guarded by <see cref="_mcpConnectionLock"/>.
     /// </summary>
     private string? _cachedNonW365ToolsKey;
-    private IReadOnlyList<IMcpClient> _cachedNonW365Clients = [];
 
     /// <summary>
     /// True when this orchestrator has already loaded lifecycle tools for the W365 MCP server in
@@ -1583,7 +1580,6 @@ public class ComputerUseOrchestrator
             _cachedW365Connection = null;
             _cachedNonW365Tools = null;
             _cachedNonW365ToolsKey = null;
-            _cachedNonW365Clients = [];
             _w365McpClientsBySessionId.Clear();
         }
         finally
@@ -1640,8 +1636,9 @@ public class ComputerUseOrchestrator
     /// because non-W365 servers don't have the "Error-tool-after-failed-session-acquisition"
     /// problem — if mail/calendar can't load, we just proceed without those tools.
     /// The cached tools are reused only for the same server URLs and token. When the token changes,
-    /// for example because BEARER_TOKEN was rotated, the clients loaded with the earlier token are
-    /// disposed and the tools are loaded again.
+    /// for example because BEARER_TOKEN was rotated, the tools are loaded again. The clients loaded with
+    /// the earlier token stay registered for shutdown cleanup, like the other shared clients, so a turn
+    /// in another conversation that is still using them isn't cut off.
     /// </summary>
     public async Task<IList<AITool>> GetOrCreateNonW365McpConnectionAsync(
         IList<string> mcpUrls, string accessToken)
@@ -1653,16 +1650,10 @@ public class ComputerUseOrchestrator
             if (_cachedNonW365Tools != null && _cachedNonW365ToolsKey == key)
                 return _cachedNonW365Tools;
 
-            await DisposeSharedClientsAsync(_cachedNonW365Clients);
-            _cachedNonW365Tools = null;
-            _cachedNonW365Clients = [];
-
-            var connection = mcpUrls.Count == 0
-                ? null
-                : await LoadToolsFromUrlsAsync(mcpUrls, accessToken);
-            IList<AITool> tools = connection?.Tools ?? [];
+            var tools = mcpUrls.Count == 0
+                ? []
+                : (await LoadToolsFromUrlsAsync(mcpUrls, accessToken)).Tools;
             _cachedNonW365Tools = tools;
-            _cachedNonW365Clients = connection?.Clients ?? [];
             _cachedNonW365ToolsKey = key;
             _logger.LogInformation("Loaded {Count} non-W365 MCP tools from {ServerCount} server(s).", tools.Count, mcpUrls.Count);
             return _cachedNonW365Tools;
@@ -1674,20 +1665,6 @@ public class ComputerUseOrchestrator
     }
 
     /// <summary>
-    /// Disposes shared MCP clients that are no longer used and stops tracking them for shutdown cleanup.
-    /// </summary>
-    private async Task DisposeSharedClientsAsync(IReadOnlyList<IMcpClient> clients)
-    {
-        foreach (var client in clients)
-        {
-            if (!_allMcpClients.TryRemove(client, out _))
-                continue;
-            try { await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Failed to dispose MCP client"); }
-        }
-    }
-
-    /// <summary>
     /// Opens SSE connections to each MCP server URL and merges their tools/list responses.
     /// Registers connected clients for shutdown cleanup and returns a matching W365 client
     /// alongside the tools, without mutating another discovery path's cache.
@@ -1695,7 +1672,6 @@ public class ComputerUseOrchestrator
     private async Task<McpConnection> LoadToolsFromUrlsAsync(IList<string> mcpUrls, string accessToken)
     {
         var allTools = new List<AITool>();
-        var clients = new List<IMcpClient>();
         IMcpClient? primaryClient = null;
         IMcpClient? firstClient = null;
 
@@ -1719,7 +1695,6 @@ public class ComputerUseOrchestrator
                 var tools = (await client.ListToolsAsync()).Cast<AITool>().ToList();
 
                 _allMcpClients.TryAdd(client, McpClientScope.Shared);
-                clients.Add(client);
                 firstClient ??= client;
                 allTools.AddRange(tools);
 
@@ -1737,7 +1712,7 @@ public class ComputerUseOrchestrator
             }
         }
 
-        return new McpConnection(allTools, primaryClient ?? firstClient, clients);
+        return new McpConnection(allTools, primaryClient ?? firstClient);
     }
 
     internal string? GetSelectedW365SessionId(string? conversationId)
