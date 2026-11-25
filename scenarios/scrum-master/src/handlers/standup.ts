@@ -126,6 +126,7 @@ const summaryDeliveries = new WeakMap<StandupSession, {
     destinations: Map<string, { activities: Activity[]; next: number }>;
     pinnedDestination?: string;
     pinnedReference?: TeamMember['conversationReference'];
+    uncertain?: boolean;
 }>();
 
 async function deliverStandup(
@@ -696,6 +697,9 @@ async function recordStandupSubmission(
 
 export async function summarizeStandup(session: StandupSession): Promise<void> {
     if (session.state !== 'open') return;
+    if (summaryDeliveries.get(session)?.uncertain) {
+        throw new Error(`Standup ${session.standupId} summary delivery is uncertain. Automatic replay is blocked; inspect Teams and delivery logs before manual recovery.`);
+    }
     if (session.fanoutPending) await resumeStandupFanout(session);
 
     // Resolve prerequisites before claiming; a transient roster failure remains retryable.
@@ -846,7 +850,20 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
             if (Buffer.byteLength(JSON.stringify(outgoing), 'utf8') > STANDUP_ACTIVITY_BYTE_BUDGET) {
                 throw new Error('Standup summary activity envelope changed beyond the Teams byte budget.');
             }
-            await ctx.sendActivity(outgoing);
+            try {
+                await ctx.sendActivity(outgoing);
+            } catch (error) {
+                const status = typeof error === 'object' && error !== null
+                    ? ('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined)
+                    : undefined;
+                const confirmedRejection = typeof status === 'number' && status >= 400 && status < 500 && status !== 408;
+                if (!confirmedRejection) {
+                    delivery!.uncertain = true;
+                    delivery!.pinnedDestination = key;
+                    delivery!.pinnedReference = reference;
+                }
+                throw error;
+            }
             progress.next++;
             delivery!.pinnedDestination = key;
             delivery!.pinnedReference = reference;
@@ -875,6 +892,10 @@ async function finalizeStandup(session: StandupSession, members: TeamMember[]): 
         session.state = 'open';
         // No acknowledged part means a later retry can include late responses.
         if (!delivery.pinnedDestination) summaryDeliveries.delete(session);
+        if (delivery.uncertain) {
+            console.error(`[standup] Summary delivery is uncertain for ${session.standupId}; destination retained and automatic fallback/replay blocked. Inspect Teams and delivery logs before manual recovery.`);
+            throw new Error('Standup summary delivery is uncertain; inspect Teams and delivery logs before manual recovery. Automatic fallback/replay is blocked.');
+        }
         console.error('[standup] Summary was not delivered; retaining the open session for retry.');
         throw new Error('Standup summary was not delivered. Retry /standup after cutoff or once all responses are collected.');
     }

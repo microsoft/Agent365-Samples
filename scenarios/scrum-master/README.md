@@ -296,6 +296,10 @@ delivery. Daily retries and `/standup retry <standupId>` resume only pending
 members, including after restart; already-sent cards are not repeated.
 Open runs with a snapshot restore assignments, accepted responses and the cutoff
 timer. Legacy runs without a snapshot still require manual inspection.
+Ordinary triggers target only the active sprint's current UTC day's run; the
+next day's tick does not restore an older run. After inspecting its persisted
+delivery state and Teams, use `/standup retry <standupId>` for an older run
+(for example, `/standup retry 21#2026-11-24`).
 
 ```powershell
 Invoke-RestMethod -Method Post `
@@ -458,8 +462,11 @@ Do not delete or reset a claim merely because a timer/card action was retried.
   partially delivered summaries still require inspection before recovery.
   For multipart summaries, acknowledged parts and the destination are retained
   in process. Retries resume at the next part and do not switch destinations
-  after partial delivery; inspect delivery before restarting. Lost connector
-  acknowledgements can still leave uncertainty, and splitting very long
+  after partial delivery when the failed part was confirmed rejected.
+  A timeout, transport failure or 5xx after any part starts sending retains
+  the destination and blocks automatic fallback and replay, even on the first
+  part. Inspect Teams and delivery logs before manual recovery or restart;
+  uncertainty checkpoints remain process-local. Splitting very long
   Markdown across continuations may affect formatting, not the retained text.
 
 ## Deploy to Azure

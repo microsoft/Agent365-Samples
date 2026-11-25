@@ -250,10 +250,13 @@ envelope fields, and capped at 90,000 bytes. Oversized summaries become numbered
 cards with repeated headers; long cells continue losslessly across cards and
 blocker mentions remain attached. Impossible envelope/mention sizes fail closed.
 Acknowledged-part progress is retained with the destination in process, so a
-retry resumes instead of resending earlier parts. Fallback to the SM is allowed
-only before any part is acknowledged; partial delivery pins the destination and
-rejects later submissions. This progress is not reconstructed after restart,
-and a lost acknowledgement cannot provide exactly-once delivery. Very long
+retry resumes instead of resending earlier parts after confirmed rejection.
+Fallback to the SM is allowed only before sending or after a confirmed non-408
+4xx rejection, and only if no earlier part was acknowledged. A timeout,
+transport failure or 5xx during any part pins the destination, marks delivery
+uncertain and blocks automatic fallback/replay. Partial or uncertain delivery
+rejects later submissions. Progress and uncertainty are not reconstructed after
+restart; inspect Teams and delivery logs before manual recovery or restart. Very long
 Markdown may lose formatting across continuations, but response text is retained.
 Jira Story-to-Epic relationships do not count as subtask parents: `parentKey`
 is populated only when Jira's `issuetype.subtask` is true, so inherited

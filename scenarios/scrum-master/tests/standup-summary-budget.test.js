@@ -115,6 +115,121 @@ async function withStandup(stubs, run) {
     finally { Module._load = load; delete require.cache[filename]; }
 }
 
+test('uncertain summary parts retain their destination and block fallback and automatic replay', async () => {
+    const sessions = require('../src/services/session-store');
+    let sequence = 0;
+    for (const failedPart of [1, 2]) {
+        for (const status of [undefined, 408, 500]) {
+            for (const withFallback of [false, true]) {
+                const id = `uncertain-summary-${++sequence}`;
+                const session = sessions.upsertSession({
+                    standupId: id, sprintId: 334, sprintName: 'Uncertain summary', state: 'open',
+                    startedUtc: '2026-11-10T09:00:00Z', cutoffUtc: '2026-11-10T10:00:00Z',
+                    expectedResponders: new Set(), itemsByAssignee: new Map(), responses: new Map(),
+                    sentTo: new Set(), unreachable: new Set(), initiatedByAadId: null,
+                });
+                const destinations = [], accepted = [];
+                let chases = 0, persisted = 0, reconciliations = 0;
+                await withStandup({
+                    '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+                    '../services/sharepoint': {
+                        findByField: async () => [{ fields: { ConversationRef: JSON.stringify(reference) } }],
+                        updateItem: async () => { persisted++; },
+                    },
+                    '../services/team-roster': { listTeamMembers: async () => withFallback ? [{
+                        AadObjectId: 'sm', Role: 'SM', conversationReference: { ...reference, conversation: { id: 'sm-dm' } },
+                    }] : [] },
+                    '../cards/standup-summary.card': {
+                        buildStandupSummaryCard: () => ({}), STANDUP_ACTIVITY_BYTE_BUDGET,
+                        splitStandupSummaryActivity: () => [1, 2].map(part => ({ type: 'message', text: `part-${part}` })),
+                    },
+                    '../services/proactive': { sendProactive: async (ref, logic) => {
+                        destinations.push(ref.conversation.id);
+                        try {
+                            await logic({
+                                activity: { getConversationReference: () => ref },
+                                sendActivity: async outgoing => {
+                                    accepted.push(outgoing.text);
+                                    if (accepted.length === failedPart) {
+                                        throw Object.assign(new Error('Acknowledgement lost'), { statusCode: status });
+                                    }
+                                },
+                            });
+                            return { ok: true };
+                        } catch (error) { return { ok: false, error: error.message }; }
+                    } },
+                    './reconcile': { reconcileAfterStandup: async () => {
+                        reconciliations++;
+                        return { autoApplied: [], needsConfirm: [], errors: [] };
+                    } },
+                    './chase': { chaseAfterStandup: async () => { chases++; } },
+                }, async standup => {
+                    try {
+                        await assert.rejects(standup.summarizeStandup(session), /delivery is uncertain/);
+                        assert.equal(session.state, 'open');
+                        assert.equal(accepted.length, failedPart);
+                        await assert.rejects(standup.summarizeStandup(session), /Automatic replay is blocked/);
+                        await assert.rejects(standup.triggerStandup({ source: 'command', retryStandupId: id }), /Automatic replay is blocked/);
+                        assert.deepEqual(destinations, [reference.conversation.id]);
+                        assert.equal(accepted.length, failedPart);
+                        assert.equal(reconciliations, 1);
+                        assert.equal(persisted, 0);
+                        assert.equal(chases, 0);
+                        assert.equal(sessions.getCompletedSession(id), undefined);
+                    } finally { sessions.removeSession(id); }
+                });
+            }
+        }
+    }
+});
+
+test('a confirmed first-part rejection permits SM fallback', async () => {
+    const sessions = require('../src/services/session-store');
+    const session = sessions.upsertSession({
+        standupId: 'rejected-first-part', sprintId: 334, sprintName: 'Rejected summary', state: 'open',
+        startedUtc: '2026-11-10T09:00:00Z', cutoffUtc: '2026-11-10T10:00:00Z',
+        expectedResponders: new Set(), itemsByAssignee: new Map(), responses: new Map(),
+        sentTo: new Set(), unreachable: new Set(), initiatedByAadId: null,
+    });
+    const destinations = [];
+    await withStandup({
+        '../config': { getJiraMode: () => 'live', getScheduleConfig: () => ({ timezone: 'UTC' }) },
+        '../services/sharepoint': {
+            findByField: async () => [{ fields: { ConversationRef: JSON.stringify(reference) } }],
+            findByTitle: async () => ({ id: 'run' }), updateItem: async () => {},
+        },
+        '../services/team-roster': { listTeamMembers: async () => [{
+            AadObjectId: 'sm', Role: 'SM', conversationReference: { ...reference, conversation: { id: 'sm-dm' } },
+        }] },
+        '../cards/standup-summary.card': {
+            buildStandupSummaryCard: () => ({}), STANDUP_ACTIVITY_BYTE_BUDGET,
+            splitStandupSummaryActivity: () => [{ type: 'message', text: 'summary' }],
+        },
+        '../services/proactive': { sendProactive: async (ref, logic) => {
+            destinations.push(ref.conversation.id);
+            try {
+                await logic({
+                    activity: { getConversationReference: () => ref },
+                    sendActivity: async () => {
+                        if (ref.conversation.id === reference.conversation.id) {
+                            throw Object.assign(new Error('Forbidden'), { status: 403 });
+                        }
+                    },
+                });
+                return { ok: true };
+            } catch (error) { return { ok: false, error: error.message }; }
+        } },
+        './reconcile': { reconcileAfterStandup: async () => ({ autoApplied: [], needsConfirm: [], errors: [] }) },
+        './chase': { chaseAfterStandup: async () => {} },
+    }, async standup => {
+        try {
+            await standup.summarizeStandup(session);
+            assert.deepEqual(destinations, [reference.conversation.id, 'sm-dm']);
+            assert.equal(session.state, 'summarized');
+        } finally { sessions.removeSession(session.standupId); }
+    });
+});
+
 for (const fallback of [false, true]) {
 test(`actual SDK activity fits; partial ${fallback ? 'fallback DM' : 'channel'} delivery resumes without duplicates`, async () => {
     const sessions = require('../src/services/session-store');
@@ -139,7 +254,7 @@ test(`actual SDK activity fits; partial ${fallback ? 'fallback DM' : 'channel'} 
     let attempts = 0, fail = true, chases = 0, persisted = 0;
     const adapter = new CloudAdapter({});
     adapter.sendActivities = async (_context, messages) => {
-        if (++attempts === 2 && fail) throw new Error('Transient connector failure');
+        if (++attempts === 2 && fail) throw Object.assign(new Error('Confirmed connector rejection'), { statusCode: 429 });
         for (const message of messages) {
             assertBounded([message]);
             assert.equal(message.channelId, 'msteams');
