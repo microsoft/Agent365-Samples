@@ -1,0 +1,251 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+/**
+ * Calendar operations for the Chase (MVP 3) flow.
+ *
+ * Implementation: drives the **A365 `mcp_CalendarTools`** MCP server via a
+ * scenario-specific OpenAI Agent. The event is created on the *agent's* mailbox
+ * (Scrum-Master-Assistant), not the SM's — which is the correct ownership model
+ * for an AI teammate that runs its own ceremonies.
+ *
+ * Rationale for going through the LLM + MCP path instead of direct Graph:
+ *   - No delegated-user Graph consent to manage.
+ *   - Auth is handled by the A365 platform via the agentic token exchange.
+ *   - Consistent with how every other tool in this sample is invoked.
+ *
+ * We use `outputType` with a Zod schema so the model returns structured JSON,
+ * not free text. Empty availability stays empty; lookup failures propagate.
+ */
+
+import { z } from 'zod';
+import { DateTime } from 'luxon';
+import { Agent, run } from '@openai/agents';
+import { TurnContext, Authorization } from '@microsoft/agents-hosting';
+import { McpToolRegistrationService } from '@microsoft/agents-a365-tooling-extensions-openai';
+
+import { getModelName } from '../openai-config';
+
+// --- public shapes (unchanged) -------------------------------------------
+
+export interface MeetingSlot {
+    startIso: string;
+    endIso: string;
+    label: string;
+}
+
+export interface Attendee {
+    email: string;
+    displayName?: string;
+}
+
+export interface CreatedEvent {
+    id: string;
+    webLink: string;
+    /** Teams join URL when the calendar tool created an online meeting. */
+    onlineMeetingUrl?: string | null;
+    /** Number of attendees the calendar tool actually attached. */
+    attendeeCount?: number;
+}
+
+// --- context threaded from the handler ------------------------------------
+
+export interface CalendarContext {
+    turnContext: TurnContext;
+    authorization: Authorization;
+    authHandlerName: string;
+}
+
+// --- module-level MCP tooling registration --------------------------------
+
+const toolService = new McpToolRegistrationService();
+
+/**
+ * Run with a scenario-specific Agent and operation-owned A365 MCP servers
+ * (including `mcp_CalendarTools` from `ToolingManifest.json`).
+ *
+ * `outputType` requires a Zod object schema per the Agents SDK; we accept any
+ * `ZodObject<any>` so callers can plug their own structured shape.
+ */
+async function withCalendarAgent<T>(
+    cc: CalendarContext,
+    instructions: string,
+    outputType: z.ZodObject<any>,
+    fn: (agent: Agent<any, any>) => Promise<T>,
+    retryReadOnly = false,
+): Promise<T> {
+    const agent = new Agent({
+        name: 'Scrum Master — Calendar',
+        model: getModelName(),
+        instructions,
+        outputType,
+    });
+    try {
+        try {
+            // Registration's typing pins the agent to the default text-output shape.
+            await toolService.addToolServersToAgent(
+                agent as any,
+                cc.authorization,
+                cc.authHandlerName,
+                cc.turnContext,
+                process.env.BEARER_TOKEN || '',
+            );
+        } catch (err) {
+            console.error('[calendar] MCP registration failed:', (err as Error).message);
+            throw err;
+        }
+        const connectAll = async () => {
+            for (const server of agent.mcpServers) await server.connect();
+        };
+        await connectAll();
+        try {
+            return await fn(agent);
+        } catch (e) {
+            const msg = String((e as Error)?.message ?? e);
+            if (retryReadOnly && (msg.includes('Session not found') || msg.includes('-32001'))) {
+                console.warn('[calendar] MCP session lost — reconnecting and retrying once.');
+                await connectAll();
+                return await fn(agent);
+            }
+            throw e;
+        }
+    } finally {
+        // Registration creates fresh wrappers for this operation, not shared clients.
+        await Promise.all(agent.mcpServers.map(async server => {
+            try {
+                await server.close();
+            } catch (error) {
+                // A cleanup error must not make a confirmed booking appear retryable.
+                console.warn('[calendar] MCP cleanup failed:', error);
+            }
+        }));
+    }
+}
+
+// --- findUnblockSlots -----------------------------------------------------
+
+const SlotArraySchema = z.object({
+    slots: z.array(z.object({
+        startIso: z.string().describe('ISO-8601 datetime with timezone offset, e.g. 2026-07-14T15:30:00+05:30'),
+        endIso: z.string().describe('ISO-8601 datetime with timezone offset'),
+        label: z.string().describe('Human-friendly local time, e.g. "Mon 14 Jul, 3:30 PM IST"'),
+    })).max(3),
+});
+
+export async function findUnblockSlots(
+    cc: CalendarContext,
+    attendees: Attendee[],
+    durationMinutes: number,
+    timezone: string,
+    lookaheadHours = 48,
+): Promise<MeetingSlot[]> {
+    // Dedupe attendees (the same person may appear as owner + reporter + SM in
+    // small teams / the POC — presenting the deduped list to the LLM is cleaner).
+    const uniqueEmails = dedupeAttendees(attendees).map(attendee => attendee.email.toLowerCase());
+    const nowIso = DateTime.now().setZone('UTC').toISO();
+    const laterIso = DateTime.now().setZone('UTC').plus({ hours: lookaheadHours }).toISO();
+
+    const instructions =
+        `You are a scheduling assistant with access to the mcp_CalendarTools tools.\n` +
+        `Your job is to propose meeting slots. Steps:\n` +
+        `1. Use mcp_CalendarTools to find candidate meeting times (or free/busy).\n` +
+        `2. Return **up to 3** distinct slot suggestions inside the requested window.\n` +
+        `3. Each slot must be exactly ${durationMinutes} minutes long.\n` +
+        `4. Prefer business hours in the ${timezone} timezone.\n` +
+        `5. Only return times confirmed available by the calendar tools. If none are available, return an empty slots array. Never invent times.\n`;
+
+    const prompt =
+        `Find up to 3 candidate ${durationMinutes}-minute meeting slots.\n` +
+        `Attendees (email addresses): ${uniqueEmails.length ? uniqueEmails.join(', ') : '(no external attendees — schedule on the organiser only)'}\n` +
+        `Window: ${nowIso} → ${laterIso}\n` +
+        `Timezone for display labels: ${timezone}`;
+
+    try {
+        const result = await withCalendarAgent(cc, instructions, SlotArraySchema, agent => run(agent, prompt), true);
+        const out = SlotArraySchema.parse(result.finalOutput);
+        return out.slots;
+    } catch (err) {
+        console.error('[calendar] Availability lookup failed:', (err as Error).message);
+        throw err;
+    }
+}
+
+// --- createUnblockMeeting -------------------------------------------------
+
+const CreatedEventSchema = z.object({
+    id: z.string().describe('The event id returned by the calendar tool.'),
+    webLink: z.string().describe('A URL to open the event in Outlook / Teams calendar.'),
+    onlineMeetingUrl: z.string().nullable().optional()
+        .describe('The Teams / online-meeting join URL if one was created. Null / empty is acceptable.'),
+    attendeeCount: z.number().int().min(0).optional()
+        .describe('Number of attendees actually attached to the created event.'),
+});
+
+export async function createUnblockMeeting(cc: CalendarContext, opts: {
+    subject: string;
+    body: string;              // may contain simple HTML
+    startIso: string;
+    endIso: string;
+    attendees: Attendee[];
+    timezone: string;
+}): Promise<CreatedEvent> {
+    const uniqueAttendees = dedupeAttendees(opts.attendees);
+
+    // Hardened instructions: we saw the earlier attempt create the event but
+    // WITHOUT attendees or a Teams meeting link. Being explicit fixes both.
+    const instructions =
+        `You are a calendar assistant with access to the mcp_CalendarTools tools.\n` +
+        `On this turn, your ONLY task is to create ONE calendar event using the calendar create-event tool. Follow every rule:\n\n` +
+        `1. **Attendees are mandatory** — pass every email listed in the user message to the tool's attendees parameter. Do not drop or de-duplicate them; the caller has already deduped.\n` +
+        `2. **Turn the event into a Teams online meeting** — the calendar tool exposes flags such as \`isOnlineMeeting\` / \`onlineMeetingProvider\` (=\`teamsForBusiness\`). Set them both. If the tool has a "createOnlineMeeting" or similar sub-option, invoke it. The resulting event MUST have a Teams join link.\n` +
+        `3. Use the exact subject, body (HTML allowed), start, end, and timezone from the user message. Do not paraphrase.\n` +
+        `4. **The event is organised by YOU (the agent)** — the caller is an attendee, not the organiser.\n` +
+        `5. After creation, verify the event was really saved (call get / read tool if available). Return the id, the webLink, the online-meeting join URL if any, and the verified attendee count. Never infer the count from the request; omit it if the saved attendees cannot be confirmed.\n` +
+        `6. If the tool call fails or its outcome is uncertain, do not repeat creation. Return \`{ id: "error:<message>", webLink: "" }\`.\n` +
+        `\nDo not chit-chat, apologise, or emit commentary. Return only the structured JSON.`;
+
+    const attendeeLines = uniqueAttendees.length
+        ? uniqueAttendees.map(a => `- ${a.email}${a.displayName ? ` (${a.displayName})` : ''}`).join('\n')
+        : '(no attendees other than the organiser)';
+
+    const prompt =
+        `Create the following meeting NOW using the calendar tool:\n` +
+        `Subject: ${opts.subject}\n` +
+        `Start (ISO): ${opts.startIso}\n` +
+        `End (ISO): ${opts.endIso}\n` +
+        `Timezone: ${opts.timezone}\n` +
+        `Attendees:\n${attendeeLines}\n` +
+        `Body (HTML):\n${opts.body}`;
+
+    const result = await withCalendarAgent(cc, instructions, CreatedEventSchema, agent => run(agent, prompt));
+    const parsed = CreatedEventSchema.safeParse(result?.finalOutput);
+    const out = parsed.success ? parsed.data : undefined;
+    // A saved event alone is not confirmation that invitations were attached.
+    // Any uncertain result must retain the handler's claim, not invite a replay.
+    if (!out || !out.id.trim() || /^error\b/i.test(out.id.trim()) ||
+        !/^https?:\/\//i.test(out.webLink) || uniqueAttendees.length === 0 ||
+        out.attendeeCount !== uniqueAttendees.length) {
+        throw new Error(
+            `CALENDAR_VERIFY_FAILED: The event may have been created — the calendar tool ` +
+            `did not confirm the event and all expected invitations. Please verify in Outlook.`,
+        );
+    }
+    return {
+        id: out.id,
+        webLink: out.webLink,
+        onlineMeetingUrl: out.onlineMeetingUrl ?? null,
+        attendeeCount: out.attendeeCount,
+    };
+}
+
+function dedupeAttendees(attendees: Attendee[]): Attendee[] {
+    const seen = new Set<string>();
+    const out: Attendee[] = [];
+    for (const a of attendees) {
+        const key = (a.email || '').trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ ...a, email: a.email.trim() });
+    }
+    return out;
+}
