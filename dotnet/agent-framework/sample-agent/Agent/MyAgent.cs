@@ -429,8 +429,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 try
                 {
                     // MCP tools are loaded for each turn and are not reused for a later turn.
-                    await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
-
                     // For the bearer token (development) flow, pass the token as an override and
                     // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
                     var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)

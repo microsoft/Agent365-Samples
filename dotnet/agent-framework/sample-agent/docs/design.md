@@ -120,7 +120,7 @@ toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLoc
 
 ### MCP Tools
 
-MCP tools are loaded in `GetClientAgent()` for each turn and are not reused for a later turn.
+MCP tools are loaded in `GetClientAgent()` for each turn because each tool's MCP client carries the token of the user and agent identity the turn runs for. Never cache them across turns or identities.
 
 ```csharp
 // With auth handler

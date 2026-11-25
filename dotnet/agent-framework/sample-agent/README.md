@@ -61,6 +61,10 @@ _logger?.LogInformation(
     fromAccount?.AadObjectId ?? "(none)");
 ```
 
+### Conversation history in group chats
+
+The sample keeps chat history per conversation (in `turnState.Conversation`), so in a group chat every member shares one history. MCP tools are different: they're loaded for each message with the sender's token.
+
 ## Handling Agent Install and Uninstall
 
 When a user installs (hires) or uninstalls (removes) the agent, the A365 platform sends an `InstallationUpdate` activity — also referred to as the `agentInstanceCreated` event. The sample handles this in `OnInstallationUpdateAsync` ([MyAgent.cs](Agent/MyAgent.cs)):
