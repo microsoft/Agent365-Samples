@@ -748,23 +748,16 @@ public class MyAgent : AgentApplication
                 return (result.Tools, otherTools, result.Client, null, null);
             }
 
-            // Development with bearer token: use orchestrator's cached MCP connection
+            // Development with bearer token: use the orchestrator's cached non-W365 MCP connection.
+            // W365 turns returned above, so only the non-CUA path is left here.
             if (TryGetBearerTokenForDevelopment(out _) && IsDevelopment())
             {
                 if (_mcpServerUrls.Length == 0)
                     throw new InvalidOperationException("McpServers (or McpServer:Url) is required in appsettings for Development mode.");
 
-                if (includeW365)
-                {
-                    // Full load: W365 + everything else. The orchestrator's cache covers both.
-                    (allTools, mcpClient) = await _orchestrator.GetOrCreateMcpConnectionAsync(_mcpServerUrls, accessToken!);
-                }
-                else
-                {
-                    // Non-CUA fast path: skip W365 entirely. Non-W365 tools have their own cache
-                    // in the orchestrator so we don't reconnect on every non-CUA message.
-                    allTools = await _orchestrator.GetOrCreateNonW365McpConnectionAsync(_otherMcpServerUrls, accessToken!);
-                }
+                // Non-CUA fast path: skip W365 entirely. Non-W365 tools have their own cache
+                // in the orchestrator so we don't reconnect on every non-CUA message.
+                allTools = await _orchestrator.GetOrCreateNonW365McpConnectionAsync(_otherMcpServerUrls, accessToken!);
             }
             else
             {
