@@ -15,7 +15,6 @@ using Microsoft.Agents.Core;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Agents.Core.Serialization;
 using Microsoft.Extensions.AI;
-using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using ObsRequest = Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts.Request;
@@ -67,8 +66,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         // Setup reusable auto sign-in handlers for user authorization (configurable via appsettings.json)
         private readonly string? AgenticAuthHandlerName;
         private readonly string? OboAuthHandlerName;
-        // Temp
-        private static readonly ConcurrentDictionary<string, List<AITool>> _agentToolCache = new();
 
         /// <summary>
         /// Check if a bearer token is available in the environment for development/testing.
@@ -274,7 +271,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             try
             {
                 var userTextBuilder = new StringBuilder(turnContext.Activity.Text?.Trim() ?? string.Empty);
-                var _agent = await GetClientAgent(turnContext, turnState, _toolService, ToolAuthHandlerName, resolvedAgentId);
+                var _agent = await GetClientAgent(turnContext, _toolService, ToolAuthHandlerName, resolvedAgentId);
 
                 // Read or Create the conversation session for this conversation.
                 AgentSession? session = await GetConversationSessionAsync(_agent, turnState, cancellationToken);
@@ -385,7 +382,7 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
         /// </summary>
         /// <param name="context"></param>
         /// <returns></returns>
-        private async Task<AIAgent?> GetClientAgent(ITurnContext context, ITurnState turnState, IMcpToolRegistrationService? toolService, string? authHandlerName, string? chatAgentId)
+        private async Task<AIAgent?> GetClientAgent(ITurnContext context, IMcpToolRegistrationService? toolService, string? authHandlerName, string? chatAgentId)
         {
             AssertionHelpers.ThrowIfNull(_configuration!, nameof(_configuration));
             AssertionHelpers.ThrowIfNull(context, nameof(context));
@@ -431,33 +428,21 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
             {
                 try
                 {
-                    string toolCacheKey = GetToolCacheKey(turnState);
-                    if (_agentToolCache.ContainsKey(toolCacheKey))
+                    // MCP tools are loaded for each turn and are not reused for a later turn.
+                    await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
+
+                    // For the bearer token (development) flow, pass the token as an override and
+                    // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
+                    var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
+                        ? authHandlerName
+                        : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
+                    var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
+
+                    var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
+
+                    if (a365Tools != null && a365Tools.Count > 0)
                     {
-                        var cachedTools = _agentToolCache[toolCacheKey];
-                        if (cachedTools != null && cachedTools.Count > 0)
-                        {
-                            toolList.AddRange(cachedTools);
-                        }
-                    }
-                    else
-                    {
-                        await context.StreamingResponse.QueueInformativeUpdateAsync("Loading tools...");
-
-                        // For the bearer token (development) flow, pass the token as an override and
-                        // use OboAuthHandlerName (or fall back to AgenticAuthHandlerName) as the handler.
-                        var handlerForMcp = !string.IsNullOrEmpty(authHandlerName)
-                            ? authHandlerName
-                            : OboAuthHandlerName ?? AgenticAuthHandlerName ?? string.Empty;
-                        var tokenOverride = string.IsNullOrEmpty(authHandlerName) ? accessToken : null;
-
-                        var a365Tools = await toolService.GetMcpToolsAsync(agentId, UserAuthorization, handlerForMcp, context, tokenOverride).ConfigureAwait(false);
-
-                        if (a365Tools != null && a365Tools.Count > 0)
-                        {
-                            toolList.AddRange(a365Tools);
-                            _agentToolCache.TryAdd(toolCacheKey, [.. a365Tools]);
-                        }
+                        toolList.AddRange(a365Tools);
                     }
                 }
                 catch (Exception ex)
@@ -532,18 +517,6 @@ namespace Agent365AgentFrameworkSampleAgent.Agent
                 JsonElement ele = ProtocolJsonSerializer.ToObject<JsonElement>(agentThreadInfo);
                 return await agent.DeserializeSessionAsync(ele, cancellationToken: cancellationToken);
             }
-        }
-
-        private string GetToolCacheKey(ITurnState turnState)
-        {
-            string userToolCacheKey = turnState.User.GetValue<string?>("user.toolCacheKey", () => null) ?? "";
-            if (string.IsNullOrEmpty(userToolCacheKey))
-            {
-                userToolCacheKey = Guid.NewGuid().ToString();
-                turnState.User.SetValue("user.toolCacheKey", userToolCacheKey);
-                return userToolCacheKey;
-            }
-            return userToolCacheKey;
         }
 
     }

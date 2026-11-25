@@ -119,6 +119,9 @@ toolList.Add(AIFunctionFactory.Create(weatherLookupTool.GetWeatherForecastForLoc
 ```
 
 ### MCP Tools
+
+MCP tools are loaded in `GetClientAgent()` for each turn and are not reused for a later turn.
+
 ```csharp
 // With auth handler
 var a365Tools = await toolService.GetMcpToolsAsync(
