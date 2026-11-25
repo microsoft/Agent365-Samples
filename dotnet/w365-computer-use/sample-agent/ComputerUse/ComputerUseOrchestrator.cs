@@ -144,6 +144,12 @@ public class ComputerUseOrchestrator
     private volatile IList<AITool>? _cachedNonW365Tools;
 
     /// <summary>
+    /// The server URLs and token <see cref="_cachedNonW365Tools"/> were loaded with, so a different
+    /// token (for example a rotated BEARER_TOKEN) loads them again. Guarded by <see cref="_mcpConnectionLock"/>.
+    /// </summary>
+    private string? _cachedNonW365ToolsKey;
+
+    /// <summary>
     /// True when this orchestrator has already loaded lifecycle tools for the W365 MCP server in
     /// the current process. The explicit W365 lifecycle requires StartSession before remote
     /// computer-use tool calls.
@@ -1573,6 +1579,7 @@ public class ComputerUseOrchestrator
         {
             _cachedW365Connection = null;
             _cachedNonW365Tools = null;
+            _cachedNonW365ToolsKey = null;
             _w365McpClientsBySessionId.Clear();
         }
         finally
@@ -1628,6 +1635,10 @@ public class ComputerUseOrchestrator
     /// list. Unlike <see cref="GetOrCreateMcpConnectionAsync"/>, this path caches unconditionally
     /// because non-W365 servers don't have the "Error-tool-after-failed-session-acquisition"
     /// problem — if mail/calendar can't load, we just proceed without those tools.
+    /// The cached tools are reused only for the same server URLs and token. When the token changes,
+    /// for example because BEARER_TOKEN was rotated, the tools are loaded again. The clients loaded with
+    /// the earlier token stay registered for shutdown cleanup, like the other shared clients, so a turn
+    /// in another conversation that is still using them isn't cut off.
     /// </summary>
     public async Task<IList<AITool>> GetOrCreateNonW365McpConnectionAsync(
         IList<string> mcpUrls, string accessToken)
@@ -1635,13 +1646,15 @@ public class ComputerUseOrchestrator
         await _mcpConnectionLock.WaitAsync();
         try
         {
-            if (_cachedNonW365Tools != null)
+            var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{string.Join('\n', mcpUrls)}\n\n{accessToken}")));
+            if (_cachedNonW365Tools != null && _cachedNonW365ToolsKey == key)
                 return _cachedNonW365Tools;
 
             var tools = mcpUrls.Count == 0
                 ? []
                 : (await LoadToolsFromUrlsAsync(mcpUrls, accessToken)).Tools;
             _cachedNonW365Tools = tools;
+            _cachedNonW365ToolsKey = key;
             _logger.LogInformation("Loaded {Count} non-W365 MCP tools from {ServerCount} server(s).", tools.Count, mcpUrls.Count);
             return _cachedNonW365Tools;
         }
