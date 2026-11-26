@@ -22,3 +22,7 @@ dist/
 
 # Dev tool directories
 /devTools/
+
+# Local test artifacts
+log.txt
+*.csv
