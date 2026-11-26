@@ -33,6 +33,7 @@
     "@microsoft/agents-activity": "^1.2.2",
     "@microsoft/agents-hosting": "^1.2.2",
     "@microsoft/opentelemetry": "^1.4.0",
+    "@opentelemetry/api": "^1.9.1",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "langchain": "^1.0.1",
@@ -45,11 +46,14 @@
     "@babel/core": "^7.28.4",
     "@babel/preset-env": "^7.28.3",
     "@microsoft/m365agentsplayground": "^0.2.18",
+    "@opentelemetry/context-async-hooks": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.9",
     "env-cmd": "^11.0.0",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "zod": "^4.6.7"
   }
 }
