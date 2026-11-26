@@ -155,7 +155,7 @@ export class MyAgent extends AgentApplication<TurnState> {
             try {
               const response = await this.agent.invokeAgentWithScope(
                 userMessage,
-                this.authorization,
+                authHandlerName ? this.authorization : undefined,
                 authHandlerName,
                 context
               );
@@ -255,7 +255,7 @@ export class MyAgent extends AgentApplication<TurnState> {
 
       const response = await this.agent.invokeAgentWithScope(
         message,
-        this.authorization,
+        authHandlerName ? this.authorization : undefined,
         authHandlerName,
         context
       );
@@ -297,7 +297,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       `Please retrieve the Word document as well as the comments and return it in text format.`;
     const wordContent = await this.agent.invokeAgentWithScope(
       docMessage,
-      this.authorization,
+      authHandlerName ? this.authorization : undefined,
       authHandlerName,
       context
     );
@@ -309,7 +309,7 @@ export class MyAgent extends AgentApplication<TurnState> {
       `Please refer to these when responding to comment '${commentText}'. ${wordContent}`;
     const response = await this.agent.invokeAgentWithScope(
       responseMessage,
-      this.authorization,
+      authHandlerName ? this.authorization : undefined,
       authHandlerName,
       context
     );

@@ -97,6 +97,10 @@ To set up and test this agent, refer to the [Configure Agent Testing](https://le
 
 For local Teams testing through a dev tunnel, keep the service connection values in `.env` populated. Bot Framework sends signed JWTs to `/api/messages` even in local development, so the server loads auth configuration from environment variables before accepting message activities.
 
+Anonymous access is permitted only with `NODE_ENV=development` and no Azure App Service marker. Production/App Service (and environments not explicitly marked as local development) must supply a nonempty authentication client ID; configuration-loading errors fail startup before listening. Anonymous message and notification handlers pass no authorization object to the agent.
+
+Rejected adapter processing is handled by Express rather than becoming an unhandled rejection. Requests that fail before a response receive a generic HTTP 500 without exception details; if headers have already been sent, Express handles the connection error. Health endpoints remain available after request failures.
+
 ### Configuration and observability
 
 Copy [.env.example](.env.example) to `.env`, populate the Google model settings and existing Agent 365 service connection, then run:

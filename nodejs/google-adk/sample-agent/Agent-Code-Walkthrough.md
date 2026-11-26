@@ -71,6 +71,8 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 - Registers health endpoints (`/`, `/api/health`, `/robots933456.txt`) **before** JWT middleware
 - `authorizeJWT(authConfig)` protects all routes after health endpoints
 - Routes `POST /api/messages` through `CloudAdapter.process()` → `AgentApplication.run()`
+- Forwards adapter Promise rejections to Express error handling; responses expose only a generic failure message
+- Allows missing JWT settings only in explicit local development; production/App Service fails startup without a client ID
 - Configures hosting baggage middleware and flushes telemetry on SIGINT/SIGTERM shutdown
 
 ### 3. hosting.ts — AgentApplication + Handlers
@@ -82,6 +84,7 @@ Teams Message → Express → authorizeJWT → CloudAdapter.process → AgentApp
 - `onAgentNotification("agents:*", ...)` — email, Word comment, lifecycle notifications
 - `BaggageBuilderUtils.fromTurnContext()` — auto-populates tenant, agent, channel, conversation
 - Telemetry never uses the workload authorization handler or a per-turn delegated-token refresh
+- Reads the SDK authorization getter only when a handler is enabled, including notification paths, so anonymous Playground turns can reach the agent
 
 ### 4. agent.ts — Google ADK Agent
 

@@ -9,7 +9,7 @@ import { configureObservabilityHosting } from './instrumentation';
 // A365 Observability — best-effort instrumentation (verify against official sample)
 import { shutdownMicrosoftOpenTelemetry } from '@microsoft/opentelemetry';
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 
 import { MyAgent } from './hosting';
 import { GoogleADKAgent } from './agent';
@@ -17,7 +17,6 @@ import {
   AuthConfiguration,
   authorizeJWT,
   loadAuthConfigFromEnv,
-  CloudAdapter,
 } from '@microsoft/agents-hosting';
 
 const logger = {
@@ -26,18 +25,26 @@ const logger = {
   error: (...args: unknown[]) => console.error(new Date().toISOString(), 'ERROR', 'main:', ...args),
 };
 
-function startServer(agentApp: MyAgent): void {
+export function startServer(agentApp: MyAgent) {
   const isProduction =
     Boolean(process.env.WEBSITE_SITE_NAME) ||
     process.env.NODE_ENV === 'production';
+  const allowAnonymous = !isProduction && process.env.NODE_ENV === 'development';
 
   // Always load auth config from env — needed for JWT validation even in dev
   // when using devtunnel. Bot Framework sends signed JWTs regardless of environment.
   let authConfig: AuthConfiguration = {};
   try {
     authConfig = loadAuthConfigFromEnv();
-  } catch {
-    logger.info('No auth credentials found — running without JWT validation');
+  } catch (error) {
+    if (!allowAnonymous) throw error;
+    logger.warn('Local development auth configuration unavailable; running without JWT validation');
+  }
+  if (!authConfig.clientId?.trim()) {
+    if (!allowAnonymous) {
+      throw new Error('A nonempty authentication client ID is required outside explicit local development.');
+    }
+    logger.warn('Anonymous access is enabled for local development only.');
   }
 
   const app = express();
@@ -63,11 +70,22 @@ function startServer(agentApp: MyAgent): void {
   app.use(authorizeJWT(authConfig));
 
   // --- Main agent endpoint ---
-  app.post('/api/messages', (req: Request, res: Response) => {
-    const adapter = agentApp.cloudAdapter as CloudAdapter;
-    adapter.process(req, res, async (context) => {
+  app.post('/api/messages', (req: Request, res: Response, next: NextFunction) => {
+    const adapter = agentApp.cloudAdapter;
+    void adapter.process(req, res, async (context) => {
       await agentApp.run(context);
+    }).catch(next);
+  });
+
+  app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+    logger.error('Message request failed.', {
+      category: error instanceof SyntaxError ? 'INVALID_JSON' : 'ADAPTER_REQUEST_FAILED',
     });
+    if (res.headersSent) {
+      next(error);
+      return;
+    }
+    res.status(500).json({ error: 'Unable to process the message request.' });
   });
 
   // --- Determine host and port ---
@@ -118,6 +136,11 @@ function startServer(agentApp: MyAgent): void {
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
+  server.once('close', () => {
+    process.removeListener('SIGTERM', shutdown);
+    process.removeListener('SIGINT', shutdown);
+  });
+  return server;
 }
 
 function main(): void {
@@ -126,9 +149,11 @@ function main(): void {
   startServer(agentApplication);
 }
 
-try {
-  main();
-} catch (e) {
-  logger.error('Application error:', e);
-  process.exit(1);
+if (require.main === module) {
+  try {
+    main();
+  } catch (e) {
+    logger.error('Application error:', e);
+    process.exit(1);
+  }
 }
