@@ -31,6 +31,10 @@ jobs:
     name: Node.js LangChain
     uses: ./.github/workflows/ci-nodejs-langchain-sampleagent.yml
 
+  nodejs-googleadk:
+    name: Node.js Google ADK
+    uses: ./.github/workflows/ci-nodejs-googleadk-sampleagent.yml
+
   nodejs-openai:
     name: Node.js OpenAI
     uses: ./.github/workflows/ci-nodejs-openai-sampleagent.yml
@@ -75,6 +79,7 @@ jobs:
       - dotnet-semantickernel
       - nodejs-claude
       - nodejs-langchain
+      - nodejs-googleadk
       - nodejs-openai
       - nodejs-vercelsdk
       - python-agentframework
@@ -88,16 +93,16 @@ jobs:
       - name: Check CI Status
         run: |
           echo "Checking CI job results..."
-          
+
           # Get all job results (skipped jobs are fine, failed jobs are not)
-          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }} ${{ needs.observability.result }} ${{ needs.scenario-chief-of-staff.result }}"
-          
+          results="${{ needs.dotnet-agentframework.result }} ${{ needs.dotnet-semantickernel.result }} ${{ needs.nodejs-claude.result }} ${{ needs.nodejs-langchain.result }} ${{ needs.nodejs-googleadk.result }} ${{ needs.nodejs-openai.result }} ${{ needs.nodejs-vercelsdk.result }} ${{ needs.python-agentframework.result }} ${{ needs.python-googleadk.result }} ${{ needs.python-openai.result }} ${{ needs.python-claude.result }} ${{ needs.observability.result }} ${{ needs.scenario-chief-of-staff.result }}"
+
           echo "Job results: $results"
-          
+
           # Check if any job failed or was cancelled
           if echo "$results" | grep -qE "failure|cancelled"; then
             echo "❌ One or more CI jobs failed or were cancelled"
             exit 1
           fi
-          
+
           echo "✅ All CI jobs passed"
