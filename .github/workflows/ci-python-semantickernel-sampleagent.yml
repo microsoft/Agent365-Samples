@@ -1,0 +1,39 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: CI - Python Semantic Kernel Sample
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  regression-tests:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: python/semantic-kernel/sample-agent
+    env:
+      PYTHONIOENCODING: utf-8
+      ENABLE_A365_OBSERVABILITY_EXPORTER: 'false'
+      MICROSOFT_OTEL_SDKSTATS_DISABLED: 'true'
+      APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install sample
+        run: python -m pip install -e .
+      - name: Check dependencies
+        run: python -m pip check
+      - name: Run offline regression tests
+        run: python -m unittest discover -s tests -v

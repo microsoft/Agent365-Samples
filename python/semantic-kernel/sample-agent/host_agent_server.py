@@ -184,7 +184,7 @@ class GenericAgentHost:
                 await context.send_activity("Got it — working on it…")
 
                 # Send typing indicator immediately (awaited so it arrives before the LLM call starts).
-                await context.send_activity(Activity(type="typing"))
+                await self._send_typing(context)
 
                 # Background loop refreshes the "..." animation every ~4s (it times out after ~5s).
                 # asyncio.create_task is used because all aiohttp handlers share the same event loop.
@@ -192,8 +192,12 @@ class GenericAgentHost:
                     while True:
                         try:
                             await asyncio.sleep(4)
-                            await context.send_activity(Activity(type="typing"))
+                            if not await self._send_typing(context):
+                                break
                         except asyncio.CancelledError:
+                            break
+                        except Exception:
+                            logger.warning("Typing refresh failed; continuing the message turn", exc_info=True)
                             break
 
                 typing_task = asyncio.create_task(_typing_loop())
@@ -272,6 +276,15 @@ class GenericAgentHost:
             await handle_notification_common(context, state, notification_activity)
         
         logger.info("✅ Notification handlers registered for 'agents' and 'msteams' channels")
+
+    @staticmethod
+    async def _send_typing(context: TurnContext) -> bool:
+        try:
+            await context.send_activity(Activity(type="typing"))
+            return True
+        except Exception:
+            logger.warning("Typing indicator failed; continuing the message turn", exc_info=True)
+            return False
 
     async def _handle_notification_with_agent(
         self, context: TurnContext, notification_activity: AgentNotificationActivity
@@ -382,32 +395,21 @@ class GenericAgentHost:
         tenant_id = environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__TENANTID")
         client_secret = environ.get("CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTSECRET")
 
-        if client_id and tenant_id and client_secret:
-            logger.info("🔒 Using Client Credentials authentication")
-            try:
-                return AgentAuthConfiguration(
-                    client_id=client_id,
-                    tenant_id=tenant_id,
-                    client_secret=client_secret,
-                    scopes=["https://api.botframework.com/.default"],
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to create AgentAuthConfiguration, falling back to anonymous: {e}"
-                )
-                return None
-
-        if environ.get("BEARER_TOKEN"):
-            logger.info(
-                "🔑 BEARER_TOKEN present but incomplete app registration; continuing in anonymous dev mode"
+        if not all(value and value.strip() for value in (client_id, tenant_id, client_secret)):
+            raise ValueError(
+                "AUTH_HANDLER_NAME requires service connection CLIENTID, TENANTID, and CLIENTSECRET"
             )
-        else:
-            logger.warning("⚠️ No authentication env vars found; running anonymous")
-
-        return None
+        return AgentAuthConfiguration(
+            client_id=client_id,
+            tenant_id=tenant_id,
+            client_secret=client_secret,
+            scopes=["https://api.botframework.com/.default"],
+        )
 
     def start_server(self, auth_configuration: AgentAuthConfiguration | None = None):
         """Start the server using Microsoft Agents SDK"""
+        if self.auth_handler_name and auth_configuration is None:
+            raise ValueError("Authenticated hosting requires a valid authentication configuration")
 
         async def entry_point(req: Request) -> Response:
             agent: AgentApplication = req.app["agent_app"]
@@ -476,11 +478,11 @@ class GenericAgentHost:
 
         app.on_startup.append(init_app)
 
-        # Register cleanup on shutdown to close all sessions
+        # Close shared clients only after aiohttp drains active handlers.
         async def shutdown_cleanup(app):
             await self.cleanup()
 
-        app.on_shutdown.append(shutdown_cleanup)
+        app.on_cleanup.append(shutdown_cleanup)
 
         # Port configuration - Azure sets PORT=8000, locally defaults to 3978
         desired_port = int(environ.get("PORT", 3978))

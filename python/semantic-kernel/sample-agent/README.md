@@ -15,7 +15,7 @@ For comprehensive documentation and guidance on building agents with the Microso
 - **Agentic Authentication** — delegated token exchange for Graph/MCP; app-only tokens for telemetry
 - **Notification handling** — email and Word comment notifications
 - **User identity** — personalized responses using `activity.from_property`
-- **Conversation continuity** — per-conversation ChatHistory across turns
+- **Conversation continuity** — identity-scoped, bounded chat history across turns
 - **Generic host pattern** — reusable hosting infrastructure compatible with Agents Playground
 
 ## Prerequisites
@@ -230,7 +230,7 @@ finally:
 
 The agent processes notification activities from the `agents` and `msteams` channels:
 
-- **Email notifications**: Processes email content and responds
+- **Email notifications**: Drafts a reply from untrusted email content with tools disabled; sender-authored instructions cannot authorize remote actions
 - **Word comment notifications**: Reads document context and responds to mentions
 
 ## MCP Tooling Integration
@@ -263,15 +263,30 @@ MCP tools require proper Azure authentication:
 - **Development**: Set `USE_AGENTIC_AUTH=false` with a valid `BEARER_TOKEN` for local testing
 - **Production**: Set `USE_AGENTIC_AUTH=true` — uses token exchange with proper scopes via the Microsoft 365 Agents SDK
 
+MCP connections belong to a single turn, not the process. Each turn clones the
+kernel, discovers tools with the current authorization context, and closes its
+plugins in `finally` (including failures/cancellation). This avoids sharing a
+previous caller's token or retaining an expired Authorization header. Gateway
+discovery receives the SDK authorization context, preserves per-server headers,
+and exchanges a server-specific audience/scope token for manifest fallback.
+Development static tokens are accepted only with `ENVIRONMENT=Development`;
+optional `BEARER_TOKEN_<MCPSERVERNAME_UPPER>` overrides support per-server tokens.
+
 ### Environment Variables for MCP
 
 ```env
 ENVIRONMENT=Development          # "Development" allows BEARER_TOKEN for MCP auth
 USE_AGENTIC_AUTH=false           # false = static bearer token, true = agentic token exchange
-SKIP_TOOLING_ON_ERRORS=true      # Falls back to bare LLM mode if MCP tools fail
+SKIP_TOOLING_ON_ERRORS=false     # Explicitly opt in only during Development
 ```
 
 > **Note**: MCP server discovery first attempts SDK-based discovery. If no servers are returned, the agent falls back to `ToolingManifest.json` regardless of `ENVIRONMENT`.
+
+Connection and manual-registration failures propagate. Only Development with
+`SKIP_TOOLING_ON_ERRORS=true` may continue without tools; partially registered
+plugins are removed and their sessions closed. Production always fails the turn.
+Manual fallback exposes each MCP input schema's properties and required fields
+to Semantic Kernel rather than advertising a generic `kwargs` argument.
 
 ## Authentication
 
@@ -280,9 +295,19 @@ Authentication is controlled by the `AUTH_HANDLER_NAME` environment variable:
 | Value       | Mode       | Description                                                  |
 | ----------- | ---------- | ------------------------------------------------------------ |
 | _(empty)_ | Playground | No JWT auth — for local testing with Agents Playground      |
-| `AGENTIC` | Production | Enables token exchange for Graph API, MCP, and observability |
+| `AGENTIC` | Production | Requires valid service credentials and JWT validation; enables workload token exchange for Graph/MCP |
 
 Service-connection credentials (`CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*`) remain available to the SDK regardless of auth mode.
+Missing or invalid production credentials stop startup instead of silently enabling
+anonymous hosting. Shared clients and observability are closed in aiohttp's
+`on_cleanup`, after active requests drain. Typing-indicator failures are logged
+without turning a successfully delivered answer into an error.
+
+History is partitioned by tenant, agent, caller, conversation, and tool-enabled
+versus email-reply mode. The Semantic Kernel truncation reducer retains roughly
+20 recent messages (with a five-message threshold and safe tool-call/result
+boundaries); at most 100 histories are retained. The model-usage totals include
+intermediate tool-selection completions, not only the final assistant reply.
 
 ## Observability
 
@@ -309,6 +334,15 @@ Telemetry uses the S2S transport with an **app-only token for the runtime agent 
 not the delegated token used for Graph or MCP. Each message/notification turn prefetches
 the token using the existing hosting blueprint connection; the exporter reads the cache
 synchronously. Tokens are checked for matching agent, tenant, audience, and expiry.
+Token and failure caches each retain at most 256 identities and prune expired
+entries. Best-effort prefetch has a ten-second deadline, three-second HTTP
+timeouts, and a four-worker admission cap, so telemetry cannot indefinitely block
+message processing or queue unlimited blocked workers. DNS/OS waits cannot be
+forcibly interrupted, so their worker slots remain reserved until they finish.
+The bounded hosting transport follows the installed MSAL hosting credential
+configuration (SDK 1.9+); non-MSAL providers and Service Fabric managed identity
+are not supported for telemetry and report acquisition failures without disabling
+workload processing. Tooling 2.0+ supplies per-audience authorization context.
 Offline replay is disabled during the migration from delegated telemetry.
 The agent builds baggage around its scopes directly. The distro's baggage middleware
 is not registered: in `microsoft-opentelemetry` 1.6.0 it calls the next handler without
@@ -362,6 +396,8 @@ These checks use mocked authentication and HTTP responses; they do not call the 
 change tenant permissions, or prove live telemetry delivery.
 They exercise the real Semantic Kernel/OpenAI integration, exporter HTTP serialization,
 console diagnostics, conversation history, and per-operation identity attributes.
+The required CI orchestrator runs this sample's unittest suite on Python 3.11/3.12
+on both Windows and Ubuntu.
 
 ## Troubleshooting
 
@@ -369,7 +405,7 @@ console diagnostics, conversation history, and per-operation identity attributes
 | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `401 Unauthorized` in Playground | Set `AUTH_HANDLER_NAME=` (empty) and `USE_AGENTIC_AUTH=false`                              |
 | MCP tools not loading              | Ensure `BEARER_TOKEN` is set and not expired. Refresh with `a365 develop get-token -o raw` |
-| Slow first response                | MCP servers connect on first message. Subsequent messages reuse the connection                 |
+| Slow response during tool setup | Each turn opens fresh authenticated MCP sessions; check gateway/token/server latency |
 | `Import could not be resolved`   | Run `uv sync` or `pip install -e .` to install all dependencies                            |
 | Token exchange failures            | Verify `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__*` credentials are correct                |
 | Agentic MCP without an auth handler | Set `AUTH_HANDLER_NAME=AGENTIC`, or use Playground settings with a non-empty bearer token |

@@ -142,7 +142,14 @@ runpy.run_path({str(entrypoint)!r}, run_name="__main__")
 class HostingRegressionTests(unittest.IsolatedAsyncioTestCase):
     async def test_host_pipeline_passes_context_to_next_handler(self):
         from host_agent_server import GenericAgentHost
-        with patch.dict(os.environ, {"AUTH_HANDLER_NAME": ""}), redirect_stdout(io.StringIO()):
+        with patch.dict(os.environ, {"AUTH_HANDLER_NAME": ""}), patch(
+            "host_agent_server.agents_sdk_config",
+            {"CONNECTIONS": {"SERVICE_CONNECTION": {"SETTINGS": {
+                "CLIENTID": "11111111-1111-4111-8111-111111111111",
+                "TENANTID": "22222222-2222-4222-8222-222222222222",
+                "CLIENTSECRET": "synthetic",
+            }}}},
+        ), redirect_stdout(io.StringIO()):
             host = GenericAgentHost(SemanticKernelAgent)
         for activity in (
             Activity(type="message", text="hello"),
@@ -183,7 +190,9 @@ class McpRegressionTests(unittest.IsolatedAsyncioTestCase):
         agent = SemanticKernelAgent.__new__(SemanticKernelAgent)
         agent._mcp_tools_registered = False
         agent.auth_options = SimpleNamespace(bearer_token="")
-        with patch.dict(os.environ, {"USE_AGENTIC_AUTH": "false", "SKIP_TOOLING_ON_ERRORS": "false"}):
+        with patch.dict(os.environ, {
+            "USE_AGENTIC_AUTH": "false", "SKIP_TOOLING_ON_ERRORS": "false", "ENVIRONMENT": "Development",
+        }):
             with self.assertRaisesRegex(ValueError, "BEARER_TOKEN"):
                 await agent.setup_mcp_tools(None, None, None)
 
@@ -193,6 +202,7 @@ class McpRegressionTests(unittest.IsolatedAsyncioTestCase):
         service._server_configs = [
             SimpleNamespace(mcp_server_name="test", url="https://example.invalid")
         ]
+        service._server_headers = {"test": {"Authorization": "Bearer synthetic"}}
         service._register_mcp_tools_manually = AsyncMock(return_value=False)
         original_import = builtins.__import__
 
@@ -202,7 +212,8 @@ class McpRegressionTests(unittest.IsolatedAsyncioTestCase):
             return original_import(name, *args, **kwargs)
 
         with patch("builtins.__import__", side_effect=without_connector):
-            self.assertEqual(await service.add_tools_to_kernel(object()), 0)
+            with self.assertRaisesRegex(RuntimeError, "returned no tools"):
+                await service.add_tools_to_kernel(object())
 
     async def test_request_ids_are_unique_within_session(self):
         ids = []
@@ -245,7 +256,7 @@ class TokenResolverTests(unittest.IsolatedAsyncioTestCase):
         self.agent_id = str(uuid.uuid4())
         self.tenant_id = str(uuid.uuid4())
         self.resolver = AppTokenResolver()
-        self.connection = SimpleNamespace(get_agentic_application_token=AsyncMock(return_value="assertion"))
+        self.connection = object()
         self.manager = SimpleNamespace(get_default_connection=lambda: self.connection)
 
     def token(self, **overrides):
@@ -261,11 +272,10 @@ class TokenResolverTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_prefetch_uses_host_connection_and_reuses_app_token(self):
         token = self.token()
-        with patch("observability.app_token_resolver._acquire", return_value={"access_token": token}) as acquire:
+        with patch("observability.app_token_resolver._acquire_with_hosting", return_value={"access_token": token}) as acquire:
             await self.resolver.prefetch(self.manager, self.tenant_id, self.agent_id)
             await self.resolver.prefetch(self.manager, self.tenant_id, self.agent_id)
-        self.connection.get_agentic_application_token.assert_awaited_once_with(self.tenant_id, self.agent_id)
-        acquire.assert_called_once_with(self.tenant_id, self.agent_id, "assertion")
+        acquire.assert_called_once_with(self.connection, self.tenant_id, self.agent_id)
         self.assertEqual(self.resolver.resolve(self.agent_id.upper(), self.tenant_id.upper()), token)
 
     async def test_rejects_delegated_mismatched_and_expired_tokens(self):
@@ -278,14 +288,14 @@ class TokenResolverTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(overrides=overrides):
                 self.resolver.clear()
-                with patch("observability.app_token_resolver._acquire", return_value={"access_token": self.token(**overrides)}):
+                with patch("observability.app_token_resolver._acquire_with_hosting", return_value={"access_token": self.token(**overrides)}):
                     with self.assertRaises(RuntimeError):
                         await self.resolver.prefetch(self.manager, self.tenant_id, self.agent_id)
                 self.assertIsNone(self.resolver.resolve(self.agent_id, self.tenant_id))
 
     async def test_cached_token_is_not_served_near_expiry(self):
         token = self.token(exp=time.time() + 120)
-        with patch("observability.app_token_resolver._acquire", return_value={"access_token": token}):
+        with patch("observability.app_token_resolver._acquire_with_hosting", return_value={"access_token": token}):
             await self.resolver.prefetch(self.manager, self.tenant_id, self.agent_id)
         with patch("observability.app_token_resolver.time.time", return_value=time.time() + 61):
             self.assertIsNone(self.resolver.resolve(self.agent_id, self.tenant_id))

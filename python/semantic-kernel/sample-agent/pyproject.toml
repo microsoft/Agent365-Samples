@@ -8,15 +8,15 @@ dependencies = [
     "PyMeta3>=0.5.1",
 
     # Microsoft Agents SDK - Official packages for hosting and integration
-    "microsoft-agents-hosting-aiohttp>=0.7.0",
-    "microsoft-agents-hosting-core>=0.7.0",
-    "microsoft-agents-authentication-msal>=0.7.0",
-    "microsoft-agents-activity>=0.7.0",
+    "microsoft-agents-hosting-aiohttp>=1.9.0",
+    "microsoft-agents-hosting-core>=1.9.0",
+    "microsoft-agents-authentication-msal>=1.9.0",
+    "microsoft-agents-activity>=1.9.0",
 
     # Agent 365 packages (using stable versions from PyPI)
     "microsoft-opentelemetry>=1.6.0",
     "microsoft-agents-a365-notifications>=0.1.0",
-    "microsoft-agents-a365-tooling>=0.1.0",
+    "microsoft-agents-a365-tooling>=2.0.0",
     "microsoft-agents-a365-runtime>=0.1.0",
 
     # Core dependencies
